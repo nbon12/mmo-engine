@@ -1,0 +1,22 @@
+# Claude Code machine-local state (the Spec Kit skills under .claude/skills/ are committed)
+.claude/settings.local.json
+.claude/worktrees/
+
+# JetBrains IDEs (Rider, IntelliJ IDEA, etc.)
+.idea/
+
+# Secrets and local environment files (tracked examples are allowed)
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# Node
+node_modules/
+
+# macOS Finder metadata
+.DS_Store
