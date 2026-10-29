@@ -1,0 +1,18 @@
+# Layered working files stay out of git; keep them in a synced drive and commit flattened PNG or
+# WebP exports instead (see README.md)
+*.psd
+*.psb
+*.kra
+*.clip
+*.procreate
+*.sai
+*.sai2
+*.xcf
+*.afphoto
+*.afdesign
+*.blend
+*.blend1
+
+# Obsidian per-machine app state and its local trash
+.obsidian/
+.trash/

@@ -1,0 +1,23 @@
+filters:
+  and:
+    - file.hasTag("asset")
+    - not:
+        - file.inFolder("_templates")
+views:
+  - type: cards
+    name: Art board
+    order:
+      - file.name
+      - type
+      - status
+  - type: table
+    name: By status
+    groupBy:
+      property: status
+      direction: ASC
+    order:
+      - file.name
+      - type
+      - status
+      - target
+      - issue
