@@ -22,6 +22,11 @@ the [style guide](style-guide.md#in-one-line), so this page reads on its own:
 - A PlanetSide 2-style MMOFPS, with continents of up to 5,000 players and several base fights at
   once. Infantry, ground vehicles and aircraft fire projectiles with travel time.
 - Progression, outfits, friends and chat are global across continents.
+- Every gameplay rule is data that an admin can change live from a web dashboard, from speeds,
+  cooldowns and costs to the win condition. Trade and supply routes, Spice farming, NPCs and all
+  flying can each be switched off, and the game must still work without trade routes, for example
+  with bases that don't depend on them
+  ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)).
 - The first client runs in the browser. A Steam build ships at launch, and consoles come later
   ([draft specs](game-design/gap-analysis-follow-up.md#26-platform-strategy)).
 - Art is anime-inspired, in the spirit of Flyff and MapleStory: cute by default, but not always.
@@ -32,15 +37,21 @@ A persistent, massive-scale fantasy FPS. Three factions fight over a continent o
 stands in for firearms, and airships and brooms replace gunships and jets. It's high fantasy, with
 aristocracies and castles ([game design spec](game-design/game-design-spec.md#overview)). Crystals
 hold up the world, and the factions fight over the crystal lattice that ties its continents
-together ([draft specs](game-design/gap-analysis-follow-up.md#core-premise)).
+together ([draft specs](game-design/gap-analysis-follow-up.md#core-premise)). A faction wins a
+continent by holding 66% of its territory through a 30-minute countdown, or by winning a timed
+alert ([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions)). Continent
+locks earn war points, war points decide each 70 to 100-day season, and at season end territory
+resets while characters, unlocks and cosmetics never do
+([draft specs](game-design/gap-analysis-follow-up.md#9-win-conditions-and-meta-campaign)).
 
 In a player's words: "It's PlanetSide 2 with magic, and you can walk around on the airships."
 *(AI proposal, derived from the game design spec's overview and pillars)*
 
 ## Pillars
 
-Every feature must serve at least one. A feature that serves none of them gets cut. These four come
-verbatim from the [game design spec](game-design/game-design-spec.md#overview):
+Every feature should serve at least one. *(AI proposal, derived from the spec template's pillar
+check; no source cuts a feature that serves none)* These four come verbatim from the
+[game design spec](game-design/game-design-spec.md#overview):
 
 1. **Scale first.** Hundreds of players per continent, with bots filling empty faction slots.
 2. **Ships you walk on.** Airships behave like Sea of Thieves ships: players run around the deck,
@@ -49,7 +60,11 @@ verbatim from the [game design spec](game-design/game-design-spec.md#overview):
 4. **Factions feel different.** Each faction has its own form of government and leader powers.
 
 Other sources pull against pillars 1, 2 and 4 (see [conflicts](#conflicts-between-sources)). Two
-specs add pillars that bind only inside their own feature:
+specs add pillars of their own, and later specs reuse some of them: the respawns spec destroys
+intercepted cargo under "deny, never take"
+([respawns](game-design/respawns-supply-and-raids.md#griefing-protection)), and the draft specs'
+capital rule matches it, since the losing faction loses nothing it owns
+([draft specs](game-design/gap-analysis-follow-up.md#capitals)):
 
 - [Logistics](game-design/logistics-and-economy.md#design-pillars): delivery is the game. Active,
   not passive. Deny, never take. Bonuses, not penalties. Bases stay central.
@@ -78,8 +93,10 @@ specs add pillars that bind only inside their own feature:
 Three factions, each with its own government. A Republic re-elects a President each cycle, a
 Monarchy keeps one Queen for the whole match, and a Council shares the role. Wherever the leader
 stands gets a boon: a trade bonus in the castle, a troop buff at a battle. Each capital is a giant
-Castle Keves-style castle behind a shield. Losing the continent drops the shield for a short raid
-window ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)).
+Castle Keves-style castle behind a shield. It is invulnerable and enemies can never enter it
+([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) until a
+faction wins and the losing capital's shield drops for a looting window
+([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions)).
 
 - **Identity** (draft proposals): an old order of tradition, in stone, gold and heraldry. An
   industrious league of invention, in brass and gears. Sky-nomad clans of freedom, in sails and
@@ -88,8 +105,19 @@ window ([game design spec](game-design/game-design-spec.md#world-factions-and-go
 - **Story**: each faction reads the waking crystals its own way: a sacred warning, an engine, a
   living thing. No faction is the villain
   ([storyline](game-design/storyline-and-living-world.md#factions-in-the-story)).
-- **Imbalance**: caps, underdog incentives and Sellsword contracts handle it, not a fourth faction
+- **Monster faction**: a fourth, non-playable faction of NPC monsters (a Hive, perhaps with a zerg
+  queen and roaming monsters such as goblins and mammoths) may at times run operations to capture
+  player bases, and becomes the main opponent when few players are on. Only some maps in the
+  rotation have it, and an admin can switch it off live
+  ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)).
+- **Imbalance**: caps, underdog incentives and Sellsword contracts handle it, not a fourth playable
+  faction like PS2's NSO
   ([draft specs](game-design/gap-analysis-follow-up.md#5-faction-population-balance)).
+- **Winning faction**: the leader becomes more vulnerable because of how the war works: fixed
+  refining, weakly held new conquests and bounties on its bases
+  ([respawns](game-design/respawns-supply-and-raids.md#preventing-snowballing)). A struggling
+  faction gets help through outcomes, numbers, coordination and support, never combat stats
+  ([respawns](game-design/respawns-supply-and-raids.md#faction-balance-levers)).
 - **Symmetry**: shared classes, weapons and vehicles; different government, leader powers, look and
   sound. *(AI proposal, derived from Factions feel different and the shared Gigas modules)*
 
@@ -122,8 +150,10 @@ Starting targets for playtests, not final values
 | Game | Take from it | Leave out |
 | --- | --- | --- |
 | PlanetSide 2 | The structure: continents, bases, classes and vehicles ([game design spec](game-design/game-design-spec.md#overview)) | Real-money weapons ([monetization](game-design/monetization.md#what-to-avoid)); shooting out of spawn rooms ([respawns](game-design/respawns-supply-and-raids.md#spawn-rooms)); air farming infantry ([draft specs](game-design/gap-analysis-follow-up.md#8-combined-arms-and-anti-air-balance)); culling inactive outfit members ([always belong](game-design/always-belong.md#overview)); a separate queue like PlanetSide Arena ([lane war](game-design/lane-war.md#format)) |
-| Flyff, MapleStory | Anime art, cute by default ([style guide](style-guide.md#in-one-line)); Flyff-style monsters and wands, Psykeeper-style levitation ([game design spec](game-design/game-design-spec.md#classes)) | Gear that adds power *(AI proposal, derived from the draft specs' sideways progression)* ([draft specs](game-design/gap-analysis-follow-up.md#6-classes-loadouts-and-progression)) |
+| Flyff, MapleStory | Anime art, cute by default ([style guide](style-guide.md#in-one-line)); Flyff-style monsters such as Aibatts and mushrooms ([game design spec](game-design/game-design-spec.md#pve-mobs-and-population-bots)), a Flyff-style homing wand missile ([game design spec](game-design/game-design-spec.md#vehicles)), Psykeeper-style levitation ([game design spec](game-design/game-design-spec.md#classes)) | Gear that adds power *(AI proposal, derived from the draft specs' sideways progression)* ([draft specs](game-design/gap-analysis-follow-up.md#6-classes-loadouts-and-progression)) |
 | Sea of Thieves | Walkable ships with crew jobs, like patching lift leaks ([logistics](game-design/logistics-and-economy.md#galleons)); tavern warmth ([always belong](game-design/always-belong.md#warmth-throughout-the-game)); ship mascots ([monetization](game-design/monetization.md#skyship-pets)) | — |
+| ArcheAge | Trade runs, where moving the goods is the content ([logistics](game-design/logistics-and-economy.md#design-pillars)) | — |
+| Battlefield 2142 | Titan mode, a close reference for the Gigas: shoot down a flying carrier, then board it to blow its core ([lane war](game-design/lane-war.md#reference-games)) | — |
 | Fortnite | Crew-style membership, pick-your-path passes, a rotating shop ([monetization](game-design/monetization.md)); a story told by changing the map, live finales ([storyline](game-design/storyline-and-living-world.md)) | Secrets shipped in the client, where dataminers find them ([storyline](game-design/storyline-and-living-world.md#protecting-secrets-from-dataminers)) |
 | Deep Rock Galactic | The space rig's cozy fellowship ([always belong](game-design/always-belong.md#warmth-throughout-the-game)); a one-time purchase as the fallback model ([monetization](game-design/monetization.md#business-model)) | — |
 | League of Legends | Creeps that soak turret fire ([scaling](game-design/population-scaling.md#creeps-and-turrets)); lanes and a nexus for Lane War ([lane war](game-design/lane-war.md#win-condition)) | Turret retargeting, outside Lane War ([lane war](game-design/lane-war.md#creeps-lanes-and-turrets)) |
@@ -152,8 +182,11 @@ Starting targets for playtests, not final values
 
 ## Monetization stance
 
-Prices and anything players see in public still wait for your sign-off. The rest comes from the
-[monetization spec](game-design/monetization.md#principles) unless a line links elsewhere:
+Prices, items for sale, legal text and anything else addressed to players or the public outside
+this repository wait for your sign-off
+([constitution](../.specify/memory/constitution.md#xiv-autonomous-studio-human-creative-direction)).
+The rest comes from the [monetization spec](game-design/monetization.md#principles) unless a line
+links elsewhere:
 
 - Free to play, cosmetics only: nothing for sale affects power, progression or access.
 - Revenue comes from cosmetics, a supporter membership, season passes and founder packs.
@@ -176,10 +209,12 @@ Prices and anything players see in public still wait for your sign-off. The rest
   [social media](game-design/social-media-and-community-events.md#guardrails)).
 - Combat stat buffs for a losing faction, or strong combat bots: losing to AI feels worse than
   losing to players ([respawns](game-design/respawns-supply-and-raids.md#rejected)).
-- Immunity for anyone, even new players: protect the ship, not the players
-  ([onboarding](game-design/join-now-onboarding.md#fairness-guardrails)).
-- Resizing a base, region or continent while it's contested
-  ([scaling](game-design/population-scaling.md#rules-and-constraints)).
+- Making new players immune: protect the ship, not the players, and give everyone the same short
+  spawn protection ([onboarding](game-design/join-now-onboarding.md#fairness-guardrails)).
+- Resizing a base, region or continent while it's contested, or changing core rules with
+  population: capture, supply and rewards work the same at every size
+  ([scaling](game-design/population-scaling.md#rules-and-constraints)), and creeps are never
+  required to capture ([scaling](game-design/population-scaling.md#creeps-and-turrets)).
 - Forcing anyone to haul, stay in a squad or speak spells, or pushing new players onto brooms
   ([respawns](game-design/respawns-supply-and-raids.md),
   [always belong](game-design/always-belong.md#squads-by-default),
@@ -215,24 +250,32 @@ coordinates ([logistics](game-design/logistics-and-economy.md#open-questions)).
 | Decide | One source says | Another says |
 | --- | --- | --- |
 | Players per continent to design for | Hundreds per continent ([game design spec](game-design/game-design-spec.md#overview)); fifty to two thousand per server ([scaling](game-design/population-scaling.md#overview)) | Up to 5,000 per continent, across several fights ([architecture spec](../docs/architecture/server-architecture.md#overview)) |
-| What starts an alert, plus the Trade War alert's trigger and length | 700 players online, for 1.5 hours ([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions)) | 30% of the server's active players, for 45 to 90 minutes ([draft specs](game-design/gap-analysis-follow-up.md#alerts)) |
-| What Spice powers | Respawns, turret upkeep and player outposts; blue Spice unassigned ([game design spec](game-design/game-design-spec.md#spice-economy-and-logistics)) | Only bonuses: a base at zero mana works normally ([logistics](game-design/logistics-and-economy.md#mana-supply-system), [draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)) |
-| Who harvests Spice | The Spice Caravan, plus dead Eron giants ([game design spec](game-design/game-design-spec.md#spice-economy-and-logistics)) | Only the Miner; caravans just transport ([draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)) |
+| What starts an alert, plus the Trade War alert's trigger and length | The Conquest alert starts at 700 players online in the world and lasts 1.5 hours; the Trade War's trigger and length are TBD ([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions)) | At least 30% of the server's active players on a continent, or the 66% territory threshold, whichever comes first. Every alert type, Trade War included, lasts 45 to 90 minutes ([draft specs](game-design/gap-analysis-follow-up.md#alerts)) |
+| What Spice powers | Player outposts; green Spice for respawns and red for turret upkeep, though the notes lean toward limiting Spice to player-made structures; blue unassigned ([game design spec](game-design/game-design-spec.md#spice-economy-and-logistics)) | V1's Spice types are retired: Spice feeds crafting and is refined into mana, and mana only adds bonuses, so a base at zero mana works normally ([logistics](game-design/logistics-and-economy.md#mana-supply-system), [draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)) |
+| Where Spice comes from, and whether territory adds to it | The Spice Caravan's harvest mode, dead Eron giants, and passive income from resource territories, which also count toward the 66% victory threshold ([game design spec](game-design/game-design-spec.md#spice-economy-and-logistics), [game design spec](game-design/game-design-spec.md#bases-and-territory-control)) | Only the Miner harvests, and caravans just transport ([draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)). Refining runs at a roughly fixed rate, so twice the territory doesn't give twice the supply ([respawns](game-design/respawns-supply-and-raids.md#overextension)) |
 | Whether monsters give XP | Flyff-style monsters roam, give XP and quests, and attack the winning faction more ([game design spec](game-design/game-design-spec.md#pve-mobs-and-population-bots)) | Live-war creeps give zero XP; XP monsters stay in the practice range and prologue ([draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)) |
 | The class roster | Flyer, Heavy, Medic, Engineer, Rogue, Mech pilot and an undecided Knight ([game design spec](game-design/game-design-spec.md#classes)) | The Knight absorbs Heavy, a Wizard replaces the Rogue, the Mech is a suited class, and Miner and Artisan join ([draft specs](game-design/gap-analysis-follow-up.md#roster)); the Handler may add one ([handler](game-design/handler-class.md#open-questions)) |
-| Which ships have walkable decks | The 16-seat airship has an open deck ([game design spec](game-design/game-design-spec.md#vehicles)); galleons run from 2 to 32 seats ([logistics](game-design/logistics-and-economy.md#galleons)) | Only the 32-seat Galleon class and the Gigas, with seats as the fallback ([draft specs](game-design/gap-analysis-follow-up.md#4-moving-platforms-and-regionizer-authority)) |
-| How leaders are chosen | Each faction its own way; kiosk points raise election odds ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) | One-week terms; influence earned only through play ([draft specs](game-design/gap-analysis-follow-up.md#elected-leaders)) |
-| What capital loot is | Real loot, with priority to players nearest the capital ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) | Cosmetic trophies only ([draft specs](game-design/gap-analysis-follow-up.md#capitals)) |
+| Which ships exist, and which have walkable decks | A 16-seat airship with an open deck and a 6-seat small airship without one ([game design spec](game-design/game-design-spec.md#vehicles)); crewed galleons of 2, 3, 4, 16 and 32 seats ([logistics](game-design/logistics-and-economy.md#galleons)) | Skiff 3, Cutter 6 and Frigate 12 on fixed seats ([draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)). Only the 32-seat Galleon class and the Gigas are walkable, with seats as the fallback ([draft specs](game-design/gap-analysis-follow-up.md#4-moving-platforms-and-regionizer-authority)) |
+| How leaders are chosen | Each faction its own way: a President re-elected each cycle, one Queen for the whole match, a shared council. When a leader dies, a random player or the nearest one takes over (the spec says both) ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) | One-week elected terms for every faction, and a recall hands the role to the runner-up. Influence is earned only through play, never through kiosks, currency or purchases ([draft specs](game-design/gap-analysis-follow-up.md#elected-leaders)) |
+| What the leader's boon and powers are | A standing boon wherever the leader is: a trade bonus in the castle, a buff to all friendly troops at a battle ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)). Each faction has its own leader powers ([game design spec](game-design/game-design-spec.md#overview)) | The same powers for every faction: waypoints, priority targets, the Gigas tiebreak vote, and one activated buff per alert, at most +5% to one stat in one region for 10 minutes ([draft specs](game-design/gap-analysis-follow-up.md#elected-leaders)) |
+| When a capital's shield drops | As soon as a faction wins the continent ([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions)) | Only after its faction has lost a continent lock and the attackers hold a set share of adjacent territory ([draft specs](game-design/gap-analysis-follow-up.md#capitals)); until then, raids reach only the outskirts ([respawns](game-design/respawns-supply-and-raids.md#protected-areas)) |
+| What capital loot is | A looting window when the shield drops, with greed-based loot priority, and keeping looting at all is still open ([game design spec](game-design/game-design-spec.md#alerts-and-win-conditions), [game design spec](game-design/game-design-spec.md#open-questions)) | Cosmetic trophies only, and the losing faction loses nothing it owns ([draft specs](game-design/gap-analysis-follow-up.md#capitals)) |
+| Whether a purchase can unlock access | Nothing for sale affects power, progression or access ([monetization](game-design/monetization.md#principles)) | A verified purchase reaches trust tier T2, which unlocks outfit creation, leadership and election candidacy ([draft specs](game-design/gap-analysis-follow-up.md#account-trust-tiers)), and founder packs include beta access ([monetization](game-design/monetization.md#business-model)) |
 | Which faction concept gets which government | Republic, Monarchy, Council ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) | Old order, industrious league, sky-nomad clans; no source pairs them ([draft specs](game-design/gap-analysis-follow-up.md#faction-pillars-proposals)) |
 | Which bots exist | Creeps are the only combat backfill ([draft specs](game-design/gap-analysis-follow-up.md#17-unified-bot-and-ai-behavior)) | Bot turret gunners and support bots ([respawns](game-design/respawns-supply-and-raids.md#support-and-defenses)); combat drones ([handler](game-design/handler-class.md#class-kit)) |
+| Whether a monster faction fights the players | A non-playable NPC Hive may at times capture player bases, and is the main opponent at low population, on some rotation maps ([game design spec](game-design/game-design-spec.md#world-factions-and-governance)) | One combat bot family, creeps, is the only combat backfill, with no simulated war ([draft specs](game-design/gap-analysis-follow-up.md#17-unified-bot-and-ai-behavior)); creeps are never required to capture a base ([scaling](game-design/population-scaling.md#creeps-and-turrets)) |
 | Which earlier specs to update | Underdog respawn cuts ([draft specs](game-design/gap-analysis-follow-up.md#underdog-incentive-ladder)), 60 to 120 m spawn rooms ([draft specs](game-design/gap-analysis-follow-up.md#layout-rules)), full-route supply and no deep raids ([logistics](game-design/logistics-and-economy.md#front-line-vs-rear)) | Superseded by pool bonuses, 30 to 60 m rooms, staging bases and rift raids ([respawns](game-design/respawns-supply-and-raids.md#open-questions)) |
 
 ### Open decisions
 
 Questions a later spec already answers are left out, pending your review. The draft specs settle
-the Engineer's kit, the Medic's staff, bots, and Spice and mana as one economy
-([draft specs](game-design/gap-analysis-follow-up.md)). The respawns spec settles stolen cargo
-([respawns](game-design/respawns-supply-and-raids.md#griefing-protection)).
+the Engineer's kit, the Medic's staff, the Wizard's role (an infiltrator and spellcaster for
+scouting and area denial), full bots versus a simulated war (neither: creeps are the only combat
+backfill), and Spice and mana as one economy
+([draft specs](game-design/gap-analysis-follow-up.md#roster),
+[draft specs](game-design/gap-analysis-follow-up.md#17-unified-bot-and-ai-behavior),
+[draft specs](game-design/gap-analysis-follow-up.md#0-cross-spec-decisions)). The respawns spec
+settles stolen cargo ([respawns](game-design/respawns-supply-and-raids.md#griefing-protection)).
 
 | Area | Decide | Raised in |
 | --- | --- | --- |
@@ -244,7 +287,7 @@ the Engineer's kit, the Medic's staff, bots, and Spice and mana as one economy
 | Economy and the Gigas | Decide whether a captured depot is destroyed or locked, whether bases specialize in goods, and whether food returns as buffet kiosks. Set the Gigas numbers: charge, overload time, hull, voting window, warning. Tune airships to reach drop range against anti-air most of the time | [logistics](game-design/logistics-and-economy.md#open-questions) |
 | Belonging | Set the number of regiments, company size, the reserve-list delay and any outfit cap. Decide whether players keep their regiment inside an outfit, what bot officers run, and how bot sergeants hand squads to players | [always belong](game-design/always-belong.md#open-questions) |
 | Onboarding | Set the recruit galleon's shield length, mission choice, launch cadence and veteran access. Define "new player". Set age signals and voice defaults per region. Decide on play-while-downloading | [onboarding](game-design/join-now-onboarding.md#open-questions) |
-| Store (prices need your sign-off) | Set currency, pass and membership prices, pass lengths and tier counts, and the launch catalog for a weekly vehicle slot. Decide gifting, the pet bond's timing and founder packs. Check EU rules on limited offers, currency and minors before launch | [monetization](game-design/monetization.md#open-questions) |
+| Store (prices need your sign-off) | Set currency, pass and membership prices, pass lengths and tier counts, the launch catalog for a weekly vehicle slot, and when that slot moves to daily. Decide gifting, the pet bond's timing and founder packs. Check EU rules on limited offers, currency and minors before launch | [monetization](game-design/monetization.md#open-questions) |
 | Story | Decide on a narrator or only in-world sources, how much war results flavor the story, fixed finale times and partner secrets. Decide whether the Season 3 Gigas finale is a scripted exception | [storyline](game-design/storyline-and-living-world.md#open-questions) |
 | Sky leviathan and milestones | Set crossing frequency, event length and the social share of damage. Decide on griefer protection, which platforms charge the cannon, milestone thresholds and buildings, and whether capitals grow | [social media](game-design/social-media-and-community-events.md#open-questions) |
 | Lane War (parked) | Decide rotation map or spinoff, and whether wins feed the main war. Set the opening threshold, time limit, fallback winner, escalation, and a lane layout that makes factions meet | [lane war](game-design/lane-war.md#open-questions), [scaling](game-design/population-scaling.md#open-questions) |
