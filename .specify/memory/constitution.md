@@ -52,14 +52,15 @@ Choices made without an explicit maintainer decision (review these):
   - Open decision 11 is new.
 
 Templates and guidance (outside /speckit-constitution's scope; updated in the same pull request):
-  .specify/templates/overrides/plan-template.md   pending: run IDs in the evidence table;
-                                                  experiment and bot gates
-  .specify/templates/overrides/spec-template.md   pending: gates, held-out re-check, content
-                                                  parameters
+  .specify/templates/overrides/plan-template.md   updated: run IDs in the evidence table; new
+                                                  Experiments and bots gate
+  .specify/templates/overrides/spec-template.md   updated: content parameters, gates, seeds and
+                                                  held-out re-check
   .specify/templates/overrides/tasks-template.md  no change needed
-  CLAUDE.md                                       pending: agent rules for experiments
-  .claude/skills/architecture-police/SKILL.md     pending: registered experiment candidates are
-                                                  deliberate alternatives
+  CLAUDE.md                                       updated: agent rules for experiments
+  .claude/skills/architecture-police/SKILL.md     updated: registered experiment candidates are
+                                                  deliberate alternatives; config values are off
+                                                  limits
   docs/architecture/server-architecture.md        unchanged (imported reference copy)
 
 Follow-up TODOs (carried over from 1.0.0):

@@ -81,8 +81,18 @@ applicable (with a one-line reason), or a violation justified under Complexity T
   exception, and no copyleft code is linked, copied or deployed. External design sources are
   recorded in `research.md`; Folia and AzerothCore are used through their documentation only.
 - **Evidence and open decisions** (VI, Architecture Constraints): Tuning values come from the
-  simulator or load tests, are recorded with their run, and live in validated configuration. The
-  plan does not silently settle an open decision, and any decision it needs is called out.
+  simulator or load tests, cite their run IDs, and live in validated configuration. Gameplay
+  content parameters live in validated configuration too. Timing is labeled a measurement only
+  when it comes from dedicated hardware over repeated runs. The plan does not silently settle an
+  open decision, and any decision it needs is called out.
+- **Experiments and bots** (VI, Experiments and automated search, Bots and scenarios): Each
+  experiment states its viability gates and score, runs at least three seeds, and re-checks its
+  winner on scenarios and seeds the search did not use. Algorithm candidates implement the shared
+  interface and pass the full suite before they compete. Bots join as ordinary clients through the
+  production protocol, with no bot-only server code, and use the shared scenario format and bot
+  library with seeded, human-like aim and reaction. Gameplay changes headed for Production have a
+  human playtest planned. Tuning and content pull requests cite run IDs and wait for human
+  approval.
 - **Operations** (Engineering Standards): Configuration is validated with FluentValidation and
   fails fast, including the environment name. Secrets are externalized. Serilog JSON logs, Sentry
   error capture, OpenTelemetry metrics and health reporting (Agones SDK or readiness endpoints) are
@@ -116,13 +126,13 @@ applicable (with a one-line reason), or a violation justified under Complexity T
 > Fill when the feature adds or changes tick-path work, Delivery work or a tuning value. Otherwise
 > write "N/A: no tick-path, Delivery or tuning changes."
 
-| Work item or tuning value | Estimate or measurement | Source (simulator run, load test, benchmark, or "estimate") | Share of the region tick budget |
-|---------------------------|-------------------------|---------------------------------------------------------------|---------------------------------|
+| Work item or tuning value | Estimate or measurement | Source (run IDs, benchmark, or "estimate") | Share of the region tick budget |
+|---------------------------|-------------------------|--------------------------------------------|---------------------------------|
 | [e.g., movement for N players] | [estimate: X ms] | [estimate] | [X% of 33 ms] |
 
 - **Allocations**: [how the tick path stays allocation-free, and which zero-allocation tests prove it]
 - **Degradation**: [how the feature behaves when its region tightens Delivery caps or drops to 20 Hz]
-- **Metrics**: [metrics added or affected, and their alerts]
+- **Metrics**: [engine and gameplay metrics added or affected, and their alerts]
 
 ## Project Structure
 

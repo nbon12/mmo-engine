@@ -134,8 +134,10 @@
   pagination defaults and maximum `limit`, UTC timestamps, ID format, cacheability, and
   breaking-change notes.]
 - **Performance and evidence**: [Expected tick-path or Delivery cost, labeled estimate or
-  measurement. Tuning values the simulator or load tests must set. Behavior under the degradation
-  order. Metrics to report.]
+  measurement. Tuning values the simulator or load tests must set, and gameplay content parameters
+  the feature adds to configuration. Behavior under the degradation order. Engine and gameplay
+  metrics to report. For an experiment: its viability gates, its score, its seeds, and the
+  scenarios and seeds held out to re-check the winner.]
 - **Security and abuse controls**: [Authentication and authorization (role and scope) for each
   protected action, rate limits, untrusted player-generated content, security events to log, and
   audit requirements.]
