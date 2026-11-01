@@ -53,6 +53,10 @@ These are **not** targets:
   **Open decisions** list are deliberate. Examples: WebTransport versus WebSocket,
   server-simulated versus client-reported hits, Orleans versus ASP.NET Core over PostgreSQL.
   Merging them would settle the decision silently. Leave them, and mention them in the report.
+- **Registered experiment candidates.** Competing implementations of one role, registered with
+  the experiment harness (for example two split heuristics or interest-management strategies),
+  are deliberate alternatives until an experiment's result is adopted (constitution, Experiments
+  and automated search). Leave them while they are registered, and mention them in the report.
 - **Duplication the constitution requires**, such as separate types for independently deployed
   processes, or per-region private data.
 - **Generated, owned-elsewhere or excluded files** (see below).
@@ -66,7 +70,9 @@ These are **not** targets:
     deployed processes (they must tolerate version skew);
   - HTTP contracts;
   - the DB schema and migrations;
-  - config keys;
+  - config keys and values, including tuning values and gameplay content parameters. Only a
+    human-approved pull request that cites run IDs changes those (constitution, Development
+    Workflow);
   - metric and log names that dashboards or alerts read;
   - simulation results. With a fixed seed and time base, every simulation test must produce the
     same outcome before and after.

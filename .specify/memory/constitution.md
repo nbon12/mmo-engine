@@ -1,92 +1,69 @@
 <!--
 Sync Impact Report
 ==================
-Version change: template (unversioned) -> 1.0.0 (initial ratification)
-Ratified: 2026-10-28 | Last amended: 2026-10-28
+Version change: 1.0.0 -> 1.1.0 (MINOR: new subsections, materially expanded guidance, and a new
+  open decision)
+Ratified: 2026-10-28 | Last amended: 2026-10-31
 
-Sources:
-  - PS2-Style MMOFPS — Server Architecture Spec (2026-09-30, Nicholas Bonilla), imported to
-    docs/architecture/server-architecture.md. Its binding content (goals, constraints, invariants,
-    policies, starting values, validation plan, open questions) is encoded below; rationale,
-    estimates, rejected alternatives and sources stay in the spec.
-  - HOA Management Company ("NekoHOA") Constitution v3.1.0 and its Spec Kit Testing Constitution.
-    Engineering practices are adapted for a real-time game. Its technology stack applies here only
-    to web surfaces.
+Purpose: support an automated experiment loop, in which bots playtest engine settings and gameplay
+  content, a search keeps the candidates that pass, and people approve what is adopted.
 
-Principles defined (all new):
-  I. One Continent, One Process, Regions That Follow the Fight
-  II. Single Writer, No Locks in Gameplay Code
-  III. Messages Across Regions, Snapshots for Reading
-  IV. The Server Is Authoritative; Clients Are Untrusted
-  V. One Owner for Live Data; PostgreSQL Is the Source of Truth
-  VI. Measure, Then Decide
-  VII. Permissive Licenses and Clean-Room Design
-  VIII. Test First; Deterministic, Parallel-Safe and Rerun-Safe Tests (NON-NEGOTIABLE)
-  IX. Executable, Living Specifications              (NekoHOA section 11)
-  X. Independent, Parallel Specs                     (NekoHOA section 12)
-  XI. Incremental Delivery, Simulator First
-  XII. Web-App-Like Features Use the Web Stack
-Sections added: Purpose and Scope; Core Principles; Architecture Constraints; Web Surfaces;
-  Engineering Standards; Testing Standards; Development Workflow; Governance.
-Removed sections: none (template placeholders replaced).
+Modified principles (titles unchanged):
+  VI. Measure, Then Decide: gameplay content parameters are validated configuration; every run has
+    a run ID and a run record, and tuning values cite run IDs; timing is a measurement only from
+    dedicated hardware over repeated runs; seed-determined outcomes are labeled simulator
+    measurements; automated search follows Experiments and automated search.
+  VII. Permissive Licenses and Clean-Room Design: offline tooling is not a code dependency
+    (maintainer decision, 2026-10-31). Copyleft code still may not be copied or vendored into the
+    repository, and the clean-room rule still applies.
+  XI. Incremental Delivery, Simulator First: the simulator is the first part of the experiment
+    harness and runs the production regionizer implementation.
 
-NekoHOA practices, disposition:
-  Carried over (adapted, project-wide): test-first red/green; xUnit Theories; transaction-per-test
-    isolation; tests assume parallel runs and leftovers from prior runs; PostgreSQL via
-    Testcontainers (no in-memory substitutes); factories without business rules; repository /
-    business-process / end-to-end test layers; completion gate; executable and living specs;
-    spec independence and parallelism; vertical-slice PRs; incremental delivery; semver
-    amendments; FluentValidation fail-fast configuration incl. environment-name validation;
-    browser boot-time config guard; secrets handling; Serilog JSON logs; Sentry; correlation IDs;
-    health endpoints; strict, tested, idempotent migrations; UTC; UUIDs; global exception handling
-    and production-safe errors; API contract standards; in-application auth (ASP.NET Core
-    Identity + JWT, rotating hashed refresh tokens); least privilege; server-side authorization;
-    security event logging; rate limiting; GitHub Actions; Sonar; Codecov; 95% changed-file
-    coverage; Docker/Docker Hub; Dev/Staging/Prod isolation; Docker Compose with real PostgreSQL.
-  Carried over (web surfaces only): Angular on Cloudflare Pages; FastEndpoints (also used for the
-    gateway's request/response endpoints); Neon; Cloud Run scale-to-zero; Cloudflare edge;
-    Swashbuckle in development only; R2/MinIO; stateless APIs; limit/offset pagination; caching
-    rules; responsiveness; WCAG 2.1 AA; Jasmine/Karma, Angular Testing Library, Playwright,
-    Cypress, Storybook.
-  Strengthened: moderation and admin actions MUST be auditable (NekoHOA: SHOULD).
-  Not carried over: HOA purpose, tenancy (hoa_id) and HOA roles; the at-least-one-admin rule;
-    the spec_kit/ test folder layout (the first plan sets the structure).
+Added sections:
+  Architecture Constraints > Experiments and automated search
+  Testing Standards > Bots and scenarios
 
-Reconciliations (conflicts between the sources, resolved here):
-  1. "MIT or Apache 2.0 only" vs. Npgsql (PostgreSQL License), which EF Core and Dapper need for
-     the mandated PostgreSQL: approved exception in Principle VII.
-  2. "GPL/AGPL are reference reading only" vs. MinIO (AGPL-3.0 server) in the web-surface
-     local/test stack: copyleft tools may run unmodified, as separate processes, in local
-     development and CI only.
-  3. "Only Orleans writes to PostgreSQL" vs. web-surface backends that write PostgreSQL: only the
-     persistence tier writes the game database; web surfaces own separate databases and reach game
-     data through the persistence tier.
-  4. Web-stack statelessness and scale-to-zero vs. stateful real-time servers: web hosting rules
-     apply only to web surfaces (Principle XII).
-  5. NekoHOA's preference for immutable DTOs vs. allocation-free structure-of-arrays tick code:
-     tick code is exempt from immutability.
-  6. Transaction-per-test isolation vs. grain tests whose code opens its own connections: approved
-     equivalent isolation patterns (Testing Standards).
+Expanded sections:
+  Architecture Constraints > Performance discipline and degradation: gameplay metrics; one set of
+    metric definitions across simulators, load tests and Production.
+  Architecture Constraints > Validation program: gameplay experiments, human playtests,
+    calibration.
+  Architecture Constraints > Open decisions: decision 11 (area effects across a region boundary);
+    the amendment range becomes 3 to 11.
+  Architecture Constraints > Glossary: gameplay content parameters, run, run record, run ledger,
+    scenario, viability gate, offline tooling.
+  Engineering Standards > Code: Python allowed for offline tooling only.
+  Engineering Standards > Configuration and secrets: content parameters validated like tuning
+    values.
+  Testing Standards > Test types, Performance tests: runs reproduce from their run records.
+  Development Workflow: tuning and content pull requests cite run IDs, need a human maintainer's
+    approval, and are never merged by scheduled tasks or agents.
 
-Additions found in neither source (review these):
-  deterministic apply order for work from different senders (III); mechanical banned-API
-  enforcement of the no-locks rule (II); regionizer invariant checker run after every tick in
-  tests; parallel-equivalence tests; zero-allocation tests and benchmarks for tick-path code; load
-  tests on dedicated hardware; no blocking I/O on tick threads; OpenTelemetry metrics export;
-  wire-protocol single source of truth with version negotiation; version tolerance across rolling
-  deploys; per-connection rate and size limits; idempotent external callbacks; Phase 1 code
-  follows the region model (XI); open decisions settle only with evidence and, where listed, an
-  amendment; pinned .NET SDK, preferably LTS; game-database hosting as an open decision.
+Removed sections: none.
 
-Templates (spec-kit 1.2.5 resolves templates through .specify/templates/overrides/ first):
-  .specify/templates/overrides/plan-template.md   added (Constitution Check gates, tick budget)
-  .specify/templates/overrides/spec-template.md   added (Constitution Requirements)
-  .specify/templates/overrides/tasks-template.md  added (test-first tasks, quality gates,
-                                                  pre-PR freshness, cross-spec dependencies)
-  .specify/templates/*.md (core)                  unchanged; shadowed by the overrides
-  CLAUDE.md                                       added (spec-kit workflow, review rules)
+Choices made without an explicit maintainer decision (review these):
+  - Tuning and content pull requests need human approval and are never auto-merged.
+  - Python is allowed for offline tooling only.
+  - Offline tooling keeps two rules: no copying or vendoring copyleft code into the repository, and
+    the clean-room rule.
+  - At least three seeds per experiment candidate.
+  - A gameplay change that reaches Production needs a human playtest; bot metrics alone do not
+    approve it.
+  - Open decision 11 is new.
 
-Follow-up TODOs:
+Templates and guidance (outside /speckit-constitution's scope; updated in the same pull request):
+  .specify/templates/overrides/plan-template.md   updated: run IDs in the evidence table; new
+                                                  Experiments and bots gate
+  .specify/templates/overrides/spec-template.md   updated: content parameters, gates, seeds and
+                                                  held-out re-check
+  .specify/templates/overrides/tasks-template.md  no change needed
+  CLAUDE.md                                       updated: agent rules for experiments
+  .claude/skills/architecture-police/SKILL.md     updated: registered experiment candidates are
+                                                  deliberate alternatives; config values are off
+                                                  limits
+  docs/architecture/server-architecture.md        unchanged (imported reference copy)
+
+Follow-up TODOs (carried over from 1.0.0):
   - TODO(REPOWISE): Repowise is not configured for this repository yet. The Development Workflow
     rule binds once indexing is set up.
   - TODO(DIAGRAMS): the spec's architecture diagram (node/333188a6-0ab8) and roadmap
@@ -225,11 +202,27 @@ ledger immediately means a crash can cost stats, never money.
 - These tuning values MUST come from the regionizer simulator or from load tests: section size,
   claim radius per entity class, minimum base spacing, target fight size, tick rates,
   visibility-tier ranges, rates and caps, per-client byte budgets, the progression batch interval,
-  split thresholds, minimum region lifetime and the parallel-phase threshold. Each value MUST be
-  recorded with the run that produced it and MUST live in validated configuration, not in code
-  constants.
+  split thresholds, minimum region lifetime and the parallel-phase threshold. Each value MUST live
+  in validated configuration, not in code constants, and MUST cite the run IDs that produced it.
+- Gameplay content parameters MUST also live in validated configuration, not in code constants.
+  They are the numbers of weapon, vehicle and ability archetypes (for example damage, fire rate,
+  projectile speed, splash radius, range, health and speed) and the contents of loadouts. Code
+  implements each kind of behavior; configuration sets its numbers. A content value MAY start as a
+  design judgment. Once an experiment or playtest changes it, it MUST cite that run's ID.
+- Every simulator run, load, stress or soak run, experiment run and human playtest MUST have a
+  unique run ID and a run record in the run ledger. The record holds the build (commit SHA), the
+  scenario, the configuration and its hash, the seeds, the hardware, the harness version and the
+  resulting metrics. A human playtest records its participant count and findings in place of
+  seeds.
 - Every performance number in a spec, plan or pull request MUST be labeled an estimate or a
   measurement. Once a measurement exists, it supersedes the estimate.
+- A timing figure (tick time, GC pause, throughput) is a measurement only when it comes from
+  dedicated, representative hardware over repeated runs, with the spread reported. Timing from the
+  offline simulator, a developer machine or a shared CI runner is an estimate. An outcome that the
+  seed fully determines, such as region count, the largest region's share of players or players
+  within a radius, is a simulator measurement and MUST be labeled so until a load test confirms it.
+- Automated search over tuning values, content parameters or algorithms MUST follow Experiments
+  and automated search (Architecture Constraints).
 - Every change to tick-path code MUST ship with benchmarks and zero-allocation tests (see Testing
   Standards).
 - When a region overruns, correctness MUST come before tick rate, and the region degrades only in
@@ -237,6 +230,8 @@ ledger immediately means a crash can cost stats, never money.
 
 **Rationale**: The spec's numbers are estimates and several of its open questions are empirical.
 The simulator and load tests exist to replace guesses with data before the design depends on them.
+Recording every run lets anyone reproduce a number and see what it rests on, and keeping gameplay
+numbers in configuration lets experiments vary them without code changes.
 
 ### VII. Permissive Licenses and Clean-Room Design
 
@@ -249,6 +244,13 @@ The simulator and load tests exist to replace guesses with data before the desig
 - GPL, AGPL and other copyleft code MUST NOT be linked, copied, vendored, translated or
   distributed. Copyleft tools MAY run as unmodified, separate processes in local development and
   CI only (for example a MinIO test container), and MUST NOT run in hosted environments.
+- Offline tooling is not a code dependency. Offline tooling runs only on developer machines, CI
+  runners and dedicated experiment or load-test hardware, never in Dev, Staging or Production, to
+  build, test, or run and analyze experiments (for example optimizers, plotting and data-analysis
+  libraries), and nothing linked into, bundled with or deployed as part of our software references
+  it. The license, linking and copyleft rules above do not apply to it, with one exception:
+  copyleft code MUST NOT be copied, vendored or translated into this repository. The clean-room
+  rule below applies to it as it does to all our code.
 - Folia (GPL-3.0) and AzerothCore (GPL-2.0) are design references only. The regionizer MUST be
   implemented from Folia's published documentation, never from its source code. Each feature MUST
   record its external design sources in its `research.md`.
@@ -332,7 +334,11 @@ one another, and they keep each merge small enough to verify.
 - The project MUST be built incrementally, in independently testable vertical slices. A plan MUST
   NOT deliver unrelated surface area all at once.
 - The first deliverable is the offline regionizer simulator. Its results set the claim radii, base
-  spacing and target fight size before features depend on them.
+  spacing and target fight size before features depend on them. It is also the first part of the
+  experiment harness: its scenario format, run records and run ledger are the ones that later load
+  tests and experiments use (Testing Standards, Bots and scenarios).
+- The simulator MUST run the production regionizer implementation, not a separate model of it, so
+  that its results carry over to continent servers.
 - Phase 1 runs one region per continent server, which proves netcode and interest management
   before the regionizer adds parallelism. Gameplay code written in Phase 1 MUST already follow the
   region model (Principles II and III), so that Phase 2 can add regions without rewriting gameplay.
@@ -631,6 +637,12 @@ Specs that touch these flows MUST conform to them or amend this constitution.
 - Every continent server MUST report per-region tick time, region count, the largest region's share
   of players, merge and split rate, cross-region message volume, snapshot size, bytes per client
   per tick, and GC pause time.
+- Every continent server MUST also report gameplay metrics, recorded into the same pre-allocated
+  per-region buffers and exported off the tick threads: kills and deaths by weapon and entity
+  class, time to kill, time from spawn to death, base captures, fight duration, and players within
+  a configured radius of each fight. The simulators, load tests and Production MUST share one set
+  of metric definitions, so that simulator results can be checked against load tests and live
+  play.
 
 ### Multi-server continents (deferred, kept open)
 
@@ -660,12 +672,47 @@ covers them.
   cleanly to 20 Hz.
 - **Door tests**: portals open and close mid-fight, and merges and splits stay correct.
 - **Soak test**: repeated merges and splits, checking timer correctness and churn.
+- **Gameplay experiments**: bots play content variants (weapons, vehicles, abilities, loadouts,
+  base layouts) in shared scenarios, and their gameplay metrics flag problems such as a dominant
+  loadout, stalemates, spawn camping or long travel between fights.
+- **Human playtests**: people play the candidates that pass the gameplay experiments, and their
+  findings decide whether a design is adopted.
+- **Calibration**: where the simulator and a load test, or a load test and Production, report the
+  same metric for the same scenario, the gap MUST be recorded with both run IDs and reported with
+  any decision that rests on the simulator.
+
+### Experiments and automated search
+
+An experiment varies tuning values, gameplay content parameters or algorithms across scenarios, by
+sweep, optimizer or agent, and keeps the candidates that do best.
+
+- An experiment MUST state its goal as viability gates plus a score. A candidate is viable only if
+  every run meets each of these gates that applies to it: the regionizer invariant checker passes
+  after every tick; every region holds its tick budget or degrades only in the defined order;
+  Delivery stays within the per-client byte budget; and bots stay above the scenario's activity
+  floors (for example shots fired, captures and distance moved), so that no candidate can score by
+  stopping play. Only viable candidates are scored.
+- Every candidate MUST run on at least three seeds, and its score is reported with the spread.
+- Before a winner is adopted, it MUST be re-run on scenarios and seeds that the search did not use.
+  It MUST stay viable there, and its score on them is reported beside its search score.
+- A value chosen for its timing MUST be confirmed by a load test before it is adopted.
+- An algorithm candidate, such as an alternative split heuristic or interest-management strategy,
+  MUST implement the shared interface for its role and MUST pass the full test suite, including
+  the invariant checker, parallel-equivalence and zero-allocation tests, before it competes.
+  Candidates registered with the experiment harness are deliberate alternatives until an
+  experiment's result is adopted; the losing candidates are then removed.
+- Bot gameplay metrics are proxies for fun. They MAY reject a design, but they MUST NOT alone
+  approve one: a gameplay change (to content parameters or gameplay rules) that reaches Production
+  MUST also be supported by a human playtest.
+- Experiments and agents MAY propose changes; they MUST NOT adopt them. Adoption follows the
+  Development Workflow. An automated run MUST NOT settle an Open decision: decisions 1 and 2 settle
+  when an approved pull request records the measurement, and decisions 3 to 11 by amendment.
 
 ### Open decisions
 
 These decisions are deliberately unsettled. A spec MUST NOT settle one silently. Decisions 1 and 2
 are settled by measurements recorded under Principle VI; later re-tuning needs no amendment.
-Decisions 3 to 10 are settled by a MINOR amendment that records the choice and its evidence.
+Decisions 3 to 11 are settled by a MINOR amendment that records the choice and its evidence.
 
 1. Section size and claim radius per entity class, from the simulator.
 2. Target maximum fight size, from load tests.
@@ -679,6 +726,9 @@ Decisions 3 to 10 are settled by a MINOR amendment that records the choice and i
 8. Nakama, or custom grains, for friends, groups and chat.
 9. Anti-cheat approach for a browser client.
 10. Hosting for the game database. The web-surface stack's Neon choice does not apply to it.
+11. Area effects that cross a region boundary, such as splash damage: count the effect radius toward
+    claims, so that the effect stays inside one region, or have the region that owns the impact
+    point post the effect to neighboring regions' entity queues, which apply it on their next tick.
 
 ### Glossary
 
@@ -703,6 +753,13 @@ Decisions 3 to 10 are settled by a MINOR amendment that records the choice and i
 | Fleet | An Agones set of identical game servers |
 | Real-time path | The game client, continent servers, the gateway's real-time channels and the persistence tier |
 | Web surface | A web-app-like feature on the Web Surfaces stack |
+| Gameplay content parameters | The numbers of weapon, vehicle and ability archetypes, and the contents of loadouts |
+| Run | One simulator, load-test, experiment or playtest execution, identified by a run ID |
+| Run record | A run's build, scenario, configuration and hash, seeds, hardware, harness version and metrics |
+| Run ledger | Where run records are kept; tuning values and content changes cite its run IDs |
+| Scenario | Map, bases, populations, loadouts, bot behaviors, duration and metrics, in the shared format |
+| Viability gate | A pass/fail check that every run of an experiment candidate must meet before it is scored |
+| Offline tooling | Tooling that runs only on developer machines, CI and experiment hardware, and that no shipped code references |
 
 ## Web Surfaces
 
@@ -805,6 +862,8 @@ These standards apply to every component unless a section says otherwise.
   current LTS release. Code follows .NET naming conventions and team code style, and CI enforces
   linting and formatting.
 - The browser game client and web frontends are written in TypeScript.
+- Offline tooling (Principle VII) MAY be written in Python. Python MUST NOT be used in the real-time
+  path, in web surfaces or in any deployed service.
 - Prefer functional design where it fits: explicit inputs and outputs, pure functions,
   composition, and immutable DTOs, messages and snapshots. In tick code, the single-writer
   structure-of-arrays model and pooled buffers take precedence over immutability.
@@ -838,8 +897,8 @@ These standards apply to every component unless a section says otherwise.
   machine), `Dev` (deployed dev), `Test`, `Staging` and `Production`.
 - Browser apps, both the game client and web frontends, MUST apply an equivalent boot-time guard
   and fail loudly on missing or invalid configuration.
-- New configuration of any kind MUST ship with its validator. Tuning values (Principle VI) are
-  configuration and are validated the same way.
+- New configuration of any kind MUST ship with its validator. Tuning values and gameplay content
+  parameters (Principle VI) are configuration and are validated the same way.
 - Secrets MUST NOT be committed or baked into images. Configuration comes from environment
   variables or managed secret stores, and Dev, Staging and Production secrets are isolated.
 
@@ -951,8 +1010,8 @@ realistic (PostgreSQL with production semantics), scalable, parallel-safe and re
   flows. The client's unit-test runner is chosen in its first plan, subject to Principle VII.
 - **Web-surface frontend**: see Web Surfaces.
 
-Simulator experiments are not tests, but every run MUST be reproducible from its recorded
-parameters and seeds.
+Simulator and experiment runs are not tests, but every seeded run MUST be reproducible from its
+run record (Principle VI).
 
 ### Isolation and rerun safety
 
@@ -1001,14 +1060,28 @@ parameters and seeds.
 - Tick-path changes MUST include BenchmarkDotNet benchmarks, and the results the change is expected
   to move are attached to the pull request.
 - Load, stress and soak tests run on dedicated, representative hardware rather than shared CI
-  runners, on a schedule and before releases. Every run records the hardware, build, parameters and
-  seeds.
+  runners, on a schedule and before releases. Every run has a run record (Principle VI).
 
 ### Factories and scenario builders
 
 - Factories and scenario builders declare valid data: explicit field values, required foreign keys
   and defaults. They MUST NOT embed business rules or conditional side effects, and they MUST NOT
   modify objects they did not create.
+
+### Bots and scenarios
+
+- Bots that connect to a continent server, for load, stress, soak or experiment runs, MUST be
+  ordinary clients. They join with a one-time join token from the gateway, use the production wire
+  protocol, and pass the same validation and per-connection limits as players. Server builds MUST
+  NOT contain bot-only commands, shortcuts or trust exemptions. Scenario setup, such as placing
+  players or opening portals, MUST use authenticated, audited admin or game-master actions.
+- Scenarios MUST use one shared definition format (map, bases, populations, loadouts, bot
+  behaviors, duration and the metrics to collect), read by the regionizer simulator, simulation
+  tests and load tests alike.
+- Bot behaviors MUST come from one shared library. It MAY offer them at several levels of
+  fidelity, from abstract movers in the regionizer simulator to full clients in load tests.
+- Bot aim and reaction MUST be modeled with seeded, human-like error and delay. Bots with perfect
+  aim or instant reactions MUST NOT be used to measure gameplay metrics such as time to kill.
 
 ### Test first
 
@@ -1044,6 +1117,10 @@ A feature or task is not complete until all of the following pass, locally or in
 - Pull requests SHOULD be focused vertical slices that deliver independently testable increments.
   Horizontal pull requests are allowed for cross-cutting infrastructure, quality, security or
   refactoring work. Broad mixed-scope pull requests MUST be split or explicitly justified.
+- A pull request that changes tuning values or gameplay content parameters MUST cite the run IDs
+  behind each change, or state that a content value is a design judgment. It MUST be merged only
+  after a human maintainer approves it, and scheduled tasks and agents MUST NOT merge it.
+  Experiment-driven value changes SHOULD land separately from code changes.
 - Code review MUST verify that every acceptance scenario and Independent Test in the changed
   `spec.md` maps to a specific automated test that faithfully exercises its Given, When and Then,
   denial and failure scenarios included. `CLAUDE.md` details the review procedure.
@@ -1074,4 +1151,4 @@ A feature or task is not complete until all of the following pass, locally or in
 - Prior versions are retained in version control history.
 - Runtime development guidance for agents lives in `CLAUDE.md`.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-10-28
+**Version**: 1.1.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-10-31
