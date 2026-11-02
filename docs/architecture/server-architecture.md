@@ -441,7 +441,7 @@ Every option that promised spatial sharding out of the box is discontinued, expe
 
 ## Open questions, glossary and sources
 
-Nine decisions remain open; the simulator and load tests settle the first four.
+Ten decisions remain open; the simulator and load tests settle the first two, and the rest settle by amendment with recorded evidence. Superseded by constitution v1.0.0, Open decisions (adds decision 10, game-database hosting, and fixes the count).
 
 ### Open questions
 
@@ -454,6 +454,7 @@ Nine decisions remain open; the simulator and load tests settle the first four.
 * Orleans from day one, or ASP.NET Core over PostgreSQL first?
 * Nakama or custom grains for friends, groups and chat?
 * Anti-cheat approach for a browser client.
+* Hosting for the game database. The web-surface stack's Neon choice does not apply to it.
 
 ### Glossary
 
