@@ -107,6 +107,45 @@ parallelizable. Because of this:
 - This does not apply to genuine hard dependencies that are explicitly documented (Principle X).
   Those must still be sequenced correctly.
 
+## No human gates: decide, build, report after
+
+Under the constitution's Autonomous Delivery principle (Principle XIII), the maintainer is not a step
+in the pipeline. Human input arrives as feedback **after** work merges, not as a gate before it. This
+is a side project; the maintainer wants to review as little as possible.
+
+- Do **not** add to specs, plans, tasks, checklists, quickstarts or PR descriptions: tasks or
+  checklist items assigned to a person, manual verification or QA, playtests as acceptance, "STOP and
+  validate" or approval/sign-off checkpoints, or "things only a human can do" sections. Every check
+  is an automated test or CI check.
+- Do **not** ask clarifying questions mid-workflow, and do not leave `[NEEDS CLARIFICATION]`
+  markers. Where a Spec Kit command says to ask the user or wait for a reply (the clarification
+  questions in `/speckit-specify`, the "incomplete checklists, proceed anyway? (yes/no)" prompt in
+  `/speckit-implement`), that text does not apply: pick the most defensible default, record it under
+  **Assumptions**, and continue. The exception is an open decision from the constitution: call it
+  out instead of assuming it, design so it stays open, and keep going on everything that does not
+  depend on it.
+- **Unless otherwise specified:** when the maintainer themselves runs `/speckit-specify` or
+  `/speckit-clarify` in the session (or says they want to be involved), follow their lead and ask
+  what those commands call for. That covers those two phases only. Plan, tasks, analyze, implement,
+  the PR and the merge stay hands-off whether or not they drove the earlier phases, and an explicit
+  instruction from them applies only to the scope they named. A command that an agent, scheduled
+  task or routine starts on its own is never maintainer-driven. An open decision still takes an
+  amendment, not an answer given while specifying.
+- Do **not** ask the maintainer to review a PR or leave it waiting on a review. The completion gate
+  and CI checks are the merge gate: when every required check passes, merge (or enable auto-merge)
+  without waiting. This always holds, even if the maintainer drove specify or clarify. Report
+  judgment calls after the fact, in the PR description and the `docs/patch-notes.md` entry.
+- Do **not** add a required reviewer or manual approval as a control in CI/CD or ops. Build an
+  automated guard (dry run, rate limit, kill switch, audit trail) instead.
+- The only exceptions are things no automation can do: creating third-party accounts or rotating
+  root credentials, billing, admin-only settings, amending the constitution (which includes settling
+  open decisions 3 to 10), or an irreversible action on production data or real money that no guard
+  bounds. Do everything else first, ship the work inert and safe by default, tell the maintainer once
+  with the exact steps, and keep going. It never blocks a merge and never becomes a task in
+  `tasks.md`.
+- This governs how work is built and delivered, not what the product does. Product features where
+  people act (a moderation console, a support queue) are specified normally.
+
 ## Code review: every natural-language test MUST map to a real, faithful automated test
 
 A **natural-language test (NLT)** in this repo is any Given/When/Then **Acceptance Scenario** and any
