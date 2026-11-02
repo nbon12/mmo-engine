@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-02 — Merge policy: the independent review runs in a subagent
 
-Spec: none (process) · PR: #PR_NUMBER
+Spec: none (process) · PR: #42
 
 ### Assumptions that no longer hold
 
