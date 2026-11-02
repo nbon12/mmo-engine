@@ -17,6 +17,24 @@ The constitution wins any conflict with the architecture spec, and both win over
 plans. Do not settle an item on the constitution's Open decisions list inside a feature; call it
 out instead.
 
+## Experiments and tuning values
+
+The constitution's experiment rules (Principle VI; Architecture Constraints, Experiments and
+automated search; Testing Standards, Bots and scenarios) bind agents as well as people:
+
+- Give every run a run ID and a run record in the run ledger. A run that can't be reproduced from
+  its record is not evidence.
+- Never change a tuning value or a gameplay content parameter without citing the run IDs behind
+  it, or saying that a content value is a design judgment. Never hand-edit a number toward the
+  result you want, and never loosen a viability gate so that a candidate passes.
+- Label timing from the simulator, your own machine or CI as an estimate.
+- You may open a pull request that changes tuning or content values, but never merge it, even when
+  every check is green: a human maintainer approves those. Keep experiment-driven value changes
+  out of code pull requests.
+- Experiments produce evidence for Open decisions; they never settle one.
+- Experiment reports are not natural-language tests. The harness, scenario format and bot library
+  are code, and their specs follow the review rules below.
+
 ## Spec Kit setup
 
 - Spec Kit **1.2.5** with the Claude integration. Its skills live in `.claude/skills/speckit-*` and

@@ -441,7 +441,7 @@ Every option that promised spatial sharding out of the box is discontinued, expe
 
 ## Open questions, glossary and sources
 
-Ten decisions remain open; the simulator and load tests settle the first two, and the rest settle by amendment with recorded evidence. Superseded by constitution v1.0.0, Open decisions (adds decision 10, game-database hosting, and fixes the count).
+Eleven decisions remain open; the simulator and load tests settle the first two, and the rest settle by amendment with recorded evidence. Superseded by constitution v1.1.0, Open decisions (v1.0.0 added decision 10, game-database hosting, and fixed the count; v1.1.0 added decision 11, area effects across a region boundary).
 
 ### Open questions
 
@@ -455,6 +455,7 @@ Ten decisions remain open; the simulator and load tests settle the first two, an
 * Nakama or custom grains for friends, groups and chat?
 * Anti-cheat approach for a browser client.
 * Hosting for the game database. The web-surface stack's Neon choice does not apply to it.
+* Area effects that cross a region boundary, such as splash damage: count the effect radius toward claims, or post the effect to neighboring regions' entity queues for their next tick?
 
 ### Glossary
 

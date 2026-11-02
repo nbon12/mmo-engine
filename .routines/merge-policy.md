@@ -50,6 +50,11 @@ approved like an architectural decision record". A PR that changes `.specify/mem
 stays **owner-merged** until nbon12 changes that rule. Leave it open, ready, and say so on the PR and its
 issue.
 
+**Tuning and content exception:** the constitution's Development Workflow (v1.1.0) requires a human
+maintainer to approve any PR that changes tuning values or gameplay content parameters, and forbids
+scheduled tasks and agents from merging one. Such a PR is also **owner-merged**: leave it open and ready,
+and say so on the PR and its issue.
+
 ## Never, under any policy
 
 - Skip, disable or quarantine a test to get green.
