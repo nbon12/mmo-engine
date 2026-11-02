@@ -44,7 +44,7 @@ Process and agent guidance only. No application change.
 
 ### Open follow-ups
 
-- `.routines/done-story-sweep.md` still reserves merges, approvals and reviews for the owner. Principle XIII supersedes that. The edit is task S3 of hoa_management_system's `docs/handoffs/2026-11-02-zero-touch-operations.md`, which also names this repo's copy.
+- Read together with `.routines/merge-policy.md` (#37, handoff task S3), which landed first and agrees with Principle XIII: no human review, guarded paths get an independent *automated* review, and no open decision is settled. `CLAUDE.md` now links it.
 - Open decision 5 says statistical outliers "MUST be reviewed". If that option is chosen, express the review as automated flagging; a person reviewing outliers would be a human step under XIII.
 - Amendments to the constitution stay owner-merged under Governance, this one included. The owner can relax that by amending Governance.
 

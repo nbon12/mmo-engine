@@ -133,7 +133,8 @@ is a side project; the maintainer wants to review as little as possible.
   amendment, not an answer given while specifying.
 - Do **not** ask the maintainer to review a PR or leave it waiting on a review. The completion gate
   and CI checks are the merge gate: when every required check passes, merge (or enable auto-merge)
-  without waiting. This always holds, even if the maintainer drove specify or clarify. Report
+  under `.routines/merge-policy.md`, without waiting for a person. This always holds, even if the
+  maintainer drove specify or clarify. Report
   judgment calls after the fact, in the PR description and the `docs/patch-notes.md` entry.
 - Do **not** add a required reviewer or manual approval as a control in CI/CD or ops. Build an
   automated guard (dry run, rate limit, kill switch, audit trail) instead.

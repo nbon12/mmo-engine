@@ -34,9 +34,10 @@ Templates (spec-kit 1.2.5 resolves templates through .specify/templates/override
 Version bump rationale (MINOR): new principle added; no existing rule removed or redefined.
 
 Follow-up TODOs:
-  - .routines/done-story-sweep.md still reserves merges, approvals and reviews for the owner.
-    Principle XIII supersedes that. The edit is tracked as task S3 of hoa_management_system's
-    docs/handoffs/2026-11-02-zero-touch-operations.md, which also names this repo's copy.
+  - .routines/merge-policy.md (#37, zero-touch handoff task S3) lets sessions merge their own PRs and
+    agrees with Principle XIII: no human review, guarded paths get an independent automated review,
+    and no open decision is settled. It keeps constitution amendments owner-merged until Governance
+    is amended.
   - Open decision 5 says statistical outliers "MUST be reviewed". If that option is chosen, express the
     review as automated flagging; a person reviewing outliers would be a human step under XIII.
   - The core Spec Kit skills (.claude/skills/speckit-*) are not edited, because Spec Kit owns them.
