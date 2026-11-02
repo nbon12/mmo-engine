@@ -20,6 +20,17 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-02 — Done story sweep: no at-mentions of Claude; watchdog reads the newest report
+
+Spec: none (maintenance) · PR: #PR_MMO
+
+### Behavior and contract changes
+
+Tooling only.
+
+- The watchdog now reads nbon12's newest comment on the `sweep-log` issue that starts with "Done story sweep report". It used to read the newest comment of any kind, so a bot reply could cause a false "didn't run" alert.
+- Sweep comments must not at-mention Claude. In hoa_management_system that mention starts `claude.yml` as nbon12, which happened once on its #290. This repo has no Claude workflow yet; the rule is for when it gets one.
+
 ## 2026-11-02 — Merge policy: the independent review runs in a subagent
 
 Spec: none (process) · PR: #42
