@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-02 — Constitution 1.1.0: no human gates, human input is feedback after merge
 
-Spec: none (constitution amendment) · PR: PR_LINK_PENDING
+Spec: none (constitution amendment) · PR: #38
 
 ### Behavior and contract changes
 
