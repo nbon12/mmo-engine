@@ -51,7 +51,7 @@ Check these in order; the first match wins.
 1. A session tagged "story:mmo-engine:<n>".
 2. A session that isn't archived and whose title or latest summary names this issue in this repo ("#<n>", "issue <n>"; the same number in hoa_management_system is a different issue). If you're unsure, read its last few events with list_events, using kinds ["user", "assistant"]. When you find a match, tag it "story:mmo-engine:<n>" with set_session_tags.
 3. If the repo has a Claude workflow (.github/workflows/claude.yml; it has none today): a queued or in-progress run of it for this issue, or a claude[bot] comment on it saying it is working.
-4. A push to a branch tied to this issue, or an update to an open PR tied to it, in the last 3 hours. That means an agent you can't see, such as a local session.
+4. A push to a branch tied to this issue, or an update to an open PR tied to it, in the last 3 hours. That means an agent you can't see, such as a local session. Don't infer this from the PR list alone. Page through list_branches, then for each branch whose name contains the issue number, and for each open PR's head branch tied to the issue, read the latest commit's time.
 
 ## 4. Act
 
