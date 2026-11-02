@@ -48,12 +48,15 @@ follow-ups. Other agents rely on it to catch up.
 
 ## Merging your own PR
 
-Sessions squash-merge their own PRs under [`.routines/merge-policy.md`](.routines/merge-policy.md): the
-build and tests run locally and listed in the PR (there is no CI), settled reviews, a ready description,
-patch notes when required, and no open decision settled. A PR that touches guarded paths (workflows,
-`.routines/`, `.claude/`, `CLAUDE.md`, the architecture spec, `infra/`) also needs an independent
-automated review and a push notification to nbon12 after the merge. Constitution changes stay
-owner-merged.
+Open your PR as a draft, and mark it ready only once
+[`.routines/merge-policy.md`](.routines/merge-policy.md)'s rules hold: the build and tests run locally
+and listed in the PR (there is no CI), settled reviews, a ready description, patch notes when
+required, and no open decision settled. Marking it ready is the decision to merge:
+`.github/workflows/auto-merge.yml` then squash-merges it once every conversation is resolved (and,
+once there is CI, every check passes). A PR that touches guarded paths (`.github/`, `.routines/`,
+`.claude/`, `CLAUDE.md`, the architecture spec, `infra/`) isn't auto-merged: it needs an independent
+automated review, then the session merges it and sends nbon12 a push notification. Constitution
+changes stay owner-merged.
 
 ## Spec Kit workflow: PR watching
 

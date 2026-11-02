@@ -4,9 +4,11 @@ Source: nbon12/hoa_management_system `docs/handoffs/2026-11-02-zero-touch-operat
 nbon12/hoa_management_system#295). Decision D1 is still open there. Until nbon12 answers it, sessions
 follow the recommended answer, which is what this file says.
 
-A session **squash-merges its own PR** when every rule below holds on the PR's current head commit. "Its
-own PR" means a PR this session, or the session or routine that handed it the work, opened. Never merge
-someone else's PR under this policy.
+A session's own PR is merged by `.github/workflows/auto-merge.yml` once the session marks it ready (see
+[Auto-merge](#auto-merge)), unless it touches a guarded path: then the session **squash-merges it**
+itself, when every rule below holds on the PR's current head commit. Either way, every rule below must
+hold first. "Its own PR" means a PR this session, or the session or routine that handed it the work,
+opened. Never merge someone else's PR under this policy.
 
 ## The rules
 
@@ -22,15 +24,26 @@ someone else's PR under this policy.
 6. **No open decision is settled.** The PR doesn't settle an item on the constitution's "Open decisions"
    list. If it would, leave it open for nbon12 and say so.
 
+## Auto-merge
+
+`.github/workflows/auto-merge.yml` squash-merges a PR that nbon12 opened (every session's PR is) once
+every conversation on it is resolved and every check has passed. There is no CI yet, so there are no
+checks, and it merges as soon as the PR is ready. It checks rule 5 and the parts of rules 2 and 3 that
+GitHub can see: no unresolved conversation, no review requesting changes, not a draft. It can't check
+the rest, so:
+
+- **Open your PR as a draft** (`gh pr create --draft`), and mark it ready (`gh pr ready`) only once
+  rules 1–4 and 6 hold. Marking it ready is the decision to merge, and here it merges within seconds.
+- **To stop a merge,** add the `hold` label; removing it lets auto-merge carry on.
+- **A PR touching a guarded path** isn't auto-merged. Follow the independent review below, then merge it
+  yourself.
+
 ## Guarded paths
 
-These are the code that enforces the guardrails, or that governs the project:
-
-```
-.github/workflows/**          .routines/**              .claude/**
-.specify/memory/constitution.md                         CLAUDE.md
-docs/architecture/server-architecture.md               infra/**
-```
+These are the code that enforces the guardrails, or that governs the project: all of `.github/`,
+`.routines/`, `.claude/`, the constitution, any `CLAUDE.md`, the architecture spec and `infra/`. The
+exact list is `GUARDED_PATHS` in `.github/workflows/auto-merge.yml`, which keeps these PRs out of
+auto-merge. Change the list there, and only there.
 
 ## Independent automated review (guarded paths)
 

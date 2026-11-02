@@ -28,34 +28,40 @@ Spec: none (tooling) · PR: #40
 
 Tooling only. No application change.
 
-- `.github/workflows/auto-merge.yml` turns on squash auto-merge for every pull request into `main`
-  that nbon12 opens. That includes every Claude session's pull request, since sessions open them as
-  nbon12. Anyone else's pull request is untouched.
-- `main` has no CI or required checks yet, so there's nothing to wait for: a qualifying pull request
-  merges as soon as it's opened or marked ready.
-- Left manual: drafts, pull requests labelled `hold`, and pull requests touching a guarded path from
-  `.routines/merge-policy.md` (all of `.github/` counts). The run's summary says what it did and
-  why.
-- The `auto-merge` label marks the pull requests the workflow turned auto-merge on for. If a later
-  push, `hold` or a switch to draft makes one of them manual, the workflow turns auto-merge back off
-  and removes the label. It leaves alone auto-merge the owner turned on by hand, but `hold` turns off
-  anyone's.
-- It uses the `MERGE_TOKEN` secret, not `GITHUB_TOKEN`, so its merges will start push-to-main
+- `.github/workflows/auto-merge.yml` squash-merges a ready pull request into `main` that nbon12
+  opens once every conversation on it is resolved and every check has passed. That includes every
+  Claude session's pull request, since sessions open them as nbon12. Anyone else's pull request is
+  untouched.
+- `main` has no CI yet, so there are no checks: a qualifying pull request merges within seconds of
+  being marked ready (or opened ready).
+- **Left alone (manual):** drafts, the `hold` label, a review requesting changes, a failed check, a
+  guarded path (`GUARDED_PATHS` in the workflow, now the one list the merge policy points to), 300+
+  changed files, a base other than `main`. The run summary says which.
+- The `auto-merge` label marks the pull requests it is handling. It only turns off auto-merge on
+  those; `hold` turns off anyone's.
+- **Fails closed:** if a run errors, a last step turns off the pull request's auto-merge.
+- It merges with the `MERGE_TOKEN` secret, not `GITHUB_TOKEN`, so its merges will start push-to-main
   workflows once there are some.
+- **Settings changed alongside this pull request:** "Allow auto-merge" is on, and `main` now has branch
+  protection: conversations must be resolved before merging, and force pushes and deletion are
+  blocked. Labels `auto-merge` and `hold` exist now.
 
 ### Assumptions that no longer hold
 
-- **Open a pull request as a draft until it's ready to merge.** Auto-merge doesn't check the merge
-  policy's other rules (the local build and tests listed in the description, settled reviews, patch
-  notes), and a ready pull request merges at once.
+- **Open a pull request as a draft, and mark it ready when it's ready to merge.**
+  `.routines/merge-policy.md` and `CLAUDE.md` say so now: marking it ready is the decision to merge,
+  because the workflow can't check the local build and tests listed in the description, the patch
+  notes or open decisions.
 - A session no longer merges its own non-guarded pull request; auto-merge does. Guarded-path pull
-  requests still follow the merge policy's independent review.
+  requests still follow the merge policy's independent review, and the session merges them.
 
 ### Open follow-ups
 
-- When CI lands, make its jobs required checks on `main`, so auto-merge waits for them.
-- If agents move to the Claude GitHub App or a bot account, add that login to the author list in the
-  workflow's `if:`.
+- When CI lands: make its jobs required checks on `main`, set `REQUIRE_CHECKS` to `"true"` in the
+  workflow, and add a `workflow_run` trigger listing the CI workflows (as hoa_management_system's copy
+  does).
+- If agents move to the Claude GitHub App or a bot account, add that login to `AUTHORS` in the
+  workflow.
 
 ## 2026-11-02 — Constitution 1.1.0: no human gates, human input is feedback after merge
 
