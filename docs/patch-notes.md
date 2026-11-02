@@ -20,6 +20,39 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-02 — Auto-merge for nbon12's pull requests
+
+Spec: none (tooling) · PR: #PR_NUMBER
+
+### Behavior and contract changes
+
+Tooling only. No application change.
+
+- `.github/workflows/auto-merge.yml` turns on squash auto-merge for every pull request into `main`
+  that nbon12 opens. That includes every Claude session's pull request, since sessions open them as
+  nbon12. Anyone else's pull request is untouched.
+- `main` has no CI or required checks yet, so there's nothing to wait for: a qualifying pull request
+  merges as soon as it's opened or marked ready.
+- Left manual: drafts, pull requests labelled `hold`, and pull requests touching a guarded path from
+  `.routines/merge-policy.md` (all of `.github/` counts). A later push, the `hold` label or a switch
+  to draft turns auto-merge back off. The run's summary says why it skipped a pull request.
+- It uses the `MERGE_TOKEN` secret, not `GITHUB_TOKEN`, so its merges will start push-to-main
+  workflows once there are some.
+
+### Assumptions that no longer hold
+
+- **Open a pull request as a draft until it's ready to merge.** Auto-merge doesn't check the merge
+  policy's other rules (the local build and tests listed in the description, settled reviews, patch
+  notes), and a ready pull request merges at once.
+- A session no longer merges its own non-guarded pull request; auto-merge does. Guarded-path pull
+  requests still follow the merge policy's independent review.
+
+### Open follow-ups
+
+- When CI lands, make its jobs required checks on `main`, so auto-merge waits for them.
+- If agents move to the Claude GitHub App or a bot account, add that login to the author list in the
+  workflow's `if:`.
+
 ## 2026-11-02 — Constitution 1.1.0: no human gates, human input is feedback after merge
 
 Spec: none (constitution amendment) · PR: #38
