@@ -35,6 +35,8 @@ Governance only. No application change.
 - Pull requests that change tuning or content values need a human maintainer's approval. Scheduled
   tasks and agents must never merge them.
 - Bots that connect to a continent server are ordinary clients. No bot-only server code.
+- `.routines/merge-policy.md` gains a tuning and content exception: those PRs are owner-merged, like
+  constitution amendments.
 
 ### Assumptions that no longer hold
 

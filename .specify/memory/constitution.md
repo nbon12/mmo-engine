@@ -61,7 +61,8 @@ Templates and guidance (outside /speckit-constitution's scope; updated in the sa
   .claude/skills/architecture-police/SKILL.md     updated: registered experiment candidates are
                                                   deliberate alternatives; config values are off
                                                   limits
-  docs/architecture/server-architecture.md        unchanged (imported reference copy)
+  docs/architecture/server-architecture.md        updated: open-questions list gains decision 11
+  .routines/merge-policy.md                       updated: tuning and content PRs are owner-merged
 
 Follow-up TODOs (carried over from 1.0.0):
   - TODO(REPOWISE): Repowise is not configured for this repository yet. The Development Workflow
