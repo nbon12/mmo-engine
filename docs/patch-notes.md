@@ -34,8 +34,12 @@ Tooling only. No application change.
 - `main` has no CI or required checks yet, so there's nothing to wait for: a qualifying pull request
   merges as soon as it's opened or marked ready.
 - Left manual: drafts, pull requests labelled `hold`, and pull requests touching a guarded path from
-  `.routines/merge-policy.md` (all of `.github/` counts). A later push, the `hold` label or a switch
-  to draft turns auto-merge back off. The run's summary says why it skipped a pull request.
+  `.routines/merge-policy.md` (all of `.github/` counts). The run's summary says what it did and
+  why.
+- The `auto-merge` label marks the pull requests the workflow turned auto-merge on for. If a later
+  push, `hold` or a switch to draft makes one of them manual, the workflow turns auto-merge back off
+  and removes the label. It leaves alone auto-merge the owner turned on by hand, but `hold` turns off
+  anyone's.
 - It uses the `MERGE_TOKEN` secret, not `GITHUB_TOKEN`, so its merges will start push-to-main
   workflows once there are some.
 
