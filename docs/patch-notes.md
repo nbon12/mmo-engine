@@ -20,6 +20,25 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-02 — Merge policy: the independent review runs in a subagent
+
+Spec: none (process) · PR: #PR_NUMBER
+
+### Assumptions that no longer hold
+
+Process and agent guidance only. No application change.
+
+- **A guarded-path pull request is reviewed by a fresh subagent, not a separate session**
+  (`.routines/merge-policy.md`, the independent review's step 1). Pass it your session's `model`. The
+  policy is nbon12's standing request for that subagent, so don't ask first. In the desktop app, a
+  session can start another session only on nbon12's own message. From an automated turn the start
+  becomes a card nbon12 has to click, which is why this changed.
+- **Fallback:** if the subagent fails twice, start a separate session: `create_session` in the cloud,
+  `start_session` on the desktop. If that can only be a card, say on the pull request that it's
+  waiting for a reviewer, and start the reviewer in the next turn nbon12 starts.
+- The same change is nbon12/hoa_management_system#311, where an independent review checked this
+  wording.
+
 ## 2026-11-02 — Auto-merge for nbon12's pull requests
 
 Spec: none (tooling) · PR: #40
