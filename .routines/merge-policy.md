@@ -1,8 +1,9 @@
 # Merge policy: when a session merges its own PR
 
-Source: nbon12/hoa_management_system `docs/handoffs/2026-11-02-zero-touch-operations.md` §3–4 (issue
-nbon12/hoa_management_system#295). Decision D1 is still open there. Until nbon12 answers it, sessions
-follow the recommended answer, which is what this file says.
+Source: nbon12/hoa_management_system `docs/handoffs/2026-11-02-zero-touch-operations.md` §3–4 and
+decision D1 (issue nbon12/hoa_management_system#295), which nbon12 answered on 2026-11-02: guarded-path PRs
+get an automated review and merge without asking for permission. Never ask nbon12 to review, approve or
+merge a PR. The one exception is a constitution amendment (below).
 
 A session **squash-merges its own PR** when every rule below holds on the PR's current head commit. "Its
 own PR" means a PR this session, or the session or routine that handed it the work, opened. Never merge
