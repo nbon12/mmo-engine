@@ -1,8 +1,10 @@
 # Merge policy: when a session merges its own PR
 
-Source: nbon12/hoa_management_system `docs/handoffs/2026-11-02-zero-touch-operations.md` §3–4 (issue
-nbon12/hoa_management_system#295). Decision D1 is still open there. Until nbon12 answers it, sessions
-follow the recommended answer, which is what this file says.
+Source: nbon12/hoa_management_system `docs/handoffs/2026-11-02-zero-touch-operations.md` §3–4 and
+its §8 decision D1. nbon12 answered it on 2026-11-02 ([decision record](https://github.com/nbon12/hoa_management_system/issues/295#issuecomment-6590561424)):
+guarded-path PRs get an automated review and merge without asking for permission. Never ask nbon12 to
+review, approve or merge a PR. The one exception is a constitution amendment, which includes settling
+an item on the constitution's "Open decisions" list (rule 6 and the constitution exception below).
 
 A session **squash-merges its own PR** when every rule below holds on the PR's current head commit. "Its
 own PR" means a PR this session, or the session or routine that handed it the work, opened. Never merge
@@ -20,7 +22,9 @@ someone else's PR under this policy.
 5. **Guarded paths get an independent review.** If the PR touches a guarded path (below), it has passed
    the independent automated review described below.
 6. **No open decision is settled.** The PR doesn't settle an item on the constitution's "Open decisions"
-   list. If it would, leave it open for nbon12 and say so.
+   list. Settling one is a constitution amendment. Design the change so the decision stays open, call
+   it out in the PR, and merge. Only a PR that can't avoid settling it is left for nbon12, as an
+   amendment.
 
 ## Guarded paths
 
@@ -61,7 +65,7 @@ issue.
 
 - Creating or rotating root credentials, accounts and billing.
 - GitHub settings that need admin: rulesets and secrets.
-- Product and spec decisions, open decisions, and constitution amendments.
+- Constitution amendments, including settling an open decision.
 - Anything on nbon12's own computer.
 
 Everything else should end with a notification, not a question.
