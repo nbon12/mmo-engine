@@ -20,6 +20,29 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-02 — Done story sweep: dispatcher session + watchdog
+
+Spec: none (maintenance) · PR: #PR_MMO
+
+### Behavior and contract changes
+
+Tooling only. No application change.
+
+- `.routines/done-story-sweep.md` now has two modes, picked by whether the session has `mcp__claude-code-remote__list_sessions`:
+  - **Dispatch:** the scheduled task "Done story sweep dispatch: mmo-engine" runs daily at 5:29 AM America/New_York. It messages the long-lived session "Done story sweep dispatcher: mmo-engine (scheduled daily; do not archive)", which runs this repo's routine. hoa_management_system has its own pair.
+  - **Watchdog:** the existing "Daily done checker" task (6:30 AM, a fresh session) only checks that the dispatcher posted today's report, and pushes a notification if it didn't.
+- Each dispatch run posts a `Done story sweep report <date>` comment on this repo's open `sweep-log` issue, created on the first run. That issue is never a sweep candidate.
+- A push notification goes out only when something new needs nbon12, or a step failed.
+
+### Assumptions that no longer hold
+
+- A scheduled task that starts a fresh session gets **no** session-management tools, whether it was made in the UI or from a session (tested 2026-11-02). That is why the 2026-11-02 run did nothing. Only sessions started from another session, and tasks that message such a session, have them.
+
+### Open follow-ups
+
+- This repo has no `.github/workflows/claude.yml`, so `@claude` handoffs aren't available here. The hoa_management_system workflow also fails today, because it has no API secret set.
+- To repair the dispatcher after its session is archived, follow the "Dispatcher setup / repair" steps in hoa_management_system's `docs/patch-notes.md` (2026-11-02 entry).
+
 ## 2026-10-31 — Architecture Police: nightly duplicate-pattern consolidation
 
 Spec: none (maintenance) · PR: #28
