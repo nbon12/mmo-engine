@@ -40,7 +40,7 @@ Tooling only. No application change.
 
 ### Open follow-ups
 
-- This repo has no `.github/workflows/claude.yml`, so `@claude` handoffs aren't available here. The hoa_management_system workflow also fails today, because it has no API secret set.
+- This repo has no `.github/workflows/claude.yml`, so `@claude` handoffs aren't available here. (hoa_management_system's works as of 2026-11-02.) The sweep doesn't depend on it.
 - "Run now" on a dispatch task starts a fresh session, not the dispatcher, and that session only runs the watchdog check. To start a dispatch run by hand, use a one-shot task bound to the dispatcher session, or `send_message`.
 - To repair the dispatcher after its session is archived, follow the "Dispatcher setup / repair" steps in hoa_management_system's `docs/patch-notes.md` (2026-11-02 entry).
 
