@@ -110,6 +110,13 @@ applicable (with a one-line reason), or a violation justified under Complexity T
 - **Incremental delivery** (XI): The plan fits the current roadmap phase (simulator first; Phase 1
   runs one region per server with region-ready code) and delivers a focused vertical slice, or a
   justified cross-cutting change.
+- **Autonomous delivery** (XIII): The plan contains no task, checkpoint or verification that assigns
+  work to a person or needs manual QA, playtesting-as-acceptance, review, approval or sign-off.
+  Ambiguities are recorded Assumptions, not open questions (an open decision is called out, not
+  assumed). CI/CD and ops controls are automated guards (dry run, rate limit, kill switch, audit
+  trail), not required reviewers. Any unavoidable human action (third-party accounts or root
+  credentials, billing, admin-only settings) is off the critical path: the work ships inert and safe
+  by default and the maintainer is notified once.
 
 ## Tick Budget and Evidence
 
