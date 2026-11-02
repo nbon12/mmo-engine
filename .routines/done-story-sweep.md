@@ -6,6 +6,13 @@ This repo only. nbon12/hoa_management_system has its own sweep routine: ignore i
 
 This repo's issues may be on https://github.com/users/nbon12/projects/1 or another of nbon12's projects. Closing an issue moves its card to Done, through that project's "Item closed" workflow.
 
+## Which mode you are in
+
+This routine runs from two scheduled tasks, and each acts differently:
+
+- Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh.
+- Watchdog mode. You don't have that tool. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), then stop.
+
 ## 0. Tools
 
 - GitHub: use the GitHub MCP tools (mcp__github__*, loaded with ToolSearch). `gh` is not authenticated in cloud sessions. If the repo is not configured for this session, call mcp__claude-code-remote__add_repo with owner "nbon12", repo "mmo-engine" and access "push", then retry.
@@ -16,7 +23,7 @@ This repo's issues may be on https://github.com/users/nbon12/projects/1 or anoth
 
 ## 1. Candidates
 
-- Take open issues (not pull requests), most recently updated first, up to 50.
+- Take open issues (not pull requests), most recently updated first, up to 50. Leave out the sweep log issue (label "sweep-log"; section 6).
 - Keep the ones that show work:
   - a PR references it: issue_read "get" returns closed_by_pull_requests, or a PR in the repo has "#<n>" in its title or body;
   - it has a checked task box;
@@ -30,7 +37,7 @@ Read the issue, its comments and its sub-issues. Check its linked PRs: are they 
 
 Put each issue in one class:
 
-- FINISHED: done by the DONE RULES in the worker message (section 6), but still open.
+- FINISHED: done by the DONE RULES in the worker message (section 8), but still open.
 - AGENT WORK: something is left that a session can do. Examples: code, tests, specs, docs, a fix, a PR.
 - OWNER ONLY: everything left needs nbon12. Examples: approvals, secrets or tokens, console or account settings, decisions (including any item on the constitution's "Open decisions" list), reviews or merges reserved for the owner, anything on their computer.
 - UNCLEAR: you can't tell.
@@ -44,7 +51,7 @@ Check these in order; the first match wins.
 1. A session tagged "story:mmo-engine:<n>".
 2. A session that isn't archived and whose title or latest summary names this issue in this repo ("#<n>", "issue <n>"; the same number in hoa_management_system is a different issue). If you're unsure, read its last few events with list_events, using kinds ["user", "assistant"]. When you find a match, tag it "story:mmo-engine:<n>" with set_session_tags.
 3. If the repo has a Claude workflow (.github/workflows/claude.yml; it has none today): a queued or in-progress run of it for this issue, or a claude[bot] comment on it saying it is working.
-4. A push to a branch tied to this issue, or an update to an open PR tied to it, in the last 3 hours. That means an agent you can't see, such as a local session.
+4. A push to a branch tied to this issue, or an update to an open PR tied to it, in the last 3 hours. That means an agent you can't see, such as a local session. Don't infer this from the PR list alone. Page through list_branches, then for each branch whose name contains the issue number, and for each open PR's head branch tied to the issue, read the latest commit's time.
 
 ## 4. Act
 
@@ -52,12 +59,12 @@ Match the agent's state:
 
 - Working: session_status RUNNING, or a match from check 3 or 4. Leave it alone.
 - Waiting on the user: status_bucket BLOCKED. Don't answer it. Report it under "Needs you".
-- Idle: session_status IDLE, not blocked and not archived. Use send_message with the worker message (section 6) and priority "later". If send_message fails, treat the issue as having no agent.
+- Idle: session_status IDLE, not blocked and not archived. Use send_message with the worker message (section 8) and priority "later". If send_message fails, treat the issue as having no agent.
 - No agent, or only archived or failed sessions: use create_session with:
   - source_url https://github.com/nbon12/mmo-engine
   - title "Story mmo-engine#<n>: <issue title>"
   - tags ["story:mmo-engine:<n>", "in-progress-sweep"]
-  - prompt: the worker message (section 6).
+  - prompt: the worker message (section 8).
 
 Cooldown: if the story's tagged session was created or updated in the last 72 hours and isn't running, don't message it and don't start another. Report its latest summary instead.
 
@@ -74,7 +81,26 @@ Write a short report:
 
 If nothing needed doing, say so in one line.
 
-## 6. Worker message
+## 6. Log and notify
+
+1. Log. Find the open issue in this repo labeled "sweep-log", titled "Done story sweep log". If there is none, create it with that title and label. Use the body "Daily reports from the Done story sweep dispatcher (.routines/done-story-sweep.md). The watchdog reads the newest comment to check that the dispatcher ran. Leave this issue open." Post the report as one comment that starts with the line "Done story sweep report <YYYY-MM-DD>", using today's date in America/New_York. Post it even when nothing needed doing.
+2. Notify only when something needs nbon12. If "Needs you" has an entry that wasn't in the previous report on the log issue, or a step of this routine failed, call PushNotification (load it with ToolSearch). Send one line under 200 characters, such as "Done sweep mmo-engine: #12 needs you (open decision); 1 handed off". Otherwise send nothing.
+
+## 7. Watchdog check
+
+Only in watchdog mode. Check both repos, nbon12/mmo-engine and nbon12/hoa_management_system. Use the GitHub MCP tools.
+
+1. In each repo, find the open issue labeled "sweep-log" and read its newest comment.
+2. The dispatcher ran today if that comment was posted by nbon12 in the last 20 hours and starts with "Done story sweep report <today's date in America/New_York>".
+3. If it ran in both repos, end with one line: "Dispatcher ran today in both repos." Don't notify.
+4. Otherwise call PushNotification with one line, for example: "Done sweep dispatcher didn't run today (mmo-engine). Check the 'Done story sweep dispatch: mmo-engine' scheduled task and its session." Then end with a short note. Say which repos are missing a report, and give the newest report date you found in each. Also give the likely causes:
+   - the dispatcher session was archived, which disables its scheduled task;
+   - the task was paused;
+   - a run is still going.
+
+   The fix is in the dispatcher setup section of docs/patch-notes.md (2026-11-02 entry).
+
+## 8. Worker message
 
 Fill in the <…> parts. Otherwise send the text in this block exactly as written:
 
