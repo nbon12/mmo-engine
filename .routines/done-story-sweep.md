@@ -11,7 +11,7 @@ This repo's issues may be on https://github.com/users/nbon12/projects/1 or anoth
 This routine runs from two scheduled tasks, and each acts differently:
 
 - Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh.
-- Watchdog mode. You don't have that tool. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), then stop.
+- Watchdog mode. You don't have that tool. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), which uses "Finding the newest report" from section 6, then stop.
 
 ## 0. Tools
 
@@ -84,17 +84,19 @@ If nothing needed doing, say so in one line.
 
 ## 6. Log and notify
 
-1. Log. Find the open issue in this repo labeled "sweep-log", titled "Done story sweep log". If there is none, create it with that title and label. Use the body "Daily reports from the Done story sweep dispatcher (.routines/done-story-sweep.md). The watchdog reads the newest report comment to check that the dispatcher ran. Leave this issue open." Post the report as one comment that starts with the line "Done story sweep report <YYYY-MM-DD>", using today's date in America/New_York. Post it even when nothing needed doing.
-2. Notify only when something needs nbon12. If "Needs you" has an entry that wasn't in the previous report (the newest earlier comment on the log issue by nbon12 that starts with "Done story sweep report"; ignore bot replies), or a step of this routine failed, call PushNotification (load it with ToolSearch). Send one line under 200 characters, such as "Done sweep mmo-engine: #12 needs you (open decision); 1 handed off". Otherwise send nothing.
+Finding the newest report: steps 6.1 and 7.1 both need the newest report on a log issue. A report is a comment posted by nbon12 that starts with "Done story sweep report". Ignore everything else, such as bot replies. Comments come oldest first, so read from the end. (1) Call issue_read with method get and read the issue's comment count n; if n is 0 there is no report. (2) Fetch page ceil(n/100) with method get_comments and perPage 100. If that page has 100 comments, also fetch the next page, in case a comment landed after you read n. Take the last report on the latest non-empty page. If it has none, step back one page at a time. If page 1 has none either, there is no report. (3) If any call in this lookup fails (the get or a page fetch), retry it once. If it fails again, the lookup failed: never use a partial list. In step 6.1 it counts as a failed step for step 2, and the push names it, for example "Done sweep mmo-engine: couldn't read the previous report; #12 needs you". In the watchdog, mark that repo "couldn't check"; step 7.4 handles it.
+
+1. Log. Find the open issue in this repo labeled "sweep-log", titled "Done story sweep log". If there is none, create it with that title and label, and the body "Daily reports from the Done story sweep dispatcher (.routines/done-story-sweep.md). The watchdog reads the newest report comment to check that the dispatcher ran. Leave this issue open." Before posting, find its newest report as in "Finding the newest report" and keep it as the previous report for step 2. Then post the report as one comment that starts with the line "Done story sweep report <YYYY-MM-DD>", using today's date in America/New_York. Post it even when nothing needed doing.
+2. Notify only when something needs nbon12. If "Needs you" has an entry that wasn't in the previous report you kept in step 1 (there is none on the first run), or a step of this routine failed, call PushNotification (load it with ToolSearch). Send one line under 200 characters, such as "Done sweep mmo-engine: #12 needs you (open decision); 1 handed off". Otherwise send nothing.
 
 ## 7. Watchdog check
 
 Only in watchdog mode. Check both repos, nbon12/mmo-engine and nbon12/hoa_management_system. Use the GitHub MCP tools.
 
-1. In each repo, find the open issue labeled "sweep-log". Find its newest comment that was posted by nbon12 and starts with "Done story sweep report". Ignore other comments, such as bot replies. Comments come oldest first, so page to the last page before choosing the newest.
+1. In each repo, find the open issue labeled "sweep-log", and find its newest report as in "Finding the newest report" (section 6).
 2. The dispatcher ran today if that report was posted in the last 20 hours and starts with "Done story sweep report <today's date in America/New_York>".
 3. If it ran in both repos, end with one line: "Dispatcher ran today in both repos." Don't notify.
-4. Otherwise call PushNotification with one line, for example: "Done sweep dispatcher didn't run today (mmo-engine). Check the 'Done story sweep dispatch: mmo-engine' scheduled task and its session." Then end with a short note. Say which repos are missing a report, and give the newest report date you found in each. Also give the likely causes:
+4. Otherwise send one PushNotification covering both repos. For a repo marked "couldn't check" (a failed lookup), say "couldn't check <repo>" rather than "didn't run", and don't list the causes below for it. For a missing report, write a line such as: "Done sweep dispatcher didn't run today (mmo-engine). Check the 'Done story sweep dispatch: mmo-engine' scheduled task and its session." Then end with a short note. Say which repos are missing a report, and give the newest report date you found in each. Also give the likely causes:
    - the dispatcher session was archived, which disables its scheduled task;
    - the task was paused;
    - a run is still going.

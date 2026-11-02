@@ -20,6 +20,14 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-02 — Done story sweep: find the newest report from the last page of the log
+
+Spec: none (maintenance) · PR: [#44](https://github.com/nbon12/mmo-engine/pull/44), with [nbon12/hoa_management_system#313](https://github.com/nbon12/hoa_management_system/pull/313)
+
+### Behavior and contract changes
+
+Tooling only. Section 6 now defines one rule, "Finding the newest report", which both the notify step (6.1, before posting) and the watchdog use. It reads the comment count, fetches only the last page with perPage 100, and steps back a page only if needed. A failed fetch is retried once, then treated as a failed lookup, never as a partial list. Before this, "page to the last page" couldn't be followed reliably, and the notify step didn't page at all. Once the log passed 30 comments, bot replies included, either step could read an old report: the notify step would send repeat pushes, and the watchdog would raise a false "didn't run" alert. hoa_management_system gets the same fix in [#313](https://github.com/nbon12/hoa_management_system/pull/313); the two merge together.
+
 ## 2026-11-02 — Done story sweep: no at-mentions of Claude; watchdog reads the newest report
 
 Spec: none (maintenance) · PR: [#43](https://github.com/nbon12/mmo-engine/pull/43), with [nbon12/hoa_management_system#312](https://github.com/nbon12/hoa_management_system/pull/312)
