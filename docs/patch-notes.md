@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-02 — Auto-merge for nbon12's pull requests
 
-Spec: none (tooling) · PR: #PR_NUMBER
+Spec: none (tooling) · PR: #40
 
 ### Behavior and contract changes
 
