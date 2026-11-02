@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-02 — Done story sweep: no at-mentions of Claude; watchdog reads the newest report
 
-Spec: none (maintenance) · PR: #PR_MMO
+Spec: none (maintenance) · PR: #43 (hoa_management_system#312)
 
 ### Behavior and contract changes
 
