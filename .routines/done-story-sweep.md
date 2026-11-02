@@ -99,7 +99,7 @@ Only in watchdog mode. Check both repos, nbon12/mmo-engine and nbon12/hoa_manage
    - the task was paused;
    - a run is still going.
 
-   The fix is in the dispatcher setup section of docs/patch-notes.md (2026-11-02 entry).
+   The repair steps are under "Dispatcher setup / repair" in nbon12/hoa_management_system's docs/patch-notes.md, entry "2026-11-02 · Done story sweep: dispatcher session + watchdog" (https://github.com/nbon12/hoa_management_system/blob/main/docs/patch-notes.md).
 
 ## 8. Worker message
 
