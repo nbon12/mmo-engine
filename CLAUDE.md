@@ -46,6 +46,15 @@ follow-ups. Other agents rely on it to catch up.
   date, title, spec link, PR link, then the sections that apply. Keep it to what someone working
   nearby needs to know. Dependency bumps and doc-only changes don't need an entry.
 
+## Merging your own PR
+
+Sessions squash-merge their own PRs under [`.routines/merge-policy.md`](.routines/merge-policy.md): the
+build and tests run locally and listed in the PR (there is no CI), settled reviews, a ready description,
+patch notes when required, and no open decision settled. A PR that touches guarded paths (workflows,
+`.routines/`, `.claude/`, `CLAUDE.md`, the architecture spec, `infra/`) also needs an independent
+automated review and a push notification to nbon12 after the merge. Constitution changes stay
+owner-merged.
+
 ## Spec Kit workflow: PR watching
 
 Spec Kit commands other than `/speckit-implement` (that is, `/speckit-specify`, `/speckit-clarify`,
