@@ -20,7 +20,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
-## 2026-11-02 — Done story sweep: page through the whole log to find the newest report
+## 2026-11-02 — Done story sweep: find the newest report from the last page of the log
 
 Spec: none (maintenance) · PR: [#44](https://github.com/nbon12/mmo-engine/pull/44), with [nbon12/hoa_management_system#313](https://github.com/nbon12/hoa_management_system/pull/313)
 
