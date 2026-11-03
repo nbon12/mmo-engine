@@ -16,7 +16,7 @@ opened. Never merge someone else's PR under this policy.
 
 ## The rules
 
-1. **The build and tests pass.** This repo has no CI. Run the build and tests the repo has, using
+1. **The build and tests pass.** CI covers only `Workflow tests` so far. Run the build and tests the repo has, using
    commands you derive from the repo rather than guess, and list what you ran and the results in the PR.
    If the repo gains CI, every check run must also be complete, with none failed or cancelled.
 2. **Reviews are settled.** No review thread is unresolved, and no review has requested changes.
@@ -33,8 +33,9 @@ opened. Never merge someone else's PR under this policy.
 ## Auto-merge
 
 `.github/workflows/auto-merge.yml` squash-merges a PR that nbon12 opened (every session's PR is) once
-every conversation on it is resolved and every check has passed. There is no CI yet, so there are no
-checks, and it merges as soon as the PR is ready. It checks rule 5 and the parts of rules 2 and 3 that
+every conversation on it is resolved and every check has passed. The only CI is `Workflow tests`, for
+changes to `.github/` or `tests/workflows/`, so most PRs have no checks and merge as soon as they are
+ready. It checks rule 5 and the parts of rules 2 and 3 that
 GitHub can see: no unresolved conversation, no review requesting changes, not a draft. It can't check
 the rest, so:
 

@@ -50,8 +50,8 @@ follow-ups. Other agents rely on it to catch up.
 
 Open your PR as a draft, and mark it ready only once
 [`.routines/merge-policy.md`](.routines/merge-policy.md)'s rules hold: the build and tests run locally
-and listed in the PR (there is no CI), settled reviews, a ready description, patch notes when
-required, and no open decision settled. Marking it ready is the decision to merge:
+and listed in the PR (CI covers only the workflow tests so far), settled reviews, a ready
+description, patch notes when required, and no open decision settled. Marking it ready is the decision to merge:
 `.github/workflows/auto-merge.yml` then squash-merges it once every conversation is resolved (and,
 once there is CI, every check passes). A PR that touches guarded paths (`.github/`, `.routines/`,
 `.claude/`, `CLAUDE.md`, the architecture spec, `infra/`) isn't auto-merged: it needs an independent

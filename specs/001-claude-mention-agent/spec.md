@@ -140,7 +140,10 @@ is hard-coded. The missing-credential error itself is a known gap.
   `hoa_management_system#290`), so the `sweep-log` label blocks every path.
 - **Claude pushes to a ready PR**: Claude can push to an owner's PR when asked to on it, for example
   to resolve conflicts. `auto-merge.yml` never merges a PR whose head commit is from `claude[bot]`,
-  because no review has seen that commit. Merge it by hand, or push a reviewed commit on top.
+  because no review has seen that commit. It matches the commit's git name and email as well as the
+  logins, because the action commits with `bot_id` 41898282, which GitHub resolves to the
+  `github-actions[bot]` login. auto-merge also ignores the `claude` check that a mention in a review
+  attaches to the head commit, so a cancelled or failed Claude run doesn't block the PR. Merge it by hand, or push a reviewed commit on top.
 - **Other handles**: `contains()` also matches `@claudette` or `x@claude.ai`, so the job starts.
   `claude-code-action` (v1.0.265, `src/github/validation/trigger.ts`) then matches its trigger phrase
   on word boundaries and exits without running Claude. The only cost is a short runner job.
@@ -233,7 +236,10 @@ is hard-coded. The missing-credential error itself is a known gap.
   - Story 1, scenario 4 (no mention, no run): `test_us1_4_no_mention_means_the_job_is_skipped`,
     `test_us1_4_other_events_never_start_a_run`.
   - Story 1, scenario 5 (configuration side): `test_us1_5_job_has_no_merge_step`,
-    `test_fr009_auto_merge_never_merges_a_claude_bot_head_commit`.
+    `test_fr009_auto_merge_never_merges_a_claude_bot_head_commit`, and `AutoMergeFiltersOnRealApiShapes`,
+    which runs auto-merge's jq filters with `jq` on GitHub API response shapes. Those shapes include
+    a claude-code-action git commit, whose logins resolve to `github-actions[bot]` and whose git name
+    is `claude[bot]`.
   - Story 2, scenarios 1–3: `test_us2_1_…` (both), `test_us2_2_…`, and `SweepLogGuard`.
   - Story 3, scenario 2: `test_us3_2_either_secret_is_wired_from_repository_secrets`,
     `test_no_credential_is_hard_coded`.

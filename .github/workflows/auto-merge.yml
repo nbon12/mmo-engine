@@ -3,11 +3,12 @@
 # every commit on them is nbon12's or comes from an app nbon12 installed. Other authors' pull
 # requests are left alone (AUTHORS below).
 #
-# main has no CI yet, so there are no checks to wait for and REQUIRE_CHECKS is off: a pull request
-# that qualifies merges as soon as it is ready. When CI exists, make its jobs required checks on
-# main, set REQUIRE_CHECKS to "true", and add a workflow_run trigger listing every pull request
-# workflow (as nbon12/hoa_management_system's copy of this file does), or pull requests will wait
-# for a finish this never hears about.
+# main's only CI is `Workflow tests` (workflow-tests.yml, for changes to .github/ or
+# tests/workflows/), and it isn't a required check, so REQUIRE_CHECKS is off: a pull request that
+# qualifies merges once the checks it has pass. The workflow_run trigger must list every pull
+# request workflow, or pull requests wait for a finish this never hears about. When the build and
+# test CI arrives, add it there, make its jobs required checks on main, and set REQUIRE_CHECKS to
+# "true". The Claude workflow's `claude` check is ignored (see the check-runs step).
 #
 # It decides on every pull request event:
 #   - Manual, so it leaves the pull request alone and turns off auto-merge it turned on: a draft;
@@ -84,7 +85,10 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           AUTHORS: nbon12 # space-separated logins
           MARK: auto-merge
-          REQUIRE_CHECKS: "false" # main has no CI yet; see the top of this file
+          REQUIRE_CHECKS: "false" # no required checks yet; see the top of this file
+          # jq filters, kept here so tests/workflows/ can run them against sample API responses.
+          HEAD_BY_JQ: '[.author.login, .committer.login, .commit.author.name, .commit.committer.name, .commit.author.email, .commit.committer.email] | map(. // "") | join(" ")'
+          CHECK_RUNS_JQ: '.check_runs[] | select(.name != "auto-merge" and .name != "claude") | [.name, (if .status == "completed" then (.conclusion // "") else "pending" end)] | @tsv'
           # Extended regexes, one per line, matched against each changed path and the old path of a
           # rename. .routines/merge-policy.md points here: this is the one list of guarded paths.
           GUARDED_PATHS: |
@@ -143,8 +147,11 @@ jobs:
               reasons+=("a review requested changes")
             fi
             # A commit the Claude workflow (claude.yml) pushed has had no independent review, so it
-            # never merges on its own: merge it by hand, or push a reviewed commit on top.
-            head_by="$(gh api "repos/${REPO}/commits/${head}" --jq '[.author.login // "", .committer.login // ""] | join(" ")')"
+            # never merges on its own: merge it by hand, or push a reviewed commit on top. Match the
+            # git names and emails too: claude-code-action commits as "claude[bot]" with the email
+            # 41898282+claude[bot]@users.noreply.github.com, and GitHub resolves that ID to the
+            # github-actions[bot] login, so the logins alone never show claude[bot].
+            head_by="$(gh api "repos/${REPO}/commits/${head}" --jq "$HEAD_BY_JQ")"
             if grep -qF 'claude[bot]' <<<"$head_by"; then
               reasons+=("its head commit is from claude[bot]")
             fi
@@ -171,10 +178,12 @@ jobs:
             fi
 
             # Every check on the head commit, by name (the latest run of each), plus commit
-            # statuses. This job's own check doesn't count. One API call per assignment, so set -e
+            # statuses. This job's own check doesn't count, and neither does `claude` (claude.yml):
+            # a mention in a review attaches that run to the head commit, and a cancelled or failed
+            # run there is about the mention, not the code. One API call per assignment, so set -e
             # stops the run when any of them fails.
             check_runs="$(gh api --paginate "repos/${REPO}/commits/${head}/check-runs?per_page=100" \
-              --jq '.check_runs[] | select(.name != "auto-merge") | [.name, (if .status == "completed" then (.conclusion // "") else "pending" end)] | @tsv')"
+              --jq "$CHECK_RUNS_JQ")"
             statuses="$(gh api "repos/${REPO}/commits/${head}/status" \
               --jq '.statuses[] | [.context, (if .state == "error" then "failure" else .state end)] | @tsv')"
             checks="$(printf '%s\n%s\n' "$check_runs" "$statuses")"

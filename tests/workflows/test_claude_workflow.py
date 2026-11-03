@@ -1,7 +1,7 @@
 """Contract tests for .github/workflows/claude.yml (spec 001-claude-mention-agent).
 
-The job's `if:` condition is evaluated against event payloads by a small evaluator for the GitHub
-Actions expression subset the condition uses (see `Expr`), so each Given/When/Then scenario that
+The job's `if:` condition is evaluated against event payloads by `gh_expr.Expr`, an evaluator for
+the GitHub Actions expression subset the condition uses, so each Given/When/Then scenario that
 decides whether a run starts is tested as behavior, not as text. The rest of the workflow is
 asserted as configuration.
 
@@ -10,10 +10,13 @@ Run: python3 -m unittest discover -s tests/workflows -v   (needs PyYAML)
 
 import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
 import yaml
+
+from gh_expr import Expr, truthy
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "claude.yml"
@@ -21,153 +24,6 @@ AUTO_MERGE_PATH = ROOT / ".github" / "workflows" / "auto-merge.yml"
 WORKFLOW_TEXT = WORKFLOW_PATH.read_text()
 WORKFLOW = yaml.safe_load(WORKFLOW_TEXT)
 JOB = WORKFLOW["jobs"]["claude"]
-
-
-# --- A GitHub Actions expression evaluator, for the subset claude.yml's condition uses -----------
-
-TOKEN = re.compile(
-    r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>\d+)|(?P<op>&&|\|\||==|!=|[!().,*\[\]])"
-    r"|(?P<ident>[A-Za-z_][A-Za-z0-9_-]*))"
-)
-
-
-class Expr:
-    """Recursive-descent evaluator with GitHub's semantics for what the condition uses:
-    `||`, `&&`, `!`, `==`, `!=`, parentheses, property access (including the `.*.` filter),
-    string literals, `contains()` and `fromJSON()`. Comparisons and `contains()` ignore case;
-    `||` and `&&` return an operand, as in GitHub."""
-
-    def __init__(self, text, context):
-        self.tokens = []
-        pos = 0
-        text = text.strip()
-        while pos < len(text):
-            m = TOKEN.match(text, pos)
-            if not m or m.end() == pos:
-                raise ValueError(f"cannot tokenize at: {text[pos:pos + 30]!r}")
-            kind = m.lastgroup
-            self.tokens.append((kind, m.group(kind)))
-            pos = m.end()
-            while pos < len(text) and text[pos].isspace():
-                pos += 1
-        self.i = 0
-        self.ctx = context
-
-    def evaluate(self):
-        value = self.or_()
-        if self.i != len(self.tokens):
-            raise ValueError(f"unexpected token {self.tokens[self.i]}")
-        return value
-
-    def peek(self):
-        return self.tokens[self.i][1] if self.i < len(self.tokens) else None
-
-    def take(self, expected=None):
-        kind, value = self.tokens[self.i]
-        if expected is not None and value != expected:
-            raise ValueError(f"expected {expected!r}, got {value!r}")
-        self.i += 1
-        return kind, value
-
-    def or_(self):
-        left = self.and_()
-        while self.peek() == "||":
-            self.take()
-            right = self.and_()
-            left = left if truthy(left) else right
-        return left
-
-    def and_(self):
-        left = self.cmp()
-        while self.peek() == "&&":
-            self.take()
-            right = self.cmp()
-            left = right if truthy(left) else left
-        return left
-
-    def cmp(self):
-        left = self.unary()
-        while self.peek() in ("==", "!="):
-            op = self.take()[1]
-            right = self.unary()
-            equal = loose_equal(left, right)
-            left = equal if op == "==" else not equal
-        return left
-
-    def unary(self):
-        if self.peek() == "!":
-            self.take()
-            return not truthy(self.unary())
-        return self.primary()
-
-    def primary(self):
-        kind, value = self.take()
-        if value == "(":
-            inner = self.or_()
-            self.take(")")
-            return inner
-        if kind == "str":
-            return value[1:-1].replace("''", "'")
-        if kind == "num":
-            return int(value)
-        if kind != "ident":
-            raise ValueError(f"unexpected {value!r}")
-        if value in ("true", "false"):
-            return value == "true"
-        if value == "null":
-            return None
-        if self.peek() == "(":
-            return self.call(value)
-        return self.path(self.ctx.get(value))
-
-    def call(self, name):
-        self.take("(")
-        args = [self.or_()]
-        while self.peek() == ",":
-            self.take()
-            args.append(self.or_())
-        self.take(")")
-        if name == "contains":
-            haystack, needle = args
-            if isinstance(haystack, list):
-                return any(loose_equal(item, needle) for item in haystack)
-            return to_str(needle).lower() in to_str(haystack).lower()
-        if name == "fromJSON":
-            return json.loads(args[0])
-        raise ValueError(f"unsupported function {name}")
-
-    def path(self, value):
-        while self.peek() == ".":
-            self.take()
-            kind, name = self.take()
-            if name == "*":
-                value = value if isinstance(value, list) else []
-                self.take(".")
-                _, field = self.take()
-                value = [item.get(field) for item in value if isinstance(item, dict)]
-            elif isinstance(value, list):
-                value = [item.get(name) for item in value if isinstance(item, dict)]
-            else:
-                value = value.get(name) if isinstance(value, dict) else None
-        return value
-
-
-def truthy(value):
-    return value not in (None, False, 0, "") and value == value
-
-
-def to_str(value):
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
-def loose_equal(a, b):
-    if isinstance(a, str) and isinstance(b, str):
-        return a.lower() == b.lower()
-    return a == b
 
 
 def job_runs(event_name, payload):
@@ -350,14 +206,65 @@ class FunctionalRequirements(unittest.TestCase):
         self.assertRegex(args, r"--max-turns 100\b")
 
     def test_fr009_auto_merge_never_merges_a_claude_bot_head_commit(self):
-        script = yaml.safe_load(AUTO_MERGE_PATH.read_text())["jobs"]["auto-merge"]["steps"][0]["run"]
-        self.assertIn("""grep -qF 'claude[bot]' <<<"$head_by\"""", script)
-        self.assertIn('reasons+=("its head commit is from claude[bot]")', script)
+        step = AUTO_MERGE_STEP
+        self.assertIn('head_by="$(gh api "repos/${REPO}/commits/${head}" --jq "$HEAD_BY_JQ")"', step["run"])
+        self.assertIn("grep -qF 'claude[bot]' <<<\"$head_by\"", step["run"])
+        self.assertIn('reasons+=("its head commit is from claude[bot]")', step["run"])
 
     def test_fr010_no_toolchains_or_shell_commands_while_repo_is_docs_only(self):
         uses = " ".join(step.get("uses", "") for step in JOB["steps"])
         self.assertNotRegex(uses, r"setup-(dotnet|node|python)")
         self.assertNotIn("--allowedTools", UserStory3Credentials.action_inputs(self)["claude_args"])
+
+
+AUTO_MERGE_STEP = yaml.safe_load(AUTO_MERGE_PATH.read_text())["jobs"]["auto-merge"]["steps"][0]
+
+
+def run_jq(filter_, document):
+    result = subprocess.run(["jq", "-r", filter_], input=json.dumps(document), capture_output=True,
+                            text=True, check=True)
+    return result.stdout
+
+
+class AutoMergeFiltersOnRealApiShapes(unittest.TestCase):
+    """auto-merge.yml's jq filters, run with jq against GitHub API response shapes (FR-009)."""
+
+    def head_by(self, commit):
+        return run_jq(AUTO_MERGE_STEP["env"]["HEAD_BY_JQ"], commit)
+
+    def test_claude_code_action_git_commit_is_recognised(self):
+        # What a claude-code-action v1.0.265 git push looks like: bot_id 41898282 is
+        # github-actions[bot], so both logins resolve to it; only the git identity says claude[bot].
+        commit = {
+            "author": {"login": "github-actions[bot]"}, "committer": {"login": "github-actions[bot]"},
+            "commit": {"author": {"name": "claude[bot]",
+                                  "email": "41898282+claude[bot]@users.noreply.github.com"},
+                       "committer": {"name": "claude[bot]",
+                                     "email": "41898282+claude[bot]@users.noreply.github.com"}}}
+        self.assertIn("claude[bot]", self.head_by(commit))
+
+    def test_api_signed_commit_with_unmapped_logins_is_recognised(self):
+        commit = {"author": {"login": "claude[bot]"}, "committer": None,
+                  "commit": {"author": {"name": "claude[bot]", "email": "x"},
+                             "committer": {"name": "GitHub", "email": "noreply@github.com"}}}
+        self.assertIn("claude[bot]", self.head_by(commit))
+
+    def test_owner_commit_is_not_flagged(self):
+        commit = {"author": {"login": "nbon12"}, "committer": {"login": "web-flow"},
+                  "commit": {"author": {"name": "Nicholas", "email": "n@example.com"},
+                             "committer": {"name": "GitHub", "email": "noreply@github.com"}}}
+        self.assertNotIn("claude[bot]", self.head_by(commit))
+
+    def test_claude_and_auto_merge_check_runs_never_count_as_failed_or_pending(self):
+        runs = {"check_runs": [
+            {"name": "claude", "status": "completed", "conclusion": "cancelled"},
+            {"name": "claude", "status": "in_progress", "conclusion": None},
+            {"name": "auto-merge", "status": "completed", "conclusion": "failure"},
+            {"name": "workflow-tests", "status": "completed", "conclusion": "success"},
+            {"name": "other", "status": "queued", "conclusion": None}]}
+        self.assertEqual(run_jq(AUTO_MERGE_STEP["env"]["CHECK_RUNS_JQ"], runs),
+                         "workflow-tests\tsuccess\nother\tpending\n")
+        self.assertIn('--jq "$CHECK_RUNS_JQ"', AUTO_MERGE_STEP["run"])
 
 
 class ExpressionEvaluator(unittest.TestCase):
