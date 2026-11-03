@@ -6,7 +6,7 @@ namespace MmoEngine.Regionizer.Simulator.Tests.Metrics;
 /// </summary>
 public sealed class CoreClaimEdgeCaseTests
 {
-    // CORE-BUG: a claim radius of 0 also claims the sections touching the entity's own (distance 0 <= 0), but the spec's edge case says it claims only its own section.
+    // Regression (fixed in the core): a radius of 0 claims only the own section, even on an edge or corner.
     [Theory]
     [InlineData(ClaimAnchoring.Section, 8.0, 8.0)]
     [InlineData(ClaimAnchoring.Position, 16.0, 8.0)]

@@ -22,7 +22,9 @@ portals.
 **Decision**: A claim is the set of sections whose square lies within distance *r* of an anchor.
 In position-anchored mode the anchor is the entity's exact position. In section-anchored mode it is
 the entity's whole section square, so the claim is the rounded square around that section. The
-distance is the Euclidean distance between point (or square) and square, in the horizontal plane.
+distance is the Euclidean distance between point (or square) and square, in the horizontal plane. A
+radius of 0 claims only the entity's own section. Without that rule, touching squares sit at
+distance 0 and would be claimed too.
 
 **Rationale**: This is the geometry that makes the issue's merge-distance formula exact. Two
 entities within rA + rB always share a section, because some point lies within rA of one and rB of

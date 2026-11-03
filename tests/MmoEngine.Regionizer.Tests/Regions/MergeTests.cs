@@ -67,23 +67,18 @@ public sealed class MergeTests
         h.Equal(mover, merges[0].CauseEntity, "cause entity of the merge");
     }
 
-    // CORE-BUG: US1.9 says claims one unclaimed section apart merge at gap 1; the core merges only claims in neighbouring sections (D3).
-    // spec.md US1.9: "Given two claims separated by exactly one unclaimed section, When the tick ends
-    // with a merge gap of 1, Then their regions merge". The core follows research D3 (a new section's
-    // eight-neighbours' owners merge), which matches FR-005's "within the merge gap of one" and the
-    // issue's "a one-section merge gap adds up to another √2 × s". Under it one unclaimed section
-    // between the claims never merges them, so the gap-1 rows fail. AdjacentClaimsMergeOnlyWithGapOne
-    // covers the D3 reading. Either the scenario's wording or the core must change.
-
-    /// <summary>US1.9: with one unclaimed section between two claims, the merge gap decides whether they merge.</summary>
+    /// <summary>
+    /// FR-005 boundary: with one unclaimed section between two claims, they stay separate whatever the
+    /// merge gap. A gap of 1 joins adjacent claims only (research D3, matching the issue's √2 × s).
+    /// </summary>
     [Theory]
-    [InlineData(1, ClaimAnchoring.Section, true, 1901)]
+    [InlineData(1, ClaimAnchoring.Section, false, 1901)]
     [InlineData(0, ClaimAnchoring.Section, false, 1902)]
-    [InlineData(1, ClaimAnchoring.Position, true, 1903)]
+    [InlineData(1, ClaimAnchoring.Position, false, 1903)]
     [InlineData(0, ClaimAnchoring.Position, false, 1904)]
-    public void MergeGapDecidesWhetherOneSectionApartMerges(int mergeGap, ClaimAnchoring anchoring, bool expectMerge, int seed)
+    public void ClaimsOneEmptySectionApartNeverMerge(int mergeGap, ClaimAnchoring anchoring, bool expectMerge, int seed)
     {
-        var h = new Kit2Harness(nameof(MergeGapDecidesWhetherOneSectionApartMerges), seed, Kit2Harness.Options(anchoring, mergeGap));
+        var h = new Kit2Harness(nameof(ClaimsOneEmptySectionApartNeverMerge), seed, Kit2Harness.Options(anchoring, mergeGap));
         var half = anchoring == ClaimAnchoring.Section ? 1 : 0;
         const int mover = 1;
         const int other = 2;
@@ -126,17 +121,17 @@ public sealed class MergeTests
     }
 
     /// <summary>
-    /// Research D3's reading of the merge gap: claims in neighbouring sections (no section between
-    /// them, none shared) merge with a gap of 1 and stay separate with a gap of 0.
+    /// US1.9: claims in adjacent sections (no section between them, none shared) merge with a gap
+    /// of 1 and stay separate with a gap of 0 (research D3).
     /// </summary>
     [Theory]
     [InlineData(1, ClaimAnchoring.Section, true, 1911)]
     [InlineData(0, ClaimAnchoring.Section, false, 1912)]
     [InlineData(1, ClaimAnchoring.Position, true, 1913)]
     [InlineData(0, ClaimAnchoring.Position, false, 1914)]
-    public void AdjacentClaimsMergeOnlyWithGapOne(int mergeGap, ClaimAnchoring anchoring, bool expectMerge, int seed)
+    public void MergeGapDecidesWhetherAdjacentClaimsMerge(int mergeGap, ClaimAnchoring anchoring, bool expectMerge, int seed)
     {
-        var h = new Kit2Harness(nameof(AdjacentClaimsMergeOnlyWithGapOne), seed, Kit2Harness.Options(anchoring, mergeGap));
+        var h = new Kit2Harness(nameof(MergeGapDecidesWhetherAdjacentClaimsMerge), seed, Kit2Harness.Options(anchoring, mergeGap));
         var half = anchoring == ClaimAnchoring.Section ? 1 : 0;
         const int mover = 1;
         const int other = 2;
@@ -161,7 +156,7 @@ public sealed class MergeTests
         h.Equal(expectMerge, h.RegionOf(mover) == h.RegionOf(other), $"one region after the tick end with merge gap {mergeGap}");
     }
 
-    // CORE-BUG: a zero claim radius in section mode claims the whole 3×3 block, so zero-radius entities in neighbouring sections merge.
+    // Regression (fixed in the core): zero-radius entities in neighbouring sections stay separate.
     // spec.md, Edge Cases: "a claim radius of zero claims only the entity's own section." In section
     // mode the core's square-to-square distance is 0 for every edge or corner neighbour, and 0 <= r²
     // holds at r = 0, so each claim covers the neighbours too and the two claims below share sections.

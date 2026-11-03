@@ -107,7 +107,7 @@ public sealed class ClaimGeometryTests
     /// Spec edge cases: a radius of 0 claims only the entity's own section, and an entity exactly on a
     /// section edge or corner belongs to the one section floor(x / s), floor(y / s) and claims from it.
     /// </summary>
-    // CORE-BUG: a radius-0 claim also takes every neighbouring section whose closed square touches the anchor: all eight neighbours when section-anchored, and the touching neighbours on an edge or corner when position-anchored.
+    // Regression (fixed in the core): a radius of 0 claims only the own section; touching squares are not claimed.
     [Theory]
     [InlineData(ClaimAnchoring.Section, 88.0, 88.0)]
     [InlineData(ClaimAnchoring.Section, 0.5, 0.5)]

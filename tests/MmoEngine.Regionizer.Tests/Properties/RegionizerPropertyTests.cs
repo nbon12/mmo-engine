@@ -18,7 +18,7 @@ public sealed class RegionizerPropertyTests
     private const ulong BaseSeed = 13_019;
     private const uint SequencesPerCase = 150;
 
-    // CORE-BUG: fails while a heavy projectile's timers stay behind when it changes region or lands on unowned ground (minimal repros in Timers/TimerTests.cs).
+    // Projectiles follow FR-003: fired from an owned section, handed over only by the location queue.
     [Theory]
     [InlineData(ClaimAnchoring.Section, 0, TimerMode.TickCounter)]
     [InlineData(ClaimAnchoring.Section, 0, TimerMode.Absolute)]
@@ -346,7 +346,14 @@ internal sealed class Kit3PropertyRun
                     // Into an owned location only during its owner's tick; into unowned ground only at a boundary.
                     var (layer, x, y) = _transit[arrival];
                     var owner = _regionizer.OwnerOfLocation(layer, x, y);
-                    if (owner == 0 ? boundary : IsTicking(owner))
+                    if (owner == 0 && boundary && _regionizer.GetEntity(arrival).Class == EntityClass.HeavyProjectile)
+                    {
+                        // A projectile can only be handed to a region owning its destination; with none, it expires (FR-003).
+                        _regionizer.RemoveEntity(arrival);
+                        _shadow.RemoveEntity(arrival);
+                        _transit.Remove(arrival);
+                    }
+                    else if (owner == 0 ? boundary : IsTicking(owner))
                     {
                         _regionizer.CompleteTeleport(arrival);
                         _transit.Remove(arrival);
@@ -435,7 +442,15 @@ internal sealed class Kit3PropertyRun
             }
         }
 
-        _regionizer.AddEntity(_nextEntityId++, (EntityClass)(op.A % 6), at.Layer, at.X, at.Y, 0, fightTag: (op.C % 3) - 1);
+        var cls = (EntityClass)(op.A % 6);
+
+        // A heavy projectile is fired from a section its firing region owns (FR-003).
+        if (cls == EntityClass.HeavyProjectile && _regionizer.OwnerOfLocation(at.Layer, at.X, at.Y) == 0)
+        {
+            return;
+        }
+
+        _regionizer.AddEntity(_nextEntityId++, cls, at.Layer, at.X, at.Y, 0, fightTag: (op.C % 3) - 1);
     }
 
     /// <summary>Starts a ready region, fires its due timers and checks them against the shadow.</summary>

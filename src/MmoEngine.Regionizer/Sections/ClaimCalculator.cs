@@ -42,6 +42,15 @@ internal sealed class ClaimCalculator
     /// </summary>
     public int Compute(int ownSection, double x, double y, double radius, ClaimAnchoring anchoring, ref int[] into)
     {
+        // A radius of 0 claims only the own section, even on a section edge or corner, where
+        // touching squares sit at distance 0 (spec edge cases).
+        if (radius <= 0)
+        {
+            var single = 0;
+            Append(ref into, ref single, ownSection);
+            return 1;
+        }
+
         var anchor = new Anchor(_topology.KeyOf(ownSection), x, y, radius, anchoring, _sectionSize);
         var layerSlot = _topology.LayerSlotOf(ownSection);
         ref readonly var layer = ref _topology.LayerAt(layerSlot);

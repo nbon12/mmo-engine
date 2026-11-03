@@ -239,6 +239,11 @@ public static class InvariantChecker
         }
 
         var claim = new HashSet<int> { anchor };
+        if (r <= 0)
+        {
+            return claim;
+        }
+
         var queue = new Queue<int>();
         queue.Enqueue(anchor);
         while (queue.Count > 0)

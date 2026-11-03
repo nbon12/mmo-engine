@@ -180,36 +180,42 @@ public sealed class TimerTests
         Assert.Equal(expectedFireNow / 3, firing.RegionTick);
     }
 
-    // CORE-BUG: a heavy projectile that leaves its region (FollowSectionOwner) leaves its timer behind, and the region's next split throws KeyNotFoundException looking up region 0.
+    // FR-003: a heavy projectile keeps its firing region over unowned ground, so its timer stays with
+    // that region, fires there exactly once, and the region still splits cleanly.
     [Fact]
-    public void SplitAfterAProjectileWithATimerLeftForUnownedGroundCompletes()
+    public void ProjectileOverUnownedGroundKeepsItsFiringRegionAndTimer()
     {
         const int projectile = 3;
+        var observer = new Kit3RecordingObserver();
         var options = Kit3World.Options(TimerMode.TickCounter, splitMinSections: 1, splitMinDeadPercent: 10);
-        var regionizer = new Regionizer(Kit3World.OpenWorld(32, 8), options);
+        var regionizer = new Regionizer(Kit3World.OpenWorld(32, 8), options, observer);
         regionizer.AddEntity(InfantryA, EntityClass.Infantry, 0, Kit3World.Centre(2), Kit3World.Centre(3));
         regionizer.AddEntity(InfantryB, EntityClass.Infantry, 0, Kit3World.Centre(4), Kit3World.Centre(3));
         regionizer.AddEntity(projectile, EntityClass.HeavyProjectile, 0, Kit3World.Centre(2), Kit3World.Centre(3));
         var region = regionizer.GetEntity(InfantryA).RegionId;
-        Assert.Equal(region, regionizer.GetEntity(projectile).RegionId);
-        regionizer.AddTimer(projectile, 5);
+        var timerId = regionizer.AddTimer(projectile, 1);
 
         // The projectile flies onto unowned ground; then B walks away so the region holds two islands.
         regionizer.MoveEntity(projectile, 0, Kit3World.Centre(25), Kit3World.Centre(3));
-        Assert.Equal(0, regionizer.GetEntity(projectile).RegionId);
+        Assert.Equal(region, regionizer.GetEntity(projectile).RegionId);
         regionizer.AdvanceTo(2);
         Assert.True(regionizer.TryMarkTicking(region));
+        regionizer.RunDueTimers(region);
         regionizer.MoveEntity(InfantryB, 0, Kit3World.Centre(12), Kit3World.Centre(3));
 
         var result = regionizer.MarkNotTicking(region);
 
         Assert.Equal(2, result.SplitChildren);
+        Assert.Equal(region, regionizer.GetEntity(projectile).RegionId);
+        var firing = Assert.Single(observer.TimersFired, f => f.TimerId == timerId);
+        Assert.Equal(region, firing.RegionId);
         Kit3Invariants.AssertClean(regionizer, "after the split");
     }
 
-    // CORE-BUG: a heavy projectile's timer stays with the region it was set in after the projectile moves into another region, so it fires there even after the projectile is removed.
+    // FR-003: flying over another region does not hand the projectile over, and a removed
+    // projectile's timer never fires.
     [Fact]
-    public void RemovedProjectileTimerNeverFiresAfterTheProjectileChangedRegion()
+    public void RemovedProjectileTimerNeverFiresAndFlyingOverAnotherRegionKeepsTheOwner()
     {
         const int projectile = 3;
         var observer = new Kit3RecordingObserver();
@@ -220,9 +226,8 @@ public sealed class TimerTests
         regionizer.AddEntity(projectile, EntityClass.HeavyProjectile, 0, Kit3World.Centre(2), Kit3World.Centre(3));
         var timerId = regionizer.AddTimer(projectile, 5);
 
-        // The projectile flies into B's region, then is removed (it hit something).
         regionizer.MoveEntity(projectile, 0, Kit3World.Centre(20), Kit3World.Centre(3));
-        Assert.Equal(regionizer.GetEntity(InfantryB).RegionId, regionizer.GetEntity(projectile).RegionId);
+        Assert.Equal(regionizer.GetEntity(InfantryA).RegionId, regionizer.GetEntity(projectile).RegionId);
         regionizer.RemoveEntity(projectile);
         for (var now = Period30Hz; now <= 20 * Period30Hz; now += Period30Hz)
         {
@@ -232,28 +237,39 @@ public sealed class TimerTests
         Assert.DoesNotContain(observer.TimersFired, f => f.TimerId == timerId);
     }
 
-    // CORE-BUG: CompleteTeleport drops the carried timers of a heavy projectile that lands on unowned ground, so the timer never fires (FR-012 requires exactly once).
+    // FR-003: the location queue hands a projectile (and its timer) to the region owning its
+    // destination; a destination nobody owns is refused, so the caller removes the projectile.
     [Fact]
-    public void ProjectileTimerFiresOnceAfterTeleportToUnownedGround()
+    public void ProjectileTimerFollowsTheLocationQueueToTheOwningRegion()
     {
         const int projectile = 3;
         var observer = new Kit3RecordingObserver();
         var regionizer = new Regionizer(Kit3World.OpenWorld(32, 8), Kit3World.Options(TimerMode.TickCounter), observer);
         var driver = new Kit3Driver(regionizer);
         regionizer.AddEntity(InfantryA, EntityClass.Infantry, 0, Kit3World.Centre(2), Kit3World.Centre(3));
+        regionizer.AddEntity(InfantryB, EntityClass.Infantry, 0, Kit3World.Centre(20), Kit3World.Centre(3));
         regionizer.AddEntity(projectile, EntityClass.HeavyProjectile, 0, Kit3World.Centre(2), Kit3World.Centre(3));
         var timerId = regionizer.AddTimer(projectile, 5);
 
-        // Two-step teleport to unowned ground, then the projectile flies back into A's region.
         regionizer.BeginTeleport(projectile, 0, Kit3World.Centre(25), Kit3World.Centre(3));
-        regionizer.CompleteTeleport(projectile);
-        regionizer.MoveEntity(projectile, 0, Kit3World.Centre(2), Kit3World.Centre(3));
-        Assert.Equal(regionizer.GetEntity(InfantryA).RegionId, regionizer.GetEntity(projectile).RegionId);
+        Assert.Throws<InvalidOperationException>(() => regionizer.CompleteTeleport(projectile));
+        Assert.True(regionizer.GetEntity(projectile).InTransit);
+
+        regionizer.RemoveEntity(projectile);
+        const int second = 4;
+        regionizer.AddEntity(second, EntityClass.HeavyProjectile, 0, Kit3World.Centre(2), Kit3World.Centre(3));
+        var secondTimer = regionizer.AddTimer(second, 5);
+        regionizer.BeginTeleport(second, 0, Kit3World.Centre(20), Kit3World.Centre(3));
+        regionizer.CompleteTeleport(second);
+        var regionB = regionizer.GetEntity(InfantryB).RegionId;
+        Assert.Equal(regionB, regionizer.GetEntity(second).RegionId);
         for (var now = Period30Hz; now <= 20 * Period30Hz; now += Period30Hz)
         {
             driver.Step(now);
         }
 
-        Assert.Single(observer.TimersFired, f => f.TimerId == timerId);
+        Assert.DoesNotContain(observer.TimersFired, f => f.TimerId == timerId);
+        var firing = Assert.Single(observer.TimersFired, f => f.TimerId == secondTimer);
+        Assert.Equal(regionB, firing.RegionId);
     }
 }

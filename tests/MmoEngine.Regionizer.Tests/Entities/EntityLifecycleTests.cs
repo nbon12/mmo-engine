@@ -103,7 +103,7 @@ public sealed class EntityLifecycleTests
     /// An unoccupied capture point claims only its own section; an occupied one claims its zone; once
     /// it becomes unoccupied it stops claiming the zone, and its region drops the zone at the next tick end.
     /// </summary>
-    // CORE-BUG: an unoccupied capture point claims through a radius of 0, which section-anchored claims turn into the own section plus its eight neighbours.
+    // Regression (fixed in the core): an unoccupied capture point claims only its own section.
     [Theory]
     [InlineData(ClaimAnchoring.Section, 88.0, 88.0)]
     [InlineData(ClaimAnchoring.Section, 130.5, 71.25)]

@@ -89,7 +89,7 @@ after every step.
 - [ ] T011 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Regions/MergeTests.cs`:
   - **US1.1** `ClaimsSharingASectionMergeAtTickEnd_CauseIsMoverClass`, where the mover is a ground
     vehicle and the cause entity ID is asserted;
-  - **US1.9** Theory `MergeGapDecidesWhetherOneSectionApartMerges`;
+  - **US1.9** Theory `MergeGapDecidesWhetherAdjacentClaimsMerge` (and `ClaimsOneEmptySectionApartNeverMerge` for the boundary);
   - a three-region chain merge ends as one region whatever the order;
   - the lower ID absorbs;
   - a claim on a dead section forces a merge (FR-005)
