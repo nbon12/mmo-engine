@@ -48,6 +48,9 @@ Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in th
 `serializedMicros,oversizedFusion,violations,stateHash`
 
 - `fusedFightPairs` is the number of distinct fight-tag pairs that share a region after this tick.
+- `merges` counts only merges where both sides held at least one entity. Merges that absorb an
+  entity-less region are counted in a separate `absorptions` column, placed after `merges` in the
+  header. They are excluded from merge rates, region lifetimes and `sectionChurn`.
 - Cross pairs are counted once each, under the smallest range they fall within: deferred
   (≤ `deferredRangeMetres`), otherwise read-only (≤ `readOnlyRangeMetres`).
 

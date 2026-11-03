@@ -46,7 +46,9 @@ public readonly record struct PortalSpec(int PortalId, SectionKey A, SectionKey 
 public sealed class SectionTopology
 {
     public static SectionTopology OpenWorld(int sectionSize, double widthMetres, double heightMetres,
-                                            params int[] extraOpenLayers); // layer 0 + uniform layers
+                                            params int[] extraOpenLayers); // layer 0 + uniform layers;
+                                            // extra layers allow direct entry (they model the air layer)
+    public bool AllowsDirectEntry(int layerId);
     public static SectionTopology Build(int sectionSize, IReadOnlyList<LayerSpec> layers,
                                         IReadOnlyList<PortalSpec> portals);
     public int SectionSize { get; }
@@ -79,6 +81,9 @@ public sealed class Regionizer
     public void MoveEntity(int entityId, int layer, double x, double y, double z = 0);
     public void RemoveEntity(int entityId);
     public void SetCapturePointOccupied(int entityId, bool occupied); // unoccupied: own section only
+    // A heavy projectile claims nothing. AddEntity requires its section to be owned (the firing
+    // region). It keeps that owner wherever it moves, and changes owner only through
+    // Begin/CompleteTeleport into an owned destination; otherwise InvalidOperationException (FR-003).
 
     // Two-step teleport (location queue). Begin removes the entity and its claims. The caller later
     // completes it, either in the destination region's tick (owner exists) or at a step boundary

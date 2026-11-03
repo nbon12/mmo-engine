@@ -69,7 +69,7 @@ concern (validator).
 | --- | --- |
 | TimerId | int, ascending |
 | EntityId | the entity it belongs to. It moves with the entity on a split. |
-| Delay | > 0. In owner ticks (TickCounter mode) or base steps (Absolute mode). |
+| Delay | > 0. In owner ticks (TickCounter mode) or base steps (Absolute mode). The simulator's synthetic timers draw delays in ticks and convert them to base steps in Absolute mode: delay × baseStepHz / tickHz. |
 | SetAt | the owner's tick counter (TickCounter mode) or the time base (Absolute mode) |
 | Deadline | SetAt + Delay. A merge adds absorber.TickCounter − absorbed.TickCounter in TickCounter mode. |
 

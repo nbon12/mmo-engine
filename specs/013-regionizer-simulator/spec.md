@@ -79,9 +79,11 @@ the invariant checker running after every tick.
    reach through it and the two regions merge at the next tick end.
 6. **Given** a region in the ticking state, **When** something tries to move it straight to dead,
    **Then** the transition is rejected and the region stays ticking.
-7. **Given** a timer with a 90-tick delay set on a region that merges into a region with a different
-   tick counter 30 ticks later, **When** ticks run, **Then** the timer fires exactly once, exactly 90
-   ticks after it was set, in both timer modes.
+7. **Given** a timer with a delay of 90 ticks set on a region that merges into a region with a
+   different tick counter 30 ticks later, **When** ticks run, **Then** the timer fires exactly once:
+   - in tick-counter mode, on the owner's 90th tick after it was set;
+   - in absolute mode (delay 90 × baseStepHz / tickHz base steps), at the owner's first tick at or
+     after the deadline.
 8. **Given** section-anchored claims, **When** an entity moves within one section, **Then** its claimed
    sections do not change; **Given** position-anchored claims, **When** the same entity moves far
    enough that its radius covers a new section, **Then** its claimed sections change on that tick.
@@ -307,7 +309,11 @@ steady-state allocation test.
   has zero claims is dead.
 - **FR-003**: Each entity MUST claim the sections within its class's claim radius, reached from its own
   section without crossing a closed portal. An occupied capture point MUST claim its zone. Heavy
-  projectiles MUST claim nothing.
+  projectiles MUST claim nothing. A heavy projectile MUST:
+  - start in a section its firing region owns;
+  - keep that region as owner wherever it flies;
+  - change owner only through the location queue (two-step teleport) to a region that owns its
+    destination (Principles II and III).
 - **FR-004**: The library MUST support section-anchored claims, computed from the entity's section and
   changing only when it crosses a section edge, and position-anchored claims, computed from its exact
   position. The mode MUST come from configuration.
@@ -323,7 +329,8 @@ steady-state allocation test.
 - **FR-008**: A region MUST split only if it owns at least *N*min sections, at least *p*dead of them
   are dead, and it is at least *T*min old. All three thresholds MUST come from configuration. The child
   that keeps the parent's ID keeps its age, and other children start at age zero. A region with no
-  entities left drops its sections and dies at its tick end, whatever these thresholds.
+  entities left (heavy projectiles count as entities) drops its sections and dies at its tick end,
+  whatever these thresholds.
 - **FR-009**: A split MUST create one child region per island: a group of entities linked by shared
   claimed sections, judged with the same merge gap as merges. No child region may be created for an
   island that holds only dead sections.
@@ -351,7 +358,8 @@ steady-state allocation test.
   - no ticking region's section set changed during its tick (recorded at each tick end);
   - every region is in a legal state and moved only by legal transitions;
   - every entity not in transit has one owner and its section belongs to that owner, while an entity
-    in transit (two-step teleport) has no owner;
+    in transit (two-step teleport) has no owner. A heavy projectile is exempt only from "its section
+    belongs to that owner".
   - no claim crosses an area boundary except through an open portal.
 - **FR-015**: The library MUST NOT depend on the simulator, so the continent server can reuse it
   unchanged.
@@ -394,6 +402,10 @@ steady-state allocation test.
   The metrics are region count, largest region size and share, fusion events with the causing class,
   merge rate by causing class, split rate, split latency, section churn, region lifetime, cross-region
   pairs, fused fight pairs, bookkeeping cost and oversized fusions:
+  - A merge counts as a merge (and toward its causing class) only when both sides hold at least one
+    entity. A merge that absorbs an entity-less region, such as a transient region collecting a
+    ticking region's growth, is an *absorption*. Absorptions are reported separately and excluded
+    from merge rates, region lifetimes and section churn.
   - A merge is a fusion when each side holds a fight tag the other does not; only players in a fight
     carry a fight tag.
   - Fused fight pairs counts, per tick, the pairs of distinct fight tags that share a region.
@@ -431,8 +443,12 @@ steady-state allocation test.
     of interaction range is in another region. With a radius below it by more than the section slack,
     there is at least one.
   - **Merge distance**: the bounds allow zero violations.
-  - **Lane bridging**: the estimate matches within 10 percentage points at each traffic step,
-    measured with uniformly random travellers and at least 200 trials per step.
+  - **Lane bridging**: the estimate at d = 30 m matches within 10 percentage points at 30, 60 and 120
+    travellers. The simulator is set up so that merges happen between 30 and 31.4 m:
+    - a 600 m lane with one 15 m-radius entity at each end;
+    - travellers placed uniformly at random, each with a 15 m radius;
+    - position anchoring, merge gap 0 and 1 m sections;
+    - at least 200 trials per step.
 - **FR-032**: The memo generator MUST write a decision memo from a set of results, with a row for each
   value the simulator sets: its recommended value labeled as a measurement, the curve it was read from,
   the margin, the seeds and the run IDs. Values that settle an item on the constitution's Open
@@ -556,3 +572,8 @@ steady-state allocation test.
   which the manifest records. Numbers from other machines are not compared directly.
 - **Edge rounding**: An entity's section is found by flooring its position divided by the section size.
 - **Map edges**: Claims are clipped to the map; nothing wraps.
+- **Deferred portal toggles in the server**: The library applies a toggle made mid-tick when no
+  region is ticking. That moment comes at every step end in the simulator, but a continent server
+  whose ticks always overlap may never reach it. Sub-spec 10 must apply queued toggles at a point it
+  guarantees, for example once no region owning an entity near the portal is ticking. This is
+  recorded as a sub-spec 10 follow-up.

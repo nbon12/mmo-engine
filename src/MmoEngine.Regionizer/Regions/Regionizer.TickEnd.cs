@@ -7,6 +7,8 @@ public sealed partial class Regionizer
     private readonly int[] _localIndex;
     private int _stamp;
     private int[] _parent = new int[256];
+    private int[] _islandSize = new int[256];
+    private int[] _islandMin = new int[256];
 
     /// <summary>Moves a ready region to ticking and increments its tick counter. False if it is not ready.</summary>
     public bool TryMarkTicking(long regionId)
@@ -251,19 +253,42 @@ public sealed partial class Regionizer
             }
         }
 
-        // Count islands and find each one's size and smallest section index.
-        var islands = new Dictionary<int, (int Size, int MinSection)>();
+        // Count islands without allocating: a damping check that finds one island is steady state (FR-028).
+        if (_islandSize.Length < n)
+        {
+            _islandSize = new int[Math.Max(n, _islandSize.Length * 2)];
+            _islandMin = new int[_islandSize.Length];
+        }
+
+        Array.Clear(_islandSize, 0, n);
+        var islandCount = 0;
         for (var i = 0; i < n; i++)
         {
             var root = Find(i);
-            islands[root] = islands.TryGetValue(root, out var info)
-                ? (info.Size + 1, Math.Min(info.MinSection, sections[i]))
-                : (1, sections[i]);
+            if (_islandSize[root]++ == 0)
+            {
+                islandCount++;
+                _islandMin[root] = sections[i];
+            }
+            else if (sections[i] < _islandMin[root])
+            {
+                _islandMin[root] = sections[i];
+            }
         }
 
-        if (islands.Count <= 1)
+        if (islandCount <= 1)
         {
             return 0;
+        }
+
+        // A real split: allocation is fine from here on.
+        var islands = new Dictionary<int, (int Size, int MinSection)>(islandCount);
+        for (var i = 0; i < n; i++)
+        {
+            if (_islandSize[i] > 0)
+            {
+                islands[i] = (_islandSize[i], _islandMin[i]);
+            }
         }
 
         var ordered = islands.OrderByDescending(kv => kv.Value.Size).ThenBy(kv => kv.Value.MinSection).Select(kv => kv.Key).ToList();

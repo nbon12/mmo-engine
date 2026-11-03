@@ -14,13 +14,15 @@ public sealed partial class Regionizer
     private void Place(int entityId)
     {
         var section = _entities.Anchor[entityId];
+        var regionId = _owner[section];
         if (_entities.Class[entityId] == EntityClass.HeavyProjectile)
         {
-            FollowSectionOwner(entityId);
+            // Callers checked the section is owned: the firing region, or the destination's region.
+            _regions[regionId].InsertEntity(entityId);
+            _entities.Region[entityId] = regionId;
+            _observer.OnEntityOwnerChanged(entityId, 0, regionId);
             return;
         }
-
-        var regionId = _owner[section];
         if (regionId == 0)
         {
             EnterSerial();
@@ -39,30 +41,6 @@ public sealed partial class Regionizer
         {
             IncrementClaim(entityId, claim[i]);
         }
-    }
-
-    /// <summary>A heavy projectile claims nothing; it belongs to whichever region owns its section, if any.</summary>
-    private void FollowSectionOwner(int entityId)
-    {
-        var current = _entities.Region[entityId];
-        var target = _owner[_entities.Anchor[entityId]];
-        if (current == target)
-        {
-            return;
-        }
-
-        if (current != 0)
-        {
-            _regions[current].RemoveEntity(entityId);
-        }
-
-        if (target != 0)
-        {
-            _regions[target].InsertEntity(entityId);
-        }
-
-        _entities.Region[entityId] = target;
-        _observer.OnEntityOwnerChanged(entityId, current, target);
     }
 
     /// <summary>Recomputes an entity's claim and applies the difference to claim counts and ownership.</summary>

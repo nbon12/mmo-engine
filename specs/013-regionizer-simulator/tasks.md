@@ -118,11 +118,14 @@ after every step.
 - [ ] T016 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Portals/PortalToggleTests.cs`:
   - **US1.5** `ClosedPortalSeparatesRegions_OpeningMergesAtNextTickEnd`;
   - closing a portal allows a split once damping holds;
-  - `PortalToggledDuringTickTakesEffectAtTickEnd` (FR-013)
+  - `PortalToggledDuringTickTakesEffectAtTickEnd`;
+  - a Theory over the gap, `OpeningPortalBetweenOwnedEndpointsMergesOnlyWithGap1` (FR-005, FR-013)
 - [ ] T017 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Entities/EntityLifecycleTests.cs`:
   - a two-step teleport never leaves an entity in two regions;
   - an unoccupied capture point claims only its own section;
   - a heavy projectile claims nothing;
+  - a heavy projectile keeps its firing region over unowned sections, changes owner only through the
+    two-step teleport, and cannot start in an unowned section;
   - removing every entity kills the region at its next tick end, even when the region is smaller
     than *N*min and younger than *T*min;
   - an entity in transit across a step boundary has no owner and the checker stays clean;
@@ -180,7 +183,10 @@ folder matches contracts/run-output.md.
   - Each case fails with the field's JSON path.
   - A map file the portal validator rejects (`simulator/maps/test/seeded-leaks.json`) gives exit
     code 2 naming `map.file`.
-  - Valid defaults load for every scenario (FR-018, FR-026).
+  - Valid defaults load for every scenario.
+  - A Theory, `TuningPathOverrideReachesEffectiveOptionsAndManifest`, checks that overriding each
+    Principle VI tuning path in the config changes the effective options and the manifest
+    (FR-018, FR-026).
 - [ ] T029 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Determinism/DeterminismTests.cs`:
   - **US2.1** `SameSeedInSeparateProcessesGivesIdenticalHashes` (two CLI processes);
   - **US2.2** `DifferentSeedsGiveDifferentHashes`;
@@ -197,6 +203,7 @@ folder matches contracts/run-output.md.
   - the region count counts players only;
   - cross-region pairs use the deferred and read-only ranges, each pair counted once under the
     smallest range it falls within (a 200 m pair counts as deferred);
+  - a scripted absorption of a transient region counts as an absorption, not a merge;
   - fused fight pairs;
   - an oversized fusion is flagged;
   - merge rate by causing class, split rate, split latency, section churn, region lifetime, and
@@ -359,7 +366,9 @@ against the core. The memo has every row with its evidence.
   - **US6.1** (second part) `ClaimRadiusFloorHoldsInTheCore_BelowFloorFails`, the floor check of
     research D16 (FR-031, SC-006)
 - [ ] T062 [P] [US6] `tests/MmoEngine.Regionizer.Simulator.Tests/Analysis/MemoGeneratorTests.cs`:
-  **US6.4** `MemoHasARowPerValueWithEvidence`, from a small generated result set (FR-032)
+  **US6.4** `MemoHasARowPerValueWithEvidence`, from a small generated result set. It also asserts
+  that the open-decision-1 rows (section size, claim radius) are labeled recommendations under
+  Principle VI (FR-032).
 
 ### Implementation for User Story 6
 
@@ -435,7 +444,9 @@ allocate nothing.
 
 - Setup (T001–T004) → Foundational (T005–T008) → US1 (T009–T027).
 - US2 depends on US1 (it drives the core). US3, US4, US6 and US7 depend on US2's run pipeline.
-- US5 depends only on Foundational (T005) and can run in parallel with US1–US4.
+- US5 depends only on Foundational (T005). Its map loader and validator (T056, T057, T059) are hard
+  dependencies of US2's invalid-map refusal (T028) and of US3's Stacked areas (T046). They are built
+  in parallel with US1 and merged before those tasks.
 - US3's Soak uses the scenarios it builds itself (Migration, Stacked areas, Air traffic). US4's
   scenario Theory includes them.
 - US6's simulator agreement tests use the core directly and can start after US1. Its memo needs

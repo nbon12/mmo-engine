@@ -103,7 +103,9 @@ public sealed class SectionTopology
         var specs = new List<LayerSpec> { new(0, 0, 0, w, h, new ushort[w * h]) };
         foreach (var id in extraOpenLayers)
         {
-            specs.Add(new LayerSpec(id, 0, 0, w, h, new ushort[w * h]));
+            // An extra full-map layer has no portals, so the only way onto it is direct entry: it
+            // models the optional air layer (FR-001).
+            specs.Add(new LayerSpec(id, 0, 0, w, h, new ushort[w * h]) { AllowsDirectEntry = true });
         }
 
         return Build(sectionSize, specs, []);

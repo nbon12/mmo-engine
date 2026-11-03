@@ -116,17 +116,19 @@ public static class InvariantChecker
 
             var regionId = entities.Region[id];
             var isProjectile = entities.Class[id] == EntityClass.HeavyProjectile;
-            if (regionId == 0 && !isProjectile)
+            if (regionId == 0)
             {
                 into.Add(new Violation(InvariantRule.EntitySingleOwner, $"entity {id} has no owner"));
                 continue;
             }
 
-            if (regionId != 0 && (!listedEntity.TryGetValue(id, out var listed) || listed != regionId))
+            if (!listedEntity.TryGetValue(id, out var listed) || listed != regionId)
             {
                 into.Add(new Violation(InvariantRule.EntitySingleOwner, $"entity {id} names region {regionId} but is not listed by it"));
             }
 
+            // A heavy projectile keeps its firing region over any section; it is exempt only from
+            // "its section belongs to its owner".
             if (isProjectile)
             {
                 if (entities.ClaimCount[id] != 0)

@@ -122,8 +122,10 @@ deadlines would need a constitution amendment.
 **Decision**: The continent time base is an integer count of base steps. The base step rate, normal
 tick rate and degraded tick rate are configuration (`scheduling.baseStepHz`, `tickHz`,
 `degradedTickHz`, defaulting to 60, 30 and 20; Principle VI lists tick rates as tuning values). The
-base rate must be a multiple of both tick rates. With the defaults, a region ticking at 30 Hz is due
-every 2 steps, and at 20 Hz every 3.
+base rate must be a multiple of both tick rates. A region is due every baseStepHz / tickHz steps,
+or every baseStepHz / degradedTickHz steps while degraded (2 and 3 with the defaults). Movement uses
+dt = period / baseStepHz seconds. Every "60 Hz" or "every 2 steps" elsewhere in these documents
+means the default values of these settings.
 
 Portal toggles requested while any region is ticking are queued by the library and applied when the
 last ticking region's tick ends (FR-013). Toggles requested with no region ticking apply at once.
@@ -278,6 +280,13 @@ Principle VI (open decision 1).
   two aircraft closing at 240 m/s at 30 Hz give 8 m above interaction range.
 - **Merge distance**: d_max = rA + rB + k·√2·s, with k = 3 section-anchored and 1 position-anchored,
   plus √2·s with a merge gap of 1.
+- **Lane bridging check setup**: position anchoring, merge gap 0, 1 m sections and 15 m radii, so
+  two claims merge between 30 and 30 + √2 ≈ 31.4 m. The lane is 600 m with a 15 m-radius entity at
+  each end, and travellers are placed uniformly. It is compared with the formula at d = 30 m.
+- **Merges and absorptions**: a merge whose absorbed side holds no entity, typically the transient
+  region that collected a ticking region's growth, is bookkeeping rather than two regions joining.
+  The metrics report it as an absorption and keep it out of merge rates, region lifetimes and
+  section churn. That keeps the merge and split rates in D15 about real joins.
 - **Lane bridging**: P_bridge ≈ (1 − e^(−λd))^(λℓ + 1). With ℓ = 600 m and d = 30 m it gives
   0.04%, 4% and 74% at 30, 60 and 120 travellers. The test tolerance for the worked examples is
   agreement when rounded to the precision the issue shows. Analysis code may use `Math.Exp`, because

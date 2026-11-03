@@ -121,6 +121,12 @@ public sealed partial class Regionizer
     public void AddEntity(int entityId, EntityClass cls, int layer, double x, double y, double z = 0, int fightTag = -1)
     {
         var section = SectionAt(layer, x, y);
+        if (cls == EntityClass.HeavyProjectile && _owner[section] == 0)
+        {
+            throw new InvalidOperationException(
+                $"Heavy projectile {entityId} must start in a section its firing region owns; ({x}, {y}) on layer {layer} is unowned.");
+        }
+
         _entities.Add(entityId, _claims.Capacity(Options.ClaimRadius.For(cls)));
         _entities.Class[entityId] = cls;
         _entities.FightTag[entityId] = fightTag;
@@ -139,10 +145,12 @@ public sealed partial class Regionizer
             throw new InvalidOperationException(
                 $"Entity {entityId} cannot move from layer {previousLayer} to {layer}: only an open portal from its section, or a layer allowing direct entry, changes layer (FR-001).");
         }
+
         SetPosition(entityId, layer, x, y, z, section);
         if (_entities.Class[entityId] == EntityClass.HeavyProjectile)
         {
-            FollowSectionOwner(entityId);
+            // A heavy projectile claims nothing and keeps its firing region as owner, even over
+            // unowned or foreign sections; it changes owner only through the location queue.
             return;
         }
 
@@ -243,8 +251,15 @@ public sealed partial class Regionizer
         }
 
         var (layer, x, y, z) = _entities.TransitTarget[entityId];
+        var section = SectionAt(layer, x, y);
+        if (_entities.Class[entityId] == EntityClass.HeavyProjectile && _owner[section] == 0)
+        {
+            throw new InvalidOperationException(
+                $"Heavy projectile {entityId} can only be handed to a region that owns its destination; remove it instead.");
+        }
+
         _entities.InTransit[entityId] = false;
-        SetPosition(entityId, layer, x, y, z, SectionAt(layer, x, y));
+        SetPosition(entityId, layer, x, y, z, section);
         Place(entityId);
 
         var carried = _entities.TransitTimers[entityId];
@@ -344,6 +359,46 @@ public sealed partial class Regionizer
                 RecomputeClaim(id);
             }
         }
+
+        // With a merge gap of 1, an open portal makes its endpoints adjacent (D3): their owners merge.
+        if (open && Options.MergeGap == 1)
+        {
+            var ownerA = _owner[a];
+            var ownerB = _owner[b];
+            if (ownerA != 0 && ownerB != 0 && ownerA != ownerB)
+            {
+                var cause = LowestClaimant(a, b);
+                if (cause < 0 && _regions[ownerA].Entities.Count > 0)
+                {
+                    cause = _regions[ownerA].Entities[0];
+                }
+
+                if (cause >= 0)
+                {
+                    RequestMerge(ownerA, ownerB, cause);
+                }
+            }
+        }
+    }
+
+    /// <summary>The lowest-id entity whose claim includes either section, or -1.</summary>
+    private int LowestClaimant(int a, int b)
+    {
+        foreach (var id in _entities.Ids)
+        {
+            if (_entities.InTransit[id])
+            {
+                continue;
+            }
+
+            var claim = _entities.Claims[id].AsSpan(0, _entities.ClaimCount[id]);
+            if (claim.BinarySearch(a) >= 0 || claim.BinarySearch(b) >= 0)
+            {
+                return id;
+            }
+        }
+
+        return -1;
     }
 
     // ---------------------------------------------------------------- helpers
