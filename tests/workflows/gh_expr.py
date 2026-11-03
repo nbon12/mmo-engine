@@ -2,7 +2,7 @@
 repo use, so tests can decide a condition against event payloads the way GitHub would.
 
 Supported: `||`, `&&`, `!`, `==`, `!=`, parentheses, property access (including the `.*.` filter),
-string, number, boolean and null literals, `contains()` and `fromJSON()`. Comparisons and
+string, number, boolean and null literals, `contains()`, `fromJSON()` and `format()`. Comparisons and
 `contains()` ignore case; `||` and `&&` return an operand. Anything else raises ValueError, so an
 unsupported construct fails loudly instead of being misread. Tests: ExpressionEvaluator in
 test_claude_workflow.py.
@@ -120,6 +120,8 @@ class Expr:
             return to_str(needle).lower() in to_str(haystack).lower()
         if name == "fromJSON":
             return json.loads(args[0])
+        if name == "format":
+            return format_string(to_str(args[0]), [to_str(a) for a in args[1:]])
         raise ValueError(f"unsupported function {name}")
 
     def path(self, value):
@@ -148,6 +150,20 @@ def to_str(value):
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def format_string(template, args):
+    """GitHub's `format()`: `{0}`, `{1}` ... are replaced by the arguments; `{{` and `}}` escape braces."""
+    def replace(match):
+        token = match.group(0)
+        if token in ("{{", "}}"):
+            return token[0]
+        index = int(match.group(1))
+        if index >= len(args):
+            raise ValueError(f"format() has no argument {index}")
+        return args[index]
+
+    return re.sub(r"\{\{|\}\}|\{(\d+)\}", replace, template)
 
 
 def loose_equal(a, b):

@@ -140,23 +140,35 @@ class Job(unittest.TestCase):
 
 
 class GateBaseRef(unittest.TestCase):
-    """The gate diffs against the pull request's base branch, or main on a push."""
+    """
+    The gate diffs against the pull request's base branch, or, on a push to main, the commit before
+    the push, so the pushed changes are gated rather than main compared with itself.
+    """
 
-    def base_ref(self, event_name, base_ref):
+    BEFORE = "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c"
+
+    def base_ref(self, event_name, base_ref, before=""):
         step = STEPS[run_step(r"^python3 tools/coverage_gate\.py\b")]
         self.assertIn('--base "$BASE_REF"', step["run"])
-        context = {"github": {"event_name": event_name, "base_ref": base_ref}}
+        context = {"github": {"event_name": event_name, "base_ref": base_ref, "event": {"before": before}}}
         return render(step["env"]["BASE_REF"], context)
 
     def test_base_ref_per_event(self):
-        cases = [  # (event, github.base_ref as Actions sets it, expected base)
-            ("pull_request", "main", "origin/main"),
-            ("pull_request", "release/1.0", "origin/release/1.0"),
-            ("push", "", "origin/main"),
+        cases = [  # (event, github.base_ref as Actions sets it, github.event.before, expected base)
+            ("pull_request", "main", "", "origin/main"),
+            ("pull_request", "release/1.0", "", "origin/release/1.0"),
+            ("push", "", self.BEFORE, self.BEFORE),
         ]
-        for event, base_ref, expected in cases:
+        for event, base_ref, before, expected in cases:
             with self.subTest(event=event, base_ref=base_ref):
-                self.assertEqual(self.base_ref(event, base_ref), expected)
+                self.assertEqual(self.base_ref(event, base_ref, before), expected)
+
+    def test_format_follows_github(self):
+        from gh_expr import format_string
+        self.assertEqual(format_string("origin/{0}", ["main"]), "origin/main")
+        self.assertEqual(format_string("{{{0}}}-{1}", ["a", "b"]), "{a}-b")
+        with self.assertRaises(ValueError):
+            format_string("{2}", ["x"])
 
 
 if __name__ == "__main__":

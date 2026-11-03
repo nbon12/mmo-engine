@@ -50,6 +50,7 @@ jobs:
 
       - name: Changed-file coverage gate
         env:
-          # The pull request's base branch; on a push to main, main itself.
-          BASE_REF: origin/${{ github.base_ref || 'main' }}
+          # The pull request's base branch; on a push to main, the commit before the push, so the
+          # pushed changes are gated rather than main compared with itself.
+          BASE_REF: ${{ github.event_name == 'push' && github.event.before || format('origin/{0}', github.base_ref) }}
         run: python3 tools/coverage_gate.py --base "$BASE_REF" --coverage-dir coverage --summary "$GITHUB_STEP_SUMMARY"

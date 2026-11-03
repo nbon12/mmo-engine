@@ -47,12 +47,18 @@ class FileCoverage:
     path: str
     covered: int
     coverable: int
+    # In no report although its source holds executable code: no test project covers it.
+    unreported: bool = False
 
     def passes(self, threshold):
+        if self.unreported:
+            return False
         # Integer-exact: covered / coverable >= threshold / 100.
         return self.coverable == 0 or self.covered * 100 >= threshold * self.coverable
 
     def percent_text(self):
+        if self.unreported:
+            return "not in any coverage report"
         if self.coverable == 0:
             return "n/a (no coverable lines)"
         # Rounded down, so a failing file never displays as the threshold.
@@ -150,15 +156,18 @@ def match_changed(candidates, changed):
 
 
 def merge_line_hits(report_paths, changed):
-    """{changed path: {line number: total hits}}, merged over every report and <class> element."""
-    merged = {path: {} for path in changed}
+    """
+    {changed path: {line number: total hits}}, merged over every report and <class> element. A
+    changed file that no report mentions has no key.
+    """
+    merged = {}
     for report in report_paths:
         sources, classes = read_report(report)
         for filename, lines in classes:
             target = match_changed(candidate_paths(filename, sources), changed)
             if target is None:
                 continue
-            hits = merged[target]
+            hits = merged.setdefault(target, {})
             for number, count in lines.items():
                 hits[number] = hits.get(number, 0) + count
     return merged
@@ -166,11 +175,32 @@ def merge_line_hits(report_paths, changed):
 
 # --- Evaluation and output -----------------------------------------------------------------------
 
-def evaluate(changed, line_hits):
-    """One FileCoverage per changed file, sorted by path."""
+# A method, constructor, accessor or local-function body, or an expression body. Enum-only and
+# interface-only files have none, and Coverlet leaves them out of its reports.
+_EXECUTABLE = re.compile(r"(\)|\bget|\bset|\binit|\badd|\bremove)\s*\{|=>")
+_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+
+
+def has_executable_code(path, repo="."):
+    """Whether a C# file holds code a test could cover. An unreadable file counts as holding none."""
+    try:
+        text = (Path(repo) / path).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _EXECUTABLE.search(_COMMENT.sub("", text)) is not None
+
+
+def evaluate(changed, line_hits, repo="."):
+    """
+    One FileCoverage per changed file, sorted by path. A file in no report passes when it holds no
+    executable code (enums, interfaces) and fails otherwise, since then no test project covers it.
+    """
     results = []
     for path in sorted(changed):
-        lines = line_hits.get(path, {})
+        lines = line_hits.get(path)
+        if lines is None:
+            results.append(FileCoverage(path, 0, 0, unreported=has_executable_code(path, repo)))
+            continue
         covered = sum(1 for hits in lines.values() if hits > 0)
         results.append(FileCoverage(path, covered, len(lines)))
     return results
@@ -233,7 +263,7 @@ def main(argv=None):
         print(f"coverage gate: error: {error}", file=sys.stderr)
         return 2
 
-    results = evaluate(changed, line_hits)
+    results = evaluate(changed, line_hits, args.repo)
     table = format_table(results, args.threshold)
     failing = [result for result in results if not result.passes(args.threshold)]
     print(f"{heading}, {len(reports)} report(s):\n\n{table}", flush=True)

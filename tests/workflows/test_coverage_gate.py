@@ -228,6 +228,24 @@ class GateDecision(unittest.TestCase):
         self.assertIn("| `src/A/Enums.cs` | 0 | 0 | n/a (no coverable lines) | pass |", out)
         self.assertIn("| `src/A/IThing.cs` | 0 | 0 | n/a (no coverable lines) | pass |", out)
 
+    def test_a_file_with_code_in_no_report_fails(self):
+        # A project no test references never reaches a report; its code must not pass as 0 of 0.
+        repo = unique_dir(self)
+        (repo / "src" / "B").mkdir(parents=True)
+        (repo / "src" / "B" / "Untested.cs").write_text(
+            "namespace B;\n// int Commented() { }\npublic static class Untested\n{\n"
+            "    public static int Twice(int x) => x * 2;\n}\n", encoding="utf-8")
+        (repo / "src" / "B" / "Kinds.cs").write_text(
+            "namespace B;\n/* not code: void M() { } */\npublic enum Kinds { A, B }\n"
+            "public interface IThing { int Count { get; } void Do(int x); }\n", encoding="utf-8")
+        self.changed = ["src/B/Untested.cs", "src/B/Kinds.cs"]
+        write_report(self.dir, [("src/A/Other.cs", hits(1, 1))])
+        code, out, err = self.gate("--repo", str(repo))
+        self.assertEqual(code, 1)
+        self.assertIn("| `src/B/Untested.cs` | 0 | 0 | not in any coverage report | FAIL |", out)
+        self.assertIn("| `src/B/Kinds.cs` | 0 | 0 | n/a (no coverable lines) | pass |", out)
+        self.assertIn("1 of 2 changed file(s)", err)
+
     def test_unchanged_files_are_not_gated(self):
         self.changed = ["src/A/Changed.cs"]
         write_report(self.dir, [("src/A/Changed.cs", hits(5, 5)), ("src/A/Untouched.cs", hits(0, 50))])

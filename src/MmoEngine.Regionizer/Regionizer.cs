@@ -118,8 +118,16 @@ public sealed partial class Regionizer
 
     // ---------------------------------------------------------------- entities
 
+    /// <summary>The largest entity id: ids are compact (constitution, Data and identifiers) and index dense arrays.</summary>
+    public const int MaxEntityId = (1 << 20) - 1;
+
     public void AddEntity(int entityId, EntityClass cls, int layer, double x, double y, double z = 0, int fightTag = -1)
     {
+        if (entityId is < 0 or > MaxEntityId)
+        {
+            throw new ArgumentOutOfRangeException(nameof(entityId), $"Entity ids must be compact, from 0 to {MaxEntityId}; was {entityId}.");
+        }
+
         var section = SectionAt(layer, x, y);
         if (cls == EntityClass.HeavyProjectile && _owner[section] == 0)
         {
@@ -371,6 +379,11 @@ public sealed partial class Regionizer
                 if (cause < 0 && _regions[ownerA].Entities.Count > 0)
                 {
                     cause = _regions[ownerA].Entities[0];
+                }
+
+                if (cause < 0 && _regions[ownerB].Entities.Count > 0)
+                {
+                    cause = _regions[ownerB].Entities[0];
                 }
 
                 if (cause >= 0)
