@@ -96,7 +96,10 @@ public sealed class Regionizer
     // Reads (no allocation).
     public ReadOnlySpan<long> RegionIds { get; }       // ascending, live (non-dead) regions
     public RegionView GetRegion(long regionId);
+    public bool TryGetState(long regionId, out RegionState state); // false once dead
     public EntityView GetEntity(int entityId);
+    public bool HasEntity(int entityId);
+    public bool IsPortalOpen(int portalId);
     public ReadOnlySpan<int> EntityIds { get; }        // ascending
     public long OwnerOf(int sectionIndex);             // 0 when unowned
     public int ClaimCountOf(int sectionIndex);
@@ -160,6 +163,15 @@ public interface IRegionDataExtension   // every new kind of region data defines
 
 A merge's cause is the entity whose claim requested it. Merges that happen later through pending
 partners keep the cause recorded at the request.
+
+Order of notifications:
+- `OnMerged` is raised *before* the absorbed region's sections, entities and timers move. An
+  observer tracking per-region data (for example fight tags, for fusions) still sees both sides as
+  they were. The moves then follow as `OnSectionOwnerChanged` and `OnEntityOwnerChanged`.
+- A new region's initial state is implied by its creation reason. `NewClaim` and `Split` start
+  Ready, `Transient` starts Transient. No `OnStateChanged` is raised for creation.
+- At a tick boundary (no region ticking) every live region is Ready with no pending merges. The
+  invariant checker enforces this.
 
 ## Invariant checker
 
