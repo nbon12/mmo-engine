@@ -152,11 +152,13 @@ Directory.Packages.props         # central package versions
 MmoEngine.sln
 src/
 ├── MmoEngine.Regionizer/                    # core library (no package deps)
-│   ├── Sections/        # SectionKey, LayerGrid, SectionTopology, claim geometry
-│   ├── Regions/         # Region, RegionState, transitions, merge/split, islands
-│   ├── Entities/        # EntityTable (SoA), EntityClass, claim buffers
-│   ├── Timers/          # tick-counter and absolute timer modes
-│   ├── Invariants/      # InvariantChecker, Violation
+│   ├── Model.cs         # enums, SectionKey, options, views' value types
+│   ├── Observation.cs   # IRegionizerObserver, IRegionDataExtension, views, stats
+│   ├── Sections/        # SectionTopology, ClaimCalculator (claim geometry and walk)
+│   ├── Regions/         # Region; Regionizer.Claims.cs (claims, merges, merge-later);
+│   │                    # Regionizer.TickEnd.cs (tick start and end, split, timers)
+│   ├── Entities/        # EntityTable (SoA), claim buffers
+│   ├── Invariants/      # InvariantChecker, test hooks
 │   └── Regionizer.cs    # public façade (contracts/regionizer-api.md)
 ├── MmoEngine.Maps/                          # map model, JSON loader, PortalValidator
 ├── MmoEngine.Regionizer.Simulator/          # PRNG, config, scenarios, movement, scheduling,
@@ -191,3 +193,4 @@ the simulator and the validator CLI share them.
 | --- | --- | --- |
 | No Sonar or Codecov in CI | Both need third-party accounts and tokens, which no agent can create (XIII, unavoidable human action 1) | Faking either would be a gate that checks nothing. CI enforces the 95% changed-file coverage rule itself until the accounts exist. |
 | SDK pinned to .NET 9, not the current LTS | The .NET 10 SDK isn't installed on the machine running the work (research D14) | It's a SHOULD. Moving later is one `global.json` change and a TFM bump. |
+| SDK-default analyzer set, not `AnalysisLevel latest-recommended` | Turning on the recommended set with warnings as errors mid-feature would add a large unrelated cleanup to this PR. CI enforces build warnings and `dotnet format`. | A follow-up PR turns it on and fixes or justifies each rule, as its own change. |

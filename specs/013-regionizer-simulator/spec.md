@@ -75,8 +75,9 @@ the invariant checker running after every tick.
    it does not split.
 5. **Given** a closed portal between a surface section and an underground section with an entity
    beside it on each side, **When** ticks run, **Then** neither entity's claim includes a section on
-   the far side and the two stay in separate regions; **When** the portal opens, **Then** the claims
-   reach through it and the two regions merge at the next tick end.
+   the far side and the two stay in separate regions; **When** the portal opens at a tick boundary,
+   **Then** the claims reach through it and the two regions merge at once (a toggle made while a
+   region ticks is deferred to the last tick end, FR-013).
 6. **Given** a region in the ticking state, **When** something tries to move it straight to dead,
    **Then** the transition is rejected and the region stays ticking.
 7. **Given** a timer with a delay of 90 ticks set on a region that merges into a region with a
@@ -164,8 +165,9 @@ degrees of parallelism and compare results; replay a recorded trace and compare 
 **Acceptance Scenarios**:
 
 1. **Given** each of Baseline, Spacing, Lane traffic, Air traffic, Vehicle columns, Stacked areas,
-   Migration, One base and Soak, **When** it runs with its defaults for a short duration, **Then** it
-   ends with zero invariant violations and writes its manifest, metrics and summary.
+   Migration, One base and Soak, **When** it runs with its defaults at a reduced population for a
+   short duration, **Then** it ends with zero invariant violations and writes its manifest, metrics and
+   summary. (The full default populations run in the sweeps and in US7.1.)
 2. **Given** a sweep of infantry claim radius over 8 to 40 m in 4 m steps with 10 seeds per cell,
    **When** the sweep driver runs it, **Then** it produces exactly one result per cell and seed, and
    each result's manifest reproduces that result's hash sequence.
@@ -403,9 +405,10 @@ steady-state allocation test.
   merge rate by causing class, split rate, split latency, section churn, region lifetime, cross-region
   pairs, fused fight pairs, bookkeeping cost and oversized fusions:
   - A merge counts as a merge (and toward its causing class) only when both sides hold at least one
-    entity. A merge that absorbs an entity-less region, such as a transient region collecting a
-    ticking region's growth, is an *absorption*. Absorptions are reported separately and excluded
-    from merge rates, region lifetimes and section churn.
+    entity. A merge in which either side holds no entity, such as one absorbing the transient region
+    that collected a ticking region's growth, is an *absorption*. Absorptions are reported separately
+    and excluded from merge rates and section churn. Only regions that held no entity are left out of
+    region lifetimes.
   - A merge is a fusion when each side holds a fight tag the other does not; only players in a fight
     carry a fight tag.
   - Fused fight pairs counts, per tick, the pairs of distinct fight tags that share a region.
