@@ -162,7 +162,8 @@ degrees of parallelism and compare results; replay a recorded trace and compare 
    **When** the sweep driver runs it, **Then** it produces exactly one result per cell and seed, and
    each result's manifest reproduces that result's hash sequence.
 3. **Given** the same sweep, **When** it runs once on one worker and once on several, **Then** every
-   cell and seed produces the same summary and hash sequence.
+   cell and seed produces the same hash sequence and the same summary, apart from wall-clock
+   measurements such as bookkeeping cost.
 4. **Given** a position trace recorded from a run, **When** the simulator replays it, **Then** the
    replayed run's per-tick state hashes match the recorded run's.
 5. **Given** the Air traffic scenario with and without the air layer, **When** each runs, **Then**
@@ -186,9 +187,9 @@ compare the reported findings with the seeded list.
 
 **Acceptance Scenarios**:
 
-1. **Given** a test map with seeded leaks, including an undeclared walkway between areas and an
-   untagged window, **When** the validator runs, **Then** it reports exactly the seeded leaks with
-   their locations and exits with a non-zero code.
+1. **Given** a test map with seeded leaks, including an undeclared walkway between areas and a window
+   opening that is not declared as a portal, **When** the validator runs, **Then** it reports exactly
+   the seeded leaks with their locations and exits with a non-zero code.
 2. **Given** a clean test map, **When** the validator runs, **Then** it reports no findings and exits
    with code 0.
 3. **Given** a portal whose far side is not a navigable section, **When** the validator runs, **Then**
@@ -298,8 +299,8 @@ steady-state allocation test.
 - **FR-006**: A ticking region MUST NOT grow. Sections it newly needs MUST go into a transient region
   recorded on it, which it absorbs when its tick ends.
 - **FR-007**: At each region's tick end the library MUST, in this order, process its pending merges;
-  mark it transient if it still owes a merge elsewhere; otherwise drop its dead sections and try a
-  split.
+  mark it transient if it still owes a merge elsewhere; otherwise, if the split damping thresholds
+  hold, drop its dead sections and try a split. Dead sections stay owned by their region until then.
 - **FR-008**: A region MUST split only if it owns at least *N*min sections, at least *p*dead of them
   are dead, and it is older than *T*min. All three thresholds MUST come from configuration.
 - **FR-009**: A split MUST create one child region per island: a group of entities linked by shared

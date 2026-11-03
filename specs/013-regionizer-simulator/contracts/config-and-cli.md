@@ -1,0 +1,73 @@
+# Contract: Configuration files and CLIs
+
+## Run configuration (JSON)
+
+A run config names a scenario and overrides any defaults. Every field is validated before the run
+starts (FR-026). An invalid field stops the run with exit code 2 and a message that names its JSON
+path, for example `regionizer.sectionSize: must be a power of two between 1 and 1024`.
+
+```json
+{
+  "scenario": "Baseline",
+  "seed": 1,
+  "scheduling": { "mode": "Lockstep", "dropTo20HzProbability": 0.01, "dropTicksMin": 5, "dropTicksMax": 60 },
+  "durationTicks": 18000,
+  "regionizer": {
+    "sectionSize": 16, "anchoring": "Section", "mergeGap": 0,
+    "claimRadius": { "infantry": 16, "groundVehicle": 24, "aircraft": 16, "traveller": 16, "capturePointZone": 20 },
+    "split": { "minSections": 32, "minDeadPercent": 25, "minAgeSeconds": 2 },
+    "timerMode": "TickCounter"
+  },
+  "movement": { "speedCeiling": { "infantry": 7, "groundVehicle": 30, "aircraft": 120 },
+                "redeployProbabilityPerSecond": 0.002 },
+  "map": { "widthMetres": 8000, "heightMetres": 8000, "lanes": 3, "file": null },
+  "population": { "total": 5000, "limit": 10000 },
+  "airLayer": { "enabled": false, "altitudeMetres": 150, "hysteresisMetres": 20 },
+  "timers": { "setProbabilityPerEntityPerSecond": 0.01, "delayTicksMin": 30, "delayTicksMax": 900 },
+  "metrics": { "metricsEveryTicks": 1, "islandCheckEveryTicks": 1, "crossRegionPairsEveryTicks": 30,
+               "deferredRangeMetres": 300, "readOnlyRangeMetres": 1000,
+               "targetFightSize": 1200, "bookkeepingBudgetMicros": 1000 },
+  "scenarioParameters": { "...": "scenario-specific, see each scenario's defaults file" },
+  "trace": { "record": null, "replay": null }
+}
+```
+
+The defaults for every scenario live in `simulator/scenarios/<scenario>.json`. A run config is
+deep-merged over them. The environment name (`DOTNET_ENVIRONMENT`) must be Development, Dev, Test,
+Staging or Production, and is Development when unset.
+
+## Sweep specification (JSON)
+
+```json
+{
+  "name": "infantry-radius",
+  "base": { "...": "a run configuration" },
+  "seeds": 10,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [ { "path": "regionizer.claimRadius.infantry", "values": [8, 12, 16, 20, 24, 28, 32, 36, 40] } ]
+}
+```
+
+- `mode` is `OneAtATime` (each parameter stepped alone around `base`) or `Grid` (the cartesian
+  product).
+- Seed *i* is the same in every cell: SplitMix64 of (`sweepSeed`, *i*). This gives common random
+  numbers across cells.
+- Cells are numbered in a fixed order. Runs execute in parallel up to `--parallelism` (default:
+  processor count). The output layout is `<out>/<sweep>/<cellId>/seed-<i>/` (run folders), plus
+  `<out>/<sweep>/sweep.json` (the cell table) and `<out>/<sweep>/cells.csv`. The cells file has one
+  row per cell and seed, with the summary's deterministic columns and the bookkeeping p99.
+
+## `regionizer-sim` CLI
+
+| Command | Purpose | Exit codes |
+| --- | --- | --- |
+| `run <config.json> --out <dir> [--seed N] [--ticks N]` | One run | 0 clean, 3 invariant violation or timer fault, 2 invalid config, 1 other error |
+| `sweep <sweep.json> --out <dir> [--parallelism N]` | A sweep | 0 all clean, 3 any violation, 2 invalid spec |
+| `replay <trace.csv> --config <config.json> --out <dir>` | A run driven by a recorded trace | as `run` |
+| `check --out <dir>` | The analytic checks (floor, merge distance, lane bridging); writes `checks.json` | 0 all within tolerance, 4 any outside |
+| `memo <results-dir> --rules <memo-rules.json> --out <memo.md>` | Writes the decision memo from sweep results | 0, or 4 when a value can't be read (the row is marked) |
+
+## `portal-validator` CLI
+
+`portal-validator <map.json> [--json]`. Exit codes are in [map-format.md](map-format.md).
