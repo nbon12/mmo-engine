@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.Regionizer\MmoEngine.Regionizer.csproj" />
+  </ItemGroup>
+</Project>

@@ -23,3 +23,9 @@ node_modules/
 
 # Python bytecode
 __pycache__/
+
+# Simulator runs, test results and benchmark artifacts
+.runs/
+TestResults/
+BenchmarkDotNet.Artifacts/
+coverage/

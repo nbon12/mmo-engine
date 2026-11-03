@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.Regionizer\MmoEngine.Regionizer.csproj" />
+    <ProjectReference Include="..\MmoEngine.Maps\MmoEngine.Maps.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.Regionizer.Simulator.Tests" />
+  </ItemGroup>
+</Project>

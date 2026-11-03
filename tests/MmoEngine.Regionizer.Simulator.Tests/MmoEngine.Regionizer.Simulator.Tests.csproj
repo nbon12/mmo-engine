@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator.Cli\MmoEngine.Regionizer.Simulator.Cli.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="CsCheck" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+</Project>
