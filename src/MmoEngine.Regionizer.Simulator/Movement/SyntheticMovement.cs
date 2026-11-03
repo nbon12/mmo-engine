@@ -5,8 +5,14 @@ using MmoEngine.Regionizer.Simulator.Scheduling;
 
 namespace MmoEngine.Regionizer.Simulator.Movement;
 
-/// <summary>What the movement models share: the world mirror, the map, the fights and the configuration.</summary>
-internal sealed class MovementContext(WorldState state, MapLayout layout, FightTable fights, MovementConfig movement, double captureZoneRadius)
+/// <summary>What the movement models share: the world mirror, the map, the fights, the air layer and the configuration.</summary>
+internal sealed class MovementContext(
+    WorldState state,
+    MapLayout layout,
+    FightTable fights,
+    MovementConfig movement,
+    double captureZoneRadius,
+    AirLayerPolicy? airLayer = null)
 {
     public WorldState State { get; } = state;
 
@@ -20,6 +26,9 @@ internal sealed class MovementContext(WorldState state, MapLayout layout, FightT
 
     /// <summary>A capture point is occupied while infantry of its fight stand within this radius.</summary>
     public double CaptureZoneRadius { get; } = captureZoneRadius;
+
+    /// <summary>Which layer aircraft use at each altitude.</summary>
+    public AirLayerPolicy AirLayer { get; } = airLayer ?? AirLayerPolicy.None;
 
     public double Ceiling(EntityClass cls) => cls switch
     {
@@ -36,6 +45,10 @@ internal sealed class MovementContext(WorldState state, MapLayout layout, FightT
     /// <summary>When the next waypoint is picked: U[min, max] seconds after <paramref name="now"/>.</summary>
     public long NextRepick(DeterministicRandom random, long now) =>
         now + Math.Max(1, TimeBase.SecondsToSteps(random.NextDouble(Models.WaypointIntervalSecondsMin, Models.WaypointIntervalSecondsMax)));
+
+    /// <summary>Clamps a point into a fight's area: its own bounds (a bunker layer) or else the map.</summary>
+    public (double X, double Y) Clamp(Fight fight, double x, double y) =>
+        fight.Bounds is { } bounds ? bounds.Clamp(x, y) : Layout.Clamp(x, y);
 }
 
 /// <summary>One entity's synthetic movement model, with its own random stream.</summary>
@@ -43,8 +56,8 @@ internal abstract class MotionModel(DeterministicRandom random)
 {
     protected DeterministicRandom Random { get; } = random;
 
-    /// <summary>The entity's position at step 0.</summary>
-    public abstract (double X, double Y, double Z) Place();
+    /// <summary>The entity's layer and position at step 0.</summary>
+    public abstract (int Layer, double X, double Y, double Z) Place();
 
     /// <summary>The update for one tick, <paramref name="dtSeconds"/> after the previous one.</summary>
     public abstract MovementUpdate Step(int entityId, long now, double dtSeconds);
@@ -85,7 +98,10 @@ public sealed class SyntheticMovement : IMovementSource
     }
 }
 
-/// <summary>Infantry in a fight: waypoints in the fight disc, half near an objective; redeploys by two-step teleport.</summary>
+/// <summary>
+/// Infantry in a fight: waypoints in the fight disc (clamped to the fight's area), half near an
+/// objective; redeploys by two-step teleport. They stay on their fight's layer.
+/// </summary>
 internal sealed class InfantryModel(DeterministicRandom random, MovementContext context, Fight fight) : MotionModel(random)
 {
     private double _wx;
@@ -93,10 +109,10 @@ internal sealed class InfantryModel(DeterministicRandom random, MovementContext 
     private double _speed;
     private long _nextRepick;
 
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
         var (x, y) = PointInFight();
-        return (x, y, 0);
+        return (fight.Layer, x, y, 0);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -139,7 +155,7 @@ internal sealed class InfantryModel(DeterministicRandom random, MovementContext 
             var (ox, oy) = objectives[Random.NextInt(0, objectives.Count - 1)];
             var (px, py) = Planar.InDisc(Random, ox, oy, models.ObjectiveRadiusMetres);
             (px, py) = Planar.IntoDisc(px, py, fight.CenterX, fight.CenterY, fight.Radius);
-            (_wx, _wy) = context.Layout.Clamp(px, py);
+            (_wx, _wy) = context.Clamp(fight, px, py);
         }
         else
         {
@@ -153,7 +169,7 @@ internal sealed class InfantryModel(DeterministicRandom random, MovementContext 
     private (double X, double Y) PointInFight()
     {
         var (x, y) = Planar.InDisc(Random, fight.CenterX, fight.CenterY, fight.Radius);
-        return context.Layout.Clamp(x, y);
+        return context.Clamp(fight, x, y);
     }
 }
 
@@ -166,10 +182,10 @@ internal sealed class GroundVehicleModel(DeterministicRandom random, MovementCon
     private long _nextRepick;
     private bool _arrived = true;
 
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
         var (x, y) = PointOnAnnulus();
-        return (x, y, 0);
+        return (fight.Layer, x, y, 0);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -190,14 +206,15 @@ internal sealed class GroundVehicleModel(DeterministicRandom random, MovementCon
     private (double X, double Y) PointOnAnnulus()
     {
         var (x, y) = Planar.OnAnnulus(Random, fight.CenterX, fight.CenterY, fight.Radius, fight.Radius + context.Models.VehicleAnnulusMetres);
-        return context.Layout.Clamp(x, y);
+        return context.Clamp(fight, x, y);
     }
 }
 
 /// <summary>
 /// Aircraft in a fight: straight strafing passes through the fight's centre, entering and leaving
 /// <c>strafeEntryMetres</c> out, with a straight repositioning leg to the next entry point. Altitude
-/// is the fight altitude over the fight disc and the cruise altitude elsewhere.
+/// is the fight altitude over the fight disc and the cruise altitude elsewhere; with the air layer on,
+/// the altitude also picks the layer (<see cref="AirLayerPolicy"/>).
 /// </summary>
 internal sealed class StrafingAircraftModel(DeterministicRandom random, MovementContext context, Fight fight) : MotionModel(random)
 {
@@ -208,7 +225,7 @@ internal sealed class StrafingAircraftModel(DeterministicRandom random, Movement
     private bool _onPass;
     private double _speed;
 
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
         var (ex, ey, xx, xy) = NewPass();
         var f = Random.NextDouble();
@@ -218,7 +235,8 @@ internal sealed class StrafingAircraftModel(DeterministicRandom random, Movement
         _ty = xy;
         _onPass = true;
         _speed = context.DrawSpeed(Random, EntityClass.Aircraft);
-        return (x, y, Altitude(x, y));
+        var z = Altitude(x, y);
+        return (context.AirLayer.InitialLayer(fight.Layer, z), x, y, z);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -242,7 +260,8 @@ internal sealed class StrafingAircraftModel(DeterministicRandom random, Movement
             _speed = context.DrawSpeed(Random, EntityClass.Aircraft);
         }
 
-        return MovementUpdate.MoveTo(state.Layer[entityId], x, y, Altitude(x, y));
+        var z = Altitude(x, y);
+        return MovementUpdate.MoveTo(context.AirLayer.LayerFor(state.Layer[entityId], fight.Layer, z), x, y, z);
     }
 
     private (double EntryX, double EntryY, double ExitX, double ExitY) NewPass()
@@ -260,13 +279,13 @@ internal sealed class StrafingAircraftModel(DeterministicRandom random, Movement
             : context.Models.AircraftCruiseAltitudeMetres;
 }
 
-/// <summary>Point-to-point aircraft: fly between random bases at the cruise altitude.</summary>
+/// <summary>Point-to-point aircraft: fly between random bases at the cruise altitude, on the air layer when it is on.</summary>
 internal sealed class PointToPointAircraftModel(DeterministicRandom random, MovementContext context) : MotionModel(random)
 {
     private int _target;
     private double _speed;
 
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
         var bases = context.Layout.Bases;
         var from = Random.NextInt(0, bases.Count - 1);
@@ -275,7 +294,8 @@ internal sealed class PointToPointAircraftModel(DeterministicRandom random, Move
         var x = bases[from].X + (f * (bases[_target].X - bases[from].X));
         var y = bases[from].Y + (f * (bases[_target].Y - bases[from].Y));
         _speed = context.DrawSpeed(Random, EntityClass.Aircraft);
-        return (x, y, context.Models.AircraftCruiseAltitudeMetres);
+        var z = context.Models.AircraftCruiseAltitudeMetres;
+        return (context.AirLayer.InitialLayer(0, z), x, y, z);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -289,7 +309,8 @@ internal sealed class PointToPointAircraftModel(DeterministicRandom random, Move
             _speed = context.DrawSpeed(Random, EntityClass.Aircraft);
         }
 
-        return MovementUpdate.MoveTo(state.Layer[entityId], x, y, context.Models.AircraftCruiseAltitudeMetres);
+        var z = context.Models.AircraftCruiseAltitudeMetres;
+        return MovementUpdate.MoveTo(context.AirLayer.LayerFor(state.Layer[entityId], 0, z), x, y, z);
     }
 
     private int PickOther(int current)
@@ -305,16 +326,31 @@ internal sealed class PointToPointAircraftModel(DeterministicRandom random, Move
     }
 }
 
-/// <summary>Travellers: move along their lane at a fixed speed and turn around at its ends.</summary>
-internal sealed class TravellerModel(DeterministicRandom random, MovementContext context, Lane lane, double speed) : MotionModel(random)
+/// <summary>Where a clump of travellers starts: its centre along the lane, how far its members spread, and its direction (+1 or −1).</summary>
+internal readonly record struct TravellerClump(double CenterX, double SpreadMetres, int Direction);
+
+/// <summary>
+/// Travellers: move along their lane at a fixed speed and turn around at its ends. A traveller starts
+/// at a uniform point with a random direction or, in a clump, within the clump's spread of its centre
+/// heading the clump's way.
+/// </summary>
+internal sealed class TravellerModel(DeterministicRandom random, MovementContext context, Lane lane, double speed, TravellerClump? clump = null)
+    : MotionModel(random)
 {
     private int _direction = 1;
 
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
+        if (clump is { } c)
+        {
+            var offset = Random.NextDouble(-c.SpreadMetres, c.SpreadMetres);
+            _direction = c.Direction;
+            return (0, Math.Min(Math.Max(c.CenterX + offset, lane.StartX), lane.EndX), lane.Y, 0);
+        }
+
         var x = lane.StartX + (Random.NextDouble() * lane.Length);
         _direction = Random.Chance(0.5) ? 1 : -1;
-        return (x, lane.Y, 0);
+        return (0, x, lane.Y, 0);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -336,13 +372,13 @@ internal sealed class TravellerModel(DeterministicRandom random, MovementContext
     }
 }
 
-/// <summary>Capture points: static; occupied while infantry of the fight at its base stand within the zone radius.</summary>
+/// <summary>Capture points: static on their base's layer; occupied while infantry of the fight at its base stand within the zone radius.</summary>
 internal sealed class CapturePointModel(DeterministicRandom random, MovementContext context, Base atBase, int objective) : MotionModel(random)
 {
-    public override (double X, double Y, double Z) Place()
+    public override (int Layer, double X, double Y, double Z) Place()
     {
         var (x, y) = atBase.Objectives[objective];
-        return (x, y, 0);
+        return (atBase.Layer, x, y, 0);
     }
 
     public override MovementUpdate Step(int entityId, long now, double dtSeconds)
@@ -378,5 +414,80 @@ internal sealed class CapturePointModel(DeterministicRandom random, MovementCont
         }
 
         return false;
+    }
+}
+
+/// <summary>
+/// A vehicle column's route: back and forth along the straight line between two bases at a fixed
+/// speed. A position is a pure function of time, so the column keeps its spacing at any tick rate.
+/// </summary>
+internal sealed class ColumnRoute
+{
+    public ColumnRoute(double ax, double ay, double bx, double by, double startArcMetres, double speedMetresPerSecond)
+    {
+        AX = ax;
+        AY = ay;
+        BX = bx;
+        BY = by;
+        StartArcMetres = startArcMetres;
+        Speed = speedMetresPerSecond;
+        Length = Math.Sqrt(Planar.DistanceSquared(ax, ay, bx, by));
+    }
+
+    public double AX { get; }
+
+    public double AY { get; }
+
+    public double BX { get; }
+
+    public double BY { get; }
+
+    /// <summary>Where along the loop A → B → A the column's leader is at step 0, in metres.</summary>
+    public double StartArcMetres { get; }
+
+    public double Speed { get; }
+
+    /// <summary>|AB| in metres; one loop is twice this.</summary>
+    public double Length { get; }
+
+    /// <summary>The point <paramref name="behindMetres"/> behind the leader along the loop at base step <paramref name="step"/>.</summary>
+    public (double X, double Y) At(long step, double behindMetres)
+    {
+        if (Length <= 0)
+        {
+            return (AX, AY);
+        }
+
+        var loop = 2 * Length;
+        var arc = (StartArcMetres + (Speed * TimeBase.StepsToSeconds(step)) - behindMetres) % loop;
+        if (arc < 0)
+        {
+            arc += loop;
+        }
+
+        if (arc <= Length)
+        {
+            var f = arc / Length;
+            return (AX + ((BX - AX) * f), AY + ((BY - AY) * f));
+        }
+
+        var g = (arc - Length) / Length;
+        return (BX + ((AX - BX) * g), BY + ((AY - BY) * g));
+    }
+}
+
+/// <summary>A ground vehicle in a column: it follows the column's route <paramref name="behindMetres"/> behind the leader.</summary>
+internal sealed class ColumnVehicleModel(DeterministicRandom random, MovementContext context, ColumnRoute route, double behindMetres) : MotionModel(random)
+{
+    public override (int Layer, double X, double Y, double Z) Place()
+    {
+        var (x, y) = route.At(0, behindMetres);
+        return (0, x, y, 0);
+    }
+
+    public override MovementUpdate Step(int entityId, long now, double dtSeconds)
+    {
+        var (x, y) = route.At(now, behindMetres);
+        return MovementUpdate.MoveTo(context.State.Layer[entityId], x, y, 0);
     }
 }

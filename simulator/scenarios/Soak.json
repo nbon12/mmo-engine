@@ -110,8 +110,7 @@
     "instantActionShare": 0.3,
     "surfaceFight": 600,
     "undergroundFight": 300,
-    "doorCycleSeconds": 60,
-    "doorOpenSeconds": 20
+    "undergroundLayer": 1
   },
   "trace": {
     "record": null,

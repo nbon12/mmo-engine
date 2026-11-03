@@ -48,10 +48,10 @@
     }
   },
   "map": {
-    "widthMetres": 8000,
-    "heightMetres": 8000,
-    "lanes": 3,
-    "basesPerLane": 4,
+    "widthMetres": 2000,
+    "heightMetres": 2000,
+    "lanes": 1,
+    "basesPerLane": 1,
     "file": "simulator/maps/stacked-base.json"
   },
   "population": {
@@ -80,6 +80,7 @@
   "scenarioParameters": {
     "surfaceFight": 600,
     "undergroundFight": 300,
+    "undergroundLayer": 1,
     "composition": {
       "infantry": 0.8,
       "groundVehicle": 0.15,
@@ -87,9 +88,7 @@
     },
     "fightRadiusPerSqrtPlayer": 8,
     "objectivesPerBase": 3,
-    "objectiveSpreadMetres": 100,
-    "doorCycleSeconds": 60,
-    "doorOpenSeconds": 20
+    "objectiveSpreadMetres": 100
   },
   "trace": {
     "record": null,

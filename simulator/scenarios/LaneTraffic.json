@@ -81,6 +81,8 @@
     "laneLengthMetres": 600,
     "travellers": 60,
     "travellerPlacement": "Uniform",
+    "clumpSize": 5,
+    "clumpSpreadMetres": 30,
     "fights": [
       500,
       500
@@ -91,9 +93,9 @@
     ],
     "pointToPointAircraft": 0,
     "composition": {
-      "infantry": 0.8,
+      "infantry": 0.85,
       "groundVehicle": 0.15,
-      "aircraft": 0.05
+      "aircraft": 0
     },
     "fightRadiusPerSqrtPlayer": 8,
     "objectivesPerBase": 3,
