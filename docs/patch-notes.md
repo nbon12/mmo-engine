@@ -20,6 +20,59 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-03 — Regionizer core library and offline simulator (Pre-Phase 1, sub-spec 1)
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #47 · Issue: #13
+
+### Behavior and contract changes
+
+The first application code in the repo:
+
+- **`src/MmoEngine.Regionizer`**: the regionizer core that sub-spec 10 runs inside the continent server. It has no package dependencies, and an architecture test enforces that.
+  - Claims, section- or position-anchored, through same-area neighbours and open portals (research D1, D2).
+  - A merge gap of 0 or 1, where 1 means *adjacent* claims merge (D3).
+  - Folia-order merge-later and tick end, split damping, islands, guarded state moves, and timers in tick-counter (default) and absolute modes (D4–D6).
+  - Portal toggles made mid-tick are deferred to the last tick end.
+  - Layer changes happen only through an open portal or a direct-entry (air) layer.
+  - Heavy projectiles keep their firing region.
+  - A region with no entities dies at its tick end.
+  - `InvariantChecker` checks rules 1–6 with an independent claim walk.
+- **`src/MmoEngine.Maps`** and **`portal-validator`**: map format version 1 (`contracts/map-format.md`), with Leak, DeadPortal, MissingPolicy and SealingFailure findings. Exit codes are 0, 1 and 2. Diagnostics go to stderr as Serilog JSON.
+- **`src/MmoEngine.Regionizer.Simulator`** and **`regionizer-sim`** (`run`, `sweep`, `replay`, `check`, `memo`):
+  - seeded runs, configurable tick rates, and lockstep and interleaved scheduling;
+  - monitors at every base step;
+  - the nine scenarios;
+  - sweeps, trace replay, the analytic checks and the decision memo.
+
+  Run folders follow `contracts/run-output.md` (format version 1); sub-spec 2's loaders read them.
+- **CI**: `.github/workflows/dotnet.yml` builds, checks `dotnet format`, runs every test with coverage, and fails when a changed `src/` file is under 95% line coverage (`tools/coverage_gate.py`).
+
+### Shared pieces to reuse
+
+- **The core** (`MmoEngine.Regionizer`): reference it alone. Its public API is `contracts/regionizer-api.md`. Run `InvariantChecker.Check` after ticks in any simulation test.
+- **`DeterministicRandom`**: SplitMix64 and xoshiro256** with named and per-entity streams. Use it for any seeded randomness in simulated code. `System.Random`, trigonometry and `Math.Pow` are banned there by `BannedApiTests`.
+- **The run-folder, map, trace and sweep-index formats**: `contracts/`.
+
+### Assumptions that no longer hold
+
+- "The repo has no application code or .NET CI": both exist now.
+
+### Open follow-ups
+
+- **.NET 10 (dated)**: the SDK is pinned to .NET 9 because the .NET 10 SDK isn't installed on the machine that ran this work. **.NET 9 support ends on 2026-11-10.** Moving means changing `global.json` and `TargetFramework`, and it also unblocks CsCheck 5.x.
+- **Sonar and Codecov**: the constitution asks for both, and both need third-party accounts and repository secrets, which no agent can create. To turn them on:
+  1. create the SonarCloud and Codecov projects for `nbon12/mmo-engine`;
+  2. add the `SONAR_TOKEN` and `CODECOV_TOKEN` secrets.
+
+  Until then, CI enforces the 95% changed-file coverage itself.
+- **`AnalysisLevel latest-recommended`**: not turned on, because doing it inside this PR would add a large unrelated cleanup. It's a follow-up PR of its own.
+- **Decision memo**: `docs/simulator/decision-memo.md` comes from a *first-pass* sweep at 9,000 ticks and 5 seeds per cell, not the issue's 18,000 ticks and 10 seeds. The full-scale specs are in `simulator/sweeps/`.
+  - Its values for open decision 1 (section size and claim radius per class) are recommendations recorded under Principle VI. They stay in configuration.
+  - The target fight size is a reading only; open decision 2 is set by load tests.
+- **Lockstep bookkeeping**: lockstep runs each region's tick to completion before the next, so its bookkeeping readings exclude merge-later work. An interleaved bookkeeping reading is a follow-up.
+- **Portal deferral in the server**: the core applies a deferred portal toggle when no region is ticking. Sub-spec 10's tick pool may never reach that point, so it must pick a guaranteed point.
+- **Sub-spec 2** (the telemetry and test harness) is the next part of #13. It covers ClickHouse loading of these run folders, the fixed runner class and golden runs.
+
 ## 2026-11-03 — @claude mention agent on GitHub
 
 Spec: [specs/001-claude-mention-agent/spec.md](../specs/001-claude-mention-agent/spec.md) · PR: #35
