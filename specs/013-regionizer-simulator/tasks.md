@@ -40,7 +40,8 @@ automated checks are green.
   file under `src/` that the PR adds or changes is under 95% line coverage. Add its tests in
   `tests/workflows/test_coverage_gate.py`.
 - [ ] T004 [P] Banned-API check for the simulated path, as a test: `tests/MmoEngine.Regionizer.Tests/Architecture/BannedApiTests.cs`
-  scans `src/MmoEngine.Regionizer/**` and `src/MmoEngine.Regionizer.Simulator/Movement/**` for
+  scans `src/MmoEngine.Regionizer/**`, `src/MmoEngine.Maps/**` and every folder of
+  `src/MmoEngine.Regionizer.Simulator/` except `Output/` and `Analysis/` for
   `Math.Sin|Cos|Tan|Atan|Exp|Log|Pow`, `MathF.`, `lock (`, `Monitor.`, `DateTime.Now|UtcNow` and
   `System.Random` (FR-016, FR-019). A real banned-API analyzer is N/A here: there are no gameplay
   assemblies yet.
@@ -86,7 +87,8 @@ after every step.
   - claims pass through open portals across layers;
   - a CsCheck property that the fast path equals the walk (FR-003, D2)
 - [ ] T011 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Regions/MergeTests.cs`:
-  - **US1.1** `ClaimsSharingASectionMergeAtTickEnd_CauseIsMoverClass`;
+  - **US1.1** `ClaimsSharingASectionMergeAtTickEnd_CauseIsMoverClass`, where the mover is a ground
+    vehicle and the cause entity ID is asserted;
   - **US1.9** Theory `MergeGapDecidesWhetherOneSectionApartMerges`;
   - a three-region chain merge ends as one region whatever the order;
   - the lower ID absorbs;
@@ -94,14 +96,17 @@ after every step.
 - [ ] T012 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Regions/MergeLaterTests.cs`:
   - **US1.2** `TickingRegionNeverGrows_TransientAbsorbedAtTickEnd`;
   - a region that owes two ticking partners becomes transient and is absorbed by the later tick end;
-  - a pending merge on a region that drops to 20 Hz still completes at its tick end (FR-006, FR-007)
+  - a pending merge on a region that drops to 20 Hz still completes at its tick end;
+  - a ticking region owing merges to two non-ticking regions absorbs both at its tick end in
+    ascending ID order (FR-006, FR-007)
 - [ ] T013 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Regions/TickEndAndSplitTests.cs`:
   - **US1.3** `TwoIslandsMeetingDampingSplit_EntitiesAndTimersFollowSections`;
   - **US1.4** `RegionYoungerThanTminDoesNotSplit`;
   - a Theory over N_min and p_dead thresholds;
   - dead sections are kept until the split check;
   - an island holding only dead sections creates no child;
-  - the largest island keeps the parent ID (FR-007–FR-010)
+  - the largest island keeps the parent ID and its age, while new children start at age zero;
+  - the Theory includes a region exactly *T*min old (FR-007–FR-010)
 - [ ] T014 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Regions/RegionStateTests.cs`:
   - **US1.6** a Theory over every state pair, `IllegalTransitionIsRejectedAndStateUnchanged`;
   - legal moves succeed (FR-011)
@@ -112,12 +117,18 @@ after every step.
     20 Hz (FR-012)
 - [ ] T016 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Portals/PortalToggleTests.cs`:
   - **US1.5** `ClosedPortalSeparatesRegions_OpeningMergesAtNextTickEnd`;
-  - closing a portal allows a split once damping holds (FR-013)
+  - closing a portal allows a split once damping holds;
+  - `PortalToggledDuringTickTakesEffectAtTickEnd` (FR-013)
 - [ ] T017 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Entities/EntityLifecycleTests.cs`:
   - a two-step teleport never leaves an entity in two regions;
   - an unoccupied capture point claims only its own section;
   - a heavy projectile claims nothing;
-  - removing every entity kills the region (FR-002, FR-003, edge cases)
+  - removing every entity kills the region at its next tick end, even when the region is smaller
+    than *N*min and younger than *T*min;
+  - an entity in transit across a step boundary has no owner and the checker stays clean;
+  - `LayerChangeOnlyThroughOpenPortalOrDirectEntryLayer`: a move to another layer is rejected unless
+    it crosses an open portal from the entity's section, or either layer allows direct entry
+    (FR-001, FR-002, FR-003, edge cases)
 - [ ] T018 [P] [US1] `tests/MmoEngine.Regionizer.Tests/Invariants/InvariantCheckerTests.cs`: one Fact
   per rule (1–6), each corrupting state through the internal test hooks and asserting the exact rule
   reported; a clean state reports none (FR-014)
@@ -143,6 +154,9 @@ after every step.
   portals, `RegionizerStats` and serialized-cost timestamps in `src/MmoEngine.Regionizer/Regionizer.cs`
 - [ ] T027 [US1] `InvariantChecker` with an independent claim walk, plus the recorded rule 3 and rule 4
   breaches, in `src/MmoEngine.Regionizer/Invariants/`
+- [ ] T079 [US1] Defer portal toggles made while any region is ticking until the last ticking region's
+  tick ends (FR-013). Enforce the layer-change rule in `MoveEntity`, using `LayerSpec.AllowsDirectEntry`
+  for the air layer (FR-001). Kill regions with no entities at tick end, whatever the damping (FR-008).
 
 **Checkpoint**: All US1 tests are green.
 
@@ -159,23 +173,34 @@ folder matches contracts/run-output.md.
 ### Tests for User Story 2 ⚠️
 
 - [ ] T028 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Config/ConfigValidationTests.cs`:
-  - **US2.4** a Theory over invalid fields: section size not a power of two, merge gap 2, negative
-    radius, p_dead 101, population over the limit, unknown scenario, bad environment name;
-  - each case fails with the field's JSON path;
-  - valid defaults load for every scenario (FR-026)
+  - **US2.4** a Theory, `InvalidConfigIsRefusedNamingTheField`, over invalid fields:
+    - section size not a power of two, merge gap 2, negative radius, p_dead 101;
+    - population over the limit, unknown scenario, bad environment name;
+    - a base step rate that isn't a multiple of the tick rates.
+  - Each case fails with the field's JSON path.
+  - A map file the portal validator rejects (`simulator/maps/test/seeded-leaks.json`) gives exit
+    code 2 naming `map.file`.
+  - Valid defaults load for every scenario (FR-018, FR-026).
 - [ ] T029 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Determinism/DeterminismTests.cs`:
   - **US2.1** `SameSeedInSeparateProcessesGivesIdenticalHashes` (two CLI processes);
   - **US2.2** `DifferentSeedsGiveDifferentHashes`;
   - entity and region iteration is in ID order (FR-017, FR-019)
 - [ ] T030 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Output/RunOutputTests.cs`:
-  - **US2.3** manifest fields, one ticks row per tick, the event columns and summary percentiles;
+  - **US2.3** `RunOutputHasManifestTicksEventsAndSummary`: manifest fields, one ticks row per tick,
+    the event columns and summary percentiles;
   - the `_incomplete` marker is present during a run and absent after;
-  - a rerun clears the folder (FR-024)
+  - a rerun clears a run folder;
+  - a non-empty folder that is not a run folder is refused with exit code 2 and nothing deleted
+    (FR-024)
 - [ ] T031 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Metrics/MetricsTests.cs`:
   - the fusion definition (each side holds a tag the other lacks);
   - the region count counts players only;
-  - cross-region pairs use the deferred and read-only ranges, each pair under the larger range;
+  - cross-region pairs use the deferred and read-only ranges, each pair counted once under the
+    smallest range it falls within (a 200 m pair counts as deferred);
+  - fused fight pairs;
   - an oversized fusion is flagged;
+  - merge rate by causing class, split rate, split latency, section churn, region lifetime, and
+    largest region size and share, each against exact values from a scripted run;
   - percentiles use nearest rank (FR-024)
 - [ ] T032 [P] [US2] `tests/MmoEngine.Regionizer.Simulator.Tests/Movement/MovementModelTests.cs`: a
   Theory over classes:
@@ -203,6 +228,9 @@ folder matches contracts/run-output.md.
   git SHA and runtime capture in `src/MmoEngine.Regionizer.Simulator/Output/`
 - [ ] T040 [US2] `regionizer-sim run` with Serilog compact JSON on stderr in
   `src/MmoEngine.Regionizer.Simulator.Cli/Program.cs`
+- [ ] T080 [US2] Configurable tick rates (`scheduling.baseStepHz`, `tickHz`, `degradedTickHz`, validated
+  and recorded in the manifest). The state hash includes each entity's section. Timer-overhead
+  calibration for bookkeeping cost. Run-folder safety (refuse non-run folders).
 
 **Checkpoint**: US2 tests are green, and Baseline runs end to end.
 
@@ -220,8 +248,8 @@ run at its tick. A shortened Soak is clean, and every timer fires exactly once.
 
 - [ ] T041 [P] [US3] `tests/MmoEngine.Regionizer.Simulator.Tests/Scheduling/InterleavedSchedulingTests.cs`:
   **US3.1** `MigrationInterleavedHitsTwentyHzAndMergeLaterWithZeroViolations`. It checks at least one
-  20 Hz tick, at least one merge requested against a ticking region, zero violations and identical
-  rerun hashes (FR-018).
+  20 Hz tick, at least one merge between regions with different tick counters, zero violations and
+  identical rerun hashes (FR-018).
 - [ ] T042 [P] [US3] `tests/MmoEngine.Regionizer.Simulator.Tests/Monitors/MonitorTests.cs`:
   - **US3.2** `SectionInTwoRegionsFailsRunAtThatTickWithRuleAndSeed`;
   - the timer monitor reports a deliberately late timer through its test hook (FR-020)
@@ -253,7 +281,9 @@ identical at any parallelism. A replayed trace reproduces the hashes.
 
 - [ ] T047 [P] [US4] `tests/MmoEngine.Regionizer.Simulator.Tests/Scenarios/ScenarioTests.cs`:
   - **US4.1** a Theory over all nine scenarios, `EachScenarioRunsCleanAndWritesOutput`;
-  - **US4.5** `AirLayerPutsHighAircraftOnTheirOwnLayer` (FR-023)
+  - **US4.5** `AirLayerPutsHighAircraftOnTheirOwnLayer`, which also asserts aircraft-caused merges
+    above 0 with and without the layer;
+  - **US4.6** a Theory over all nine scenarios, `EachScenarioRerunGivesIdenticalHashes` (FR-023, SC-001)
 - [ ] T048 [P] [US4] `tests/MmoEngine.Regionizer.Simulator.Tests/Sweep/SweepDriverTests.cs`:
   - **US4.2** `SweepProducesOneReproducibleResultPerCellAndSeed`;
   - **US4.3** `SweepResultsDoNotDependOnParallelism`;
@@ -325,8 +355,9 @@ against the core. The memo has every row with its evidence.
     0.04%, 4% and 74%) (FR-031)
 - [ ] T061 [P] [US6] `tests/MmoEngine.Regionizer.Simulator.Tests/Analysis/SimulatorAgreementTests.cs`:
   - **US6.2** a Theory over anchoring and gap, `MergeDistanceBoundsHoldAgainstTheCore`;
-  - lane-bridging simulation within 10 percentage points at each step, with at least 200 trials
-    (FR-031, SC-006)
+  - lane-bridging simulation within 10 percentage points at each step, with at least 200 trials;
+  - **US6.1** (second part) `ClaimRadiusFloorHoldsInTheCore_BelowFloorFails`, the floor check of
+    research D16 (FR-031, SC-006)
 - [ ] T062 [P] [US6] `tests/MmoEngine.Regionizer.Simulator.Tests/Analysis/MemoGeneratorTests.cs`:
   **US6.4** `MemoHasARowPerValueWithEvidence`, from a small generated result set (FR-032)
 
@@ -373,7 +404,10 @@ allocate nothing.
 ## Phase 10: Polish & Cross-Cutting Concerns
 
 - [ ] T069 Sweep specs for every row of D15 in `simulator/sweeps/*.json`, plus
-  `simulator/sweeps/memo-rules.json`
+  `simulator/sweeps/memo-rules.json`:
+  - the population per row as D15 sets it;
+  - the measured options (merge gap 0 vs 1, tick-counter vs absolute timers) from Migration in
+    interleaved mode
 - [ ] T070 Run the sweeps (Release, all cores). Commit their summary tables to `docs/simulator/results/`
   and the generated `docs/simulator/decision-memo.md`. Raw run folders stay local. (SC-005)
 - [ ] T071 Run the 24-hour simulated Soak in interleaved mode, and record its manifest and summary in

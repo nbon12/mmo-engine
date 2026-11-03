@@ -10,7 +10,8 @@ path, for example `regionizer.sectionSize: must be a power of two between 1 and 
 {
   "scenario": "Baseline",
   "seed": 1,
-  "scheduling": { "mode": "Lockstep", "dropTo20HzProbability": 0.01, "dropTicksMin": 5, "dropTicksMax": 60 },
+  "scheduling": { "mode": "Lockstep", "baseStepHz": 60, "tickHz": 30, "degradedTickHz": 20,
+                  "dropTo20HzProbability": 0.01, "dropTicksMin": 5, "dropTicksMax": 60 },
   "durationTicks": 18000,
   "regionizer": {
     "sectionSize": 16, "anchoring": "Section", "mergeGap": 0,
@@ -31,6 +32,10 @@ path, for example `regionizer.sectionSize: must be a power of two between 1 and 
   "trace": { "record": null, "replay": null }
 }
 ```
+
+`baseStepHz` must be a multiple of `tickHz` and of `degradedTickHz`, and `degradedTickHz` must be
+lower than `tickHz` (exit 2 otherwise). `dropTo20HzProbability` is the per-tick-end probability of
+dropping to `degradedTickHz`; the name keeps the issue's wording.
 
 The defaults for every scenario live in `simulator/scenarios/<scenario>.json`. A run config is
 deep-merged over them. The environment name (`DOTNET_ENVIRONMENT`) must be Development, Dev, Test,

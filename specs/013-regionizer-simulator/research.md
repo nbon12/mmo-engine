@@ -55,7 +55,10 @@ simulator refuses to run a map that fails validation.
 
 **Decision**: When an entity's claim adds a section S, the regions that must join the entity's region
 are the owner of S (if any, live or dead), plus, with a merge gap of 1, the owners of the
-eight-neighbours of S reachable under D2. A merge runs at once when neither region is ticking.
+eight-neighbours of S reachable under D2. So a gap of 1 means claims in *adjacent* sections merge
+without sharing one. This matches the issue's "a one-section merge gap adds up to another √2 × s",
+the extra distance between points in two adjacent sections. A gap of one empty section *between*
+claims would add up to 2√2·s. A merge runs at once when neither region is ticking.
 Otherwise the pair is recorded as a pending merge and runs at the first tick end where both regions
 are not ticking. The lower region ID absorbs the higher, so the older region keeps its age.
 
@@ -78,7 +81,12 @@ sections disappear at the next split check anyway, so we follow Folia.
    gap 1 so are eight-neighbour live sections. Each island becomes a child region with the parent's
    tick counter. The largest island, ties broken by lowest section index, keeps the parent's ID.
 
-Dead sections are dropped only when the split check runs, as in Folia.
+Dead sections are dropped only when the split check runs, as in Folia. There is one exception: a
+region with no entities left drops all its sections and dies at its tick end, whatever the damping
+thresholds. Without this, a small emptied region would keep dead sections that still force merges.
+
+Ages: the child that keeps the parent's ID keeps `CreatedAt`. New children take `Now`, so they cannot
+split again until they are *T*min old. Age is compared with "at least" (≥ *T*min).
 
 **Rationale**: Folia's order and damping (recalculation count and max dead section percent), plus the
 issue's minimum age. Keeping the parent's ID on the largest child keeps region IDs stable through
@@ -111,8 +119,16 @@ deadlines would need a constitution amendment.
 
 ## D7. Scheduling and the time base
 
-**Decision**: The continent time base is an integer count of base steps at 60 Hz. A region ticking at
-30 Hz is due every 2 steps, and at 20 Hz every 3.
+**Decision**: The continent time base is an integer count of base steps. The base step rate, normal
+tick rate and degraded tick rate are configuration (`scheduling.baseStepHz`, `tickHz`,
+`degradedTickHz`, defaulting to 60, 30 and 20; Principle VI lists tick rates as tuning values). The
+base rate must be a multiple of both tick rates. With the defaults, a region ticking at 30 Hz is due
+every 2 steps, and at 20 Hz every 3.
+
+Portal toggles requested while any region is ticking are queued by the library and applied when the
+last ticking region's tick ends (FR-013). Toggles requested with no region ticking apply at once.
+This keeps "no claim changes mid-tick" a library property, so the continent server, which has no
+global step boundary, gets it too.
 - **Lockstep**: every 2 steps, all ready regions start in ID order, each runs its tick body, then all
   end in ID order.
 - **Interleaved**: at each base step, the due regions' start and end events are shuffled into a random
@@ -139,16 +155,21 @@ is what makes merges against ticking regions happen in interleaved mode.
   under IEEE 754. There are no transcendental functions in the simulated path. Random directions use
   rejection sampling in the unit disc, and turning uses a rational rotation. A source-scan test bans
   `Math.Sin|Cos|Tan|Atan|Exp|Log|Pow` and `MathF.` in the core and simulator movement code.
-- The state hash is XxHash64 over, for each region in ID order: ID, state, tick counter, sorted
-  section keys, sorted entity IDs, and timers sorted by ID. It is hashed per tick and chained, so a
-  row written every *n* ticks still covers all of them.
+- The state hash is XxHash64 over two parts. First, for each region in ID order: ID, state, tick
+  counter, sorted section keys, sorted entity IDs, and timers sorted by ID. Second, for each entity in
+  ID order: its section index (−1 in transit), so positions that diverge across a section edge change
+  the hash. It is hashed per tick and chained, so a row written every *n* ticks still covers all of
+  them.
 
 **Rationale**: FR-016, FR-017 and FR-019, and the clarification that hashes must match on one
 machine with the design open to matching across machines. Cross-machine golden runs are sub-spec 2.
 
 ## D9. Bookkeeping cost
 
-**Decision**: `Stopwatch.GetTimestamp` wraps every regionizer call in a step. Serialized cost covers
+**Decision**: `Stopwatch.GetTimestamp` wraps every regionizer call in a step. At startup the
+simulator measures the cost of one timestamp pair, records it in the manifest, and subtracts it per
+call, so the timing overhead doesn't inflate the budget reading. The BenchmarkDotNet results
+cross-check the numbers. Serialized cost covers
 the operations that touch more than one region and would hold the regionizer's lock in the server:
 merges, splits, transient-region creation and claims landing on another region's section. Total cost
 is everything. Both are recorded per step and summarized at p50, p95, p99 and max against the
@@ -156,7 +177,10 @@ configured budget (1 ms p99, an estimate).
 
 ## D10. Metric sampling
 
-**Decision**: Most metrics are recorded every tick. Two are sampled at a configurable interval:
+**Decision**: Most metrics are recorded every tick: region count, largest region size and share,
+merges by causing class, splits, fusions, fused fight pairs, section churn, region deaths with
+lifetime, and bookkeeping cost. Splits have no causing class, so the split rate is reported as a
+total. Two metrics are sampled at a configurable interval:
 island detection for split latency (default every tick) and cross-region pairs (default every 30
 ticks, using a uniform grid of 1,000 m cells). This is because their per-tick cost grows with fight
 size squared. The interval is in the manifest, and split latency is reported at that resolution.
@@ -212,8 +236,10 @@ FsCheck was rejected because it is BSD-3-Clause, which is not on the approved li
 
 **Decision**: Pin .NET 9 (`global.json` 9.0.300, `rollForward: latestPatch`). The constitution says
 the SDK SHOULD be the current LTS (.NET 10), but it isn't installed on the machine running this
-unattended work, and installing it needed an approval that didn't arrive. Moving to .NET 10 is
-recorded as a follow-up. It's a `global.json` and `TargetFramework` change.
+unattended work. Downloading and installing an SDK needs the maintainer's approval, which didn't
+arrive. **.NET 9 support ends on 2026-11-10**, so moving to .NET 10 is a dated follow-up (by
+2026-11-10, in the patch notes). The move is a `global.json` and `TargetFramework` change, and it also
+unblocks CsCheck 5.x.
 
 ## D15. Reading the results (memo rules)
 
@@ -231,3 +257,37 @@ recorded as a follow-up. It's a `global.json` and `TargetFramework` change.
 Every row records the curve (x, mean, min and max over seeds), its margin, the seeds and the run IDs,
 and is labeled a measurement. Section size and claim radius rows are recommendations recorded under
 Principle VI (open decision 1).
+
+- **Population per row**: the claim radius, spacing, lane-bridging, split-damping, air-layer and
+  target-fight-size rows run at `population.total` = 2,000, the constitution's continent cap. The
+  section-size row and the bookkeeping budget run at 5,000, the issue's stress bound. Each row
+  records its population.
+- **Constitution reading**: the claim-radius and spacing rows also record the region-count and
+  largest-share curves, which the constitution's Validation program reads, and note where region
+  count collapses. Fused fight pairs (the number of fight-tag pairs sharing a region) is the
+  operational form of that collapse. The first fused pair is the point at which fights stop staying
+  separate, which is what region count collapsing means once travellers' small regions are
+  discounted.
+- **Measured options** (no recommendation needed, each reported side by side): merge gap 0 vs 1,
+  and tick-counter vs absolute timers, from the Migration scenario in interleaved mode (merge and
+  split rates, fusions and timer faults).
+
+## D16. Formulas and the floor check
+
+- **Claim-radius floor**: r_min = d_interact + v_rel,max · Δt, with Δt = 1 / tickHz. For example,
+  two aircraft closing at 240 m/s at 30 Hz give 8 m above interaction range.
+- **Merge distance**: d_max = rA + rB + k·√2·s, with k = 3 section-anchored and 1 position-anchored,
+  plus √2·s with a merge gap of 1.
+- **Lane bridging**: P_bridge ≈ (1 − e^(−λd))^(λℓ + 1). With ℓ = 600 m and d = 30 m it gives
+  0.04%, 4% and 74% at 30, 60 and 120 travellers. The test tolerance for the worked examples is
+  agreement when rounded to the precision the issue shows. Analysis code may use `Math.Exp`, because
+  it is outside the simulated path.
+- **Floor check in the simulator**: an aircraft A with claim radius r closes head-on on an entity B
+  that claims only its own section (an unoccupied capture point) at v_rel. At every tick boundary
+  where |AB| ≤ d_interact + v_rel·Δt (they could interact within the next tick), they must share a
+  region.
+  - With r = r_min there must be zero failures, because the claim always covers B's section.
+  - With r < r_min − k·√2·s (below the floor by more than the section slack) at least one boundary
+    must fail, which shows the floor is needed.
+
+  The check runs over random lateral offsets inside sections.

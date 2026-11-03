@@ -26,8 +26,9 @@ Answered by the agent with the recommended option (unattended run, Principle XII
   splits (copied counter). In absolute mode the timer fires at the first tick of its owning region at
   or after the deadline on the continent time base.
 - Q: What ranges does the cross-region pairs metric count? → A: Two configurable placeholder ranges,
-  300 m for deferred and 1,000 m for read-only interactions; a pair is counted under the larger range
-  it falls within.
+  300 m for deferred and 1,000 m for read-only interactions. A pair is counted once, under the
+  smallest range it falls within: deferred up to 300 m, read-only from 300 m to 1,000 m. (Corrected by
+  analysis: counting under the larger range would always leave the deferred count at zero.)
 - Q: What tolerances do the analytic checks use? → A: The claim-radius floor matches exactly; the
   merge distance is checked as exact bounds with zero violations allowed; the lane-bridging estimate
   matches within 10 percentage points at each traffic step, with uniformly random travellers and at
@@ -58,15 +59,16 @@ the invariant checker running after every tick.
 
 **Acceptance Scenarios**:
 
-1. **Given** two infantry entities in separate regions whose claims are three sections apart, **When**
-   one moves until their claims share a section and the tick ends, **Then** both entities belong to
-   one region and the merge is recorded with the mover's class as its cause.
+1. **Given** an infantry entity and a ground vehicle in separate regions whose claims are three
+   sections apart, **When** the ground vehicle moves until their claims share a section and the tick
+   ends, **Then** both entities belong to one region, and the merge is recorded with the ground
+   vehicle's class and entity ID as its cause.
 2. **Given** a region that is ticking, **When** a new entity's claim lands on sections beside it
    during that tick, **Then** the ticking region's section set does not change during the tick, the
    new sections form a transient region recorded on the ticking region, and the transient region is
    absorbed when the ticking region's tick ends.
 3. **Given** a region holding two islands of entities that meets the split damping thresholds (at
-   least *N*min sections, at least *p*dead of them dead, older than *T*min), **When** its tick ends,
+   least *N*min sections, at least *p*dead of them dead, at least *T*min old), **When** its tick ends,
    **Then** it splits into two child regions, each entity belongs to the child that owns its section,
    and each child carries the parent's timers for its entities.
 4. **Given** a region holding two islands that is younger than *T*min, **When** its tick ends, **Then**
@@ -83,8 +85,9 @@ the invariant checker running after every tick.
 8. **Given** section-anchored claims, **When** an entity moves within one section, **Then** its claimed
    sections do not change; **Given** position-anchored claims, **When** the same entity moves far
    enough that its radius covers a new section, **Then** its claimed sections change on that tick.
-9. **Given** two claims separated by exactly one unclaimed section, **When** the tick ends with a merge
-   gap of 1, **Then** their regions merge; **When** the merge gap is 0, **Then** they stay separate.
+9. **Given** two claims in adjacent sections that share no section, **When** the tick ends with a
+   merge gap of 1, **Then** their regions merge; **When** the merge gap is 0, **Then** they stay
+   separate.
 
 ---
 
@@ -120,8 +123,9 @@ order and regions randomly drop to 20 Hz, so merges against ticking regions and 
 counters really happen. Invariant monitors run after every tick and stop the run at the first
 violation.
 
-**Why this priority**: Lockstep never ticks one region while another changes, so it cannot exercise
-merge-later or timer offsets. Interleaved mode and the monitors are what prove the core under churn.
+**Why this priority**: Lockstep ticks every region together at one rate, so tick counters never
+diverge and no region runs at 20 Hz. Interleaved mode produces merges between regions with different
+tick counters, which exercise timer offsets, and the monitors prove the core under that churn.
 
 **Independent Test**: Run Migration in interleaved mode and confirm a clean, reproducible run; inject
 a corrupted state through the test hook and confirm the run fails at that tick with the rule and
@@ -129,15 +133,17 @@ seed; run a shortened Soak and confirm every timer fired exactly once.
 
 **Acceptance Scenarios**:
 
-1. **Given** the Migration scenario in interleaved mode with a seed, **When** it runs, **Then** at least
-   one region ticks at 20 Hz and at least one merge lands on a ticking region, the run ends with
-   zero invariant violations, and a rerun with the same seed gives identical per-tick hashes.
+1. **Given** the Migration scenario in interleaved mode with a seed, **When** it runs, **Then**:
+   - at least one region ticks at 20 Hz;
+   - at least one merge joins two regions with different tick counters;
+   - the run ends with zero invariant violations;
+   - a rerun with the same seed gives identical per-tick hashes.
 2. **Given** a run in which a section is made to belong to two regions at tick *t*, **When** the
    monitors run at tick *t*, **Then** the run fails at tick *t* and reports rule 1, the tick number
    and the seed.
 3. **Given** the Soak scenario (migration, stacked areas and air traffic) with a shortened duration
-   in interleaved mode, **When** it runs, **Then** it ends with zero violations and every synthetic
-   timer fired exactly once, exactly its delay after it was set.
+   in interleaved mode, **When** it runs, **Then** it ends with zero violations, and every synthetic
+   timer fired exactly once, when FR-012 says for the active timer mode.
 
 ---
 
@@ -168,7 +174,9 @@ degrees of parallelism and compare results; replay a recorded trace and compare 
    replayed run's per-tick state hashes match the recorded run's.
 5. **Given** the Air traffic scenario with and without the air layer, **When** each runs, **Then**
    the run with the air layer has aircraft above the altitude threshold in their own section layer,
-   and both record merges caused by aircraft.
+   and both runs record more than zero merges caused by aircraft.
+6. **Given** each scenario, **When** it runs twice with the same seed for a short duration, **Then**
+   the two runs' per-tick state hashes are identical (SC-001).
 
 ---
 
@@ -217,7 +225,11 @@ that every value has a row with its evidence.
 **Acceptance Scenarios**:
 
 1. **Given** an aircraft interaction range and two aircraft closing at 240 m/s at 30 Hz, **When** the
-   claim-radius floor is computed, **Then** it is the interaction range plus 8 m.
+   claim-radius floor is computed, **Then** it is the interaction range plus 8 m. **When** an aircraft
+   with a claim radius at the floor closes on an entity that claims only its own section, **Then** at
+   every tick boundary where the two are within one tick of interaction range they share a region.
+   **When** the radius is below the floor by more than the section slack, **Then** at least one such
+   boundary finds them in different regions.
 2. **Given** two entities stepped apart one section at a time in each anchoring mode, **When** the
    merge-distance check runs, **Then** every pair within the sum of their radii shares a region, and
    no pair farther apart than the merge distance d_max shares a region because of their claims.
@@ -259,23 +271,26 @@ steady-state allocation test.
 - An entity at the map edge claims only sections inside the map.
 - A claim never wraps around the map or skips a section; a claim radius of zero claims only the
   entity's own section.
-- A portal opens or closes during a region's tick: the change takes effect for claims at that
-  region's tick end, never mid-tick.
-- A ticking region owes merges to two regions at once: both are absorbed at its tick end, in a
-  deterministic order.
+- A portal opens or closes while any region is ticking: the change takes effect for claims when the
+  last ticking region's tick ends, never mid-tick.
+- A ticking region owes merges to two regions that are not ticking: both are absorbed at its tick
+  end, in ascending region ID order.
 - Three regions chain-merge in one tick end: the result is one region, whatever the iteration order.
 - A region drops to 20 Hz while a merge into it is pending: the merge still happens at its tick end,
   and timers keep their deadlines.
-- Every entity leaves a region: the region's sections go dead, and the region dies once it owns no
-  live section.
+- Every entity leaves a region: the region's sections go dead, and at its next tick end it drops them
+  and dies, whatever the split damping thresholds.
 - A teleport moves an entity into another region's sections: it is removed from its old region and
   added on the destination region's next tick (two-step teleport), and never belongs to two regions.
 - A split would leave an island holding only dead sections: no child region is created for it.
-- A capture point that becomes unoccupied stops claiming its zone at the next tick end.
+- A capture point that becomes unoccupied stops claiming its zone at once. Its sections go dead and
+  are dropped at the next split check.
 - A scenario asks for more entities than the configured population limit: the simulator refuses to
   start and names the field.
 - A run is interrupted: its output folder is marked incomplete, and a rerun into the same folder
   starts clean rather than appending.
+- An output folder that is non-empty but holds neither `manifest.json` nor `_incomplete` is not a
+  run folder: the simulator refuses it with exit code 2 and deletes nothing.
 
 ## Requirements *(mandatory)*
 
@@ -284,8 +299,10 @@ steady-state allocation test.
 **Regionizer core library**
 
 - **FR-001**: The library MUST divide the map into square sections whose side is a power of two in
-  metres, keyed by layer and grid position. Layer 0 is the open world, each sealed designed area is
-  its own layer, and an entity changes layer only by passing through a portal.
+  metres, keyed by layer and grid position. Layer 0 is the open world, and each sealed designed area
+  is its own layer. A move MUST change an entity's layer only when it crosses an open portal from its
+  current section, or when the move is to or from a layer marked as allowing direct entry (the
+  optional air layer). Any other layer change is rejected. A two-step teleport may land on any layer.
 - **FR-002**: Each section MUST keep a count of the claims on it. A section its region owns while it
   has zero claims is dead.
 - **FR-003**: Each entity MUST claim the sections within its class's claim radius, reached from its own
@@ -294,15 +311,19 @@ steady-state allocation test.
 - **FR-004**: The library MUST support section-anchored claims, computed from the entity's section and
   changing only when it crosses a section edge, and position-anchored claims, computed from its exact
   position. The mode MUST come from configuration.
-- **FR-005**: A claim landing on a section owned by another region, or within the configured merge gap
-  (0 or 1 section) of one, MUST force those regions to merge.
+- **FR-005**: A claim landing on a section owned by another region MUST force those regions to merge.
+  With a merge gap of 1, a claim landing on a section adjacent (eight-neighbour, same area, or across
+  an open portal) to a section owned by another region MUST also force a merge. With a gap of 0 it
+  MUST NOT.
 - **FR-006**: A ticking region MUST NOT grow. Sections it newly needs MUST go into a transient region
   recorded on it, which it absorbs when its tick ends.
 - **FR-007**: At each region's tick end the library MUST, in this order, process its pending merges;
   mark it transient if it still owes a merge elsewhere; otherwise, if the split damping thresholds
   hold, drop its dead sections and try a split. Dead sections stay owned by their region until then.
 - **FR-008**: A region MUST split only if it owns at least *N*min sections, at least *p*dead of them
-  are dead, and it is older than *T*min. All three thresholds MUST come from configuration.
+  are dead, and it is at least *T*min old. All three thresholds MUST come from configuration. The child
+  that keeps the parent's ID keeps its age, and other children start at age zero. A region with no
+  entities left drops its sections and dies at its tick end, whatever these thresholds.
 - **FR-009**: A split MUST create one child region per island: a group of entities linked by shared
   claimed sections, judged with the same merge gap as merges. No child region may be created for an
   island that holds only dead sections.
@@ -317,14 +338,21 @@ steady-state allocation test.
   base. In both modes a timer MUST fire exactly once: in tick-counter mode after exactly its delay in
   ticks of its owning region, counted across merges and splits; in absolute mode at the first tick of
   its owning region at or after its deadline.
-- **FR-013**: Opening a portal MUST let claims reach through it from the next tick end, which may cause
-  a merge. Closing one MUST stop claims crossing it from the next tick end, which may allow a split.
-- **FR-014**: The library MUST expose an invariant checker that verifies, at each region's tick
-  boundary: every live section belongs to exactly one region; every section in an entity's claim
-  belongs to its region or to a region pending a merge with it; a ticking region's section set did not
-  change during its tick; every region is in a legal state and moved only by legal transitions; every
-  entity has one owner and its section belongs to that owner; and no claim crosses an area boundary
-  except through an open portal.
+- **FR-013**: Opening a portal MUST let claims reach through it, which may cause a merge. Closing one
+  MUST stop claims crossing it, which may allow a split. A toggle made while no region is ticking
+  takes effect at once. A toggle made while any region is ticking MUST be deferred until the last
+  ticking region's tick ends, so no claim changes mid-tick because of it.
+- **FR-014**: The library MUST expose an invariant checker for tick boundaries: points where no region
+  is ticking, which the simulator reaches at the end of every base step. It verifies that:
+  - every live section belongs to exactly one region;
+  - every section in an entity's claim belongs to its region (at a boundary no merge is still
+    pending, so the issue's "or a region pending a merge with it" clause reduces to this, and the
+    checker also reports any pending merge);
+  - no ticking region's section set changed during its tick (recorded at each tick end);
+  - every region is in a legal state and moved only by legal transitions;
+  - every entity not in transit has one owner and its section belongs to that owner, while an entity
+    in transit (two-step teleport) has no owner;
+  - no claim crosses an area boundary except through an open portal.
 - **FR-015**: The library MUST NOT depend on the simulator, so the continent server can reuse it
   unchanged.
 
@@ -337,14 +365,17 @@ steady-state allocation test.
   collection.
 - **FR-018**: The simulator MUST offer lockstep scheduling, where every region ticks together, and
   interleaved scheduling, where region ticks start and end in a seeded random order and regions
-  randomly drop to 20 Hz.
+  randomly drop to the degraded tick rate. The base step rate, the normal tick rate and the degraded
+  tick rate are configuration, defaulting to 60, 30 and 20 Hz. The base step rate must be a multiple
+  of both tick rates.
 - **FR-019**: The simulator MUST compute a 64-bit state hash every tick over a canonical serialization
-  of section owners, region membership and timers. The same scenario, configuration and seed MUST
+  of section owners, region membership, each entity's section and timers. The same scenario, configuration and seed MUST
   give the same hash sequence on the same machine and build. The simulated path MUST avoid
   platform-dependent math, so that hashes can also match across machines.
-- **FR-020**: The simulator MUST run the invariant checker after every tick and fail the run at the
-  first violation, reporting the rule, tick, seed and details. In test builds it MUST also check that
-  every synthetic timer fires exactly once, exactly its delay after it was set.
+- **FR-020**: The simulator MUST run the invariant checker at the end of every base step and fail the
+  run at the first violation, reporting the rule, tick, seed and details. In every build it MUST also
+  check that every synthetic timer fires exactly once, when FR-012 says for the active timer mode. A
+  timer fault fails the run like a violation.
 - **FR-021**: The simulator MUST move entities with synthetic models: infantry clustered around a
   fight's objectives in a random walk, some redeploying by two-step teleport; ground vehicles along
   lanes, loitering at fight edges; aircraft point to point with strafing passes; travellers along
@@ -356,14 +387,19 @@ steady-state allocation test.
   without an air layer), Vehicle columns, Stacked areas, Migration, One base and Soak scenarios, with
   the population, map size and lane layout as parameters. The default map is 8 × 8 km with three
   lanes.
-- **FR-024**: Every run MUST write to its output folder a manifest, one metrics row per tick, the
-  events (merges, splits, fusions, violations) and a summary with p50, p95, p99 and max per metric.
+- **FR-024**: Every run MUST write to its output folder a manifest, a metrics row per tick (or every
+  configured number of ticks, default 1), the events (merges, splits, fusions, violations) and a
+  summary with p50, p95, p99 and max per metric over the recorded rows. It never deletes a folder that
+  isn't a run folder.
   The metrics are region count, largest region size and share, fusion events with the causing class,
-  merge and split rates by causing class, split latency, section churn, region lifetime, cross-region
-  pairs, bookkeeping cost and oversized fusions. A merge is a fusion when each side holds a fight tag
-  the other does not; only players in a fight carry a fight tag. Cross-region pairs count entity pairs
-  in different regions within the configured deferred range (default 300 m) or read-only range
-  (default 1,000 m), each pair under the larger range it falls within.
+  merge rate by causing class, split rate, split latency, section churn, region lifetime, cross-region
+  pairs, fused fight pairs, bookkeeping cost and oversized fusions:
+  - A merge is a fusion when each side holds a fight tag the other does not; only players in a fight
+    carry a fight tag.
+  - Fused fight pairs counts, per tick, the pairs of distinct fight tags that share a region.
+  - Cross-region pairs count entity pairs in different regions within the configured deferred range
+    (default 300 m) or read-only range (default 1,000 m). Each pair is counted once, under the
+    smallest range it falls within.
 - **FR-025**: The sweep driver MUST run one-parameter-at-a-time sweeps around a default point and grids
   over several parameters, with a configurable number of seeds per cell, spread across the machine's
   cores. Each run's result MUST be the same whatever the degree of parallelism.
@@ -390,9 +426,13 @@ steady-state allocation test.
 
 - **FR-031**: The analysis MUST compute the claim-radius floor, the merge distance for both anchoring
   modes and the lane-bridging estimate, compare them with simulator results, and flag any
-  disagreement outside tolerance: the floor matches exactly; the merge-distance bounds allow zero
-  violations; the lane-bridging estimate matches within 10 percentage points at each traffic step,
-  measured with uniformly random travellers and at least 200 trials per step.
+  disagreement outside tolerance:
+  - **Floor**: with a radius at the floor, there are zero boundaries where an entity within one tick
+    of interaction range is in another region. With a radius below it by more than the section slack,
+    there is at least one.
+  - **Merge distance**: the bounds allow zero violations.
+  - **Lane bridging**: the estimate matches within 10 percentage points at each traffic step,
+    measured with uniformly random travellers and at least 200 trials per step.
 - **FR-032**: The memo generator MUST write a decision memo from a set of results, with a row for each
   value the simulator sets: its recommended value labeled as a measurement, the curve it was read from,
   the margin, the seeds and the run IDs. Values that settle an item on the constitution's Open
@@ -473,7 +513,7 @@ steady-state allocation test.
 - **SC-001**: For every scenario, two runs on the same machine with the same seed and configuration
   give identical per-tick state hashes on every tick.
 - **SC-002**: A 24-hour simulated Soak run in interleaved mode ends with zero invariant violations, and
-  every synthetic timer fires exactly once at its deadline.
+  every synthetic timer fires exactly once, when FR-012 says.
 - **SC-003**: The portal validator reports 100% of the leaks seeded into the test maps, and nothing on
   the clean test map.
 - **SC-004**: Bookkeeping cost at 5,000 entities is recorded at p50, p95, p99 and max for Baseline and

@@ -23,7 +23,9 @@ public sealed partial class Regionizer
     private readonly List<Violation> _breaches = [];
     private readonly List<int> _mergeScratch = [];
     private readonly List<TimerView> _timerScratch = [];
+    private readonly List<(int Slot, bool Open)> _deferredPortals = [];
     private int[] _claimScratch = new int[256];
+    private int _tickingCount;
     private long _nextRegionId = 1;
     private int _nextTimerId = 1;
     private int _serialDepth;
@@ -131,6 +133,12 @@ public sealed partial class Regionizer
         RequireIdle(entityId);
         var section = SectionAt(layer, x, y);
         var previous = _entities.Anchor[entityId];
+        var previousLayer = _entities.Layer[entityId];
+        if (layer != previousLayer && !LayerChangeAllowed(previous, previousLayer, section, layer))
+        {
+            throw new InvalidOperationException(
+                $"Entity {entityId} cannot move from layer {previousLayer} to {layer}: only an open portal from its section, or a layer allowing direct entry, changes layer (FR-001).");
+        }
         SetPosition(entityId, layer, x, y, z, section);
         if (_entities.Class[entityId] == EntityClass.HeavyProjectile)
         {
@@ -257,6 +265,10 @@ public sealed partial class Regionizer
 
     // ---------------------------------------------------------------- portals
 
+    /// <summary>
+    /// Opens or closes a portal. Applied at once when no region is ticking; otherwise queued and
+    /// applied when the last ticking region's tick ends, so no claim changes mid-tick (FR-013).
+    /// </summary>
     public void SetPortalOpen(int portalId, bool open)
     {
         if (!Topology.TryPortalSlot(portalId, out var slot))
@@ -264,6 +276,50 @@ public sealed partial class Regionizer
             throw new KeyNotFoundException($"No portal {portalId}.");
         }
 
+        if (_tickingCount > 0)
+        {
+            _deferredPortals.Add((slot, open));
+            return;
+        }
+
+        ApplyPortal(slot, open);
+    }
+
+    private void ApplyDeferredPortals()
+    {
+        if (_tickingCount > 0 || _deferredPortals.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < _deferredPortals.Count; i++)
+        {
+            ApplyPortal(_deferredPortals[i].Slot, _deferredPortals[i].Open);
+        }
+
+        _deferredPortals.Clear();
+    }
+
+    private bool LayerChangeAllowed(int fromSection, int fromLayer, int toSection, int toLayer)
+    {
+        if (Topology.AllowsDirectEntry(fromLayer) || Topology.AllowsDirectEntry(toLayer))
+        {
+            return true;
+        }
+
+        foreach (var link in Topology.LinksOf(fromSection))
+        {
+            if (link.Other == toSection && _portalOpen[link.PortalSlot])
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ApplyPortal(int slot, bool open)
+    {
         if (_portalOpen[slot] == open)
         {
             return;

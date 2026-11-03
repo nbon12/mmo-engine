@@ -37,8 +37,12 @@ ships).
 }
 ```
 
-- Rectangles are `[x0, y0, x1, y1]` in section coordinates of that layer, with both corners inclusive.
+- All coordinates are *absolute* section coordinates, the same space the core's `SectionKey` uses. A
+  layer covers x from `originX` to `originX + width − 1`, and y likewise.
+- Rectangles are `[x0, y0, x1, y1]` with both corners inclusive.
 - Section keys are `[layer, x, y]`.
+- A layer may set `"allowsDirectEntry": true` (the optional air layer). Entities may then move to or
+  from it without a portal.
 - `defaultArea` covers every section that no `areas` rectangle covers. A section that two rectangles
   cover is an error (exit code 2).
 - **Implicit navigable adjacency**: eight-neighbour sections of the same layer and the same area,

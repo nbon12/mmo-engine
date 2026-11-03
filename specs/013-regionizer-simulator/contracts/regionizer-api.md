@@ -37,7 +37,10 @@ that isn't a power of two, a merge gap other than 0 or 1, a negative radius).
 
 ```csharp
 public readonly record struct LayerSpec(int LayerId, int OriginX, int OriginY,
-                                        int Width, int Height, ushort[] AreaTags); // row-major W*H
+                                        int Width, int Height, ushort[] AreaTags) // row-major W*H
+{
+    public bool AllowsDirectEntry { get; init; }   // the air layer: moves may enter or leave it without a portal
+}
 public readonly record struct PortalSpec(int PortalId, SectionKey A, SectionKey B, bool Open);
 
 public sealed class SectionTopology
@@ -71,6 +74,8 @@ public sealed class Regionizer
     // Entities. IDs are caller-assigned, compact and unique.
     public void AddEntity(int entityId, EntityClass cls, int layer, double x, double y,
                           double z = 0, int fightTag = -1);
+    // A layer change is allowed only across an open portal from the entity's current section, or to
+    // or from a layer with AllowsDirectEntry. Anything else throws InvalidOperationException (FR-001).
     public void MoveEntity(int entityId, int layer, double x, double y, double z = 0);
     public void RemoveEntity(int entityId);
     public void SetCapturePointOccupied(int entityId, bool occupied); // unoccupied: own section only
@@ -82,7 +87,8 @@ public sealed class Regionizer
     public long OwnerOfLocation(int layer, double x, double y); // region ID or 0
     public void CompleteTeleport(int entityId);
 
-    // Portals take effect immediately for claims. Callers apply them at step boundaries (D7).
+    // A toggle applies at once when no region is ticking. Otherwise it is queued and applied when
+    // the last ticking region's tick ends (FR-013). IsPortalOpen reports the applied state.
     public void SetPortalOpen(int portalId, bool open);
 
     // Region ticks.

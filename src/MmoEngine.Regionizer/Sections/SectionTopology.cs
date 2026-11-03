@@ -1,7 +1,11 @@
 namespace MmoEngine.Regionizer;
 
 /// <summary>A layer of the section grid. <paramref name="AreaTags"/> is row-major, <c>Width * Height</c> long.</summary>
-public readonly record struct LayerSpec(int LayerId, int OriginX, int OriginY, int Width, int Height, ushort[] AreaTags);
+public readonly record struct LayerSpec(int LayerId, int OriginX, int OriginY, int Width, int Height, ushort[] AreaTags)
+{
+    /// <summary>Entities may move onto or off this layer without a portal (the optional air layer, FR-001).</summary>
+    public bool AllowsDirectEntry { get; init; }
+}
 
 /// <summary>A declared portal between two sections, initially open or closed.</summary>
 public readonly record struct PortalSpec(int PortalId, SectionKey A, SectionKey B, bool Open);
@@ -143,7 +147,10 @@ public sealed class SectionTopology
                 uniform = spec.AreaTags[t] == spec.AreaTags[0];
             }
 
-            built[i] = new Layer(spec.LayerId, spec.OriginX, spec.OriginY, spec.Width, spec.Height, baseIndex, (ushort[])spec.AreaTags.Clone(), uniform);
+            built[i] = new Layer(spec.LayerId, spec.OriginX, spec.OriginY, spec.Width, spec.Height, baseIndex, (ushort[])spec.AreaTags.Clone(), uniform)
+            {
+                AllowsDirectEntry = spec.AllowsDirectEntry,
+            };
             baseIndex = checked(baseIndex + (spec.Width * spec.Height));
         }
 
@@ -221,6 +228,9 @@ public sealed class SectionTopology
 
     internal bool IsPortalEndpoint(int index) => _linksBySection.ContainsKey(index);
 
+    /// <summary>Whether a layer allows direct entry (no portal needed to move onto or off it).</summary>
+    public bool AllowsDirectEntry(int layerId) => _slotByLayerId.TryGetValue(layerId, out var slot) && _layers[slot].AllowsDirectEntry;
+
     private static void AddLink(Dictionary<int, List<PortalLink>> links, int section, PortalLink link)
     {
         if (!links.TryGetValue(section, out var list))
@@ -251,6 +261,7 @@ public sealed class SectionTopology
         public readonly ushort[] AreaTags = areaTags;
         public readonly bool UniformArea = uniformArea;
         public bool HasPortals;
+        public bool AllowsDirectEntry;
 
         public readonly int IndexOf(int x, int y) => BaseIndex + ((y - OriginY) * Width) + (x - OriginX);
 

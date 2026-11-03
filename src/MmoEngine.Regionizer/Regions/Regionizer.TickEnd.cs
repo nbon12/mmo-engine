@@ -17,6 +17,7 @@ public sealed partial class Regionizer
         }
 
         Transition(region, RegionState.Ticking);
+        _tickingCount++;
         region.TickCounter++;
         region.VersionAtTickStart = region.SectionVersion;
         region.TransientHelper = 0;
@@ -31,6 +32,13 @@ public sealed partial class Regionizer
     /// </summary>
     public TickEndResult MarkNotTicking(long regionId)
     {
+        var result = EndTick(regionId);
+        ApplyDeferredPortals();
+        return result;
+    }
+
+    private TickEndResult EndTick(long regionId)
+    {
         if (!_regions.TryGetValue(regionId, out var region) || region.State != RegionState.Ticking)
         {
             throw new InvalidOperationException($"Region {regionId} is not ticking.");
@@ -42,6 +50,7 @@ public sealed partial class Regionizer
         }
 
         region.TransientHelper = 0;
+        _tickingCount--;
         Transition(region, RegionState.Ready);
 
         var survivor = regionId;

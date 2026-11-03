@@ -44,8 +44,12 @@ before finishing keeps `_incomplete`.
 Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in this order:
 
 `tick,timeSteps,regionCount,largestRegionPlayers,largestRegionShare,merges,splits,fusions,`
-`sectionChurn,crossPairsDeferred,crossPairsReadOnly,bookkeepingMicros,serializedMicros,`
-`oversizedFusion,violations,stateHash`
+`fusedFightPairs,sectionChurn,crossPairsDeferred,crossPairsReadOnly,bookkeepingMicros,`
+`serializedMicros,oversizedFusion,violations,stateHash`
+
+- `fusedFightPairs` is the number of distinct fight-tag pairs that share a region after this tick.
+- Cross pairs are counted once each, under the smallest range they fall within: deferred
+  (≤ `deferredRangeMetres`), otherwise read-only (≤ `readOnlyRangeMetres`).
 
 - `tick` is the continent tick (30 Hz) index. `timeSteps` is the time base in 60 Hz steps.
 - `regionCount` counts regions holding at least one player (infantry, ground vehicle, aircraft or
@@ -89,7 +93,8 @@ Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in th
              "fusionsPerSecondByClass": { "...": 0.0 } },
   "totals": { "merges": 0, "splits": 0, "fusions": 0, "oversizedFusionTicks": 0,
               "timersSet": 0, "timersFired": 0 },
-  "fusedFightPairs": { "p50": 0, "p95": 0, "max": 0 },
+  "fusedFightPairs": { "p50": 0, "p95": 0, "p99": 0, "max": 0, "mean": 0 },
+  "scheduling": { "baseStepHz": 60, "tickHz": 30, "degradedTickHz": 20, "timerOverheadNanos": 0 },
   "budget": { "bookkeepingP99Micros": 0.0, "budgetMicros": 1000.0, "withinBudget": true },
   "wallClock": { "seconds": 0.0 }
 }
