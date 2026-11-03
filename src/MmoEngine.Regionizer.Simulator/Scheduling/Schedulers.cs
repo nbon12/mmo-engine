@@ -23,10 +23,10 @@ public sealed class SchedulingStats
     /// <summary>Region ticks started.</summary>
     public long Ticks { get; internal set; }
 
-    /// <summary>Region ticks run at 20 Hz (3 base steps to the region's next tick).</summary>
+    /// <summary>Region ticks run at the degraded rate (20 Hz by default: 3 base steps to the region's next tick).</summary>
     public long TwentyHzTicks { get; internal set; }
 
-    /// <summary>Times a region dropped to 20 Hz.</summary>
+    /// <summary>Times a region dropped to the degraded rate.</summary>
     public long Drops { get; internal set; }
 }
 
@@ -36,6 +36,9 @@ public interface ITickScheduler
     SchedulingMode Mode { get; }
 
     SchedulingStats Stats { get; }
+
+    /// <summary>The run's time base: the tick periods region ticks are spaced by.</summary>
+    TimeBase Time { get; }
 
     /// <summary>Region bookkeeping the scheduler needs from the core, or null.</summary>
     IRegionizerObserver? Observer { get; }
@@ -55,7 +58,7 @@ public static class TickSchedulers
         ArgumentNullException.ThrowIfNull(config);
         return config.Mode switch
         {
-            SchedulingMode.Lockstep => new LockstepScheduler(),
+            SchedulingMode.Lockstep => new LockstepScheduler(TimeBase.From(config)),
             SchedulingMode.Interleaved => new InterleavedScheduler(config, DeterministicRandom.ForStream(seed, "scheduling")),
             _ => throw new ArgumentOutOfRangeException(nameof(config), $"Unknown scheduling mode {config.Mode}."),
         };
@@ -63,17 +66,31 @@ public static class TickSchedulers
 }
 
 /// <summary>
-/// Lockstep: on every even base step, each region alive at the step's start ticks in ascending ID
-/// order, start to end, before the next one starts. No region ticks while another changes, so merges
-/// never land on a ticking region and every region keeps 30 Hz.
+/// Lockstep: on the first base step of every continent tick, each region alive at the step's start
+/// ticks in ascending ID order, start to end, before the next one starts. No region ticks while
+/// another changes, so merges never land on a ticking region and every region keeps the tick rate.
 /// </summary>
 public sealed class LockstepScheduler : ITickScheduler
 {
     private long[] _due = new long[8];
 
+    /// <summary>A lockstep scheduler at the default rates.</summary>
+    public LockstepScheduler()
+        : this(TimeBase.Default)
+    {
+    }
+
+    public LockstepScheduler(TimeBase time)
+    {
+        ArgumentNullException.ThrowIfNull(time);
+        Time = time;
+    }
+
     public SchedulingMode Mode => SchedulingMode.Lockstep;
 
     public SchedulingStats Stats { get; } = new();
+
+    public TimeBase Time { get; }
 
     public IRegionizerObserver? Observer => null;
 
@@ -84,7 +101,7 @@ public sealed class LockstepScheduler : ITickScheduler
     public void RunStep(long step, ReadOnlySpan<long> regionIds, ITickHost host)
     {
         ArgumentNullException.ThrowIfNull(host);
-        if (step % TimeBase.StepsPerTick != 0)
+        if (step % Time.TickPeriodSteps != 0)
         {
             return;
         }
@@ -92,7 +109,7 @@ public sealed class LockstepScheduler : ITickScheduler
         var count = Snapshot(regionIds, ref _due);
         for (var i = 0; i < count; i++)
         {
-            if (host.StartTick(_due[i], step, TimeBase.StepsPerTick))
+            if (host.StartTick(_due[i], step, Time.TickPeriodSteps))
             {
                 Stats.Ticks++;
                 host.EndTick(_due[i]);
@@ -115,9 +132,9 @@ public sealed class LockstepScheduler : ITickScheduler
 /// <summary>
 /// Interleaved: at each base step the due regions' start and end events are shuffled into a random
 /// valid order by the "scheduling" stream, and each body runs at its start event, so regions move
-/// while others are ticking. At each tick end a region not already slowed drops to 20 Hz with the
-/// configured probability for U[dropTicksMin, dropTicksMax] ticks (research D7). Schedules follow the
-/// core's regions: split children copy their parent's, an absorber keeps its own.
+/// while others are ticking. At each tick end a region not already slowed drops to the degraded rate
+/// with the configured probability for U[dropTicksMin, dropTicksMax] ticks (research D7). Schedules
+/// follow the core's regions: split children copy their parent's, an absorber keeps its own.
 /// </summary>
 public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
 {
@@ -136,11 +153,14 @@ public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
         ArgumentNullException.ThrowIfNull(random);
         _config = config;
         _random = random;
+        Time = TimeBase.From(config);
     }
 
     public SchedulingMode Mode => SchedulingMode.Interleaved;
 
     public SchedulingStats Stats { get; } = new();
+
+    public TimeBase Time { get; }
 
     public IRegionizerObserver Observer => this;
 
@@ -201,20 +221,21 @@ public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
 
     private bool Start(long id, long step, ITickHost host)
     {
-        var schedule = _schedules.TryGetValue(id, out var s) ? s : new Schedule(step, 0, TimeBase.StepsPerTick);
-        var period = schedule.SlowLeft > 0 ? TimeBase.StepsPerSlowTick : TimeBase.StepsPerTick;
+        var schedule = _schedules.TryGetValue(id, out var s) ? s : new Schedule(step, 0, Time.TickPeriodSteps);
+        var slow = schedule.SlowLeft > 0;
+        var period = slow ? Time.DegradedPeriodSteps : Time.TickPeriodSteps;
         if (!host.StartTick(id, step, period))
         {
             return false;
         }
 
         Stats.Ticks++;
-        if (period == TimeBase.StepsPerSlowTick)
+        if (slow)
         {
             Stats.TwentyHzTicks++;
         }
 
-        _schedules[id] = new Schedule(step + period, Math.Max(0, schedule.SlowLeft - (period == TimeBase.StepsPerSlowTick ? 1 : 0)), period);
+        _schedules[id] = new Schedule(step + period, slow ? schedule.SlowLeft - 1 : 0, period);
         return true;
     }
 
@@ -241,7 +262,7 @@ public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
             return;
         }
 
-        _schedules[regionId] = new Schedule(_inTicks ? _step + 1 : _step, 0, TimeBase.StepsPerTick);
+        _schedules[regionId] = new Schedule(_inTicks ? _step + 1 : _step, 0, Time.TickPeriodSteps);
     }
 
     void IRegionizerObserver.OnRegionDied(long regionId, long ageSteps) => _schedules.Remove(regionId);
@@ -278,6 +299,6 @@ public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
     {
     }
 
-    /// <summary>A region's next due step, its remaining 20 Hz ticks and its current period.</summary>
+    /// <summary>A region's next due step, its remaining degraded ticks and its current period.</summary>
     private readonly record struct Schedule(long NextDue, int SlowLeft, int Period);
 }

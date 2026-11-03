@@ -29,6 +29,9 @@ public sealed class RunConfigValidator : AbstractValidator<RunConfig>
 
     private const string Required = "is required";
 
+    /// <summary>The highest base step or tick rate accepted.</summary>
+    private const int MaxRateHz = 1000;
+
     /// <summary>Validates <paramref name="config"/> and returns its errors keyed by JSON path.</summary>
     public static IReadOnlyList<ConfigError> Errors(RunConfig config)
     {
@@ -44,6 +47,17 @@ public sealed class RunConfigValidator : AbstractValidator<RunConfig>
         public SchedulingValidator()
         {
             RuleFor(s => s.Mode).IsInEnum().WithMessage("must be Lockstep or Interleaved");
+
+            // Tick rates (FR-018, research D7). The 1,000 Hz ceiling keeps run lengths in base steps far from overflow.
+            RuleFor(s => s.BaseStepHz).InclusiveBetween(1, MaxRateHz).WithMessage($"must be between 1 and {MaxRateHz} Hz");
+            RuleFor(s => s.TickHz).InclusiveBetween(1, MaxRateHz).WithMessage($"must be between 1 and {MaxRateHz} Hz");
+            RuleFor(s => s.DegradedTickHz).InclusiveBetween(1, MaxRateHz).WithMessage($"must be between 1 and {MaxRateHz} Hz");
+            RuleFor(s => s.BaseStepHz)
+                .Must((s, hz) => s.TickHz < 1 || s.DegradedTickHz < 1 || (hz % s.TickHz == 0 && hz % s.DegradedTickHz == 0))
+                .WithMessage(s => $"must be a multiple of scheduling.tickHz ({s.TickHz}) and scheduling.degradedTickHz ({s.DegradedTickHz}), was {s.BaseStepHz}");
+            RuleFor(s => s.DegradedTickHz)
+                .LessThan(s => s.TickHz)
+                .WithMessage(s => $"must be lower than scheduling.tickHz ({s.TickHz}), was {s.DegradedTickHz}");
             RuleFor(s => s.DropTo20HzProbability).InclusiveBetween(0, 1).WithMessage("must be between 0 and 1");
             RuleFor(s => s.DropTicksMin).GreaterThanOrEqualTo(1).WithMessage("must be at least 1");
             RuleFor(s => s.DropTicksMax).GreaterThanOrEqualTo(s => s.DropTicksMin).WithMessage("must be at least scheduling.dropTicksMin");

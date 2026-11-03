@@ -11,28 +11,111 @@ public sealed class InterleavedSchedulingTests
 {
     /// <summary>
     /// US3.1: Given the Migration scenario in interleaved mode with a seed, When it runs, Then at least
-    /// one region ticks at 20 Hz and at least one merge lands on a ticking region, the run ends with
-    /// zero invariant violations, and a rerun with the same seed gives identical per-tick hashes.
+    /// one region ticks at 20 Hz, at least one merge joins two regions with different tick counters,
+    /// the run ends with zero invariant violations, and a rerun with the same seed gives identical
+    /// per-tick hashes.
     /// </summary>
     [Fact]
     public void MigrationInterleavedHitsTwentyHzAndMergeLaterWithZeroViolations()
     {
         const ulong Seed = 20261103;
-        var runConfig = TestRuns.Small("Migration", Seed, 600, population: 240)
+        const int Ticks = 300;
+        var runConfig = TestRuns.Small("Migration", Seed, Ticks, population: 160)
             .With("scheduling.mode", "Interleaved")
             .With("scheduling.dropTo20HzProbability", 0.05)
-            .With("scenarioParameters.migrationEverySeconds", 5);
+            .With("scenarioParameters.migrationEverySeconds", 3);
         var loaded = TestRuns.Load(runConfig);
+        var probe = new TickCounterMergeProbe();
 
-        var first = TestRuns.Run(loaded, new RunOptions { KeepTickHashes = true });
+        var first = TestRuns.Run(loaded, new RunOptions { KeepTickHashes = true, Observers = [probe], AfterStep = probe.Attach });
         var rerun = TestRuns.Run(loaded, new RunOptions { KeepTickHashes = true });
 
         Assert.True(first.FirstViolation is null, $"seed {Seed}: {first.FirstViolation}");
         Assert.True(first.Completed && first.ExitCode == ExitCodes.Clean, $"seed {Seed}: run did not complete cleanly");
+        Assert.Equal(20, loaded.Config.Scheduling.DegradedTickHz);
         Assert.True(first.Scheduling.TwentyHzTicks > 0, $"seed {Seed}: no region ticked at 20 Hz");
+        Assert.True(probe.MergesAcrossTickCounters > 0, $"seed {Seed}: no merge joined two regions with different tick counters ({probe.Merges} merges seen)");
         Assert.True(first.MergesRequestedAgainstTicking > 0, $"seed {Seed}: no merge was requested against a ticking region");
-        Assert.True(first.InvariantChecks >= 600, $"seed {Seed}: only {first.InvariantChecks} invariant checks ran");
-        Assert.True(first.TickHashes.Count == 600 && first.TickHashes.SequenceEqual(rerun.TickHashes), $"seed {Seed}: rerun hashes differ");
+        Assert.True(first.InvariantChecks >= Ticks * 2, $"seed {Seed}: only {first.InvariantChecks} invariant checks ran");
+        Assert.True(first.TickHashes.Count == Ticks && first.TickHashes.SequenceEqual(rerun.TickHashes), $"seed {Seed}: rerun hashes differ");
+    }
+
+    /// <summary>Lockstep ticks every region on the first step of each continent tick, at the configured tick rate.</summary>
+    [Theory]
+    [InlineData(60, 30, 20, new long[] { 0, 2, 4, 6, 8, 10 })]
+    [InlineData(60, 20, 10, new long[] { 0, 3, 6, 9 })]
+    [InlineData(120, 30, 20, new long[] { 0, 4, 8 })]
+    [InlineData(60, 60, 20, new long[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 })]
+    public void LockstepTicksAtTheConfiguredTickRate(int baseStepHz, int tickHz, int degradedTickHz, long[] expectedSteps)
+    {
+        var host = new RecordingHost();
+        var scheduler = TickSchedulers.Create(new SchedulingConfig { Mode = SchedulingMode.Lockstep, BaseStepHz = baseStepHz, TickHz = tickHz, DegradedTickHz = degradedTickHz }, 1);
+
+        for (var step = 0L; step < 12; step++)
+        {
+            scheduler.RunStep(step, [4], host);
+        }
+
+        Assert.Equal(expectedSteps, host.Events.Where(e => e.Start).Select(e => e.Step));
+        Assert.Equal(baseStepHz / tickHz, scheduler.Time.TickPeriodSteps);
+    }
+
+    /// <summary>A region dropped to the degraded rate ticks every baseStepHz / degradedTickHz steps (10 Hz: 6 steps).</summary>
+    [Fact]
+    public void ADropSpacesTicksByTheConfiguredDegradedPeriod()
+    {
+        var host = new RecordingHost();
+        var config = Scheduling(1, 2, 2) with { DegradedTickHz = 10 };
+        var scheduler = new InterleavedScheduler(config, new DeterministicRandom(1));
+
+        for (var step = 0L; step <= 20; step++)
+        {
+            scheduler.RunStep(step, [7], host);
+        }
+
+        Assert.Equal([0L, 2, 8, 14, 20], host.Events.Where(e => e.Start).Select(e => e.Step));
+        Assert.Equal(4, scheduler.Stats.TwentyHzTicks);
+        Assert.Equal(3, scheduler.Stats.Drops);
+        Assert.Equal(26, scheduler.NextDueOf(7));
+        Assert.Equal(6, scheduler.Time.DegradedPeriodSteps);
+    }
+
+    /// <summary>A run at non-default rates spaces its region ticks by the configured period in both modes.</summary>
+    [Theory]
+    [InlineData("Lockstep", 120, 30, 20)]
+    [InlineData("Interleaved", 120, 30, 20)]
+    [InlineData("Lockstep", 60, 20, 10)]
+    [InlineData("Interleaved", 90, 30, 15)]
+    public void RunsSpaceRegionTicksByTheConfiguredPeriods(string mode, int baseStepHz, int tickHz, int degradedTickHz)
+    {
+        const ulong Seed = 17;
+        const int Ticks = 60;
+        var loaded = TestRuns.Load(TestRuns.Small("Baseline", Seed, Ticks, population: 80)
+            .With("scheduling.mode", mode)
+            .With("scheduling.baseStepHz", baseStepHz)
+            .With("scheduling.tickHz", tickHz)
+            .With("scheduling.degradedTickHz", degradedTickHz)
+            .With("scheduling.dropTo20HzProbability", 0.2));
+        var gaps = new TickGapRecorder();
+
+        var result = TestRuns.Run(loaded, new RunOptions { Observers = [gaps] });
+
+        Assert.True(result.Completed, $"seed {Seed}: {result.FirstViolation}");
+        Assert.Equal(Ticks, result.TicksRun);
+        var period = baseStepHz / tickHz;
+        var degraded = baseStepHz / degradedTickHz;
+        Assert.Contains(period, gaps.Gaps);
+        Assert.All(gaps.Gaps, gap => Assert.True(gap >= period, $"seed {Seed}: a region ticked {gap} steps after its previous tick, faster than every {period}"));
+        if (mode == "Lockstep")
+        {
+            Assert.All(gaps.Gaps, gap => Assert.True(gap % period == 0, $"seed {Seed}: a lockstep region ticked {gap} steps after its previous tick"));
+            Assert.Equal(0, result.Scheduling.TwentyHzTicks);
+        }
+        else
+        {
+            Assert.Contains(degraded, gaps.Gaps);
+            Assert.True(result.Scheduling.TwentyHzTicks > 0, $"seed {Seed}: no region ticked at the degraded rate");
+        }
     }
 
     [Fact]
@@ -239,6 +322,61 @@ public sealed class InterleavedSchedulingTests
 
     private static SchedulingConfig Scheduling(double p, int min, int max) =>
         new() { Mode = SchedulingMode.Interleaved, DropTo20HzProbability = p, DropTicksMin = min, DropTicksMax = max };
+
+    /// <summary>
+    /// Counts merges where both sides hold an entity and their tick counters differ, reading both
+    /// regions from the core when <see cref="IRegionizerObserver.OnMerged"/> is raised (before the
+    /// absorbed region's data moves). The core is attached through the step hook.
+    /// </summary>
+    private sealed class TickCounterMergeProbe : ObserverBase
+    {
+        private Regionizer? _regionizer;
+
+        public int Merges { get; private set; }
+
+        public int MergesAcrossTickCounters { get; private set; }
+
+        public void Attach(StepHookContext context) => _regionizer ??= context.Regionizer;
+
+        public override void OnMerged(long absorberId, long absorbedId, EntityClass causeClass, int causeEntityId)
+        {
+            if (_regionizer is null)
+            {
+                return;
+            }
+
+            var absorber = _regionizer.GetRegion(absorberId);
+            var absorbed = _regionizer.GetRegion(absorbedId);
+            if (absorber.Entities.Length == 0 || absorbed.Entities.Length == 0)
+            {
+                return;
+            }
+
+            Merges++;
+            if (absorber.TickCounter != absorbed.TickCounter)
+            {
+                MergesAcrossTickCounters++;
+            }
+        }
+    }
+
+    /// <summary>The steps between each region's consecutive tick starts.</summary>
+    private sealed class TickGapRecorder : ObserverBase
+    {
+        private readonly Dictionary<long, long> _last = [];
+
+        public HashSet<long> Gaps { get; } = [];
+
+        public override void OnRegionTickStarted(long regionId, long tickCounter, long now)
+        {
+            if (_last.TryGetValue(regionId, out var previous))
+            {
+                Gaps.Add(now - previous);
+            }
+
+            _last[regionId] = now;
+        }
+    }
 
     private sealed class RecordingHost : ITickHost
     {

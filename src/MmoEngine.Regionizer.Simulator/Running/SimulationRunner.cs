@@ -9,16 +9,17 @@ using MmoEngine.Regionizer.Simulator.Scheduling;
 namespace MmoEngine.Regionizer.Simulator.Running;
 
 /// <summary>
-/// Runs one scenario (US2): builds the world, drives the core step by step on the 60 Hz time base with
-/// the configured scheduler, checks the invariants after every step in which anything changed and
-/// watches every synthetic timer, hashes the state after every continent tick, and writes the run
-/// folder. Single-threaded and deterministic: the same configuration and seed give the same hash
-/// sequence. The run stops at the first violation or timer fault (FR-020).
+/// Runs one scenario (US2): builds the world, drives the core step by step on the run's own time base
+/// (<c>scheduling.baseStepHz</c>) with the configured scheduler, checks the invariants after every
+/// step in which anything changed and watches every synthetic timer, hashes the state after every
+/// continent tick, and writes the run folder. Single-threaded and deterministic: the same
+/// configuration and seed give the same hash sequence. Runs share no mutable state, so a sweep can
+/// run many on parallel threads. The run stops at the first violation or timer fault (FR-020).
 /// </summary>
 public static class SimulationRunner
 {
     /// <summary>Runs <paramref name="config"/> into <paramref name="outputDir"/>.</summary>
-    /// <exception cref="ConfigValidationException">The configuration is invalid (exit code 2).</exception>
+    /// <exception cref="ConfigValidationException">The configuration is invalid, or the folder is not a run folder (exit code 2).</exception>
     public static RunResult Run(RunConfig config, string outputDir, RunOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -27,15 +28,25 @@ public static class SimulationRunner
     }
 
     /// <summary>Runs a configuration already loaded and validated by <see cref="RunConfigLoader"/>.</summary>
+    /// <exception cref="ConfigValidationException">The output folder is not empty and not a run folder (exit code 2); nothing is deleted.</exception>
     public static RunResult Run(LoadedRunConfig loaded, string outputDir, RunOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDir);
         options ??= new RunOptions();
+        if (options.TimerOverheadNanos is { } injected && !(injected >= 0 && double.IsFinite(injected)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), injected, "The timer overhead must be a finite number of nanoseconds, at least 0.");
+        }
+
+        RunFolder.EnsureUsable(outputDir);
         var config = loaded.Config;
+        var time = TimeBase.From(config.Scheduling);
         var log = options.Logger ?? Serilog.Core.Logger.None;
         var wall = Stopwatch.StartNew();
         var started = DateTime.UtcNow;
+        var overheadTicks = options.TimerOverheadNanos is { } nanos ? TimestampOverhead.NanosToTicks(nanos) : TimestampOverhead.CalibrateTicks();
+        var overheadNanos = TimestampOverhead.TicksToNanos(overheadTicks);
 
         var world = ScenarioRegistry.Create(config.Scenario).Build(config);
         var movement = options.MovementSourceFactory?.Invoke(world, config) ?? world.Movement;
@@ -45,14 +56,16 @@ public static class SimulationRunner
         using var folder = RunFolder.Create(outputDir);
         folder.WriteManifest(RunManifest.Build(loaded, runId, gitSha, started, null, 0));
         log.Information(
-            "Run {RunId} started: scenario {Scenario}, seed {Seed}, {Scheduling}, {Ticks} ticks, {Entities} entities, config {ConfigHash}",
+            "Run {RunId} started: scenario {Scenario}, seed {Seed}, {Scheduling} at {TimeBase}, {Ticks} ticks, {Entities} entities, config {ConfigHash}, timer overhead {TimerOverheadNanos:F1} ns",
             runId,
             config.Scenario,
             config.Seed,
             config.Scheduling.Mode,
+            time.ToString(),
             config.DurationTicks,
             world.Entities.Count,
-            loaded.ConfigHash);
+            loaded.ConfigHash,
+            overheadNanos);
 
         var listeners = options.Listeners;
         void Emit(RunEvent e)
@@ -75,8 +88,8 @@ public static class SimulationRunner
         }
 
         observers.AddRange(options.Observers);
-        var regionizer = new Regionizer(world.Topology, config.Regionizer.ToRegionizerOptions(), new CompositeObserver(observers));
-        var engine = new SimulationEngine(regionizer, world.State, movement, config, timerMonitor, listeners);
+        var regionizer = new Regionizer(world.Topology, config.ToRegionizerOptions(), new CompositeObserver(observers));
+        var engine = new SimulationEngine(regionizer, world.State, movement, config, timerMonitor, listeners, overheadTicks);
         var hasher = new StateHasher();
         var hashes = options.KeepTickHashes ? new List<ulong>((int)Math.Min(config.DurationTicks, 1 << 24)) : null;
 
@@ -84,7 +97,7 @@ public static class SimulationRunner
         scheduler.BeginStep(0);
         engine.AddEntities(world.Entities);
 
-        var totalSteps = config.DurationTicks * TimeBase.StepsPerTick;
+        var totalSteps = time.TicksToSteps(config.DurationTicks);
         var progressEvery = Math.Max(1, config.DurationTicks / 10);
         var lastSerialized = regionizer.Stats.SerializedTimestampTicks;
         var faultsSeen = 0;
@@ -93,7 +106,7 @@ public static class SimulationRunner
         for (var step = 0L; step < totalSteps; step++)
         {
             options.CancellationToken.ThrowIfCancellationRequested();
-            var tick = TimeBase.TickOf(step);
+            var tick = time.TickAt(step);
             metrics.SetClock(tick, step);
             regionizer.AdvanceTo(step);
             scheduler.BeginStep(step);
@@ -130,7 +143,7 @@ public static class SimulationRunner
                 faultsSeen = faults.Count;
             }
 
-            if (TimeBase.EndsTick(step) || failure is not null)
+            if (time.IsLastStepOfTick(step) || failure is not null)
             {
                 var hash = hasher.Next(regionizer);
                 hashes?.Add(hash);
@@ -176,17 +189,18 @@ public static class SimulationRunner
         }
 
         var completed = failure is null && ticksRun == config.DurationTicks;
-        folder.WriteSummary(RunSummary.Build(runId, completed, ticksRun, failure, metrics, timerMonitor, config.Metrics, wall.Elapsed.TotalSeconds));
+        folder.WriteSummary(RunSummary.Build(runId, completed, ticksRun, failure, metrics, timerMonitor, config.Metrics, time, overheadNanos, wall.Elapsed.TotalSeconds));
         folder.WriteManifest(RunManifest.Build(loaded, runId, gitSha, started, DateTime.UtcNow, ticksRun));
         folder.Complete();
 
         log.Information(
-            "Run {RunId} finished: completed {Completed}, {TicksRun} ticks, hash {FinalHash}, {Merges} merges, {Splits} splits, {Fusions} fusions, {TwentyHzTicks} 20 Hz ticks, {MergesAgainstTicking} merges requested against ticking regions, {Seconds:F1} s",
+            "Run {RunId} finished: completed {Completed}, {TicksRun} ticks, hash {FinalHash}, {Merges} merges, {Absorptions} absorptions, {Splits} splits, {Fusions} fusions, {TwentyHzTicks} degraded ticks, {MergesAgainstTicking} merges requested against ticking regions, {Seconds:F1} s",
             runId,
             completed,
             ticksRun,
             RunFolder.FormatHash(hasher.Current),
             metrics.Merges,
+            metrics.Absorptions,
             metrics.Splits,
             metrics.Fusions,
             scheduler.Stats.TwentyHzTicks,
@@ -207,6 +221,7 @@ public static class SimulationRunner
             Scheduling = scheduler.Stats,
             MergesRequestedAgainstTicking = metrics.MergesRequestedAgainstTicking,
             Merges = metrics.Merges,
+            Absorptions = metrics.Absorptions,
             Splits = metrics.Splits,
             Fusions = metrics.Fusions,
             TimersSet = timerMonitor.TimersSet,
@@ -214,6 +229,8 @@ public static class SimulationRunner
             InvariantChecks = invariants.Checks,
             TimerFaults = [.. timerMonitor.Faults],
             TickHashes = hashes is null ? [] : hashes,
+            Time = time,
+            TimerOverheadNanos = overheadNanos,
         };
     }
 }

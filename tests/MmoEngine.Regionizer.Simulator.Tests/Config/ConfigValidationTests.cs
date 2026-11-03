@@ -1,6 +1,10 @@
 using System.Text.Json.Nodes;
+using MmoEngine.Regionizer.Simulator.Cli;
 using MmoEngine.Regionizer.Simulator.Config;
+using MmoEngine.Regionizer.Simulator.Output;
+using MmoEngine.Regionizer.Simulator.Running;
 using MmoEngine.Regionizer.Simulator.Scenarios;
+using MmoEngine.Regionizer.Simulator.Scheduling;
 using MmoEngine.Regionizer.Simulator.Tests.Support;
 
 namespace MmoEngine.Regionizer.Simulator.Tests.Config;
@@ -11,8 +15,10 @@ public sealed class ConfigValidationTests
     public static TheoryData<string> Scenarios => [.. ScenarioNames.All];
 
     /// <summary>
-    /// US2.4: Given a configuration with an invalid field, When the simulator loads it, Then it refuses
-    /// to run and the error names the field by its JSON path.
+    /// US2.4: Given a configuration with an invalid field, When the simulator starts, Then it refuses
+    /// to run, exits with a non-zero code (2) and names the invalid field by its JSON path. The cases
+    /// include tick rates the base step rate is not a multiple of, a degraded rate not below the tick
+    /// rate, and a map file the portal validator rejects.
     /// </summary>
     [Theory]
     [InlineData("regionizer.sectionSize", "12", null, "regionizer.sectionSize")]
@@ -22,20 +28,255 @@ public sealed class ConfigValidationTests
     [InlineData("population.total", "10001", null, "population.total")]
     [InlineData("scenario", "\"Skirmish\"", null, "scenario")]
     [InlineData(null, null, "Prod", "DOTNET_ENVIRONMENT")]
-    public void InvalidFieldIsRefusedAndNamedByItsJsonPath(string? path, string? json, string? environment, string expectedPath)
+    [InlineData("scheduling.baseStepHz", "50", null, "scheduling.baseStepHz")]
+    [InlineData("scheduling.baseStepHz", "90", null, "scheduling.baseStepHz")]
+    [InlineData("scheduling.tickHz", "25", null, "scheduling.baseStepHz")]
+    [InlineData("scheduling.degradedTickHz", "7", null, "scheduling.baseStepHz")]
+    [InlineData("scheduling.degradedTickHz", "30", null, "scheduling.degradedTickHz")]
+    [InlineData("scheduling.tickHz", "0", null, "scheduling.tickHz")]
+    [InlineData("scheduling.baseStepHz", "1200", null, "scheduling.baseStepHz")]
+    [InlineData("map.file", "\"simulator/maps/test/seeded-leaks.json\"", null, "map.file")]
+    public void InvalidConfigIsRefusedNamingTheField(string? path, string? json, string? environment, string expectedPath)
     {
-        var runConfig = new JsonObject { ["scenario"] = "Baseline" };
+        var runConfig = TestRuns.Small("Baseline", 3, 10);
         if (path is not null)
         {
             ConfigJson.SetPath(runConfig, path, JsonNode.Parse(json!));
         }
 
         var result = RunConfigLoader.Load(runConfig, environmentName: environment);
+        var output = TestRuns.TempDir();
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var code = Program.Run(
+            ["run", TestRuns.WriteConfig(runConfig), "--out", output],
+            stdout,
+            stderr,
+            new RunOptions { GitSha = "unknown", EnvironmentName = environment });
 
         Assert.False(result.Succeeded);
         Assert.Null(result.Loaded);
         Assert.Contains(result.Errors, e => e.Path == expectedPath);
+        Assert.Equal(ExitCodes.InvalidConfig, code);
+        Assert.Contains($"\"Path\":\"{expectedPath}\"", stderr.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, stdout.ToString());
+        Assert.False(Directory.Exists(output));
     }
+
+    [Fact]
+    public void EachPortalValidatorFindingIsAnErrorOnTheMapFile()
+    {
+        // seeded-leaks.expected.json lists the map's five seeded leaks.
+        var runConfig = new JsonObject { ["scenario"] = "Baseline" }.With("map.file", "simulator/maps/test/seeded-leaks.json");
+
+        var errors = RunConfigLoader.Load(runConfig).Errors;
+
+        Assert.Equal(5, errors.Count);
+        Assert.All(errors, e => Assert.Equal(MapFileCheck.ConfigPath, e.Path));
+        Assert.All(errors, e => Assert.Contains("fails the portal validator: Leak ", e.Message, StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Message.Contains("adjacency:walkway-east", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Message.Contains("openings:murder-hole", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("missing", "was not found")]
+    [InlineData("not-json", "is not a valid map")]
+    public void AMapFileThatCannotBeLoadedIsAnErrorOnTheMapFile(string variant, string message)
+    {
+        var dir = TestRuns.TempDir();
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "map.json");
+        if (variant == "not-json")
+        {
+            File.WriteAllText(file, "{ nope");
+        }
+
+        var error = Assert.Single(RunConfigLoader.Load(new JsonObject { ["scenario"] = "Baseline" }.With("map.file", file)).Errors);
+
+        Assert.Equal("map.file", error.Path);
+        Assert.Contains(message, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMapFileThatPassesTheValidatorIsAccepted()
+    {
+        var result = RunConfigLoader.Load(new JsonObject { ["scenario"] = "Baseline" }.With("map.file", "simulator/maps/test/clean.json"));
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Errors));
+        Assert.Equal("simulator/maps/test/clean.json", result.Loaded!.Config.Map.File);
+    }
+
+    [Fact]
+    public void MapFilesResolveAbsoluteOrUpwardFromTheWorkingOrToolDirectory()
+    {
+        var root = TestRuns.RepositoryRoot();
+        var elsewhere = TestRuns.TempDir();
+        Directory.CreateDirectory(elsewhere);
+        var relative = Path.Combine("simulator", "maps", "test", "clean.json");
+        var absolute = Path.Combine(root, relative);
+
+        Assert.Equal(absolute, MapFileCheck.Resolve(absolute, elsewhere, elsewhere));
+        Assert.Equal(absolute, MapFileCheck.Resolve(relative, Path.Combine(root, "src", "MmoEngine.Maps"), elsewhere));
+        Assert.Equal(absolute, MapFileCheck.Resolve(relative, elsewhere, Path.Combine(root, "tests")));
+        Assert.Null(MapFileCheck.Resolve(relative, elsewhere, elsewhere));
+        Assert.Null(MapFileCheck.Resolve(Path.Combine(elsewhere, "none.json"), root, root));
+    }
+
+    /// <summary>The tick rates (FR-018, research D7): valid combinations load, with 60, 30 and 20 Hz when the config leaves them out.</summary>
+    [Theory]
+    [InlineData(null, null, null, 60, 30, 20)]
+    [InlineData(120, null, null, 120, 30, 20)]
+    [InlineData(60, 60, 20, 60, 60, 20)]
+    [InlineData(90, 30, 10, 90, 30, 10)]
+    [InlineData(30, 30, 10, 30, 30, 10)]
+    public void ValidTickRatesLoadAndDefaultToSixtyThirtyAndTwenty(int? baseStepHz, int? tickHz, int? degradedTickHz, int expectedBase, int expectedTick, int expectedDegraded)
+    {
+        var runConfig = new JsonObject { ["scenario"] = "Baseline" };
+        if (baseStepHz is { } b)
+        {
+            runConfig.With("scheduling.baseStepHz", b);
+        }
+
+        if (tickHz is { } t)
+        {
+            runConfig.With("scheduling.tickHz", t);
+        }
+
+        if (degradedTickHz is { } d)
+        {
+            runConfig.With("scheduling.degradedTickHz", d);
+        }
+
+        var scheduling = TestRuns.Load(runConfig).Config.Scheduling;
+
+        Assert.Equal((expectedBase, expectedTick, expectedDegraded), (scheduling.BaseStepHz, scheduling.TickHz, scheduling.DegradedTickHz));
+    }
+
+    [Theory]
+    [InlineData("scheduling.baseStepHz", "50", "scheduling.baseStepHz: must be a multiple of scheduling.tickHz (30) and scheduling.degradedTickHz (20), was 50")]
+    [InlineData("scheduling.degradedTickHz", "30", "scheduling.degradedTickHz: must be lower than scheduling.tickHz (30), was 30")]
+    public void TickRateErrorsReadAsTheContractStatesThem(string path, string json, string expected)
+    {
+        var runConfig = new JsonObject { ["scenario"] = "Baseline" }.With(path, JsonNode.Parse(json));
+
+        var error = Assert.Single(RunConfigLoader.Load(runConfig).Errors);
+
+        Assert.Equal(expected, error.ToString());
+    }
+
+    public static TheoryData<string, string> TuningPaths => new()
+    {
+        { "regionizer.sectionSize", "32" },
+        { "regionizer.anchoring", "\"Position\"" },
+        { "regionizer.mergeGap", "1" },
+        { "regionizer.claimRadius.infantry", "24" },
+        { "regionizer.claimRadius.groundVehicle", "32" },
+        { "regionizer.claimRadius.aircraft", "40" },
+        { "regionizer.claimRadius.traveller", "8" },
+        { "regionizer.claimRadius.capturePointZone", "12" },
+        { "regionizer.split.minSections", "16" },
+        { "regionizer.split.minDeadPercent", "40" },
+        { "regionizer.split.minAgeSeconds", "5" },
+        { "regionizer.timerMode", "\"Absolute\"" },
+        { "scheduling.baseStepHz", "120" },
+        { "scheduling.tickHz", "60" },
+        { "scheduling.degradedTickHz", "15" },
+        { "metrics.targetFightSize", "900" },
+    };
+
+    /// <summary>
+    /// FR-026 and Principle VI: every tuning value comes from configuration. Overriding each tuning
+    /// path changes the run's effective options (the core's options, the time base or the metrics
+    /// settings) and is recorded in the manifest's parameters.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TuningPaths))]
+    public void TuningPathOverrideReachesEffectiveOptionsAndManifest(string path, string json)
+    {
+        const ulong Seed = 5;
+        var value = JsonNode.Parse(json)!;
+        var defaults = TestRuns.Load(TestRuns.Small("Baseline", Seed, 2, population: 40));
+        var overridden = TestRuns.Load(TestRuns.Small("Baseline", Seed, 2, population: 40).With(path, value));
+        var dir = TestRuns.TempDir();
+
+        var result = SimulationRunner.Run(overridden, dir, new RunOptions { GitSha = "unknown" });
+
+        var before = Effective(defaults.Config, path);
+        var after = Effective(overridden.Config, path);
+        Assert.NotEqual(before, after);
+        Assert.Equal(Expected(path, value, overridden.Config), after);
+        Assert.True(result.Completed, $"seed {Seed}: {result.FirstViolation}");
+        var manifest = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, RunFolder.ManifestFile)))!.AsObject();
+        Assert.Equal(ConfigJson.Canonical(value), ConfigJson.Canonical(ConfigJson.GetPath(manifest["parameters"]!.AsObject(), path)));
+        Assert.NotEqual(defaults.ConfigHash, manifest["configHash"]!.GetValue<string>());
+        Assert.Equal(overridden.ConfigHash, manifest["configHash"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(2.0, 60, 30, 20, 120)]
+    [InlineData(0.5, 60, 30, 20, 30)]
+    [InlineData(0.0, 60, 30, 20, 0)]
+    [InlineData(0.025, 60, 30, 20, 2)]
+    [InlineData(2.0, 120, 30, 20, 240)]
+    [InlineData(0.5, 90, 30, 10, 45)]
+    [InlineData(0.025, 30, 30, 10, 1)]
+    public void MinAgeSecondsBecomesBaseStepsOfTheRunsTimeBase(double seconds, int baseStepHz, int tickHz, int degradedTickHz, long steps)
+    {
+        var config = TestRuns.Load(new JsonObject { ["scenario"] = "Baseline" }
+            .With("regionizer.split.minAgeSeconds", seconds)
+            .With("scheduling.baseStepHz", baseStepHz)
+            .With("scheduling.tickHz", tickHz)
+            .With("scheduling.degradedTickHz", degradedTickHz)).Config;
+
+        var options = config.ToRegionizerOptions();
+
+        Assert.Equal(steps, options.SplitMinAgeSteps);
+        Assert.Equal(config.Regionizer.SectionSize, options.SectionSize);
+        Assert.Equal(config.Regionizer.ClaimRadius.CapturePointZone, options.ClaimRadius.CapturePointZone);
+        Assert.Equal(TimeBase.Default.ToSteps(seconds), config.Regionizer.ToRegionizerOptions().SplitMinAgeSteps);
+    }
+
+    /// <summary>The run's effective value of a tuning path, as the run uses it.</summary>
+    private static object Effective(RunConfig config, string path)
+    {
+        var options = config.ToRegionizerOptions();
+        var time = TimeBase.From(config.Scheduling);
+        return path switch
+        {
+            "regionizer.sectionSize" => options.SectionSize,
+            "regionizer.anchoring" => options.Anchoring,
+            "regionizer.mergeGap" => options.MergeGap,
+            "regionizer.claimRadius.infantry" => options.ClaimRadius.Infantry,
+            "regionizer.claimRadius.groundVehicle" => options.ClaimRadius.GroundVehicle,
+            "regionizer.claimRadius.aircraft" => options.ClaimRadius.Aircraft,
+            "regionizer.claimRadius.traveller" => options.ClaimRadius.Traveller,
+            "regionizer.claimRadius.capturePointZone" => options.ClaimRadius.CapturePointZone,
+            "regionizer.split.minSections" => options.SplitMinSections,
+            "regionizer.split.minDeadPercent" => options.SplitMinDeadPercent,
+            "regionizer.split.minAgeSeconds" => options.SplitMinAgeSteps,
+            "regionizer.timerMode" => options.TimerMode,
+            "scheduling.baseStepHz" => (time.BaseStepHz, options.SplitMinAgeSteps),
+            "scheduling.tickHz" => (time.TickHz, time.TickPeriodSteps),
+            "scheduling.degradedTickHz" => (time.DegradedTickHz, time.DegradedPeriodSteps),
+            "metrics.targetFightSize" => config.Metrics.TargetFightSize,
+            _ => throw new ArgumentOutOfRangeException(nameof(path), path, "not a tuning path of this test"),
+        };
+    }
+
+    /// <summary>What the effective value must be once <paramref name="value"/> is set, stated from the value itself.</summary>
+    private static object Expected(string path, JsonNode value, RunConfig config) => path switch
+    {
+        "regionizer.anchoring" => Enum.Parse<ClaimAnchoring>(value.GetValue<string>()),
+        "regionizer.timerMode" => Enum.Parse<TimerMode>(value.GetValue<string>()),
+        "regionizer.claimRadius.infantry" or "regionizer.claimRadius.groundVehicle" or "regionizer.claimRadius.aircraft"
+            or "regionizer.claimRadius.traveller" or "regionizer.claimRadius.capturePointZone"
+            or "regionizer.split.minDeadPercent" => value.GetValue<double>(),
+        "regionizer.split.minAgeSeconds" => (long)(value.GetValue<double>() * 60),
+        "scheduling.baseStepHz" => (value.GetValue<int>(), (long)(config.Regionizer.Split.MinAgeSeconds * value.GetValue<int>())),
+        "scheduling.tickHz" => (value.GetValue<int>(), 60 / value.GetValue<int>()),
+        "scheduling.degradedTickHz" => (value.GetValue<int>(), 60 / value.GetValue<int>()),
+        _ => value.GetValue<int>(),
+    };
 
     [Fact]
     public void SectionSizeErrorReadsAsTheContractStatesIt()
@@ -177,22 +418,6 @@ public sealed class ConfigValidationTests
         Assert.Equal(loaded.CanonicalJson, reparsed.CanonicalJson);
         var keys = ((JsonObject)JsonNode.Parse(loaded.CanonicalJson)!).Select(kv => kv.Key).ToList();
         Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
-    }
-
-    [Theory]
-    [InlineData(2.0, 120)]
-    [InlineData(0.5, 30)]
-    [InlineData(0.0, 0)]
-    [InlineData(0.025, 2)]
-    public void MinAgeSecondsBecomesBaseStepsAtSixtyHertz(double seconds, long steps)
-    {
-        var config = TestRuns.Load(new JsonObject { ["scenario"] = "Baseline" }.With("regionizer.split.minAgeSeconds", seconds)).Config;
-
-        var options = config.Regionizer.ToRegionizerOptions();
-
-        Assert.Equal(steps, options.SplitMinAgeSteps);
-        Assert.Equal(config.Regionizer.SectionSize, options.SectionSize);
-        Assert.Equal(config.Regionizer.ClaimRadius.CapturePointZone, options.ClaimRadius.CapturePointZone);
     }
 
     [Theory]

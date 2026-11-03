@@ -8,8 +8,9 @@ namespace MmoEngine.Regionizer.Simulator.Output;
 
 /// <summary>
 /// Builds <c>summary.json</c> (contracts/run-output.md): p50, p95, p99, max and mean per metric by
-/// nearest rank, rates by causing class, totals, fused fight pairs, the bookkeeping budget check and
-/// wall-clock time. Everything except the bookkeeping, budget and wall-clock values is deterministic.
+/// nearest rank, rates by causing class, totals (absorptions apart from merges), fused fight pairs,
+/// the run's tick rates and timer overhead, the bookkeeping budget check and wall-clock time.
+/// Everything except the bookkeeping, timer overhead, budget and wall-clock values is deterministic.
 /// </summary>
 public static class RunSummary
 {
@@ -21,6 +22,8 @@ public static class RunSummary
     /// <param name="metrics">The collector.</param>
     /// <param name="timers">The timer monitor.</param>
     /// <param name="config">The metrics configuration (budget).</param>
+    /// <param name="time">The run's time base; rates are per second of it.</param>
+    /// <param name="timerOverheadNanos">The calibrated cost of a timestamp pair, subtracted from each timed call (research D9).</param>
     /// <param name="wallClockSeconds">Wall-clock duration of the run.</param>
     public static JsonObject Build(
         string runId,
@@ -30,12 +33,15 @@ public static class RunSummary
         MetricsCollector metrics,
         TimerMonitor timers,
         MetricsConfig config,
+        TimeBase time,
+        double timerOverheadNanos,
         double wallClockSeconds)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(timers);
         ArgumentNullException.ThrowIfNull(config);
-        var seconds = ticks / (double)TimeBase.TicksPerSecond;
+        ArgumentNullException.ThrowIfNull(time);
+        var seconds = time.TicksToSeconds(ticks);
         var perMetric = new JsonObject();
         foreach (var name in MetricsCollector.SampledMetrics)
         {
@@ -50,7 +56,6 @@ public static class RunSummary
             fusionRates[cls.ToString()] = Rate(metrics.FusionsCausedBy(cls), seconds);
         }
 
-        var fused = Percentiles.Summarize(metrics.FusedFightPairSamples);
         var bookkeeping = Percentiles.Summarize(metrics.Samples("bookkeepingMicros"));
         return new JsonObject
         {
@@ -69,13 +74,21 @@ public static class RunSummary
             ["totals"] = new JsonObject
             {
                 ["merges"] = metrics.Merges,
+                ["absorptions"] = metrics.Absorptions,
                 ["splits"] = metrics.Splits,
                 ["fusions"] = metrics.Fusions,
                 ["oversizedFusionTicks"] = metrics.OversizedFusionTicks,
                 ["timersSet"] = timers.TimersSet,
                 ["timersFired"] = timers.TimersFired,
             },
-            ["fusedFightPairs"] = new JsonObject { ["p50"] = fused.P50, ["p95"] = fused.P95, ["max"] = fused.Max },
+            ["fusedFightPairs"] = ToJson(Percentiles.Summarize(metrics.FusedFightPairSamples)),
+            ["scheduling"] = new JsonObject
+            {
+                ["baseStepHz"] = time.BaseStepHz,
+                ["tickHz"] = time.TickHz,
+                ["degradedTickHz"] = time.DegradedTickHz,
+                ["timerOverheadNanos"] = timerOverheadNanos,
+            },
             ["budget"] = new JsonObject
             {
                 ["bookkeepingP99Micros"] = bookkeeping.P99,
