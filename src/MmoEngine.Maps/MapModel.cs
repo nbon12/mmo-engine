@@ -74,6 +74,7 @@ public sealed class MapLayer
         string defaultArea,
         IReadOnlyList<MapArea> areas,
         IReadOnlyList<MapRect> blocked,
+        bool allowsDirectEntry,
         ushort[] areaIds,
         bool[] blockedCells)
     {
@@ -86,6 +87,7 @@ public sealed class MapLayer
         DefaultArea = defaultArea;
         Areas = areas;
         Blocked = blocked;
+        AllowsDirectEntry = allowsDirectEntry;
         _areaIds = areaIds;
         _blocked = blockedCells;
     }
@@ -111,6 +113,13 @@ public sealed class MapLayer
 
     /// <summary>The blocked rectangles as written. Blocked sections keep their area tag.</summary>
     public IReadOnlyList<MapRect> Blocked { get; }
+
+    /// <summary>
+    /// Whether entities may move onto or off this layer without a portal (the optional air layer).
+    /// The file's <c>allowsDirectEntry</c>, false when absent; <see cref="MapDocument.ToTopology"/>
+    /// carries it into <see cref="LayerSpec.AllowsDirectEntry"/>.
+    /// </summary>
+    public bool AllowsDirectEntry { get; }
 
     /// <summary>Row-major area ids, <c>Width * Height</c> long, as the core's <see cref="LayerSpec.AreaTags"/>.</summary>
     internal ushort[] AreaIds => _areaIds;

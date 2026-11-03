@@ -52,6 +52,9 @@ internal sealed class LayerJson
 
     public List<int[]?>? Blocked { get; set; }
 
+    /// <summary>Optional; absent means false. True for the optional air layer, which entities enter and leave without a portal.</summary>
+    public bool? AllowsDirectEntry { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Unknown { get; set; }
 }

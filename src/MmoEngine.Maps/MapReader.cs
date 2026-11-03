@@ -181,7 +181,8 @@ internal static class MapReader
                 blocked[k] = ReadRect(layer.Blocked![k], $"{path}.blocked[{k}]", bounds, id);
             }
 
-            headers.Add(new LayerHeader(id, layer.Name, originX, originY, width, height, defaultArea, areas, blocked, path));
+            var allowsDirectEntry = layer.AllowsDirectEntry ?? false;
+            headers.Add(new LayerHeader(id, layer.Name, originX, originY, width, height, defaultArea, areas, blocked, allowsDirectEntry, path));
         }
 
         return headers;
@@ -270,6 +271,7 @@ internal static class MapReader
             header.DefaultArea,
             header.Areas,
             header.Blocked,
+            header.AllowsDirectEntry,
             ids,
             BlockedCells(header));
     }
@@ -561,5 +563,6 @@ internal static class MapReader
         string DefaultArea,
         MapArea[] Areas,
         MapRect[] Blocked,
+        bool AllowsDirectEntry,
         string Path);
 }
