@@ -1,0 +1,164 @@
+{
+  "formatVersion": 1,
+  "runId": "soak-s16-r16-seed1-2dbfb8ef",
+  "kind": "simulator",
+  "gitSha": "9bdb673be8295d9d9202d849f508a596ba6113f2",
+  "configHash": "2dbfb8efc4556b7f",
+  "scenario": "Soak",
+  "seed": 1,
+  "scheduling": "Interleaved",
+  "environment": "Development",
+  "parameters": {
+    "airLayer": {
+      "altitudeMetres": 150,
+      "enabled": true,
+      "hysteresisMetres": 20
+    },
+    "durationTicks": 2592000,
+    "map": {
+      "basesPerLane": 4,
+      "file": "simulator/maps/stacked-base.json",
+      "heightMetres": 8000,
+      "lanes": 3,
+      "widthMetres": 8000
+    },
+    "metrics": {
+      "bookkeepingBudgetMicros": 1000,
+      "crossRegionPairsEveryTicks": 30,
+      "deferredRangeMetres": 300,
+      "islandCheckEveryTicks": 30,
+      "metricsEveryTicks": 30,
+      "readOnlyRangeMetres": 1000,
+      "targetFightSize": 1200
+    },
+    "movement": {
+      "models": {
+        "aircraftCruiseAltitudeMetres": 300,
+        "aircraftFightAltitudeMetres": 50,
+        "objectiveRadiusMetres": 40,
+        "objectiveWaypointShare": 0.5,
+        "speedFactorMax": 1,
+        "speedFactorMin": 0.5,
+        "strafeEntryMetres": 800,
+        "vehicleAnnulusMetres": 150,
+        "vehicleSpeedFactorMin": 0.3,
+        "waypointIntervalSecondsMax": 10,
+        "waypointIntervalSecondsMin": 2
+      },
+      "redeployProbabilityPerSecond": 0.002,
+      "speedCeiling": {
+        "aircraft": 120,
+        "groundVehicle": 30,
+        "infantry": 7
+      }
+    },
+    "population": {
+      "limit": 10000,
+      "total": 1000
+    },
+    "regionizer": {
+      "anchoring": "Section",
+      "claimRadius": {
+        "aircraft": 16,
+        "capturePointZone": 20,
+        "groundVehicle": 24,
+        "infantry": 16,
+        "traveller": 16
+      },
+      "mergeGap": 0,
+      "sectionSize": 16,
+      "split": {
+        "minAgeSeconds": 2,
+        "minDeadPercent": 25,
+        "minSections": 32
+      },
+      "timerMode": "TickCounter"
+    },
+    "scenario": "Soak",
+    "scenarioParameters": {
+      "composition": {
+        "aircraft": 0.05,
+        "groundVehicle": 0.15,
+        "infantry": 0.8
+      },
+      "fightBases": [
+        0,
+        1,
+        3,
+        5,
+        6,
+        8,
+        10
+      ],
+      "fightRadiusPerSqrtPlayer": 8,
+      "fights": [
+        1200,
+        800,
+        800,
+        500,
+        400,
+        300,
+        300
+      ],
+      "instantActionShare": 0.3,
+      "migrationEverySeconds": 120,
+      "objectiveSpreadMetres": 100,
+      "objectivesPerBase": 3,
+      "pointToPointAircraft": 200,
+      "surfaceFight": 600,
+      "travellers": 500,
+      "undergroundFight": 300,
+      "undergroundLayer": 1
+    },
+    "scheduling": {
+      "baseStepHz": 60,
+      "degradedTickHz": 20,
+      "dropTicksMax": 60,
+      "dropTicksMin": 5,
+      "dropTo20HzProbability": 0.01,
+      "mode": "Interleaved",
+      "tickHz": 30
+    },
+    "seed": 1,
+    "timers": {
+      "delayTicksMax": 900,
+      "delayTicksMin": 30,
+      "setProbabilityPerEntityPerSecond": 0.01
+    },
+    "trace": {
+      "record": null,
+      "replay": null
+    }
+  },
+  "runtime": {
+    "framework": ".NET 9.0.7",
+    "os": "Darwin 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:38:56 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6000",
+    "architecture": "Arm64",
+    "processorCount": 10,
+    "machineName": "redacted (local Apple M1 Max workstation)",
+    "hardwareIntrinsics": {
+      "DOTNET_EnableHWIntrinsic": "unset",
+      "DOTNET_EnableSSE42": "unset",
+      "DOTNET_EnableAVX": "unset",
+      "DOTNET_EnableAVX2": "unset",
+      "DOTNET_EnableAVX512F": "unset",
+      "DOTNET_EnableArm64AdvSimd": "unset",
+      "DOTNET_PreferredVectorBitWidth": "unset",
+      "DOTNET_TieredCompilation": "unset",
+      "DOTNET_TieredPGO": "unset",
+      "DOTNET_ReadyToRun": "unset",
+      "Sse42.IsSupported": false,
+      "Avx2.IsSupported": false,
+      "Avx512F.IsSupported": false,
+      "AdvSimd.IsSupported": true,
+      "Vector<byte>.Count": 16
+    },
+    "vectorIsHardwareAccelerated": true
+  },
+  "startedUtc": "2026-11-03T15:46:25.106Z",
+  "finishedUtc": "2026-11-03T20:37:21.490Z",
+  "ticks": 2592000,
+  "metricsEveryTicks": 30,
+  "islandCheckEveryTicks": 30,
+  "crossRegionPairsEveryTicks": 30
+}
