@@ -1,7 +1,7 @@
 # Quickstart: Regionizer Simulator
 
 A guide to running and validating the feature. Every check here is also an automated test. This page
-shows how to run them by hand during development.
+shows the commands those tests run, for use during development.
 
 ## Prerequisites
 

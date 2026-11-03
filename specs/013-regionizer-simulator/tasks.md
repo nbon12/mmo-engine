@@ -420,10 +420,13 @@ allocate nothing.
   - the population per row as D15 sets it;
   - the measured options (merge gap 0 vs 1, tick-counter vs absolute timers) from Migration in
     interleaved mode
-- [ ] T070 Run the sweeps (Release, all cores). Commit their summary tables to `docs/simulator/results/`
+- [x] T070 Run the sweeps (Release, all cores). Commit their summary tables to `docs/simulator/results/`
   and the generated `docs/simulator/decision-memo.md`. Raw run folders stay local. (SC-005)
-- [ ] T071 Run the 24-hour simulated Soak in interleaved mode, and record its manifest and summary in
-  `docs/simulator/results/soak-24h/` (SC-002)
+  As run: the first-pass sweeps (9,000 ticks, 5 seeds), with tables in
+  `docs/simulator/results/first-pass/`. The memo's scope note covers the full-scale rerun.
+- [x] T071 Run the 24-hour simulated Soak in interleaved mode, and record its manifest and summary in
+  `docs/simulator/results/soak-24h/` (SC-002). As run: 1,000 players, zero violations and zero timer
+  faults.
 - [ ] T072 [P] Run the benchmarks, and attach the results to the PR and to
   `docs/simulator/results/benchmarks.md` (SC-004)
 - [x] T073 [P] Add an automated quickstart check, `tests/MmoEngine.Regionizer.Simulator.Tests/Cli/QuickstartTests.cs`,
@@ -437,9 +440,13 @@ allocate nothing.
 - [x] T076 Add a `docs/patch-notes.md` entry: behavior and contract changes; the shared pieces to reuse
   (the core library, output formats, map format); open follow-ups (.NET 10, Sonar and Codecov
   accounts, sub-spec 2, open decision 1 recommendations)
-- [ ] T077 **Before the PR**: bring spec.md and tasks.md up to date with the work done. Check every
+- [x] T077 **Before the PR**: bring spec.md and tasks.md up to date with the work done. Check every
   acceptance scenario and FR maps to a passing test. Run the 95% changed-file coverage gate locally.
-- [ ] T078 Audit for human steps (Principle XIII): none in the spec, plan, tasks or PR description
+  The review's mapping audit and the fix round closed every gap. The gate passes on all changed
+  files.
+- [x] T078 Audit for human steps (Principle XIII): none in the spec, plan, tasks or PR description.
+  The one unavoidable human action, the Sonar and Codecov accounts, is described once in the patch
+  notes.
 
 ---
 
@@ -476,9 +483,10 @@ Gaps the converge assessment and the review found after implementation, each clo
   - the CLI options in contracts/config-and-cli.md;
   - the quickstart.
 
+- [x] T088 [US6] `baseline-final` rerun at the first-pass memo's recommended values (radii 40, 48 and 32 m,
+  Section anchoring, *p*dead 50%) before the memo was regenerated.
+
 Recorded as follow-ups, not done here:
-- T088, `baseline-final` at the chosen values: the first-pass memo reads it at the defaults, and a
-  rerun at the recommended values is listed in the memo.
 - T091, `AnalysisLevel`: see plan.md's Complexity Tracking.
 - T095, the anchoring comparison at equal bookkeeping cost: see research D15.
 
