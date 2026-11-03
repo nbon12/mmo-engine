@@ -20,6 +20,37 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-03 — @claude mention agent on GitHub
+
+Spec: [specs/001-claude-mention-agent/spec.md](../specs/001-claude-mention-agent/spec.md) · PR: #35
+
+### Behavior and contract changes
+
+Tooling only. No application change.
+
+- Mentioning `@claude` in an issue, issue comment, PR review or PR review comment runs Claude Code (`.github/workflows/claude.yml`). It replies on the same thread, and for a change it pushes a branch and offers a PR link.
+- Only `OWNER`/`MEMBER`/`COLLABORATOR` mentions start a run. A mention on the sweep log issue (label `sweep-log`) never does, even from nbon12. That closes the follow-up from the #43 entry below.
+- Only issue *opened* triggers on `issues`; assigning an issue doesn't.
+- Runs for one issue or PR never overlap, but GitHub keeps only one waiting: in a burst of mentions, only the newest waiting one gets a reply.
+- `auto-merge.yml` no longer merges a PR whose head commit is from `claude[bot]`, matched by git name and email too, since the action's commits resolve to the `github-actions[bot]` login. Merge such a PR by hand, or push a reviewed commit on top. auto-merge ignores the `claude` check, and it re-decides when `Workflow tests` finishes.
+- New CI: `Workflow tests` (`.github/workflows/workflow-tests.yml`) runs `tests/workflows/` on PRs and pushes touching `.github/` or the tests.
+- `.github/dependabot.yml` now opens weekly bump PRs for the SHA-pinned actions.
+- Needs the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret and the Claude GitHub App.
+
+### Assumptions that no longer hold
+
+- The Done story sweep entry below says this repo has no `claude.yml`, so `@claude` handoffs aren't available. They are now, and `.routines/done-story-sweep.md` says so.
+
+### Shared pieces to reuse
+
+- `tests/workflows/gh_expr.py` has `Expr`, an evaluator for the GitHub Actions expression subset used in `if:` conditions. Use it to test other workflows' gates against event payloads.
+
+### Open follow-ups
+
+- No build toolchains yet. When application code lands, add the setup steps and allow the CI build and test commands (spec FR-010).
+- A live smoke test (that `claude[bot]` actually replies) needs a write-access user's token as a secret. See the spec's known gap.
+- hoa_management_system's `claude.yml` doesn't have the `sweep-log` guard, the `assigned` fix or the auto-merge exclusion yet.
+
 ## 2026-11-02 — Done story sweep: find the newest report from the last page of the log
 
 Spec: none (maintenance) · PR: [#44](https://github.com/nbon12/mmo-engine/pull/44), with [nbon12/hoa_management_system#313](https://github.com/nbon12/hoa_management_system/pull/313)
