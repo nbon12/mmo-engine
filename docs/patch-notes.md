@@ -20,6 +20,23 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-03 — @claude mention agent on GitHub
+
+Spec: [specs/001-claude-mention-agent/spec.md](../specs/001-claude-mention-agent/spec.md) · PR: #35
+
+### Behavior and contract changes
+
+Tooling only. No application change.
+
+- Mentioning `@claude` in an issue, issue comment, PR review or PR review comment runs Claude Code (`.github/workflows/claude.yml`). It replies on the same thread, and for a change it pushes a branch and offers a PR link.
+- Only `OWNER`/`MEMBER`/`COLLABORATOR` mentions start a run. Everyone else's are skipped.
+- Needs the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret and the Claude GitHub App.
+
+### Open follow-ups
+
+- No build toolchains yet. When application code lands, add the setup steps and allow the CI build and test commands (spec FR-010).
+- The workflow contract check and the live smoke test the spec calls for don't exist yet.
+
 ## 2026-10-31 — Architecture Police: nightly duplicate-pattern consolidation
 
 Spec: none (maintenance) · PR: #28
