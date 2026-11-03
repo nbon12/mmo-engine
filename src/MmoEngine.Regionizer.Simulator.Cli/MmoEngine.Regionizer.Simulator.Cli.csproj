@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>regionizer-sim</AssemblyName>
+    <RootNamespace>MmoEngine.Regionizer.Simulator.Cli</RootNamespace>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.Regionizer.Simulator.Tests" />
+  </ItemGroup>
+  <!-- The scenario defaults travel with the tool, so `regionizer-sim run` works outside the repository. -->
+  <ItemGroup>
+    <Content Include="..\..\simulator\scenarios\*.json" Link="scenarios\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,87 @@
+{
+  "formatVersion": 1,
+  "name": "seeded-leaks",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 32,
+      "height": 32,
+      "defaultArea": "open",
+      "areas": [
+        { "tag": "courtyard", "rects": [ [ 4, 4, 11, 11 ] ] },
+        { "tag": "market", "rects": [ [ 20, 4, 27, 11 ] ] }
+      ],
+      "blocked": [ [ 14, 0, 14, 15 ] ]
+    },
+    {
+      "id": 1,
+      "name": "cellar",
+      "originX": 4,
+      "originY": 20,
+      "width": 8,
+      "height": 8,
+      "defaultArea": "cellar"
+    },
+    {
+      "id": 2,
+      "name": "vault",
+      "originX": 20,
+      "originY": 20,
+      "width": 6,
+      "height": 6,
+      "defaultArea": "vault"
+    }
+  ],
+  "sealedAreas": [ "vault" ],
+  "adjacency": [
+    { "id": "vault-stairs", "kind": "stairs", "a": [ 2, 22, 22 ], "b": [ 0, 22, 22 ] },
+    { "id": "walkway-east", "kind": "walkway", "a": [ 0, 11, 10 ], "b": [ 0, 12, 10 ] },
+    { "id": "cellar-ramp", "kind": "ramp", "a": [ 0, 8, 24 ], "b": [ 1, 8, 24 ] },
+    { "kind": "bridge", "a": [ 0, 11, 4 ], "b": [ 0, 20, 4 ] },
+    { "id": "courtyard-path", "kind": "walkway", "a": [ 0, 5, 5 ], "b": [ 0, 6, 6 ] },
+    { "id": "cellar-ladder", "kind": "ladder", "a": [ 0, 6, 22 ], "b": [ 1, 6, 22 ] }
+  ],
+  "openings": [
+    { "id": "window-north", "kind": "window", "a": [ 0, 8, 11 ], "b": [ 0, 8, 12 ] },
+    { "id": "market-window", "kind": "window", "a": [ 0, 19, 6 ], "b": [ 0, 20, 6 ] },
+    { "id": "murder-hole", "kind": "murder-hole", "a": [ 1, 10, 26 ], "b": [ 0, 10, 26 ] }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "vault-door",
+      "a": [ 0, 22, 22 ],
+      "b": [ 2, 22, 22 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 2,
+      "name": "cellar-hatch",
+      "a": [ 0, 6, 22 ],
+      "b": [ 1, 6, 22 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 3,
+      "name": "courtyard-gate",
+      "a": [ 0, 11, 8 ],
+      "b": [ 0, 12, 8 ],
+      "open": true,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": true }
+    },
+    {
+      "id": 4,
+      "name": "market-window",
+      "a": [ 0, 20, 6 ],
+      "b": [ 0, 19, 6 ],
+      "open": true,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": false, "deferredProjectiles": true }
+    }
+  ]
+}

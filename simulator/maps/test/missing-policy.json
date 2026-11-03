@@ -1,0 +1,74 @@
+{
+  "formatVersion": 1,
+  "name": "missing-policy",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 16,
+      "height": 16,
+      "defaultArea": "open"
+    },
+    {
+      "id": 1,
+      "name": "cellar",
+      "originX": 0,
+      "originY": 0,
+      "width": 4,
+      "height": 4,
+      "defaultArea": "cellar"
+    }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "no-policy",
+      "a": [ 0, 1, 1 ],
+      "b": [ 1, 1, 1 ],
+      "open": false
+    },
+    {
+      "id": 2,
+      "name": "no-deferred-projectiles",
+      "a": [ 0, 2, 2 ],
+      "b": [ 1, 2, 2 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true }
+    },
+    {
+      "id": 3,
+      "name": "empty-policy",
+      "a": [ 0, 3, 3 ],
+      "b": [ 1, 3, 3 ],
+      "open": false,
+      "closedPolicy": {}
+    },
+    {
+      "id": 4,
+      "name": "complete-policy",
+      "a": [ 0, 0, 3 ],
+      "b": [ 1, 0, 3 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 5,
+      "name": "null-policy",
+      "a": [ 0, 3, 0 ],
+      "b": [ 1, 3, 0 ],
+      "open": false,
+      "closedPolicy": null
+    },
+    {
+      "id": 6,
+      "name": "no-entity-transfers",
+      "a": [ 0, 0, 0 ],
+      "b": [ 1, 0, 0 ],
+      "open": false,
+      "closedPolicy": { "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    }
+  ]
+}

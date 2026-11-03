@@ -1,0 +1,753 @@
+{
+  "formatVersion": 1,
+  "name": "spacing",
+  "scenario": "Spacing",
+  "mode": "OneAtATime",
+  "sweepSeed": 20261103,
+  "seeds": [
+    {
+      "index": 0,
+      "seed": 5843011988881251843
+    },
+    {
+      "index": 1,
+      "seed": 7620229681788273117
+    },
+    {
+      "index": 2,
+      "seed": 3728128964537905102
+    },
+    {
+      "index": 3,
+      "seed": 1906953110644082044
+    },
+    {
+      "index": 4,
+      "seed": 17502585706050438786
+    }
+  ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 100
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c000/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c000/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c000/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c000/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c000/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c001",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 150
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c001/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c001/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c001/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c001/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c001/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c002",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 200
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c002/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c002/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c002/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c002/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c002/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c003",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 250
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c003/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c003/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c003/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c003/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c003/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c004",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 300
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c004/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c004/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c004/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c004/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c004/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c005",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 350
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c005/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c005/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c005/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c005/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c005/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c006",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 400
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c006/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c006/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c006/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c006/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c006/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c007",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 450
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c007/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c007/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c007/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c007/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c007/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c008",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 500
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c008/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c008/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c008/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c008/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c008/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c009",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 550
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c009/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c009/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c009/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c009/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c009/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c010",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 600
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c010/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c010/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c010/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c010/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c010/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c011",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 650
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c011/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c011/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c011/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c011/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c011/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c012",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 700
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c012/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c012/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c012/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c012/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c012/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c013",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 750
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c013/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c013/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c013/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c013/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c013/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c014",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 800
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c014/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c014/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c014/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c014/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c014/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c015",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 850
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c015/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c015/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c015/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c015/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c015/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c016",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 900
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c016/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c016/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c016/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c016/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c016/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c017",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 950
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c017/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c017/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c017/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c017/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c017/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c018",
+      "parameters": {
+        "scenarioParameters.spacingMetres": 1000
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c018/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c018/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c018/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c018/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c018/seed-4",
+          "completed": true
+        }
+      ]
+    }
+  ]
+}

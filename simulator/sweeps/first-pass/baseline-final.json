@@ -1,0 +1,35 @@
+{
+  "name": "baseline-final",
+  "base": {
+    "scenario": "Baseline",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 9000,
+    "regionizer": {
+      "claimRadius": {
+        "infantry": 40,
+        "groundVehicle": 48,
+        "aircraft": 32
+      },
+      "anchoring": "Section",
+      "split": {
+        "minDeadPercent": 50
+      }
+    }
+  },
+  "seeds": 5,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "metrics.targetFightSize",
+      "values": [
+        1200
+      ]
+    }
+  ]
+}

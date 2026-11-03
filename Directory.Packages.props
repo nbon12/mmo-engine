@@ -1,0 +1,21 @@
+<Project>
+  <!-- Licenses are recorded in specs/013-regionizer-simulator/research.md (D13). Only MIT or
+       Apache-2.0 packages, or an approved exception, may be added (constitution Principle VII). -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="FluentValidation" Version="12.2.0" />
+    <PackageVersion Include="System.IO.Hashing" Version="10.0.14" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.14" />
+    <PackageVersion Include="Serilog" Version="4.4.0" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="CsCheck" Version="4.9.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+</Project>

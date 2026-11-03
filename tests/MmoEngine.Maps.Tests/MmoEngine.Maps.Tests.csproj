@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MmoEngine.Maps\MmoEngine.Maps.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.PortalValidator.Cli\MmoEngine.PortalValidator.Cli.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="CsCheck" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+</Project>

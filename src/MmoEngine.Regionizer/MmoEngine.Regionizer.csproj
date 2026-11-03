@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The regionizer core. The continent server reuses it unchanged (FR-015), so it references no
+       package and no other project. CoreDependencyTests enforces this. -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.Regionizer.Tests" />
+    <InternalsVisibleTo Include="MmoEngine.Regionizer.Simulator.Tests" />
+  </ItemGroup>
+</Project>

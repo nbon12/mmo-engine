@@ -1,0 +1,183 @@
+{
+  "formatVersion": 1,
+  "name": "section-size-onebase",
+  "scenario": "OneBase",
+  "mode": "OneAtATime",
+  "sweepSeed": 20261103,
+  "seeds": [
+    {
+      "index": 0,
+      "seed": 5843011988881251843
+    },
+    {
+      "index": 1,
+      "seed": 7620229681788273117
+    },
+    {
+      "index": 2,
+      "seed": 3728128964537905102
+    },
+    {
+      "index": 3,
+      "seed": 1906953110644082044
+    },
+    {
+      "index": 4,
+      "seed": 17502585706050438786
+    }
+  ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": {
+        "regionizer.sectionSize": 8
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c000/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c000/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c000/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c000/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c000/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c001",
+      "parameters": {
+        "regionizer.sectionSize": 16
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c001/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c001/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c001/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c001/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c001/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c002",
+      "parameters": {
+        "regionizer.sectionSize": 32
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c002/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c002/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c002/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c002/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c002/seed-4",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c003",
+      "parameters": {
+        "regionizer.sectionSize": 64
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c003/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 1,
+          "seed": 7620229681788273117,
+          "folder": "c003/seed-1",
+          "completed": true
+        },
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c003/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 3,
+          "seed": 1906953110644082044,
+          "folder": "c003/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c003/seed-4",
+          "completed": true
+        }
+      ]
+    }
+  ]
+}

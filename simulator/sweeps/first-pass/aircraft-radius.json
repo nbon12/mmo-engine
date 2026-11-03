@@ -1,0 +1,27 @@
+{
+  "name": "aircraft-radius",
+  "base": {
+    "scenario": "Baseline",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 9000
+  },
+  "seeds": 5,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.claimRadius.aircraft",
+      "values": [
+        8,
+        16,
+        24,
+        32
+      ]
+    }
+  ]
+}

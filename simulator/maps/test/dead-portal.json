@@ -1,0 +1,68 @@
+{
+  "formatVersion": 1,
+  "name": "dead-portal",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 16,
+      "height": 16,
+      "defaultArea": "open",
+      "blocked": [ [ 8, 0, 8, 15 ] ]
+    },
+    {
+      "id": 1,
+      "name": "bunker",
+      "originX": 4,
+      "originY": 4,
+      "width": 4,
+      "height": 4,
+      "defaultArea": "bunker"
+    }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "wall-door",
+      "a": [ 0, 7, 3 ],
+      "b": [ 0, 8, 3 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 2,
+      "name": "bunker-hatch",
+      "a": [ 0, 5, 5 ],
+      "b": [ 1, 9, 9 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 3,
+      "name": "lost-door",
+      "a": [ 3, 1, 1 ],
+      "b": [ 0, 1, 1 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 4,
+      "name": "good-hatch",
+      "a": [ 0, 6, 6 ],
+      "b": [ 1, 6, 6 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 5,
+      "name": "walled-in",
+      "a": [ 0, 8, 10 ],
+      "b": [ 0, 8, 11 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    }
+  ]
+}
