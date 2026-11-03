@@ -1,0 +1,55 @@
+name: .NET
+
+# Builds the solution with warnings as errors, checks formatting, runs every test with coverage, and
+# fails when a C# file under src/ that the change adds or modifies is under 95% line coverage
+# (constitution, CI/CD and code quality; spec 013-regionizer-simulator T003). The gate is
+# tools/coverage_gate.py; tests/workflows/ holds its tests and this workflow's.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so the coverage gate can diff against the base branch's merge base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore MmoEngine.sln
+
+      - name: Build
+        run: dotnet build MmoEngine.sln -warnaserror --no-restore
+
+      - name: Check formatting
+        run: dotnet format MmoEngine.sln --verify-no-changes --no-restore
+
+      - name: Test with coverage
+        run: dotnet test MmoEngine.sln --no-build --collect:"XPlat Code Coverage" --results-directory coverage
+
+      - name: Test the coverage gate
+        run: python3 -m unittest discover -s tests/workflows -p "test_coverage_gate.py" -v
+
+      - name: Changed-file coverage gate
+        env:
+          # The pull request's base branch; on a push to main, main itself.
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
+        run: python3 tools/coverage_gate.py --base "$BASE_REF" --coverage-dir coverage --summary "$GITHUB_STEP_SUMMARY"

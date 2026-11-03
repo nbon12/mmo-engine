@@ -1,0 +1,27 @@
+[
+  {
+    "code": "Leak",
+    "location": "adjacency:walkway-east",
+    "message": "walkway from [0,11,10] (courtyard) to [0,12,10] (open) crosses an area boundary and matches no portal"
+  },
+  {
+    "code": "Leak",
+    "location": "adjacency:cellar-ramp",
+    "message": "ramp from [0,8,24] (open) to [1,8,24] (cellar) crosses layer and area boundaries and matches no portal"
+  },
+  {
+    "code": "Leak",
+    "location": "adjacency[3]",
+    "message": "bridge from [0,11,4] (courtyard) to [0,20,4] (market) crosses an area boundary and matches no portal"
+  },
+  {
+    "code": "Leak",
+    "location": "openings:window-north",
+    "message": "window from [0,8,11] (courtyard) to [0,8,12] (open) crosses an area boundary and matches no portal"
+  },
+  {
+    "code": "Leak",
+    "location": "openings:murder-hole",
+    "message": "murder-hole from [1,10,26] (cellar) to [0,10,26] (open) crosses layer and area boundaries and matches no portal"
+  }
+]

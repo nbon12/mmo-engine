@@ -1,0 +1,52 @@
+{
+  "formatVersion": 1,
+  "name": "stacked-base",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 125,
+      "height": 125,
+      "defaultArea": "open"
+    },
+    {
+      "id": 1,
+      "name": "bunker",
+      "originX": 53,
+      "originY": 53,
+      "width": 20,
+      "height": 20,
+      "defaultArea": "bunker"
+    }
+  ],
+  "sealedAreas": [ "bunker" ],
+  "adjacency": [
+    { "id": "west-stairs", "kind": "stairs", "a": [ 0, 55, 62 ], "b": [ 1, 55, 62 ] },
+    { "id": "east-stairs", "kind": "stairs", "a": [ 0, 70, 62 ], "b": [ 1, 70, 62 ] }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "west-door",
+      "a": [ 0, 55, 62 ],
+      "b": [ 1, 55, 62 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 2,
+      "name": "east-door",
+      "a": [ 0, 70, 62 ],
+      "b": [ 1, 70, 62 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    }
+  ],
+  "portalSchedule": [
+    { "portal": 1, "everySeconds": 60, "openSeconds": 20 },
+    { "portal": 2, "everySeconds": 60, "openSeconds": 20 }
+  ]
+}

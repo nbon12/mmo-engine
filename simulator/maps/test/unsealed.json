@@ -1,0 +1,61 @@
+{
+  "formatVersion": 1,
+  "name": "unsealed",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 32,
+      "height": 32,
+      "defaultArea": "open"
+    },
+    {
+      "id": 1,
+      "name": "vault",
+      "originX": 8,
+      "originY": 8,
+      "width": 8,
+      "height": 8,
+      "defaultArea": "vault"
+    },
+    {
+      "id": 2,
+      "name": "crypt",
+      "originX": 20,
+      "originY": 20,
+      "width": 4,
+      "height": 4,
+      "defaultArea": "crypt"
+    }
+  ],
+  "sealedAreas": [ "vault", "crypt" ],
+  "adjacency": [
+    { "id": "vault-stairs", "kind": "stairs", "a": [ 0, 9, 9 ], "b": [ 1, 9, 9 ] },
+    { "id": "crypt-stairs", "kind": "stairs", "a": [ 2, 21, 21 ], "b": [ 0, 21, 21 ] }
+  ],
+  "openings": [
+    { "id": "vault-vent", "kind": "vent", "a": [ 1, 14, 14 ], "b": [ 0, 14, 14 ] },
+    { "id": "arrow-slit", "kind": "window", "a": [ 1, 10, 8 ], "b": [ 0, 10, 7 ] }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "vault-door",
+      "a": [ 0, 9, 9 ],
+      "b": [ 1, 9, 9 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 2,
+      "name": "crypt-door",
+      "a": [ 0, 21, 21 ],
+      "b": [ 2, 21, 21 ],
+      "open": true,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    }
+  ]
+}

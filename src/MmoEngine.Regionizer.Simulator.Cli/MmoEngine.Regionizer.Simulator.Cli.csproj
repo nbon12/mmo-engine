@@ -18,4 +18,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="MmoEngine.Regionizer.Simulator.Tests" />
   </ItemGroup>
+  <!-- The scenario defaults travel with the tool, so `regionizer-sim run` works outside the repository. -->
+  <ItemGroup>
+    <Content Include="..\..\simulator\scenarios\*.json" Link="scenarios\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
