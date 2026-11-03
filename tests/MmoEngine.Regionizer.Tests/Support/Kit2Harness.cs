@@ -36,14 +36,25 @@ internal sealed class Kit2Harness
     private readonly string _name;
     private ulong _state;
 
-    public Kit2Harness(string name, int seed, RegionizerOptions options, SectionTopology? topology = null)
+    /// <param name="extensions">Region data extensions handed to the regionizer, if any.</param>
+    /// <param name="observe">
+    /// When false the regionizer gets no observer (it uses its own null observer) and
+    /// <see cref="Events"/> stays empty.
+    /// </param>
+    public Kit2Harness(
+        string name,
+        int seed,
+        RegionizerOptions options,
+        SectionTopology? topology = null,
+        IReadOnlyList<IRegionDataExtension>? extensions = null,
+        bool observe = true)
     {
         _name = name;
         Seed = seed;
         _state = (ulong)seed;
         Topology = topology ?? OpenWorld();
         Events = new Kit2Observer();
-        R = new Regionizer(Topology, options, Events);
+        R = new Regionizer(Topology, options, observe ? Events : null, extensions);
     }
 
     public Regionizer R { get; }
@@ -264,6 +275,45 @@ internal sealed class Kit2Harness
         if (!e.SequenceEqual(a))
         {
             Assert.Fail($"{Context} {what}: expected {{{Keys(e)}}}, actual {{{Keys(a)}}}");
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> and asserts it throws exactly <typeparamref name="T"/>, naming the
+    /// test, seed and step on failure. Returns the exception.
+    /// </summary>
+    public T Throws<T>(Action action, string what)
+        where T : Exception
+    {
+        var thrown = Record.Exception(action);
+        if (thrown is null || thrown.GetType() != typeof(T))
+        {
+            Assert.Fail($"{Context} {what}: expected {typeof(T).Name}, actual {thrown?.GetType().Name ?? "no exception"} ({thrown?.Message})");
+        }
+
+        return (T)thrown;
+    }
+
+    /// <summary>The sum of every section's claim count.</summary>
+    public long TotalClaims()
+    {
+        long total = 0;
+        for (var s = 0; s < Topology.SectionCount; s++)
+        {
+            total += R.ClaimCountOf(s);
+        }
+
+        return total;
+    }
+
+    /// <summary>Asserts the checker reports exactly <paramref name="expected"/>, in any order.</summary>
+    public void SameViolations(IEnumerable<Violation> expected, IEnumerable<Violation> actual, string what)
+    {
+        var e = expected.Select(v => $"rule {(int)v.Rule} {v.Rule}: {v.Detail}").Order(StringComparer.Ordinal).ToArray();
+        var a = actual.Select(v => $"rule {(int)v.Rule} {v.Rule}: {v.Detail}").Order(StringComparer.Ordinal).ToArray();
+        if (!e.SequenceEqual(a))
+        {
+            Assert.Fail($"{Context} {what}:{Environment.NewLine}expected ({e.Length}):{Environment.NewLine}  {string.Join(Environment.NewLine + "  ", e)}{Environment.NewLine}actual ({a.Length}):{Environment.NewLine}  {string.Join(Environment.NewLine + "  ", a)}");
         }
     }
 

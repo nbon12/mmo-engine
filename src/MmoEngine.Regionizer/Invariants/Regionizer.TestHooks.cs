@@ -54,6 +54,30 @@ public sealed partial class Regionizer
         }
     }
 
+    /// <summary>
+    /// Takes a section off a region's list. Its owner stays (breaks rule 1: owned but not listed), or,
+    /// with <paramref name="clearOwner"/>, it loses its owner as if dropped while still claimed.
+    /// </summary>
+    internal void TestHookUnlistSection(long regionId, int section, bool clearOwner)
+    {
+        _regions[regionId].Sections.Remove(section);
+        if (clearOwner && _owner[section] != 0)
+        {
+            _owner[section] = 0;
+            OwnedSectionCount--;
+        }
+    }
+
+    /// <summary>Lists an entity under a region without changing the region it names (breaks rule 5).</summary>
+    internal void TestHookListEntityInRegion(long regionId, int entityId) => _regions[regionId].InsertEntity(entityId);
+
+    /// <summary>Moves an entity on its layer without recomputing its claim (breaks rules 2 and 5).</summary>
+    internal void TestHookMoveWithoutReclaim(int entityId, double x, double y)
+    {
+        var layer = _entities.Layer[entityId];
+        SetPosition(entityId, layer, x, y, _entities.Z[entityId], SectionAt(layer, x, y));
+    }
+
     /// <summary>Asks for a state move through the guarded transition (an illegal one is refused and recorded).</summary>
     internal bool TestHookTransition(long regionId, RegionState to) => Transition(_regions[regionId], to);
 

@@ -272,4 +272,48 @@ public sealed class TimerTests
         var firing = Assert.Single(observer.TimersFired, f => f.TimerId == secondTimer);
         Assert.Equal(regionB, firing.RegionId);
     }
+
+    /// <summary>
+    /// The timer-deadline test hook (used by the simulator's timer monitor) moves a timer's deadline:
+    /// the timer then fires once, at the new deadline, in whichever region holds it, while other
+    /// timers keep theirs. In both modes the new deadline (owner tick 3, or base step 6) is the third
+    /// lockstep tick, at step 6. An unknown timer id is refused.
+    /// </summary>
+    [Theory]
+    [InlineData(TimerMode.TickCounter, 3, 9301)]
+    [InlineData(TimerMode.Absolute, 6, 9302)]
+    public void TimerDeadlineMovedByTheTestHookFiresOnceAtTheNewDeadline(TimerMode mode, long newDeadline, int seed)
+    {
+        var h = new Kit2Harness(nameof(TimerDeadlineMovedByTheTestHookFiresOnceAtTheNewDeadline), seed, Kit2Harness.Options(timerMode: mode));
+        h.Add(InfantryA, 4, 8);
+        h.Add(InfantryB, 20, 8);
+        var regionB = h.RegionOf(InfantryB);
+        h.True(h.RegionOf(InfantryA) != regionB, "A and B are in separate regions");
+
+        // Ten ticks (or twenty base steps) for each, set at step 0.
+        var delay = mode == TimerMode.TickCounter ? 10L : 20L;
+        var timerA = h.R.AddTimer(InfantryA, delay);
+        var timerB = h.R.AddTimer(InfantryB, delay);
+
+        h.R.TestHookSetTimerDeadline(timerB, newDeadline);
+
+        h.Equal(newDeadline, h.R.GetRegion(regionB).Timers[0].Deadline, "deadline of B's timer after the hook");
+        h.Equal(delay, h.R.GetRegion(h.RegionOf(InfantryA)).Timers[0].Deadline, "deadline of A's timer (untouched)");
+        h.Throws<KeyNotFoundException>(() => h.R.TestHookSetTimerDeadline(timerB + 100, 1), "moving the deadline of an unknown timer");
+
+        for (var tick = 0; tick < 10; tick++)
+        {
+            h.Lockstep();
+        }
+
+        var fired = h.Events.Of<Kit2TimerFired>().ToList();
+        var b = fired.Where(f => f.TimerId == timerB).ToList();
+        var a = fired.Where(f => f.TimerId == timerA).ToList();
+        h.Equal(1, b.Count, "times B's timer fired");
+        h.Equal(6L, b[0].Now, "step B's timer fired at");
+        h.Equal(3L, b[0].RegionTick, "owner tick B's timer fired at");
+        h.Equal(regionB, b[0].Region, "region B's timer fired in");
+        h.Equal(1, a.Count, "times A's timer fired");
+        h.Equal(20L, a[0].Now, "step A's timer fired at");
+    }
 }

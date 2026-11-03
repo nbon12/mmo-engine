@@ -252,6 +252,192 @@ public sealed class EntityLifecycleTests
         Kit1Fixtures.AssertInvariantsHold(regionizer, $"{anchoring}: after the region's tick end");
     }
 
+    /// <summary>A layer-changing move in <see cref="LayerChangeOnlyThroughOpenPortalOrDirectEntryLayer"/>.</summary>
+    public enum LayerMove
+    {
+        /// <summary>From the portal's surface endpoint to its underground endpoint, the portal open: allowed.</summary>
+        AcrossOpenPortal,
+
+        /// <summary>The same move with the portal closed: rejected.</summary>
+        AcrossClosedPortal,
+
+        /// <summary>From a surface section beside the open portal's endpoint to the underground: rejected.</summary>
+        FromNonEndpointSection,
+
+        /// <summary>From the open portal's endpoint to an underground section that is not its far end: rejected.</summary>
+        FromEndpointToAnotherSection,
+
+        /// <summary>Onto and off the extra layer of <see cref="SectionTopology.OpenWorld"/> (direct entry): allowed.</summary>
+        OntoAndOffOpenWorldDirectEntryLayer,
+
+        /// <summary>Onto and off a built layer with <see cref="LayerSpec.AllowsDirectEntry"/>: allowed.</summary>
+        OntoAndOffBuiltDirectEntryLayer,
+    }
+
+    /// <summary>The cases of <see cref="LayerChangeOnlyThroughOpenPortalOrDirectEntryLayer"/>.</summary>
+    public static TheoryData<LayerMove, ClaimAnchoring, int> LayerMoves()
+    {
+        var data = new TheoryData<LayerMove, ClaimAnchoring, int>();
+        var seed = 7100;
+        foreach (var move in Enum.GetValues<LayerMove>())
+        {
+            data.Add(move, ClaimAnchoring.Section, ++seed);
+            data.Add(move, ClaimAnchoring.Position, ++seed);
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// FR-001: a move changes an entity's layer only across an open portal from its current section,
+    /// or onto or off a layer that allows direct entry; its claim then follows it. Any other layer
+    /// change throws <see cref="InvalidOperationException"/> and leaves the entity's layer, position,
+    /// region and claim, and every claim count, as they were. Each move is made during the entity's
+    /// region's tick, and the invariant checker runs at the tick boundary after it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(LayerMoves))]
+    public void LayerChangeOnlyThroughOpenPortalOrDirectEntryLayer(LayerMove move, ClaimAnchoring anchoring, int seed)
+    {
+        const int portalId = 7;
+        const int surface = 0;
+        const int underground = 1;
+        const int portalX = 8;
+        const int row = 8;
+        const int entity = 1;
+        var directLayer = move == LayerMove.OntoAndOffOpenWorldDirectEntryLayer ? 2 : 3;
+        var topology = move switch
+        {
+            LayerMove.AcrossClosedPortal => PortalLayers(open: false),
+            LayerMove.OntoAndOffOpenWorldDirectEntryLayer => SectionTopology.OpenWorld(Kit2Harness.SectionSize, Kit2Harness.SectionSize * 32, Kit2Harness.SectionSize * 32, directLayer),
+            LayerMove.OntoAndOffBuiltDirectEntryLayer => SectionTopology.Build(
+                Kit2Harness.SectionSize,
+                [Kit1Fixtures.UniformLayer(surface, 0, 0, 32, 32), Kit1Fixtures.UniformLayer(directLayer, 0, 0, 32, 32) with { AllowsDirectEntry = true }],
+                []),
+            _ => PortalLayers(open: true),
+        };
+        var h = new Kit2Harness(nameof(LayerChangeOnlyThroughOpenPortalOrDirectEntryLayer), seed, Kit2Harness.Options(anchoring), topology);
+        var (startX, targetLayer, targetX) = move switch
+        {
+            LayerMove.FromNonEndpointSection => (portalX - 1, underground, portalX - 1),
+            LayerMove.FromEndpointToAnotherSection => (portalX, underground, portalX + 1),
+            LayerMove.OntoAndOffOpenWorldDirectEntryLayer or LayerMove.OntoAndOffBuiltDirectEntryLayer => (5, directLayer, 5),
+            _ => (portalX, underground, portalX),
+        };
+        h.True(topology.AllowsDirectEntry(directLayer) == (move is LayerMove.OntoAndOffOpenWorldDirectEntryLayer or LayerMove.OntoAndOffBuiltDirectEntryLayer), "only the direct-entry cases have a direct-entry layer");
+        h.Equal(false, topology.AllowsDirectEntry(surface), "the surface layer allows direct entry");
+
+        // Given an entity on the surface, during its region's tick.
+        h.Add(entity, startX, row, layer: surface);
+        h.AssertClean();
+        var region = h.RegionOf(entity);
+        h.AdvanceTo(Kit2Harness.LockstepPeriod);
+        h.Start(region);
+        var before = h.R.GetEntity(entity);
+        var (layer0, x0, y0) = (before.Layer, before.X, before.Y);
+        var claim0 = string.Join(",", h.ClaimOf(entity));
+        var total0 = h.TotalClaims();
+        var (tx, ty) = h.Spot(targetX, row);
+
+        var allowed = move is LayerMove.AcrossOpenPortal or LayerMove.OntoAndOffOpenWorldDirectEntryLayer or LayerMove.OntoAndOffBuiltDirectEntryLayer;
+        if (!allowed)
+        {
+            // When it moves to another layer any other way, Then the move is rejected and nothing changes.
+            h.Throws<InvalidOperationException>(() => h.R.MoveEntity(entity, targetLayer, tx, ty), $"{move}: a move from layer {surface} to layer {targetLayer}");
+            var after = h.R.GetEntity(entity);
+            h.Equal(layer0, after.Layer, $"{move}: layer after the rejected move");
+            h.Equal((x0, y0), (after.X, after.Y), $"{move}: position after the rejected move");
+            h.Equal(region, after.RegionId, $"{move}: region after the rejected move");
+            h.Equal(claim0, string.Join(",", h.ClaimOf(entity)), $"{move}: claim after the rejected move");
+            h.Equal(total0, h.TotalClaims(), $"{move}: total claim count after the rejected move");
+            h.End(region);
+            h.AssertClean();
+            return;
+        }
+
+        // When it moves onto the other layer: across the open portal, or onto the direct-entry layer.
+        h.R.MoveEntity(entity, targetLayer, tx, ty);
+
+        // Then it stands on that layer and its claim follows: through the portal, both endpoints' footprints.
+        var moved = h.R.GetEntity(entity);
+        h.Equal(targetLayer, moved.Layer, $"{move}: layer after the move");
+        h.Equal((tx, ty), (moved.X, moved.Y), $"{move}: position after the move");
+        h.Equal(region, moved.RegionId, $"{move}: region after the move");
+        var expected = move == LayerMove.AcrossOpenPortal
+            ? h.Footprint(underground, portalX, row).Union(h.Footprint(surface, portalX, row))
+            : h.Footprint(directLayer, targetX, row);
+        h.SameSections(expected, h.ClaimOf(entity), $"{move}: claim after the move");
+
+        // ... and a further move shows it is on the new layer: off the endpoint it claims that layer
+        // only, and off the direct-entry layer (back to the surface) it claims the surface only.
+        var (backLayer, backX) = move == LayerMove.AcrossOpenPortal ? (underground, portalX + 3) : (surface, targetX + 1);
+        var (bx, by) = h.Spot(backX, row);
+        h.R.MoveEntity(entity, backLayer, bx, by);
+        h.Equal(backLayer, h.R.GetEntity(entity).Layer, $"{move}: layer after the second move");
+        h.SameSections(h.Footprint(backLayer, backX, row), h.ClaimOf(entity), $"{move}: claim after the second move");
+        h.Equal(RegionState.Ready, h.End(region).State, $"{move}: state of the region after its tick end");
+        h.Equal(region, h.RegionOf(entity), $"{move}: region after the tick end");
+        h.AssertClean();
+
+        static SectionTopology PortalLayers(bool open) =>
+            SectionTopology.Build(
+                Kit2Harness.SectionSize,
+                [Kit1Fixtures.UniformLayer(surface, 0, 0, 32, 32), Kit1Fixtures.UniformLayer(underground, 0, 0, 32, 32)],
+                [new PortalSpec(portalId, new SectionKey(surface, portalX, row), new SectionKey(underground, portalX, row), open)]);
+    }
+
+    /// <summary>
+    /// FR-003: a heavy projectile must start in a section its firing region owns. Fired into unowned
+    /// ground, just beside the firing region's claim or far from it, it is refused: the projectile does
+    /// not exist afterwards, no region was created and no claim count changed. Fired from inside the
+    /// region, it is accepted.
+    /// </summary>
+    [Theory]
+    [InlineData(ClaimAnchoring.Section, true, 7201)]
+    [InlineData(ClaimAnchoring.Section, false, 7202)]
+    [InlineData(ClaimAnchoring.Position, true, 7203)]
+    [InlineData(ClaimAnchoring.Position, false, 7204)]
+    public void HeavyProjectileCannotStartInAnUnownedSection(ClaimAnchoring anchoring, bool besideTheRegion, int seed)
+    {
+        const int shooter = 1;
+        const int projectile = 2;
+        const int row = 8;
+        var h = new Kit2Harness(nameof(HeavyProjectileCannotStartInAnUnownedSection), seed, Kit2Harness.Options(anchoring));
+        h.Add(shooter, 8, row);
+        h.AssertClean();
+        var region = h.RegionOf(shooter);
+        var owned = string.Join(",", h.SectionsOf(region).Order());
+        var created = h.Events.Of<Kit2Created>().Count();
+        var total = h.TotalClaims();
+
+        // Section mode owns columns 7–9, position mode column 8: column 10 is unowned either way.
+        var column = besideTheRegion ? 10 : 20;
+        var (x, y) = h.Spot(column, row);
+        h.Equal(0L, h.R.OwnerOfLocation(0, x, y), $"owner of the launch point in column {column}");
+
+        // When the firing region, during its tick, fires a heavy projectile from unowned ground.
+        h.AdvanceTo(Kit2Harness.LockstepPeriod);
+        h.Start(region);
+        h.Throws<InvalidOperationException>(() => h.R.AddEntity(projectile, EntityClass.HeavyProjectile, 0, x, y), $"a heavy projectile starting in unowned column {column}");
+
+        // Then it does not exist, no region was created and the claims are unchanged.
+        h.Equal(false, h.R.HasEntity(projectile), "the refused projectile exists");
+        h.Equal(created, h.Events.Of<Kit2Created>().Count(), "regions created");
+        h.Equal(region.ToString(), string.Join(",", h.R.RegionIds.ToArray()), "live regions");
+        h.Equal(total, h.TotalClaims(), "total claim count");
+        h.Equal(owned, string.Join(",", h.SectionsOf(region).Order()), "sections of the firing region");
+        h.Equal(shooter.ToString(), string.Join(",", h.EntitiesOf(region)), "entities of the firing region");
+
+        // Control: fired from the shooter's own section, it is accepted into the firing region and claims nothing.
+        var (sx, sy) = h.Spot(8, row);
+        h.R.AddEntity(projectile, EntityClass.HeavyProjectile, 0, sx, sy);
+        h.Equal(region, h.RegionOf(projectile), "region of a projectile fired from an owned section");
+        h.Equal(0, h.ClaimOf(projectile).Length, "sections the accepted projectile claims");
+        h.Equal(total, h.TotalClaims(), "total claim count after the accepted projectile");
+        h.End(region);
+        h.AssertClean();
+    }
+
     private static void RemoveAll(Regionizer regionizer, int entityCount)
     {
         for (var id = 1; id <= entityCount; id++)

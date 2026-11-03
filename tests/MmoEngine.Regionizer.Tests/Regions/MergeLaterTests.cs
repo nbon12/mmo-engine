@@ -165,6 +165,100 @@ public sealed class MergeLaterTests
     }
 
     /// <summary>
+    /// FR-007 and research D4: a ticking region whose entities' claims land on two non-ticking regions
+    /// owes both a merge; they wait as transient. At its one tick end it processes the pending merges
+    /// in ascending partner id, whatever order the claims requested them in or where the partners
+    /// lie: inside that single <see cref="Regionizer.MarkNotTicking"/> it absorbs the lower-id partner,
+    /// then the higher, each merge keeping the entity that requested it as its cause.
+    /// </summary>
+    [Theory]
+    [InlineData(true, true, 1501)]
+    [InlineData(true, false, 1502)]
+    [InlineData(false, true, 1503)]
+    [InlineData(false, false, 1504)]
+    public void TickingRegionOwingTwoNonTickingRegionsAbsorbsBothInAscendingIdOrder(bool leftPartnerCreatedFirst, bool rightClaimFirst, int seed)
+    {
+        var h = new Kit2Harness(nameof(TickingRegionOwingTwoNonTickingRegionsAbsorbsBothInAscendingIdOrder), seed, Kit2Harness.Options());
+        const int tickingLeft = 1;
+        const int tickingRight = 2;
+        const int leftPartnerEntity = 3;
+        const int rightPartnerEntity = 4;
+
+        // Given the ticking region T (entities in columns 8 and 10, claims 7–11), created first, and two
+        // partners just beside it: L in column 5 (claims 4–6) and R in column 13 (claims 12–14).
+        h.Add(tickingLeft, 8, Row);
+        h.Add(tickingRight, 10, Row);
+        if (leftPartnerCreatedFirst)
+        {
+            h.Add(leftPartnerEntity, 5, Row);
+            h.Add(rightPartnerEntity, 13, Row);
+        }
+        else
+        {
+            h.Add(rightPartnerEntity, 13, Row);
+            h.Add(leftPartnerEntity, 5, Row);
+        }
+
+        h.AssertClean();
+        var t = h.RegionOf(tickingLeft);
+        var left = h.RegionOf(leftPartnerEntity);
+        var right = h.RegionOf(rightPartnerEntity);
+        h.Equal(t, h.RegionOf(tickingRight), "region of T's second entity");
+        h.Equal(3, new[] { t, left, right }.Distinct().Count(), "regions before the tick");
+        h.True(t < left && t < right, "T has the lowest id");
+        var (lower, higher) = left < right ? (left, right) : (right, left);
+        var causeOf = new Dictionary<long, int> { [left] = tickingLeft, [right] = tickingRight };
+
+        // When only T ticks, and its entities step out until each claim lands on a partner's sections
+        // (column 7 claims 6–8, sharing column 6 with L; column 11 claims 10–12, sharing column 12 with R).
+        h.AdvanceTo(Kit2Harness.LockstepPeriod);
+        h.Start(t);
+        var sectionsAtStart = string.Join(",", h.SectionsOf(t).Order());
+        var moves = new List<Action>
+        {
+            () => h.MoveInTick(tickingLeft, 7, Row),
+            () => h.MoveInTick(tickingRight, 11, Row),
+        };
+        if (rightClaimFirst)
+        {
+            moves.Reverse();
+        }
+
+        foreach (var move in moves)
+        {
+            move();
+        }
+
+        // Then T does not grow, and both partners wait as transient, each owed by T.
+        h.Equal(sectionsAtStart, string.Join(",", h.SectionsOf(t).Order()), "sections of T during its tick");
+        h.Equal($"{lower},{higher}", string.Join(",", h.PendingOf(t)), "pending partners of T");
+        foreach (var partner in new[] { left, right })
+        {
+            h.Equal(RegionState.Transient, h.StateOf(partner), $"state of partner {partner} during T's tick");
+            h.Equal(t.ToString(), string.Join(",", h.PendingOf(partner)), $"pending partners of partner {partner}");
+        }
+
+        // When T's tick ends.
+        var mark = h.Events.Log.Count;
+        var result = h.End(t);
+
+        // Then that single tick end absorbed the lower-id partner first, then the higher, into T.
+        var merges = h.Events.Of<Kit2Merged>(mark).ToList();
+        h.Equal(
+            $"{t}<-{lower} (cause {causeOf[lower]}), {t}<-{higher} (cause {causeOf[higher]})",
+            string.Join(", ", merges.Select(m => $"{m.Absorber}<-{m.Absorbed} (cause {m.CauseEntity})")),
+            "merges inside T's tick end, in order");
+        h.True(merges.All(m => m.Step == h.R.Now && m.Cause == EntityClass.Infantry), "both merges happen at this step with an infantry cause");
+        h.Equal(new TickEndResult(RegionState.Ready, 0, 0), result, "result of T's tick end");
+        h.Equal(t.ToString(), string.Join(",", h.R.RegionIds.ToArray()), "live regions after T's tick end");
+        h.Equal(RegionState.Dead, h.StateOf(left), "state of L after the tick end");
+        h.Equal(RegionState.Dead, h.StateOf(right), "state of R after the tick end");
+        h.Equal("1,2,3,4", string.Join(",", h.EntitiesOf(t)), "entities of T after the tick end");
+        h.Equal(0, h.PendingOf(t).Length, "pending merges of T after the tick end");
+        h.AssertClean();
+    }
+
+    /// <summary>
     /// A merge requested against a region that ticks at a slower cadence (20 Hz, every 3 base steps)
     /// while the requester ticks at 30 Hz (every 2): the requester waits as transient, cannot start
     /// another tick, and the merge completes at the slow region's tick end. Timers on both sides keep

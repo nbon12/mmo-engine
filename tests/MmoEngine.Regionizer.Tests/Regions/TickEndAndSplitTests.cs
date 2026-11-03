@@ -8,7 +8,7 @@ namespace MmoEngine.Regionizer.Tests.Regions;
 /// the invariant checker at every tick boundary. Entities stand on row 8 of a 32×32 open world; with
 /// the harness radii a section-anchored claim is the 3×3 block around the entity's section and a
 /// position-anchored one is the entity's own section. Ticks end at even steps, so the odd minimum
-/// ages used here are never met with equality.
+/// ages used here are never met with equality; the even-T_min test checks the equality case.
 /// </summary>
 public sealed class TickEndAndSplitTests
 {
@@ -126,6 +126,49 @@ public sealed class TickEndAndSplitTests
         // Control: the first tick end at an age past T_min splits it.
         h.Equal(2, h.Lockstep()[parent].SplitChildren, $"split children at age {h.R.Now - createdAt} (T_min {minAge})");
         h.Equal(minAge + 1, h.R.Now - createdAt, "age at the split");
+    }
+
+    /// <summary>
+    /// FR-008's "at least T_min old" includes equality: with an even T_min a tick end falls exactly at
+    /// age T_min, and the region splits there. At the tick end one tick earlier (age T_min − 2) every
+    /// other threshold already holds, and it does not split.
+    /// </summary>
+    [Theory]
+    [InlineData(12, ClaimAnchoring.Section, 3251)]
+    [InlineData(12, ClaimAnchoring.Position, 3252)]
+    [InlineData(16, ClaimAnchoring.Section, 3253)]
+    public void EvenTminSplitsAtTheTickEndWhereAgeEqualsTmin(long minAge, ClaimAnchoring anchoring, int seed)
+    {
+        // Given a region holding two islands, with N_min 1 and p_dead 0 so only its age can block a split.
+        var h = new Kit2Harness(
+            nameof(EvenTminSplitsAtTheTickEndWhereAgeEqualsTmin),
+            seed,
+            Kit2Harness.Options(anchoring, splitMinSections: 1, splitMinDeadPercent: 0, splitMinAgeSteps: minAge));
+        var parent = ArrangeOneRegionOfTwoGroups(h);
+        var createdAt = h.R.GetRegion(parent).CreatedAt;
+        h.Equal(0L, createdAt, "creation step of the region");
+        _ = WalkGroupsApart(h, parent, minAge);
+
+        // When ticks end up to one tick before T_min, Then none splits it.
+        var last = default(TickEndResult);
+        var lastAge = -1L;
+        while (h.R.Now + Kit2Harness.LockstepPeriod - createdAt < minAge)
+        {
+            last = h.Lockstep()[parent];
+            lastAge = h.R.Now - createdAt;
+            h.Equal(0, last.SplitChildren, $"split children at age {lastAge} (T_min {minAge})");
+        }
+
+        h.Equal(minAge - Kit2Harness.LockstepPeriod, lastAge, "age at the last tick end before T_min");
+        h.Equal(RegionState.Ready, last.State, "state after the tick end one tick before T_min");
+        h.Equal(1, h.R.RegionIds.Length, "live regions one tick before T_min");
+
+        // When the tick end falls at exactly T_min, Then it splits there.
+        var result = h.Lockstep()[parent];
+        h.Equal(minAge, h.R.Now - createdAt, "age at this tick end");
+        h.Equal(2, result.SplitChildren, $"split children at age exactly T_min {minAge}");
+        h.Equal(2, h.R.RegionIds.Length, "live regions after the split");
+        h.True(h.RegionOf(Left1) != h.RegionOf(Right1), "the two groups are in different regions");
     }
 
     /// <summary>
@@ -329,10 +372,22 @@ public sealed class TickEndAndSplitTests
         h.Equal(leftCount == 2 ? 12 : 9, leftSize, "sections of the left island");
         h.Equal(rightCount == 2 ? 12 : 9, rightSize, "sections of the right island");
 
+        var parentCreatedAt = h.R.GetRegion(parent).CreatedAt;
+
         var result = h.Lockstep()[parent];
 
         h.Equal(2, result.SplitChildren, "regions after the split");
         var (keeperGroup, otherGroup) = leftKeeps ? (leftGroup, rightGroup) : (rightGroup, leftGroup);
+
+        // FR-008: the child keeping the parent's id keeps its age; every other child starts at the split.
+        var splitAt = h.R.Now;
+        h.True(splitAt != parentCreatedAt, $"the split (step {splitAt}) comes after the parent's creation (step {parentCreatedAt})");
+        h.Equal(parentCreatedAt, h.R.GetRegion(parent).CreatedAt, "creation step of the keeper");
+        foreach (var id in h.R.RegionIds.ToArray().Where(id => id != parent))
+        {
+            h.Equal(splitAt, h.R.GetRegion(id).CreatedAt, $"creation step of new child {id}");
+        }
+
         h.Equal(parent, h.RegionOf(keeperGroup[0]), $"region of the {(leftKeeps ? "left" : "right")} island (sizes {leftSize} and {rightSize})");
         var child = h.RegionOf(otherGroup[0]);
         h.True(child > parent, $"the other island's region {child} is new, after parent {parent}");
