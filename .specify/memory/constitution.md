@@ -1,6 +1,49 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.0.0 -> 1.1.0
+Ratified: 2026-10-28 | Last amended: 2026-11-02
+
+Principle added:
+  XIII. Autonomous Delivery; Human Input Arrives as Feedback   (NekoHOA section 14, v3.2.0)
+    The maintainer is not a step in the pipeline. Agents decide and continue (ambiguity becomes a
+    recorded Assumption, never a question or a [NEEDS CLARIFICATION] marker, except that an open
+    decision is called out, not settled); specs, plans, tasks, checklists and PR descriptions carry
+    no human-assigned tasks, manual verification, or approval/sign-off gates; CI/CD and ops controls
+    are automated guards, not required reviewers; the automated checks are the merge gate and a
+    green PR always merges; human input arrives as feedback after work lands. "Unless otherwise
+    specified": when the maintainer drives /speckit-specify or /speckit-clarify themselves, or says
+    so, the agent engages and asks in those phases only; everything after them stays hands-off. The
+    only other exceptions are actions no automation can do
+    (third-party accounts and root credentials, billing, admin-only settings, amending this
+    constitution, unbounded irreversible actions on production), and even those never block a merge.
+Principles modified: none. No existing rule is removed or redefined.
+Sections modified: Development Workflow (one bullet: agents carry work to merge without human gates;
+  code review flags an added human step).
+
+Templates (spec-kit 1.2.5 resolves templates through .specify/templates/overrides/ first):
+  .specify/templates/overrides/spec-template.md   updated (Constitution Requirements bullet;
+                                                  clarification example replaced by an assumption)
+  .specify/templates/overrides/plan-template.md   updated (Constitution Check gate for XIII)
+  .specify/templates/overrides/tasks-template.md  updated ("STOP and VALIDATE" and checkpoints pass on
+                                                  green automated checks; quickstart validation is
+                                                  automated; Polish item for a human-step audit)
+  CLAUDE.md                                       updated (agent guidance; overrides Spec Kit command
+                                                  text that says to ask or wait)
+  docs/patch-notes.md                             entry added
+Version bump rationale (MINOR): new principle added; no existing rule removed or redefined.
+
+Follow-up TODOs:
+  - .routines/merge-policy.md (#37, zero-touch handoff task S3) lets sessions merge their own PRs and
+    agrees with Principle XIII: no human review, guarded paths get an independent automated review,
+    and no open decision is settled. It keeps constitution amendments owner-merged until Governance
+    is amended.
+  - Open decision 5 says statistical outliers "MUST be reviewed". If that option is chosen, express the
+    review as automated flagging; a person reviewing outliers would be a human step under XIII.
+  - The core Spec Kit skills (.claude/skills/speckit-*) are not edited, because Spec Kit owns them.
+    Principle XIII and CLAUDE.md prevail where they say to ask the user or wait.
+
+----- prior amendment: initial ratification -----
 Version change: template (unversioned) -> 1.0.0 (initial ratification)
 Ratified: 2026-10-28 | Last amended: 2026-10-28
 
@@ -357,6 +400,95 @@ stay verifiable.
 
 **Rationale**: NekoHOA's stack is proven for web applications. The real-time path has different
 latency and statefulness requirements.
+
+### XIII. Autonomous Delivery; Human Input Arrives as Feedback
+
+This project is built and operated by agents with little supervision. The maintainer gives direction
+and feedback and is **not a step in the pipeline**. Human input MUST arrive as **feedback after work
+lands**, never as a gate before it. This principle governs how work is specified, built, verified,
+merged and operated. It does not limit what the product does: features in which people act (a
+moderation console, a support queue, an admin action) are specified normally.
+
+- **Decide, don't ask.** Unless the maintainer specifies otherwise (see "Unless otherwise specified"
+  below), agents MUST carry work from request to merge on their own judgment. When something is
+  ambiguous, the agent MUST choose the most defensible default, record it under the
+  spec's **Assumptions**, and continue. It MUST NOT stop to ask a question and MUST NOT leave a
+  `[NEEDS CLARIFICATION]` marker for a person to resolve. A wrong assumption is corrected through
+  feedback, as ordinary follow-up work. The one thing an assumption MUST NOT settle is an open
+  decision (Architecture Constraints, Open decisions): the agent calls it out in the plan, designs
+  so it stays open, and continues with the work that does not depend on it.
+- **No human steps in artifacts.** Specs, plans, tasks, checklists, quickstarts and PR descriptions
+  MUST NOT contain:
+  - tasks, steps or checklist items assigned to a person (owner, operator, maintainer, reviewer,
+    QA, playtester, stakeholder);
+  - manual verification, manual QA, playtests-as-acceptance or user-acceptance steps. Every check
+    is an automated test (Principle IX) or an automated CI check;
+  - review, approval or sign-off gates, including "stop and validate", "wait for approval" and
+    "confirm with the maintainer" checkpoints. A checkpoint is passed when its automated checks are
+    green;
+  - "things only a human can do" sections, or their equivalents.
+- **Automation, not approval.** A required reviewer, manual approval or "someone clicks" step MUST
+  NOT be introduced as a control in CI/CD, infrastructure or operations. The control is an automated
+  guard in code: preconditions checked against live state, a bounded blast radius, a dry run before
+  the write, a rate limit, a kill switch and an audit trail. Taking a person out of the loop never
+  takes the check out: a human gate is replaced by an automated one, not by nothing, and Principles
+  VIII and IX and the completion gate still hold.
+- **Merge on green, always.** Apart from amendments to this constitution (Governance), the
+  completion gate and the CI checks are the merge gate. When every required check passes, the agent
+  merges the pull request, or enables auto-merge, without waiting. A pull request MUST NOT be held
+  for human review, no person is asked to review at that stage, and no process may depend on a
+  person approving or merging it. This holds whether or not the maintainer drove the earlier
+  phases; the "Unless otherwise specified" bullet below never applies to merging.
+- **Unless otherwise specified: maintainer-driven specify and clarify.** The maintainer sometimes
+  sits down and runs the Spec Kit commands themselves, particularly `/speckit-specify` and
+  `/speckit-clarify`, and may want to be involved in those phases. They will not always do so. The
+  "Decide, don't ask" default gives way **only** in these cases:
+  - **The maintainer drives the phase.** When the maintainer starts `/speckit-specify` or
+    `/speckit-clarify` themselves in the session, or says they want to be involved, the agent
+    engages in that phase: it asks the questions those commands call for and follows the
+    maintainer's answers. A command that an agent, a scheduled task or a routine starts on its own
+    is never maintainer-driven.
+  - **The maintainer says otherwise.** An explicit instruction from the maintainer for the session
+    or task at hand ("ask me about X", "stop after the plan") is followed for the scope they named.
+    It does not carry over to other work.
+
+  The exception ends when `specify` and `clarify` end. Everything after them (plan, tasks, analyze,
+  checklist, implement, converge, the PR and the merge) is hands-off: no questions, no gates, no
+  waiting for the maintainer to come back, whether or not they drove the earlier phases. It
+  relaxes only "Decide, don't ask": even in a phase the maintainer is driving, artifacts still carry
+  no human-assigned tasks, manual verification or approval/sign-off gates, CI/CD and ops controls
+  are still automated guards, and merge on green still applies. An open decision is still not
+  settled by an answer given while specifying; it takes an amendment.
+- **Feedback after the fact.** Judgment calls and anything the maintainer may want to know (an
+  assumption made, a sensitive path touched, a failed run) are reported once the work lands: in the
+  spec's Assumptions, the PR description and the Open follow-ups of the `docs/patch-notes.md` entry.
+  The maintainer's feedback arrives as new requests or comments and is handled as ordinary work.
+- **Unavoidable human actions (the only exceptions).** A person MAY be asked for something only when
+  no automation can do it:
+  1. creating accounts or rotating root credentials with a third party, entering payment or billing
+     details, or changing settings that need admin rights the agent does not hold;
+  2. amending this constitution (Governance), which includes settling open decisions 3 to 10;
+  3. an irreversible action on production data, real money or real players (deleting production
+     data, charging or paying, messaging real players) that no automated guard bounds.
+
+  When one applies, the agent does everything else first and does not wait. The human action MUST NOT
+  sit on the critical path or block a merge: the work ships inert and safe by default (for example,
+  behind a configuration default that fails safe and is validated at startup) so it merges and
+  deploys without the step. The spec describes how the system behaves with and without the input,
+  and does not list the person's action as a requirement, task or acceptance scenario. The agent
+  tells the maintainer once, in one place (an issue comment or the patch-notes Open follow-ups),
+  what is needed, why no automation can do it, and the exact steps or values. Then it moves on.
+- **Precedence and scope.** Where a Spec Kit command or template tells an agent to stop, ask or wait
+  for a person (resolving clarification markers, proceeding past incomplete checklists, "stop and
+  validate" checkpoints), this principle prevails: the agent decides and continues, except in a phase
+  the maintainer is driving or has told the agent to ask in (see "Unless otherwise specified"
+  above). It applies to
+  artifacts written or changed from now on. Existing specs are not rewritten only to remove an
+  earlier human step.
+
+**Rationale**: The maintainer has a side project's worth of attention. A gate before merge stalls
+every agent working in parallel and makes the maintainer the bottleneck. Feedback after merge keeps
+the work moving and still lets the maintainer steer, and the automated checks keep it safe.
 
 ## Architecture Constraints
 
@@ -1047,6 +1179,9 @@ A feature or task is not complete until all of the following pass, locally or in
 - Code review MUST verify that every acceptance scenario and Independent Test in the changed
   `spec.md` maps to a specific automated test that faithfully exercises its Given, When and Then,
   denial and failure scenarios included. `CLAUDE.md` details the review procedure.
+- Agents carry work from spec to merge without human gates (Principle XIII). Code review and
+  `/speckit-analyze` MUST treat an added human step, gate or manual verification as a violation of
+  this constitution.
 - Once Repowise indexing is configured for this repository, pull requests MUST include regenerated
   or confirmed-unchanged Repowise outputs in Repowise-maintained regions.
 
@@ -1074,4 +1209,4 @@ A feature or task is not complete until all of the following pass, locally or in
 - Prior versions are retained in version control history.
 - Runtime development guidance for agents lives in `CLAUDE.md`.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-10-28
+**Version**: 1.1.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-11-02
