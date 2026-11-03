@@ -8,7 +8,18 @@
     "metrics": {
       "islandCheckEveryTicks": 15
     },
-    "durationTicks": 18000
+    "durationTicks": 18000,
+    "regionizer": {
+      "claimRadius": {
+        "infantry": 40,
+        "groundVehicle": 48,
+        "aircraft": 32
+      },
+      "anchoring": "Section",
+      "split": {
+        "minDeadPercent": 50
+      }
+    }
   },
   "seeds": 10,
   "sweepSeed": 20261103,
