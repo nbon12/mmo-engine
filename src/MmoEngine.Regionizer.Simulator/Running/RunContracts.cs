@@ -52,6 +52,12 @@ public sealed record RunOptions
 
     /// <summary>Stops the run between steps; the folder keeps its <c>_incomplete</c> marker.</summary>
     public CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
+    /// The cost of a timestamp pair to subtract from each timed core call, in nanoseconds; when null it
+    /// is calibrated at run start (research D9). Tests set it to check the subtraction.
+    /// </summary>
+    public double? TimerOverheadNanos { get; init; }
 }
 
 /// <summary>The outcome of one run.</summary>
@@ -84,7 +90,11 @@ public sealed record RunResult
     /// <summary>Merge requests whose other region was ticking (merge-later against a ticking region).</summary>
     public required long MergesRequestedAgainstTicking { get; init; }
 
+    /// <summary>Merges where both sides held an entity.</summary>
     public required long Merges { get; init; }
+
+    /// <summary>Merges that took in an entity-less region (research D16); not counted in <see cref="Merges"/>.</summary>
+    public long Absorptions { get; init; }
 
     public required long Splits { get; init; }
 
@@ -101,6 +111,12 @@ public sealed record RunResult
 
     /// <summary>Every tick's state hash, when <see cref="RunOptions.KeepTickHashes"/> is set.</summary>
     public IReadOnlyList<ulong> TickHashes { get; init; } = [];
+
+    /// <summary>The run's time base, from <c>scheduling</c>.</summary>
+    public TimeBase Time { get; init; } = TimeBase.Default;
+
+    /// <summary>The timestamp pair cost subtracted from each timed core call, in nanoseconds.</summary>
+    public double TimerOverheadNanos { get; init; }
 }
 
 /// <summary>

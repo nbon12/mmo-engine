@@ -110,11 +110,19 @@ public static class RunConfigLoader
         return new ConfigLoadResult(new LoadedRunConfig(config, canonical, ConfigJson.Hash(canonical), environment), []);
     }
 
-    /// <summary>Every error in a typed configuration: the common rules, then the scenario's own.</summary>
+    /// <summary>
+    /// Every error in a typed configuration: the common rules, then the map file (it must load and
+    /// pass the portal validator), then the scenario's own.
+    /// </summary>
     public static IReadOnlyList<ConfigError> Validate(RunConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
         var errors = new List<ConfigError>(RunConfigValidator.Errors(config));
+        if (errors.Count == 0 && config.Map.File is { } mapFile)
+        {
+            errors.AddRange(MapFileCheck.Validate(mapFile));
+        }
+
         if (errors.Count == 0 && ScenarioRegistry.TryCreate(config.Scenario, out var scenario))
         {
             errors.AddRange(scenario.Validate(config));

@@ -45,22 +45,22 @@ public static class ScenarioNames
 }
 
 /// <summary>
-/// The scenario implementations, keyed by name. Adding a scenario means writing its class and
-/// replacing its one line here.
+/// The scenario implementations, keyed by name, one for each of <see cref="ScenarioNames.All"/>.
+/// Adding a scenario means adding its name there, its defaults file and its line here.
 /// </summary>
 public static class ScenarioRegistry
 {
     private static readonly Dictionary<string, Func<IScenario>> Factories = new(StringComparer.Ordinal)
     {
         [ScenarioNames.Baseline] = () => new BaselineScenario(),
-        [ScenarioNames.Spacing] = () => new NotImplementedScenario(ScenarioNames.Spacing),
-        [ScenarioNames.LaneTraffic] = () => new NotImplementedScenario(ScenarioNames.LaneTraffic),
-        [ScenarioNames.AirTraffic] = () => new NotImplementedScenario(ScenarioNames.AirTraffic),
-        [ScenarioNames.VehicleColumns] = () => new NotImplementedScenario(ScenarioNames.VehicleColumns),
-        [ScenarioNames.StackedAreas] = () => new NotImplementedScenario(ScenarioNames.StackedAreas),
+        [ScenarioNames.Spacing] = () => new SpacingScenario(),
+        [ScenarioNames.LaneTraffic] = () => new LaneTrafficScenario(),
+        [ScenarioNames.AirTraffic] = () => new AirTrafficScenario(),
+        [ScenarioNames.VehicleColumns] = () => new VehicleColumnsScenario(),
+        [ScenarioNames.StackedAreas] = () => new StackedAreasScenario(),
         [ScenarioNames.Migration] = () => new MigrationScenario(),
-        [ScenarioNames.OneBase] = () => new NotImplementedScenario(ScenarioNames.OneBase),
-        [ScenarioNames.Soak] = () => new NotImplementedScenario(ScenarioNames.Soak),
+        [ScenarioNames.OneBase] = () => new OneBaseScenario(),
+        [ScenarioNames.Soak] = () => new SoakScenario(),
     };
 
     /// <summary>A new instance of the named scenario.</summary>
@@ -78,15 +78,4 @@ public static class ScenarioRegistry
         scenario = null!;
         return false;
     }
-}
-
-/// <summary>A registered name whose implementation has not been written yet. It validates nothing and cannot be built.</summary>
-public sealed class NotImplementedScenario(string name) : IScenario
-{
-    public string Name { get; } = name;
-
-    public IEnumerable<ConfigError> Validate(RunConfig config) => [];
-
-    public ScenarioWorld Build(RunConfig config) =>
-        throw new NotImplementedException($"Scenario '{Name}' is not implemented yet.");
 }

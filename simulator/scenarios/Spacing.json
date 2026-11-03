@@ -90,9 +90,9 @@
     "travellers": 0,
     "pointToPointAircraft": 0,
     "composition": {
-      "infantry": 0.8,
+      "infantry": 0.85,
       "groundVehicle": 0.15,
-      "aircraft": 0.05
+      "aircraft": 0
     },
     "fightRadiusPerSqrtPlayer": 8,
     "objectivesPerBase": 3,

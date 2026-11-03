@@ -7,10 +7,13 @@ namespace MmoEngine.Regionizer.Simulator.Metrics;
 
 /// <summary>
 /// Collects the run metrics (FR-024) as an <see cref="IRegionizerObserver"/>. It keeps per-region
-/// player counts and fight-tag counts from <see cref="OnEntityOwnerChanged"/>; because the core raises
+/// entity, player and fight-tag counts from <see cref="OnEntityOwnerChanged"/>; because the core raises
 /// <see cref="OnMerged"/> before the absorbed region's data moves, both sides are still intact when a
-/// merge is classified as a fusion (each side holds a fight tag the other lacks). Events go to the
-/// sink as they happen; <see cref="EndTick"/> produces each tick's row.
+/// merge is classified. A merge where both sides hold at least one entity is a merge (and a fusion
+/// when each side holds a fight tag the other lacks); one that takes in an entity-less region, such
+/// as the transient region collecting a ticking region's growth, is an absorption, kept out of merge
+/// rates, region lifetimes and section churn (research D16). Events go to the sink as they happen;
+/// <see cref="EndTick"/> produces each tick's row.
 /// </summary>
 public sealed class MetricsCollector : IRegionizerObserver
 {
@@ -30,9 +33,12 @@ public sealed class MetricsCollector : IRegionizerObserver
     private long _tick;
     private long _step;
     private long _rowMerges;
+    private long _rowAbsorptions;
     private long _rowSplits;
     private long _rowFusions;
     private long _rowChurn;
+    private long _absorbedFrom;
+    private long _absorbedInto;
 
     private const int ClassCount = 6;
 
@@ -69,7 +75,11 @@ public sealed class MetricsCollector : IRegionizerObserver
         "crossPairsReadOnly", "bookkeepingMicros", "serializedMicros", "regionLifetimeSteps", "splitLatencyTicks",
     ];
 
+    /// <summary>Merges where both sides held at least one entity.</summary>
     public long Merges { get; private set; }
+
+    /// <summary>Merges that took in, or were made by, a region holding no entity (research D16).</summary>
+    public long Absorptions { get; private set; }
 
     public long Splits { get; private set; }
 
@@ -97,6 +107,9 @@ public sealed class MetricsCollector : IRegionizerObserver
 
     /// <summary>Players in a live region, or 0.</summary>
     public int PlayersIn(long regionId) => _regions.TryGetValue(regionId, out var r) ? r.Players : 0;
+
+    /// <summary>Entities of any class in a live region, or 0.</summary>
+    public int EntitiesIn(long regionId) => _regions.TryGetValue(regionId, out var r) ? r.Entities : 0;
 
     /// <summary>Distinct fight tags in a live region, or 0.</summary>
     public int FightTagsIn(long regionId) => _regions.TryGetValue(regionId, out var r) ? r.DistinctTags : 0;
@@ -198,7 +211,8 @@ public sealed class MetricsCollector : IRegionizerObserver
             oversized,
             _fusedPairs.Count,
             violations,
-            stateHash);
+            stateHash,
+            _rowAbsorptions);
         if (record)
         {
             _samples["regionCount"].Add(regionCount);
@@ -209,6 +223,7 @@ public sealed class MetricsCollector : IRegionizerObserver
             _samples["serializedMicros"].Add(serializedMicros);
             _fusedPairSamples.Add(_fusedPairs.Count);
             _rowMerges = 0;
+            _rowAbsorptions = 0;
             _rowSplits = 0;
             _rowFusions = 0;
             _rowChurn = 0;
@@ -218,7 +233,7 @@ public sealed class MetricsCollector : IRegionizerObserver
     }
 
     public void OnRegionCreated(long regionId, RegionCreationReason reason, long parentId) =>
-        _regions[regionId] = new RegionStats(reason, _tagSlots)
+        _regions[regionId] = new RegionStats(_tagSlots)
         {
             State = reason == RegionCreationReason.Transient ? RegionState.Transient : RegionState.Ready,
         };
@@ -241,9 +256,10 @@ public sealed class MetricsCollector : IRegionizerObserver
     }
 
     /// <summary>
-    /// Counts a merge between two real regions. Absorbing a transient helper region (created by the
-    /// core to hold sections a ticking region needed) is bookkeeping, not a merge of two regions: the
-    /// merge it stands for is counted when the regions themselves join.
+    /// Classifies a merge (FR-024). When both sides hold an entity it is a merge, counted toward its
+    /// causing class, and possibly a fusion. Otherwise it is an absorption: the section moves that
+    /// follow are not churn and the absorbed region's death is not a lifetime, because the regions
+    /// themselves did not join (the merge it stands for is counted when they do).
     /// </summary>
     public void OnMerged(long absorberId, long absorbedId, EntityClass causeClass, int causeEntityId)
     {
@@ -252,12 +268,18 @@ public sealed class MetricsCollector : IRegionizerObserver
             return;
         }
 
-        absorber.FirstTwoIslandTick = -1;
-        if (absorber.Reason == RegionCreationReason.Transient || absorbed.Reason == RegionCreationReason.Transient)
+        if (absorber.Entities == 0 || absorbed.Entities == 0)
         {
+            Absorptions++;
+            _rowAbsorptions++;
+            absorbed.Absorbed = true;
+            _absorbedFrom = absorbedId;
+            _absorbedInto = absorberId;
             return;
         }
 
+        _absorbedFrom = 0;
+        absorber.FirstTwoIslandTick = -1;
         Merges++;
         _rowMerges++;
         _mergesByClass[(int)causeClass]++;
@@ -302,17 +324,29 @@ public sealed class MetricsCollector : IRegionizerObserver
         }
     }
 
+    /// <summary>
+    /// Records a region's lifetime, unless it died in an absorption or never held an entity (a
+    /// transient helper): those are bookkeeping, not regions that lived and died.
+    /// </summary>
     public void OnRegionDied(long regionId, long ageSteps)
     {
-        _emit(new RunEvent(_tick, _step, RunEventType.RegionDied, regionId, Value: ageSteps));
-        if (_regions.Remove(regionId, out var stats) && stats.Reason != RegionCreationReason.Transient)
+        if (!_regions.Remove(regionId, out var stats) || stats.Absorbed || !stats.HeldEntity)
         {
-            _samples["regionLifetimeSteps"].Add(ageSteps);
+            return;
         }
+
+        _emit(new RunEvent(_tick, _step, RunEventType.RegionDied, regionId, Value: ageSteps));
+        _samples["regionLifetimeSteps"].Add(ageSteps);
     }
 
+    /// <summary>Counts a section owner change as churn, except the moves of an absorption.</summary>
     public void OnSectionOwnerChanged(int sectionIndex, long oldOwner, long newOwner)
     {
+        if (oldOwner != 0 && oldOwner == _absorbedFrom && newOwner == _absorbedInto)
+        {
+            return;
+        }
+
         _rowChurn++;
     }
 
@@ -341,7 +375,7 @@ public sealed class MetricsCollector : IRegionizerObserver
     }
 
     /// <summary>Stopwatch ticks as microseconds.</summary>
-    public static double TimestampToMicros(long timestampTicks) => timestampTicks * 1_000_000.0 / Stopwatch.Frequency;
+    public static double TimestampToMicros(double timestampTicks) => timestampTicks * 1_000_000.0 / Stopwatch.Frequency;
 
     private void SampleIslands(Regionizer regionizer, long tick)
     {
@@ -373,11 +407,12 @@ public sealed class MetricsCollector : IRegionizerObserver
         }
     }
 
-    private sealed class RegionStats(RegionCreationReason reason, int tagSlots)
+    private sealed class RegionStats(int tagSlots)
     {
-        public RegionCreationReason Reason { get; } = reason;
-
         public RegionState State { get; set; }
+
+        /// <summary>Entities of any class it holds.</summary>
+        public int Entities { get; private set; }
 
         public int Players { get; private set; }
 
@@ -385,11 +420,19 @@ public sealed class MetricsCollector : IRegionizerObserver
 
         public int DistinctTags { get; private set; }
 
+        /// <summary>It held an entity at some point of its life.</summary>
+        public bool HeldEntity { get; private set; }
+
+        /// <summary>It was taken in by an absorption, which is about to end it.</summary>
+        public bool Absorbed { get; set; }
+
         /// <summary>The first sampled tick at which it held two or more islands, or −1.</summary>
         public long FirstTwoIslandTick { get; set; } = -1;
 
         public void Add(bool player, int tag)
         {
+            Entities++;
+            HeldEntity = true;
             if (player)
             {
                 Players++;
@@ -403,6 +446,7 @@ public sealed class MetricsCollector : IRegionizerObserver
 
         public void Remove(bool player, int tag)
         {
+            Entities--;
             if (player)
             {
                 Players--;

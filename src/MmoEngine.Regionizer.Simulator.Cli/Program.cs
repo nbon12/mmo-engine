@@ -22,7 +22,11 @@ public static class Program
     /// <summary>Runs the CLI with explicit writers, as <see cref="Main"/> does with the console.</summary>
     internal static int Run(string[] args, TextWriter stdout, TextWriter stderr) => Run(args, stdout, stderr, new RunOptions());
 
-    /// <summary>Runs the CLI with run options from the caller (tests inject step hooks here).</summary>
+    /// <summary>
+    /// Runs the CLI with run options from the caller (tests inject step hooks here). A non-null
+    /// <see cref="RunOptions.EnvironmentName"/> stands in for <c>DOTNET_ENVIRONMENT</c>, so a test can
+    /// check the environment name without touching the process environment.
+    /// </summary>
     internal static int Run(string[] args, TextWriter stdout, TextWriter stderr, RunOptions runOptions)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -35,7 +39,8 @@ public static class Program
             .WriteTo.Sink(new TextWriterSink(stderr, new CompactJsonFormatter()))
             .CreateLogger();
 
-        var context = new CliContext(stdout, stderr, logger, Environment.GetEnvironmentVariable(EnvironmentNames.VariableName), runOptions);
+        var environmentName = runOptions.EnvironmentName ?? Environment.GetEnvironmentVariable(EnvironmentNames.VariableName);
+        var context = new CliContext(stdout, stderr, logger, environmentName, runOptions);
         var root = new RootCommand("The regionizer simulator: deterministic, seeded runs of the regionizer core.");
         foreach (var command in CliCommands.All())
         {

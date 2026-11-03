@@ -49,9 +49,9 @@ public sealed class MonitorTests
         Assert.NotEmpty(violations);
         Assert.All(violations, v => Assert.Equal(CorruptTick.ToString(System.Globalization.CultureInfo.InvariantCulture), v[0]));
         Assert.StartsWith("rule 1 ", violations[0][8].Trim('"'), StringComparison.Ordinal);
-        var lastRow = TestRuns.CsvRows(Path.Combine(dir, RunFolder.TicksFile))[^1];
-        Assert.Equal(CorruptTick.ToString(System.Globalization.CultureInfo.InvariantCulture), lastRow[0]);
-        Assert.NotEqual("0", lastRow[14]);
+        var ticksPath = Path.Combine(dir, RunFolder.TicksFile);
+        Assert.Equal(CorruptTick.ToString(System.Globalization.CultureInfo.InvariantCulture), TestRuns.CsvColumn(ticksPath, "tick")[^1]);
+        Assert.NotEqual("0", TestRuns.CsvColumn(ticksPath, "violations")[^1]);
         Assert.False(File.Exists(Path.Combine(dir, RunFolder.IncompleteMarker)));
     }
 
@@ -115,6 +115,45 @@ public sealed class MonitorTests
         Assert.True(result.TimersFired > 100, $"seed {Seed}: only {result.TimersFired} timers fired");
         Assert.True(result.TimersFired <= result.TimersSet, $"seed {Seed}: more timers fired than were set");
         Assert.True(result.Merges > 0 && result.Splits > 0, $"seed {Seed}: merges {result.Merges}, splits {result.Splits}");
+    }
+
+    /// <summary>
+    /// Synthetic timer delays are drawn in ticks: kept as owner ticks in tick-counter mode, and
+    /// converted to ticks × baseStepHz / tickHz base steps in absolute mode (data-model.md, Timer).
+    /// Every timer still fires exactly once, at the configured rates.
+    /// </summary>
+    [Theory]
+    [InlineData("TickCounter", "Interleaved", 120, 30, 20)]
+    [InlineData("Absolute", "Interleaved", 120, 30, 20)]
+    [InlineData("Absolute", "Lockstep", 60, 60, 20)]
+    [InlineData("Absolute", "Interleaved", 90, 30, 10)]
+    [InlineData("Absolute", "Lockstep", 60, 30, 20)]
+    public void SyntheticTimerDelaysFollowTheConfiguredTickRates(string timerMode, string scheduling, int baseStepHz, int tickHz, int degradedTickHz)
+    {
+        const ulong Seed = 29;
+        const int DelayMin = 5;
+        const int DelayMax = 40;
+        var loaded = TestRuns.Load(TestRuns.Small("Migration", Seed, 100, population: 80)
+            .With("regionizer.timerMode", timerMode)
+            .With("scheduling.mode", scheduling)
+            .With("scheduling.baseStepHz", baseStepHz)
+            .With("scheduling.tickHz", tickHz)
+            .With("scheduling.degradedTickHz", degradedTickHz)
+            .With("scheduling.dropTo20HzProbability", 0.05)
+            .With("scenarioParameters.migrationEverySeconds", 2)
+            .With("timers.setProbabilityPerEntityPerSecond", 0.5)
+            .With("timers.delayTicksMin", DelayMin)
+            .With("timers.delayTicksMax", DelayMax));
+        var unit = timerMode == "Absolute" ? baseStepHz / tickHz : 1;
+        var delays = new HashSet<long>();
+
+        var result = TestRuns.Run(loaded, new RunOptions { AfterStep = context => CollectDelays(context, delays) });
+
+        Assert.True(result.FirstViolation is null, $"seed {Seed}: {result.FirstViolation}");
+        Assert.Empty(result.TimerFaults);
+        Assert.True(result.TimersFired > 20, $"seed {Seed}: only {result.TimersFired} timers fired");
+        Assert.True(delays.Count > 5, $"seed {Seed}: only {delays.Count} distinct delays seen");
+        Assert.All(delays, d => Assert.True(d % unit == 0 && d / unit is >= DelayMin and <= DelayMax, $"seed {Seed}: delay {d} is not a tick count in [{DelayMin}, {DelayMax}] times {unit} steps"));
     }
 
     [Fact]
@@ -225,6 +264,18 @@ public sealed class MonitorTests
         monitor.OnTimerFired(9, 0, 5, 2, 1);
 
         Assert.Contains("never set", Assert.Single(monitor.Faults).Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>Adds the delay of every pending timer to <paramref name="delays"/>.</summary>
+    private static void CollectDelays(StepHookContext context, HashSet<long> delays)
+    {
+        foreach (var id in context.Regionizer.RegionIds)
+        {
+            foreach (var timer in context.Regionizer.GetRegion(id).Timers)
+            {
+                delays.Add(timer.Delay);
+            }
+        }
     }
 
     [Theory]

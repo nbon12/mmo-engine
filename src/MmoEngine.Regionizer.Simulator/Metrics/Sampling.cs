@@ -280,9 +280,10 @@ public sealed class IslandDetector
 }
 
 /// <summary>
-/// The per-tick state hash (FR-019, research D8): XxHash64 over, for each live region in ascending ID,
-/// its ID, state, tick counter, sorted section indices, ascending entity IDs and timers sorted by ID,
-/// prefixed by the previous tick's hash so the sequence is chained. All values little-endian.
+/// The per-tick state hash (FR-019, research D8): XxHash64 over, first, for each live region in
+/// ascending ID, its ID, state, tick counter, sorted section indices, ascending entity IDs and timers
+/// sorted by ID; then, for each entity in ascending ID, its ID and section index (−1 in transit). It
+/// is prefixed by the previous tick's hash so the sequence is chained. All values little-endian.
 /// </summary>
 public sealed class StateHasher
 {
@@ -349,9 +350,24 @@ public sealed class StateHasher
             }
         }
 
+        // Second part: each entity's section in ascending ID, so positions that diverge across a
+        // section edge change the hash even when no region changes.
+        var topology = regionizer.Topology;
+        var ids = regionizer.EntityIds;
+        WriteInt32(ids.Length);
+        foreach (var id in ids)
+        {
+            WriteInt32(id);
+            WriteInt32(SectionOf(regionizer.GetEntity(id), topology));
+        }
+
         Current = XxHash64.HashToUInt64(_buffer.AsSpan(0, _length));
         return Current;
     }
+
+    /// <summary>The entity's section index, or −1 while it is in transit (two-step teleport).</summary>
+    internal static int SectionOf(EntityView entity, SectionTopology topology) =>
+        !entity.InTransit && topology.TrySectionAt(entity.Layer, entity.X, entity.Y, out var index) ? index : -1;
 
     private void Ensure(int bytes)
     {

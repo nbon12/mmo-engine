@@ -61,6 +61,52 @@ public sealed class MovementModelTests
         Assert.True(checkedSteps > 100, $"seed {Seed}: only {checkedSteps} {cls} moves were checked");
     }
 
+    // OUTSIDE-BUG: src/MmoEngine.Regionizer.Simulator/Movement/SyntheticMovement.cs computes each
+    // update's dt with the static TimeBase.StepsToSeconds (the default 60 Hz base), not the run's
+    // scheduling.baseStepHz, so at 120 Hz every entity covers twice the distance its speed allows
+    // per step (FR-018, FR-021, research D7: dt = period / baseStepHz). MovementContext.NextRepick and
+    // MigrationEvents (Scenarios/BaselineScenario.cs, migrationEverySeconds) convert seconds at 60 Hz
+    // the same way. Movement and Scenarios need the run's TimeBase (TimeBase.From(config.Scheduling)).
+    // This case fails at 120 Hz until they take it; it passes at the default rates.
+
+    /// <summary>Speed stays within the ceiling at any configured base step rate: dt is a step at scheduling.baseStepHz.</summary>
+    [Theory]
+    [InlineData(60, 30, 20)]
+    [InlineData(120, 30, 20)]
+    public void SpeedNeverExceedsTheCeilingAtTheConfiguredBaseStepRate(int baseStepHz, int tickHz, int degradedTickHz)
+    {
+        var loaded = Load(TestRuns.Small("Baseline", Seed, 150, population: 120)
+            .With("scheduling.baseStepHz", baseStepHz)
+            .With("scheduling.tickHz", tickHz)
+            .With("scheduling.degradedTickHz", degradedTickHz));
+        var time = TimeBase.From(loaded.Config.Scheduling);
+        var ceiling = loaded.Config.Movement.SpeedCeiling.Infantry;
+        var recorder = new MoveRecorder();
+
+        var result = TestRuns.Run(loaded, new RunOptions { Listeners = [recorder] });
+
+        Assert.True(result.Completed, $"seed {Seed}: {result.FirstViolation}");
+        var world = ScenarioRegistry.Create("Baseline").Build(loaded.Config);
+        var infantry = world.Entities.Where(e => e.Class == EntityClass.Infantry).Select(e => e.Id).ToHashSet();
+        var fastest = 0.0;
+        var checkedSteps = 0;
+        foreach (var (id, moves) in recorder.Moves.Where(kv => infantry.Contains(kv.Key)))
+        {
+            for (var i = 1; i < moves.Count; i++)
+            {
+                if (!moves[i].AfterTeleport)
+                {
+                    var dt = time.ToSeconds(moves[i].Step - moves[i - 1].Step);
+                    fastest = Math.Max(fastest, Math.Sqrt(Sq(moves[i].X - moves[i - 1].X) + Sq(moves[i].Y - moves[i - 1].Y)) / dt);
+                    checkedSteps++;
+                }
+            }
+        }
+
+        Assert.True(checkedSteps > 100, $"seed {Seed}: only {checkedSteps} infantry moves were checked");
+        Assert.True(fastest <= ceiling * (1 + 1e-9), $"seed {Seed}: at {baseStepHz} Hz infantry moved at {fastest} m/s, over the {ceiling} m/s ceiling");
+    }
+
     [Fact]
     public void InfantryStayWithinTheirFightRadiusPlusOneStep()
     {

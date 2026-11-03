@@ -28,6 +28,12 @@ public static class AnalyticFormulas
     };
 
     /// <summary>
+    /// The section slack k·√2·s: how far the section grid can carry two claims beyond the sum of their
+    /// radii with a merge gap of 0 (research D1, D16).
+    /// </summary>
+    public static double SectionSlack(int sectionSize, ClaimAnchoring anchoring) => MergeDistance(0, 0, sectionSize, anchoring, 0);
+
+    /// <summary>
     /// The merge distance d_max = rA + rB + k·√2·s, plus √2·s for a merge gap of 1: no two entities
     /// farther apart than this can share a region because of their claims (research D1).
     /// </summary>

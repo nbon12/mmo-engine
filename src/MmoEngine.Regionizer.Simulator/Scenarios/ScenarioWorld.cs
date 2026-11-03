@@ -77,11 +77,12 @@ internal sealed class WorldBuilder
     private readonly List<MotionModel> _models = [];
     private readonly List<Func<MovementContext, MotionModel>> _pending = [];
 
-    public WorldBuilder(RunConfig config, MapLayout layout, SectionTopology topology)
+    public WorldBuilder(RunConfig config, MapLayout layout, SectionTopology topology, int airLayerId = -1)
     {
         Config = config;
         Layout = layout;
         Topology = topology;
+        AirLayerId = airLayerId;
     }
 
     public RunConfig Config { get; }
@@ -89,6 +90,9 @@ internal sealed class WorldBuilder
     public MapLayout Layout { get; }
 
     public SectionTopology Topology { get; }
+
+    /// <summary>The air layer's ID in <see cref="Topology"/>, or −1 when it has none.</summary>
+    public int AirLayerId { get; }
 
     public FightTable Fights { get; } = new();
 
@@ -102,21 +106,23 @@ internal sealed class WorldBuilder
         return id;
     }
 
-    /// <summary>Creates the models, places every entity and returns the world.</summary>
+    /// <summary>Creates the models, places every entity on its layer and returns the world.</summary>
     public ScenarioWorld Build(IReadOnlyList<IStepEventSource> stepEvents)
     {
         var state = new WorldState(_entities);
-        var context = new MovementContext(state, Layout, Fights, Config.Movement, Config.Regionizer.ClaimRadius.CapturePointZone);
+        var airLayer = AirLayerId >= 0 ? AirLayerPolicy.From(Config.AirLayer, AirLayerId) : AirLayerPolicy.None;
+        var context = new MovementContext(state, Layout, Fights, Config.Movement, Config.Regionizer.ClaimRadius.CapturePointZone, airLayer);
         var specs = new List<EntitySpec>(_entities.Count);
         for (var id = 0; id < _pending.Count; id++)
         {
             var model = _pending[id](context);
             _models.Add(model);
-            var (x, y, z) = model.Place();
+            var (layer, x, y, z) = model.Place();
+            state.Layer[id] = layer;
             state.X[id] = x;
             state.Y[id] = y;
             state.Z[id] = z;
-            specs.Add(_entities[id] with { X = x, Y = y, Z = z });
+            specs.Add(_entities[id] with { Layer = layer, X = x, Y = y, Z = z });
         }
 
         return new ScenarioWorld

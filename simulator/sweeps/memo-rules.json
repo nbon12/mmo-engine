@@ -1,6 +1,6 @@
 {
-  "formatVersion": 1,
-  "description": "Memo rules for regionizer-sim memo (research D15, FR-032). Each value names the sweep folder it reads (<results>/<sweep>/sweep.json), the metric it reads from each run's summary.json (contracts/run-output.md), and its margins and thresholds. Interaction ranges and closing speeds are placeholders until game design supplies real values (spec Assumptions); closing speeds are twice each class's default speed ceiling (7, 30 and 120 m/s).",
+  "formatVersion": 2,
+  "description": "Memo rules for regionizer-sim memo (research D15, FR-032). Each value names the sweep folder it reads (<results>/<sweep>/sweep.json), the metric it reads from each run's summary.json (contracts/run-output.md), the population.total every run must have, and its margins and thresholds. Rows read at the constitution's 2,000-player continent cap, except section size, which reads the issue's 5,000-entity stress bound that the bookkeeping budget is set at. Merge rates count real merges; absorptions are reported separately. Interaction ranges and closing speeds are placeholders until game design supplies real values (spec Assumptions); closing speeds are twice each class's default speed ceiling (7, 30 and 120 m/s).",
   "values": [
     {
       "id": "claim-radius-infantry",
@@ -9,12 +9,19 @@
       "sweep": "infantry-radius",
       "parameter": "regionizer.claimRadius.infantry",
       "unit": "m",
+      "population": 2000,
       "metric": { "paths": ["fusedFightPairs.p50"] },
       "collapseAt": 1,
       "stepsBelowCollapse": 1,
       "floor": { "interactionRangeMetres": 10, "closingSpeedMetresPerSecond": 14, "tickRateHz": 30 },
+      "constitutionReading": {
+        "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] },
+        "regionCount": { "paths": ["metrics.regionCount.p50"] },
+        "largestShare": { "paths": ["metrics.largestRegionShare.p50"] },
+        "collapseAt": 1
+      },
       "openDecision": 1,
-      "description": "Baseline with the infantry claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict."
+      "description": "Baseline at 2,000 players with the infantry claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict. The region-count and largest-share curves are recorded next to it."
     },
     {
       "id": "claim-radius-ground-vehicle",
@@ -23,12 +30,19 @@
       "sweep": "vehicle-radius",
       "parameter": "regionizer.claimRadius.groundVehicle",
       "unit": "m",
+      "population": 2000,
       "metric": { "paths": ["fusedFightPairs.p50"] },
       "collapseAt": 1,
       "stepsBelowCollapse": 1,
       "floor": { "interactionRangeMetres": 15, "closingSpeedMetresPerSecond": 60, "tickRateHz": 30 },
+      "constitutionReading": {
+        "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] },
+        "regionCount": { "paths": ["metrics.regionCount.p50"] },
+        "largestShare": { "paths": ["metrics.largestRegionShare.p50"] },
+        "collapseAt": 1
+      },
       "openDecision": 1,
-      "description": "Baseline with the ground-vehicle claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict."
+      "description": "Baseline at 2,000 players with the ground-vehicle claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict. The region-count and largest-share curves are recorded next to it."
     },
     {
       "id": "claim-radius-aircraft",
@@ -37,25 +51,33 @@
       "sweep": "aircraft-radius",
       "parameter": "regionizer.claimRadius.aircraft",
       "unit": "m",
+      "population": 2000,
       "metric": { "paths": ["fusedFightPairs.p50"] },
       "collapseAt": 1,
       "stepsBelowCollapse": 1,
       "floor": { "interactionRangeMetres": 8, "closingSpeedMetresPerSecond": 240, "tickRateHz": 30 },
+      "constitutionReading": {
+        "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] },
+        "regionCount": { "paths": ["metrics.regionCount.p50"] },
+        "largestShare": { "paths": ["metrics.largestRegionShare.p50"] },
+        "collapseAt": 1
+      },
       "openDecision": 1,
-      "description": "Baseline with the aircraft claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor (two aircraft closing at 240 m/s at 30 Hz: the range plus 8 m); if the floor is above it, the row is flagged as a conflict."
+      "description": "Baseline at 2,000 players with the aircraft claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor (two aircraft closing at 240 m/s at 30 Hz: the range plus 8 m); if the floor is above it, the row is flagged as a conflict. The region-count and largest-share curves are recorded next to it."
     },
     {
       "id": "section-size",
       "title": "Section size",
       "rule": "SmallestWithin",
-      "sweep": "section-size",
+      "sweeps": ["section-size", "section-size-onebase"],
       "parameter": "regionizer.sectionSize",
       "unit": "m",
+      "population": 5000,
       "metric": { "paths": ["budget.bookkeepingP99Micros"] },
       "threshold": 1000,
       "inclusive": true,
       "openDecision": 1,
-      "description": "Baseline and One base with the section size swept (the sweep's other parameter, scenario, makes each a series). The smallest size whose bookkeeping p99 is within the 1 ms budget (an estimate until measured) in every seed of both scenarios."
+      "description": "Baseline (sweep section-size) and One base (sweep section-size-onebase) at 5,000 entities, the stress bound the bookkeeping budget is set at, with the section size swept; each sweep is a series. The smallest size whose bookkeeping p99 is within the 1 ms budget (an estimate until measured) in every seed of both scenarios."
     },
     {
       "id": "claim-anchoring",
@@ -63,8 +85,9 @@
       "rule": "Lowest",
       "sweep": "anchoring",
       "parameter": "regionizer.anchoring",
+      "population": 2000,
       "metric": { "paths": ["rates.fusionsPerSecondByClass"] },
-      "description": "Baseline in both anchoring modes at equal bookkeeping cost. The mode with the lower fusion-event rate (fusions per second, every causing class summed)."
+      "description": "Baseline at 2,000 players in both anchoring modes at equal bookkeeping cost. The mode with the lower fusion-event rate (fusions per second, every causing class summed). Fusions are a fight reading, so this row reads the constitution's continent cap like the claim-radius rows."
     },
     {
       "id": "minimum-base-spacing",
@@ -72,11 +95,18 @@
       "rule": "SmallestWithin",
       "sweep": "spacing",
       "unit": "m",
+      "population": 2000,
       "metric": { "paths": ["totals.oversizedFusionTicks"], "divideBy": "ticks" },
       "threshold": 0.01,
       "inclusive": false,
       "addMargin": 100,
-      "description": "Spacing with the base spacing swept. The smallest spacing whose oversized-fusion ticks are under 1% of ticks in every seed, plus a 100 m sprawl margin (a placeholder until fight sprawl is measured)."
+      "constitutionReading": {
+        "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] },
+        "regionCount": { "paths": ["metrics.regionCount.p50"] },
+        "largestShare": { "paths": ["metrics.largestRegionShare.p50"] },
+        "collapseAt": 1
+      },
+      "description": "Spacing at 2,000 players with the base spacing swept. The smallest spacing whose oversized-fusion ticks are under 1% of ticks in every seed, plus a 100 m sprawl margin (a placeholder until fight sprawl is measured). The fused-fight-pairs, region-count and largest-share curves are recorded next to it."
     },
     {
       "id": "lane-bridging-limit",
@@ -84,23 +114,26 @@
       "rule": "LargestWithin",
       "sweep": "lane-traffic",
       "unit": "travellers",
+      "population": 2000,
       "metric": { "paths": ["totals.oversizedFusionTicks"], "divideBy": "ticks" },
       "threshold": 0.01,
       "inclusive": false,
-      "description": "Lane traffic with the traveller count swept. The largest traffic level whose bridging (fight-fusion) ticks are under 1% of ticks in every seed. The lane-traffic sweep sets metrics.targetFightSize below the two fights' combined player count, so an oversized-fusion tick is a tick on which the fights are fused."
+      "description": "Lane traffic at 2,000 players with the traveller count swept. The largest traffic level whose bridging (fight-fusion) ticks are under 1% of ticks in every seed. The lane-traffic sweep sets metrics.targetFightSize below the two fights' combined player count, so an oversized-fusion tick is a tick on which the fights are fused."
     },
     {
       "id": "split-damping",
       "title": "Split damping",
       "rule": "Lowest",
       "sweep": "split-damping",
+      "population": 2000,
       "metric": { "paths": ["rates.mergesPerSecondByClass", "rates.splitsPerSecond"] },
       "constraint": {
         "metric": { "paths": ["metrics.splitLatencyTicks.p99"] },
         "threshold": 150,
         "inclusive": false
       },
-      "description": "Migration with N_min, p_dead and T_min swept. The lowest merge-plus-split rate (per second, every causing class summed) among cells whose split latency p99 is under 5 s (150 ticks at 30 Hz) in every seed."
+      "absorptions": { "paths": ["totals.absorptions"], "cellsColumn": "absorptions" },
+      "description": "Migration at 2,000 players with N_min, p_dead and T_min swept. The lowest merge-plus-split rate (per second, every causing class summed) among cells whose split latency p99 is under 5 s (150 ticks at 30 Hz) in every seed. Merges are real merges: absorptions of entity-less regions are not in the rate."
     },
     {
       "id": "air-layer",
@@ -110,10 +143,12 @@
       "parameter": "airLayer.enabled",
       "baseline": false,
       "candidate": true,
+      "population": 2000,
       "metric": { "paths": ["rates.mergesPerSecondByClass.Aircraft"], "absentAsZero": true },
       "minimumDropPercent": 25,
       "guard": { "paths": ["rates.fusionsPerSecondByClass"] },
-      "description": "Air traffic with and without the air layer. Adopt only if aircraft-caused merges drop by at least 25% with no rise in fusion events."
+      "absorptions": { "paths": ["totals.absorptions"], "cellsColumn": "absorptions" },
+      "description": "Air traffic at 2,000 players with and without the air layer. Adopt only if aircraft-caused merges (real merges, not absorptions) drop by at least 25% with no rise in fusion events."
     },
     {
       "id": "target-fight-size",
@@ -121,9 +156,49 @@
       "rule": "Reading",
       "sweep": "baseline-final",
       "unit": "players",
+      "population": 2000,
       "metric": { "paths": ["metrics.largestRegionPlayers.p99"] },
       "openDecision": 2,
-      "description": "Baseline at the chosen values. The p99 of the largest region's player count, as a reading for the Phase 1 sweep."
+      "description": "Baseline at 2,000 players at the chosen values. The p99 of the largest region's player count, as a reading for the Phase 1 sweep; open decision 2 is set by load tests."
+    }
+  ],
+  "measuredOptions": [
+    {
+      "id": "merge-gap",
+      "title": "Merge gap 0 vs 1",
+      "sweep": "merge-gap",
+      "parameter": "regionizer.mergeGap",
+      "options": [0, 1],
+      "population": 2000,
+      "scenario": "Migration",
+      "scheduling": "Interleaved",
+      "metrics": [
+        { "label": "Merges per second, every causing class", "paths": ["rates.mergesPerSecondByClass"] },
+        { "label": "Splits per second", "paths": ["rates.splitsPerSecond"] },
+        { "label": "Fusions per second, every causing class", "paths": ["rates.fusionsPerSecondByClass"] },
+        { "label": "Fusions", "paths": ["totals.fusions"] }
+      ],
+      "absorptions": { "paths": ["totals.absorptions"], "cellsColumn": "absorptions" },
+      "description": "Migration at 2,000 players in interleaved mode with the merge gap at 0 and 1. The merge-gap rule is one of the issue's proposed changes to architecture v2, which needs a yes or no before sub-spec 10, so the memo reports it and does not recommend."
+    },
+    {
+      "id": "timer-mode",
+      "title": "Tick-counter vs absolute timers",
+      "sweep": "timer-mode",
+      "parameter": "regionizer.timerMode",
+      "options": ["TickCounter", "Absolute"],
+      "population": 2000,
+      "scenario": "Migration",
+      "scheduling": "Interleaved",
+      "metrics": [
+        { "label": "Merges per second, every causing class", "paths": ["rates.mergesPerSecondByClass"] },
+        { "label": "Splits per second", "paths": ["rates.splitsPerSecond"] },
+        { "label": "Fusions per second, every causing class", "paths": ["rates.fusionsPerSecondByClass"] },
+        { "label": "Timers set", "paths": ["totals.timersSet"] },
+        { "label": "Timers fired", "paths": ["totals.timersFired"] }
+      ],
+      "absorptions": { "paths": ["totals.absorptions"], "cellsColumn": "absorptions" },
+      "description": "Migration at 2,000 players in interleaved mode with tick-counter timers (the constitution's default) and absolute deadlines. Adopting absolute deadlines would need a constitution amendment, so the memo reports both and does not recommend."
     }
   ]
 }

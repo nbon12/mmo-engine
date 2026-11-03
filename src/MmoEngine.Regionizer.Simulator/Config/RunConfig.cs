@@ -1,14 +1,15 @@
 using System.Text.Json.Nodes;
+using MmoEngine.Regionizer.Simulator.Scheduling;
 
 namespace MmoEngine.Regionizer.Simulator.Config;
 
 /// <summary>How region ticks are ordered (research D7).</summary>
 public enum SchedulingMode
 {
-    /// <summary>Every ready region ticks every 2 base steps, one after another in ID order.</summary>
+    /// <summary>Every ready region ticks every tick period (2 base steps by default), one after another in ID order.</summary>
     Lockstep,
 
-    /// <summary>Region tick starts and ends interleave in a seeded order, and regions drop to 20 Hz at random.</summary>
+    /// <summary>Region tick starts and ends interleave in a seeded order, and regions drop to the degraded rate at random.</summary>
     Interleaved,
 }
 
@@ -50,12 +51,25 @@ public sealed record RunConfig
     public TraceConfig Trace { get; init; } = new();
 }
 
-/// <summary><c>scheduling</c>: the scheduling mode and the interleaved mode's 20 Hz drops.</summary>
+/// <summary>
+/// <c>scheduling</c>: the scheduling mode, the tick rates (FR-018, research D7) and the interleaved
+/// mode's drops to the degraded rate. The rates are tuning values (Principle VI); a config that
+/// leaves them out gets 60, 30 and 20 Hz.
+/// </summary>
 public sealed record SchedulingConfig
 {
     public SchedulingMode Mode { get; init; }
 
-    /// <summary>The chance, at each region tick end, that the region drops to 20 Hz.</summary>
+    /// <summary>Base steps per second: the continent time base. A multiple of both tick rates.</summary>
+    public int BaseStepHz { get; init; } = TimeBase.DefaultBaseStepHz;
+
+    /// <summary>Region ticks per second.</summary>
+    public int TickHz { get; init; } = TimeBase.DefaultTickHz;
+
+    /// <summary>Ticks per second of a region dropped to the degraded rate; lower than <see cref="TickHz"/>.</summary>
+    public int DegradedTickHz { get; init; } = TimeBase.DefaultDegradedTickHz;
+
+    /// <summary>The chance, at each region tick end, that the region drops to <see cref="DegradedTickHz"/> (the issue's "20 Hz").</summary>
     public double DropTo20HzProbability { get; init; }
 
     public int DropTicksMin { get; init; }
@@ -193,7 +207,7 @@ public sealed record TimersConfig
 {
     public double SetProbabilityPerEntityPerSecond { get; init; }
 
-    /// <summary>Delay bounds in continent ticks (twice as many base steps in absolute mode).</summary>
+    /// <summary>Delay bounds in continent ticks (ticks × baseStepHz / tickHz base steps in absolute mode).</summary>
     public int DelayTicksMin { get; init; }
 
     public int DelayTicksMax { get; init; }

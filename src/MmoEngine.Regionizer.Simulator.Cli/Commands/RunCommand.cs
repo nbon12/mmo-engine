@@ -8,8 +8,9 @@ namespace MmoEngine.Regionizer.Simulator.Cli.Commands;
 
 /// <summary>
 /// <c>regionizer-sim run &lt;config.json&gt; --out &lt;dir&gt; [--seed N] [--ticks N]</c>: one run.
-/// Exit codes: 0 clean, 3 invariant violation or timer fault, 2 invalid configuration or arguments,
-/// 1 any other error (contracts/config-and-cli.md).
+/// Exit codes: 0 clean, 3 invariant violation or timer fault, 2 invalid configuration (an invalid map
+/// file included) or arguments, or an <c>--out</c> folder that is not a run folder, 1 any other error
+/// (contracts/config-and-cli.md).
 /// </summary>
 internal sealed class RunCommand : ICliCommand
 {
@@ -18,7 +19,11 @@ internal sealed class RunCommand : ICliCommand
     public Command Create(CliContext context)
     {
         var config = new Argument<FileInfo>("config") { Description = "The run config JSON, deep-merged over simulator/scenarios/<scenario>.json." };
-        var output = new Option<DirectoryInfo>("--out") { Description = "The run folder; emptied first.", Required = true };
+        var output = new Option<DirectoryInfo>(RunFolder.OutOption)
+        {
+            Description = "The run folder: missing, empty, or an earlier run's folder (emptied first). Any other non-empty folder is refused (exit 2).",
+            Required = true,
+        };
         var seed = new Option<ulong?>("--seed") { Description = "Overrides the config's seed." };
         var ticks = new Option<long?>("--ticks") { Description = "Overrides the config's durationTicks." };
         var scenarios = new Option<DirectoryInfo?>("--scenarios") { Description = "The scenario defaults directory (default: found next to the tool or above the working directory)." };
@@ -64,6 +69,11 @@ internal sealed class RunCommand : ICliCommand
             };
             context.Stdout.WriteLine(line.ToJsonString());
             return result.ExitCode;
+        }
+        catch (ConfigValidationException ex)
+        {
+            // An --out folder that is not a run folder: refused before anything is written or deleted.
+            return context.InvalidConfig(ex.Errors);
         }
         catch (Exception ex)
         {

@@ -84,43 +84,44 @@ internal sealed class MergeDistanceTally(double lowerBound, double mergeDistance
 }
 
 /// <summary>
-/// Follows one approach at a time for the claim-radius floor: each tick end that finds the pair within
-/// interaction range must follow a tick end at which they already shared a region.
+/// Follows head-on approaches for the claim-radius floor (research D16): every tick boundary at which the
+/// pair is within reach, d_interact + v_rel · Δt, must find them in one region. Call
+/// <see cref="StartApproach"/> before each approach.
 /// </summary>
-internal sealed class FloorTally(double interactionRange, FailureLog log)
+internal sealed class FloorTally(double reach, FailureLog log)
 {
-    private double _previous;
-    private bool _sharedBefore;
+    private double _previous = double.NaN;
 
-    public int InteractionTicks { get; private set; }
+    public int Boundaries { get; private set; }
 
-    public int InteractionsWhileSeparated { get; private set; }
+    public int SeparatedBoundaries { get; private set; }
 
     /// <summary>The largest closing over one tick seen so far.</summary>
     public double MaxClosingPerTick { get; private set; }
 
-    /// <summary>One tick end of an approach; tick 0 is the tick that ends right after placement.</summary>
+    /// <summary>Starts a new approach, so its first boundary does not count as closing from the last approach.</summary>
+    public void StartApproach() => _previous = double.NaN;
+
+    /// <summary>One tick boundary of an approach, and whether the pair shares a region there.</summary>
     public void Observe(int trial, int tick, double ax, double ay, double bx, double by, bool shared)
     {
         var distance = SimulatorAgreement.Distance(ax, ay, bx, by);
-        if (tick > 0)
+        if (!double.IsNaN(_previous))
         {
             MaxClosingPerTick = Math.Max(MaxClosingPerTick, _previous - distance);
         }
 
-        if (distance <= interactionRange)
+        _previous = distance;
+        if (distance > reach)
         {
-            InteractionTicks++;
-
-            // Placed already in range, there is no earlier tick end: the pair must share now.
-            if (!(tick > 0 ? _sharedBefore : shared))
-            {
-                InteractionsWhileSeparated++;
-                log.Record(trial, tick, $"{FailureLog.Pair(ax, ay, bx, by, distance)}: within interaction range of a target it did not share a region with at the previous tick end");
-            }
+            return;
         }
 
-        _previous = distance;
-        _sharedBefore = shared;
+        Boundaries++;
+        if (!shared)
+        {
+            SeparatedBoundaries++;
+            log.Record(trial, tick, $"{FailureLog.Pair(ax, ay, bx, by, distance)}: two regions within reach, d_interact + v_rel·Δt = {reach.ToString("0.###", CultureInfo.InvariantCulture)} m");
+        }
     }
 }

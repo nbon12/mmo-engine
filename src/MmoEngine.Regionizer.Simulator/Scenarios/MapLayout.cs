@@ -9,7 +9,15 @@ namespace MmoEngine.Regionizer.Simulator.Scenarios;
 /// <param name="X">Centre, metres.</param>
 /// <param name="Y">Centre, metres.</param>
 /// <param name="Objectives">Objective positions, metres.</param>
-public sealed record Base(int Index, int Lane, int IndexOnLane, double X, double Y, IReadOnlyList<(double X, double Y)> Objectives);
+/// <param name="Layer">The section layer its fight and capture points stand on (a bunker's layer, or 0).</param>
+public sealed record Base(int Index, int Lane, int IndexOnLane, double X, double Y, IReadOnlyList<(double X, double Y)> Objectives, int Layer = 0);
+
+/// <summary>A rectangle in metres that positions are clamped into, both corners inclusive.</summary>
+public readonly record struct MetreBounds(double MinX, double MinY, double MaxX, double MaxY)
+{
+    /// <summary>The nearest point inside the rectangle.</summary>
+    public (double X, double Y) Clamp(double x, double y) => (Math.Min(Math.Max(x, MinX), MaxX), Math.Min(Math.Max(y, MinY), MaxY));
+}
 
 /// <summary>A straight lane at height <paramref name="Y"/> from <paramref name="StartX"/> to <paramref name="EndX"/>, joining its bases.</summary>
 public sealed record Lane(int Index, double Y, double StartX, double EndX, IReadOnlyList<Base> Bases)
@@ -89,6 +97,12 @@ public sealed class MapLayout
         var lane = BuildLane(0, heightMetres / 2, [.. baseXs], 0, widthMetres, heightMetres, objectivesPerBase, objectiveSpreadMetres, layoutRandom);
         return new MapLayout(widthMetres, heightMetres, [lane]);
     }
+
+    /// <summary>A map with no lanes or bases: a designed map's scenario places its bases itself.</summary>
+    public static MapLayout Open(double widthMetres, double heightMetres) => new(widthMetres, heightMetres, []);
+
+    /// <summary>The map as a clamping rectangle, kept strictly inside the far edges like <see cref="Clamp"/>.</summary>
+    public MetreBounds Bounds => new(0, 0, WidthMetres - EdgeMargin, HeightMetres - EdgeMargin);
 
     /// <summary>The base after <paramref name="current"/> on its lane in <paramref name="direction"/> (+1 or −1), bouncing at the ends.</summary>
     public (Base Next, int Direction) NextOnLane(Base current, int direction)

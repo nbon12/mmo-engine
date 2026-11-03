@@ -3,10 +3,11 @@ namespace MmoEngine.Regionizer.Simulator.Scenarios;
 /// <summary>
 /// A fight at a base. Its players carry its tag (infantry and ground vehicles; aircraft carry none,
 /// per the spec's clarifications). Scenarios such as Migration move it between bases at step boundaries.
+/// A fight in a designed area (a bunker) stands on that area's layer and stays inside its bounds.
 /// </summary>
 public sealed class Fight
 {
-    public Fight(int index, int tag, Base atBase, int players, double radius)
+    public Fight(int index, int tag, Base atBase, int players, double radius, MetreBounds? bounds = null)
     {
         ArgumentNullException.ThrowIfNull(atBase);
         Index = index;
@@ -14,7 +15,14 @@ public sealed class Fight
         Players = players;
         Radius = radius;
         Base = atBase;
+        Bounds = bounds;
     }
+
+    /// <summary>The section layer its players stand on: its base's layer.</summary>
+    public int Layer => Base.Layer;
+
+    /// <summary>Where its players may go, when narrower than the map (a bunker); null means the whole map.</summary>
+    public MetreBounds? Bounds { get; }
 
     public int Index { get; }
 
