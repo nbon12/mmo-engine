@@ -18,7 +18,8 @@ public sealed class ConfigValidationTests
     /// US2.4: Given a configuration with an invalid field, When the simulator starts, Then it refuses
     /// to run, exits with a non-zero code (2) and names the invalid field by its JSON path. The cases
     /// include tick rates the base step rate is not a multiple of, a degraded rate not below the tick
-    /// rate, and a map file the portal validator rejects.
+    /// rate, and a map file the portal validator rejects (on Stacked areas, a scenario that reads map
+    /// files, so the refusal is the validator's and not "must be null").
     /// </summary>
     [Theory]
     [InlineData("regionizer.sectionSize", "12", null, "regionizer.sectionSize")]
@@ -35,10 +36,10 @@ public sealed class ConfigValidationTests
     [InlineData("scheduling.degradedTickHz", "30", null, "scheduling.degradedTickHz")]
     [InlineData("scheduling.tickHz", "0", null, "scheduling.tickHz")]
     [InlineData("scheduling.baseStepHz", "1200", null, "scheduling.baseStepHz")]
-    [InlineData("map.file", "\"simulator/maps/test/seeded-leaks.json\"", null, "map.file")]
-    public void InvalidConfigIsRefusedNamingTheField(string? path, string? json, string? environment, string expectedPath)
+    [InlineData("map.file", "\"simulator/maps/test/seeded-leaks.json\"", null, "map.file", "StackedAreas", "portal validator")]
+    public void InvalidConfigIsRefusedNamingTheField(string? path, string? json, string? environment, string expectedPath, string scenario = "Baseline", string? expectedMessage = null)
     {
-        var runConfig = TestRuns.Small("Baseline", 3, 10);
+        var runConfig = TestRuns.Small(scenario, 3, 10);
         if (path is not null)
         {
             ConfigJson.SetPath(runConfig, path, JsonNode.Parse(json!));
@@ -61,6 +62,27 @@ public sealed class ConfigValidationTests
         Assert.Contains($"\"Path\":\"{expectedPath}\"", stderr.ToString(), StringComparison.Ordinal);
         Assert.Equal(string.Empty, stdout.ToString());
         Assert.False(Directory.Exists(output));
+        if (expectedMessage is not null)
+        {
+            Assert.Contains(result.Errors, e => e.Path == expectedPath && e.Message.Contains(expectedMessage, StringComparison.Ordinal));
+            Assert.Contains(expectedMessage, stderr.ToString(), StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// FR-021 and FR-023: with nothing but the scenario named, the speed ceilings are 7, 30 and 120 m/s for
+    /// infantry, ground vehicles and aircraft, and the map is 8 × 8 km with three lanes and no map file.
+    /// </summary>
+    [Fact]
+    public void DefaultsMatchTheSpec()
+    {
+        var config = TestRuns.Load(new JsonObject { ["scenario"] = "Baseline" }).Config;
+
+        var ceiling = config.Movement.SpeedCeiling;
+        Assert.Equal((7.0, 30.0, 120.0), (ceiling.Infantry, ceiling.GroundVehicle, ceiling.Aircraft));
+        Assert.Equal((8000.0, 8000.0), (config.Map.WidthMetres, config.Map.HeightMetres));
+        Assert.Equal(3, config.Map.Lanes);
+        Assert.Null(config.Map.File);
     }
 
     /// <summary>

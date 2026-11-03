@@ -134,7 +134,9 @@ public sealed class LockstepScheduler : ITickScheduler
 /// valid order by the "scheduling" stream, and each body runs at its start event, so regions move
 /// while others are ticking. At each tick end a region not already slowed drops to the degraded rate
 /// with the configured probability for U[dropTicksMin, dropTicksMax] ticks (research D7). Schedules
-/// follow the core's regions: split children copy their parent's, an absorber keeps its own.
+/// follow the core's regions: split children copy their parent's, an absorber keeps its own. The
+/// observer methods run inside the core's timed calls, so they only update the schedule table: O(1),
+/// allocating only when a region is created and the table grows (FR-027).
 /// </summary>
 public sealed class InterleavedScheduler : ITickScheduler, IRegionizerObserver
 {

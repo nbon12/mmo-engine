@@ -42,6 +42,7 @@ public sealed class MetricsTests
             events.Add);
 
         harness.Regionizer.MoveEntity(2, 0, 120, 100);
+        harness.Metrics.FlushEvents();
 
         Assert.Equal(1, harness.Metrics.Merges);
         Assert.Equal(expectedFusions, harness.Metrics.Fusions);
@@ -86,7 +87,11 @@ public sealed class MetricsTests
         Assert.Equal(0, harness.Metrics.MergesCausedBy(EntityClass.Infantry));
     }
 
-    /// <summary>A merge counts only when both sides hold an entity: taking in a region whose entities all left is an absorption.</summary>
+    /// <summary>
+    /// A merge counts only when both sides hold an entity: a region whose entities all left, taking in
+    /// one that still holds an entity, is an absorption. The absorbed region held the vehicle, so its
+    /// death is a real region lifetime (0 steps here, research D16).
+    /// </summary>
     [Fact]
     public void AMergeWithARegionHoldingNoEntityIsAnAbsorption()
     {
@@ -106,8 +111,96 @@ public sealed class MetricsTests
         Assert.Equal((0L, 1L), (harness.Metrics.Merges, harness.Metrics.Absorptions));
         Assert.Equal((0L, 1L, 0L), (row.Merges, row.Absorptions, row.Fusions));
         Assert.Equal(0, harness.Metrics.MergesCausedBy(EntityClass.GroundVehicle));
-        Assert.DoesNotContain(events, e => e.Type is RunEventType.Merge or RunEventType.Fusion or RunEventType.RegionDied);
-        Assert.Empty(harness.Metrics.Samples("regionLifetimeSteps"));
+        Assert.DoesNotContain(events, e => e.Type is RunEventType.Merge or RunEventType.Fusion);
+        var death = Assert.Single(events, e => e.Type == RunEventType.RegionDied);
+        Assert.Equal((regions[1], 0.0), (death.RegionA, death.Value!.Value));
+        Assert.Equal([0.0], harness.Metrics.Samples("regionLifetimeSteps"));
+    }
+
+    /// <summary>
+    /// FR-024, research D16: a merge is a merge only when both sides hold an entity; otherwise it is an
+    /// absorption, whichever side is empty. The absorbed region's death is a region lifetime unless the
+    /// absorbed side held no entity. Entity 0's region (the lower ID, so the absorber) and entity 1's
+    /// region are 6 steps old when one side is emptied by a teleport (or neither is) and the other
+    /// entity closes in.
+    /// </summary>
+    [Theory]
+    [InlineData("both hold an entity", -1, 1L, 0L, true)]
+    [InlineData("the absorbed side is empty", 1, 0L, 1L, false)]
+    [InlineData("the absorber is empty", 0, 0L, 1L, true)]
+    public void AMergeIsAnAbsorptionUnlessBothSidesHoldAnEntity(string combination, int emptied, long merges, long absorptions, bool absorbedLifetime)
+    {
+        var events = new List<RunEvent>();
+        var harness = new Harness([Spec(0, EntityClass.Infantry, 100, 100, 0), Spec(1, EntityClass.Infantry, 300, 100, 0)], events.Add);
+        var regions = harness.Regionizer.RegionIds.ToArray();
+        Assert.Equal(2, regions.Length);
+        Assert.Equal(regions[0], harness.Regionizer.GetEntity(0).RegionId);
+        harness.Regionizer.AdvanceTo(6);
+        if (emptied >= 0)
+        {
+            harness.Regionizer.BeginTeleport(emptied, 0, 900, 900);
+        }
+
+        var emptiedRegion = emptied >= 0 ? regions[emptied] : 0;
+        Assert.True(emptied < 0 || harness.Metrics.EntitiesIn(emptiedRegion) == 0, $"{combination}: region {emptiedRegion} should hold no entity");
+        if (emptied == 0)
+        {
+            harness.Regionizer.MoveEntity(1, 0, 110, 100);
+        }
+        else
+        {
+            harness.Regionizer.MoveEntity(0, 0, 290, 100);
+        }
+
+        var row = harness.EndTick(3);
+
+        Assert.Equal(1, harness.Regionizer.Stats.Merges);
+        Assert.Equal([regions[0]], harness.Regionizer.RegionIds.ToArray());
+        Assert.Equal((merges, absorptions), (harness.Metrics.Merges, harness.Metrics.Absorptions));
+        Assert.Equal((merges, absorptions), (row.Merges, row.Absorptions));
+        Assert.Equal(merges, harness.Metrics.MergesCausedBy(EntityClass.Infantry));
+        Assert.Equal(merges, events.Count(e => e.Type == RunEventType.Merge));
+        Assert.DoesNotContain(events, e => e.Type == RunEventType.Fusion);
+        var deaths = events.Where(e => e.Type == RunEventType.RegionDied).ToList();
+        if (absorbedLifetime)
+        {
+            var death = Assert.Single(deaths);
+            Assert.Equal((regions[1], 6.0), (death.RegionA, death.Value!.Value));
+            Assert.Equal([6.0], harness.Metrics.Samples("regionLifetimeSteps"));
+        }
+        else
+        {
+            Assert.Empty(deaths);
+            Assert.Empty(harness.Metrics.Samples("regionLifetimeSteps"));
+        }
+    }
+
+    /// <summary>
+    /// FR-027: the observer methods run inside the core's timed calls, so they queue events instead of
+    /// writing them. The sink sees nothing until <see cref="MetricsCollector.FlushEvents"/>, then every
+    /// event in order; a violation emitted later is written after them.
+    /// </summary>
+    [Fact]
+    public void EventsAreQueuedInsideCoreCallsAndWrittenInOrderAtAFlush()
+    {
+        var events = new List<RunEvent>();
+        var harness = new Harness(
+            [Spec(0, EntityClass.GroundVehicle, 100, 100, -1), Spec(1, EntityClass.Infantry, 300, 100, 0), Spec(2, EntityClass.Infantry, 500, 100, 1)],
+            events.Add);
+
+        harness.Regionizer.MoveEntity(0, 0, 290, 100);
+        harness.Regionizer.MoveEntity(2, 0, 310, 100);
+
+        Assert.Empty(events);
+        Assert.Equal(5, harness.Metrics.PendingEvents);
+        harness.Metrics.Emit(new RunEvent(0, 0, RunEventType.Violation, 0, Detail: "rule 1"));
+
+        Assert.Equal(
+            [RunEventType.Merge, RunEventType.RegionDied, RunEventType.Merge, RunEventType.Fusion, RunEventType.RegionDied, RunEventType.Violation],
+            events.Select(e => e.Type));
+        Assert.Equal(0, harness.Metrics.PendingEvents);
+        harness.Metrics.FlushEvents();
+        Assert.Equal(6, events.Count);
     }
 
     /// <summary>The region count counts regions holding at least one player.</summary>
@@ -258,6 +351,7 @@ public sealed class MetricsTests
         Assert.True(harness.Regionizer.TryMarkTicking(merged));
         harness.Regionizer.MoveEntity(2, 0, 700, 700);
         var split = harness.Regionizer.MarkNotTicking(merged);
+        harness.Metrics.FlushEvents();
 
         var rates = harness.Summary(15, new TimeBase(60, tickHz, 10))["rates"]!;
 
@@ -295,6 +389,7 @@ public sealed class MetricsTests
         harness.Metrics.SetClock(5, 10);
         Assert.True(harness.Regionizer.TryMarkTicking(region));
         var result = harness.Regionizer.MarkNotTicking(region);
+        harness.Metrics.FlushEvents();
 
         Assert.Equal(2, result.SplitChildren);
         var latency = Assert.Single(events, e => e.Type == RunEventType.SplitLatency);
@@ -344,6 +439,7 @@ public sealed class MetricsTests
 
         Assert.True(harness.Regionizer.TryMarkTicking(regions[0]));
         var died = harness.Regionizer.MarkNotTicking(regions[0]);
+        harness.Metrics.FlushEvents();
 
         Assert.Equal(RegionState.Dead, died.State);
         Assert.Equal(1, harness.Metrics.Absorptions);

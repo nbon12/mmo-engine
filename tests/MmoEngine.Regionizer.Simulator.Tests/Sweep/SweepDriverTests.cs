@@ -14,39 +14,53 @@ public sealed class SweepDriverTests
     private const string RadiusPath = "regionizer.claimRadius.infantry";
 
     /// <summary>
-    /// US4.2: Given a sweep of infantry claim radius with several seeds per cell, When the sweep driver
-    /// runs it, Then it produces exactly one result per cell and seed, and each result's manifest
-    /// reproduces that result's hash sequence. (Three cells by two seeds of 30 ticks keep it fast.)
+    /// US4.2: Given a sweep of infantry claim radius over 8 to 40 m in 4 m steps with 10 seeds per cell,
+    /// When the sweep driver runs it, Then it produces exactly one result per cell and seed (90 run
+    /// folders and 90 cells.csv rows), and each result's manifest reproduces that result's hash sequence.
+    /// The scenario's nine radii and ten seeds are kept; each run is 20 entities for 3 ticks, so the
+    /// whole sweep stays fast.
     /// </summary>
     [Fact]
     public void SweepProducesOneReproducibleResultPerCellAndSeed()
     {
         const ulong SweepSeed = 20261103;
-        const int Ticks = 30;
-        var spec = SweepSpecs.Spec("infantry-radius", SweepSeed, 2, SweepSpecs.Base(Ticks), "OneAtATime", (RadiusPath, [8, 12, 16]));
+        const int Ticks = 3;
+        const int Seeds = 10;
+        double[] radii = [8, 12, 16, 20, 24, 28, 32, 36, 40];
+        var baseConfig = TestRuns.Small("Baseline", 1, Ticks, population: 20);
+        var values = new JsonArray();
+        foreach (var radius in radii)
+        {
+            values.Add(radius);
+        }
+
+        var spec = SweepSpecs.Spec("infantry-radius", SweepSeed, Seeds, baseConfig, "OneAtATime", (RadiusPath, values));
         var plan = SweepSpecs.Plan(spec);
         var output = TestRuns.TempDir();
 
-        var outcome = SweepSpecs.Run(plan, output, parallelism: 3);
+        var outcome = SweepSpecs.Run(plan, output, parallelism: 4);
 
         Assert.True(outcome.ExitCode == ExitCodes.Clean, $"sweep seed {SweepSeed}: exit code {outcome.ExitCode}, {string.Join("; ", outcome.Runs.Select(r => r.Error ?? r.FirstViolation?.ToString()))}");
         var sweepDir = Path.Combine(output, "infantry-radius");
-        Assert.Equal(["c000", "c001", "c002"], Directory.GetDirectories(sweepDir).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        string[] cellIds = [.. Enumerable.Range(0, radii.Length).Select(c => $"c{c:000}")];
+        Assert.Equal(cellIds, Directory.GetDirectories(sweepDir).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        var runFolders = Directory.GetDirectories(sweepDir).SelectMany(Directory.GetDirectories).ToList();
+        Assert.True(runFolders.Count == radii.Length * Seeds, $"sweep seed {SweepSeed}: {runFolders.Count} run folders, expected {radii.Length * Seeds}");
 
         var index = SweepSpecs.ReadJson(Path.Combine(sweepDir, "sweep.json"));
         var cells = index["cells"]!.AsArray();
-        Assert.Equal(3, cells.Count);
-        double[] radii = [8, 12, 16];
+        Assert.Equal(radii.Length, cells.Count);
+        string[] seedFolders = [.. Enumerable.Range(0, Seeds).Select(i => $"seed-{i}")];
         for (var c = 0; c < cells.Count; c++)
         {
             var cell = cells[c]!;
-            var cellId = $"c{c:000}";
+            var cellId = cellIds[c];
             Assert.Equal(cellId, cell["cellId"]!.GetValue<string>());
             Assert.Equal(radii[c], cell["parameters"]![RadiusPath]!.GetValue<double>());
             Assert.Single(cell["parameters"]!.AsObject());
-            Assert.Equal(["seed-0", "seed-1"], Directory.GetDirectories(Path.Combine(sweepDir, cellId)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+            Assert.Equal(seedFolders.Order(StringComparer.Ordinal), Directory.GetDirectories(Path.Combine(sweepDir, cellId)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
             var runs = cell["runs"]!.AsArray();
-            Assert.Equal(2, runs.Count);
+            Assert.Equal(Seeds, runs.Count);
             for (var i = 0; i < runs.Count; i++)
             {
                 var seed = DeterministicRandom.SweepSeed(SweepSeed, i);
@@ -66,14 +80,15 @@ public sealed class SweepDriverTests
                 Assert.Equal(seed, manifest["seed"]!.GetValue<ulong>());
                 Assert.Equal(radii[c], manifest["parameters"]!["regionizer"]!["claimRadius"]!["infantry"]!.GetValue<double>());
                 var rerun = TestRuns.Run(TestRuns.Load(manifest["parameters"]!.AsObject()));
-                Assert.Equal(manifest["configHash"]!.GetValue<string>(), rerun.ConfigHash);
+                Assert.True(manifest["configHash"]!.GetValue<string>() == rerun.ConfigHash, $"{cellId} seed {seed}: the manifest's rerun has config hash {rerun.ConfigHash}");
                 Assert.True(recorded.SequenceEqual(SweepSpecs.Hashes(rerun.OutputDirectory)), $"{cellId} seed {seed}: the manifest's rerun gives other hashes");
             }
         }
 
         var rows = TestRuns.CsvRows(Path.Combine(sweepDir, "cells.csv"));
+        Assert.True(rows.Count == radii.Length * Seeds, $"sweep seed {SweepSeed}: cells.csv has {rows.Count} rows, expected {radii.Length * Seeds}");
         Assert.Equal(
-            ["c000/0", "c000/1", "c001/0", "c001/1", "c002/0", "c002/1"],
+            cellIds.SelectMany(cellId => Enumerable.Range(0, Seeds).Select(i => $"{cellId}/{i}")),
             rows.Select(r => $"{r[0]}/{r[1]}"));
     }
 

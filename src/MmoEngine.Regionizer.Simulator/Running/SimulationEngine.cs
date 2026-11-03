@@ -1,8 +1,7 @@
-using System.Diagnostics;
 using MmoEngine.Regionizer.Simulator.Config;
-using MmoEngine.Regionizer.Simulator.Metrics;
 using MmoEngine.Regionizer.Simulator.Monitors;
 using MmoEngine.Regionizer.Simulator.Movement;
+using MmoEngine.Regionizer.Simulator.Output;
 using MmoEngine.Regionizer.Simulator.Random;
 using MmoEngine.Regionizer.Simulator.Scheduling;
 
@@ -12,8 +11,10 @@ namespace MmoEngine.Regionizer.Simulator.Running;
 /// Runs region tick bodies and step boundaries against the core (research D7). A tick body, run at the
 /// region's start event, delivers the region's location-queue arrivals, fires its due timers, moves
 /// its entities in ascending ID through the movement source and sets synthetic timers from the
-/// "timers" stream. Every core call is wrapped in <see cref="Stopwatch.GetTimestamp"/> for the
-/// bookkeeping cost, less the calibrated cost of the timestamp pair (research D9).
+/// "timers" stream. Every core call is bracketed by the run's <see cref="BookkeepingMeter"/> for the
+/// bookkeeping cost, less the calibrated cost of the timestamp pair (research D9). The core calls the
+/// observers inside those brackets, so they only queue work; the timer monitor's shadow work and event
+/// output run after the call returns (<see cref="TimerMonitor.Flush"/>, <see cref="Metrics.MetricsCollector.FlushEvents"/>).
 /// </summary>
 internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
 {
@@ -26,9 +27,8 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
     private readonly LocationQueue _queue = new();
     private readonly Func<Arrival, long> _ownerOf;
     private readonly Action<Arrival> _complete;
-    private readonly double _overheadTicks;
+    private readonly BookkeepingMeter _meter;
     private int[] _entities = new int[16];
-    private double _bookkeeping;
     private long _bookkeepingCalls;
 
     /// <param name="regionizer">The core.</param>
@@ -37,7 +37,7 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
     /// <param name="config">The run's validated configuration; its <c>scheduling</c> gives the time base.</param>
     /// <param name="timers">The timer shadow monitor.</param>
     /// <param name="listeners">Run listeners.</param>
-    /// <param name="timerOverheadTicks">The calibrated cost of a timestamp pair, subtracted from each timed call.</param>
+    /// <param name="meter">Times every core call; a new meter with no overhead correction when null.</param>
     public SimulationEngine(
         Regionizer regionizer,
         WorldState state,
@@ -45,7 +45,7 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
         RunConfig config,
         TimerMonitor timers,
         IReadOnlyList<IRunListener> listeners,
-        double timerOverheadTicks = 0)
+        BookkeepingMeter? meter = null)
     {
         Regionizer = regionizer;
         State = state;
@@ -54,7 +54,7 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
         _time = TimeBase.From(config.Scheduling);
         _timers = timers;
         _listeners = listeners;
-        _overheadTicks = timerOverheadTicks;
+        _meter = meter ?? new BookkeepingMeter();
         _timerRandom = DeterministicRandom.ForStream(config.Seed, "timers");
         _ownerOf = OwnerOf;
         _complete = Complete;
@@ -67,21 +67,16 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
     public long Step { get; private set; }
 
     /// <summary>Returns and resets the Stopwatch ticks spent in core calls since the last call, net of the timestamp overhead.</summary>
-    public double TakeBookkeeping()
-    {
-        var value = _bookkeeping;
-        _bookkeeping = 0;
-        return value;
-    }
+    public double TakeBookkeeping() => _meter.Take();
 
     /// <summary>Places the scenario's entities at step 0, in ascending ID.</summary>
     public void AddEntities(IReadOnlyList<Scenarios.EntitySpec> entities)
     {
         foreach (var e in entities)
         {
-            var t0 = Stopwatch.GetTimestamp();
+            var t0 = _meter.Start();
             Regionizer.AddEntity(e.Id, e.Class, e.Layer, e.X, e.Y, e.Z, e.FightTag);
-            Measured(t0);
+            _meter.Stop(t0);
             foreach (var listener in _listeners)
             {
                 listener.OnEntityAdded(0, e);
@@ -113,9 +108,9 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
             return;
         }
 
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         Regionizer.SetPortalOpen(portalId, open);
-        Measured(t0);
+        _meter.Stop(t0);
         _bookkeepingCalls++;
         foreach (var listener in _listeners)
         {
@@ -126,9 +121,9 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
     public bool StartTick(long regionId, long step, int periodSteps)
     {
         Step = step;
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         var started = Regionizer.TryMarkTicking(regionId);
-        Measured(t0);
+        _meter.Stop(t0);
         if (!started)
         {
             return false;
@@ -136,9 +131,9 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
 
         _queue.CompleteForRegion(regionId, _ownerOf, _complete);
 
-        t0 = Stopwatch.GetTimestamp();
+        t0 = _meter.Start();
         Regionizer.RunDueTimers(regionId);
-        Measured(t0);
+        _meter.Stop(t0);
 
         var members = Regionizer.GetRegion(regionId).Entities;
         if (_entities.Length < members.Length)
@@ -164,18 +159,15 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
 
     public TickEndResult EndTick(long regionId)
     {
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         var result = Regionizer.MarkNotTicking(regionId);
-        Measured(t0);
+        _meter.Stop(t0);
         return result;
     }
 
-    /// <summary>Adds the time since <paramref name="t0"/>, less the timestamp pair's cost, to the bookkeeping.</summary>
-    private void Measured(long t0) => _bookkeeping += TimestampOverhead.Net(Stopwatch.GetTimestamp() - t0, _overheadTicks);
-
     private void Apply(int id, in MovementUpdate update, long step)
     {
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         switch (update.Op)
         {
             case MovementOp.Move:
@@ -183,7 +175,6 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
                 break;
             case MovementOp.TeleportBegin:
                 Regionizer.BeginTeleport(id, update.Layer, update.X, update.Y, update.Z);
-                _queue.Enqueue(new Arrival(id, step, update.Layer, update.X, update.Y));
                 break;
             case MovementOp.Occupy:
                 Regionizer.SetCapturePointOccupied(id, true);
@@ -193,7 +184,13 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
                 break;
         }
 
-        Measured(t0);
+        _meter.Stop(t0);
+        if (update.Op == MovementOp.TeleportBegin)
+        {
+            // The simulator's location queue is not the core's bookkeeping: it is filled outside the timed call.
+            _queue.Enqueue(new Arrival(id, step, update.Layer, update.X, update.Y));
+        }
+
         State.Apply(id, update);
         foreach (var listener in _listeners)
         {
@@ -231,26 +228,26 @@ internal sealed class SimulationEngine : ITickHost, IStepBoundaryActions
                 continue;
             }
 
-            var t0 = Stopwatch.GetTimestamp();
+            var t0 = _meter.Start();
             var timerId = Regionizer.AddTimer(id, delay);
-            Measured(t0);
+            _meter.Stop(t0);
             _timers.OnTimerSet(timerId, id, regionId, delay, step);
         }
     }
 
     private long OwnerOf(Arrival arrival)
     {
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         var owner = Regionizer.OwnerOfLocation(arrival.Layer, arrival.X, arrival.Y);
-        Measured(t0);
+        _meter.Stop(t0);
         return owner;
     }
 
     private void Complete(Arrival arrival)
     {
-        var t0 = Stopwatch.GetTimestamp();
+        var t0 = _meter.Start();
         Regionizer.CompleteTeleport(arrival.EntityId);
-        Measured(t0);
+        _meter.Stop(t0);
         State.CompleteTeleport(arrival.EntityId);
         _movement.OnTeleportCompleted(arrival.EntityId, Step);
         foreach (var listener in _listeners)
