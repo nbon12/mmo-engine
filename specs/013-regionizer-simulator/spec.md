@@ -12,6 +12,30 @@ fights must sit, before separate fights fuse into one region. It drives the real
 library, which sub-spec 10 later runs inside the continent server unchanged, with synthetic movement,
 and records what the regions do."
 
+## Clarifications
+
+### Session 2026-11-03
+
+Answered by the agent with the recommended option (unattended run, Principle XIII).
+
+- Q: When does a merge count as a fusion event? → A: Each player in a fight carries that fight's tag
+  from the scenario; travellers, aircraft and capture points carry none. A merge is a fusion when each
+  side holds a fight tag the other side does not.
+- Q: What does "fires exactly its delay after it was set" mean when a region drops to 20 Hz? → A: In
+  tick-counter mode the delay counts the owning region's ticks, carried across merges (offset) and
+  splits (copied counter). In absolute mode the timer fires at the first tick of its owning region at
+  or after the deadline on the continent time base.
+- Q: What ranges does the cross-region pairs metric count? → A: Two configurable placeholder ranges,
+  300 m for deferred and 1,000 m for read-only interactions; a pair is counted under the larger range
+  it falls within.
+- Q: What tolerances do the analytic checks use? → A: The claim-radius floor matches exactly; the
+  merge distance is checked as exact bounds with zero violations allowed; the lane-bridging estimate
+  matches within 10 percentage points at each traffic step, with uniformly random travellers and at
+  least 200 trials per step.
+- Q: Must the per-tick hashes match across machines? → A: They must match on the same machine and
+  build. The design avoids platform-dependent math so hashes can also match across machines, but
+  proving that with golden runs belongs to sub-spec 2.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The users of this feature are the engineers and agents who tune the regionizer and later run it
@@ -289,7 +313,9 @@ steady-state allocation test.
 - **FR-012**: The library MUST support two timer modes, chosen in configuration: per-region tick
   counters, where a merge offsets the absorbed region's timers and a split copies the parent's
   counter (the default, as the constitution requires), and absolute deadlines on the continent time
-  base. In both modes a timer MUST fire exactly once, exactly its delay after it was set.
+  base. In both modes a timer MUST fire exactly once: in tick-counter mode after exactly its delay in
+  ticks of its owning region, counted across merges and splits; in absolute mode at the first tick of
+  its owning region at or after its deadline.
 - **FR-013**: Opening a portal MUST let claims reach through it from the next tick end, which may cause
   a merge. Closing one MUST stop claims crossing it from the next tick end, which may allow a split.
 - **FR-014**: The library MUST expose an invariant checker that verifies, at each region's tick
@@ -313,7 +339,8 @@ steady-state allocation test.
   randomly drop to 20 Hz.
 - **FR-019**: The simulator MUST compute a 64-bit state hash every tick over a canonical serialization
   of section owners, region membership and timers. The same scenario, configuration and seed MUST
-  give the same hash sequence.
+  give the same hash sequence on the same machine and build. The simulated path MUST avoid
+  platform-dependent math, so that hashes can also match across machines.
 - **FR-020**: The simulator MUST run the invariant checker after every tick and fail the run at the
   first violation, reporting the rule, tick, seed and details. In test builds it MUST also check that
   every synthetic timer fires exactly once, exactly its delay after it was set.
@@ -332,7 +359,10 @@ steady-state allocation test.
   events (merges, splits, fusions, violations) and a summary with p50, p95, p99 and max per metric.
   The metrics are region count, largest region size and share, fusion events with the causing class,
   merge and split rates by causing class, split latency, section churn, region lifetime, cross-region
-  pairs, bookkeeping cost and oversized fusions.
+  pairs, bookkeeping cost and oversized fusions. A merge is a fusion when each side holds a fight tag
+  the other does not; only players in a fight carry a fight tag. Cross-region pairs count entity pairs
+  in different regions within the configured deferred range (default 300 m) or read-only range
+  (default 1,000 m), each pair under the larger range it falls within.
 - **FR-025**: The sweep driver MUST run one-parameter-at-a-time sweeps around a default point and grids
   over several parameters, with a configurable number of seeds per cell, spread across the machine's
   cores. Each run's result MUST be the same whatever the degree of parallelism.
@@ -359,7 +389,9 @@ steady-state allocation test.
 
 - **FR-031**: The analysis MUST compute the claim-radius floor, the merge distance for both anchoring
   modes and the lane-bridging estimate, compare them with simulator results, and flag any
-  disagreement outside the configured tolerance.
+  disagreement outside tolerance: the floor matches exactly; the merge-distance bounds allow zero
+  violations; the lane-bridging estimate matches within 10 percentage points at each traffic step,
+  measured with uniformly random travellers and at least 200 trials per step.
 - **FR-032**: The memo generator MUST write a decision memo from a set of results, with a row for each
   value the simulator sets: its recommended value labeled as a measurement, the curve it was read from,
   the margin, the seeds and the run IDs. Values that settle an item on the constitution's Open
@@ -372,7 +404,8 @@ steady-state allocation test.
 - **Region**: a set of sections, the entities in them and their timers, with a state (transient, ready,
   ticking, dead), an age, a tick counter and the merges it owes.
 - **Entity**: something with a stable ID, a class (infantry, ground vehicle, aircraft, traveller,
-  capture point, heavy projectile), a position, a layer and the sections it claims.
+  capture point, heavy projectile), a position, a layer, the sections it claims and, for players in a
+  fight, that fight's tag.
 - **Portal**: a declared edge between two sections, open or closed, with a policy for what crosses it
   while closed.
 - **Timer**: a synthetic gameplay timer with a delay and an owner, expressed as a tick-counter deadline
@@ -436,8 +469,8 @@ steady-state allocation test.
 
 ### Measurable Outcomes
 
-- **SC-001**: For every scenario, two runs with the same seed and configuration give identical
-  per-tick state hashes on every tick.
+- **SC-001**: For every scenario, two runs on the same machine with the same seed and configuration
+  give identical per-tick state hashes on every tick.
 - **SC-002**: A 24-hour simulated Soak run in interleaved mode ends with zero invariant violations, and
   every synthetic timer fires exactly once at its deadline.
 - **SC-003**: The portal validator reports 100% of the leaks seeded into the test maps, and nothing on
@@ -446,8 +479,8 @@ steady-state allocation test.
   One base, with the serialized part separate, and compared with the 1 ms p99 budget.
 - **SC-005**: The decision memo recommends a value, with its curve, margin, seeds and runs, for each
   of the eight values the simulator sets.
-- **SC-006**: The three analytic checks agree with simulator results within their configured
-  tolerances.
+- **SC-006**: The three analytic checks agree with simulator results within the tolerances FR-031
+  sets.
 - **SC-007**: The regionizer core library has no dependency on the simulator, so sub-spec 10 can use it
   without changes.
 
