@@ -36,6 +36,12 @@ Answered by the agent with the recommended option (unattended run, Principle XII
 - Q: Must the per-tick hashes match across machines? → A: They must match on the same machine and
   build. The design avoids platform-dependent math so hashes can also match across machines, but
   proving that with golden runs belongs to sub-spec 2.
+- Q: What does the memo report when a value's rule finds no value in the swept range (for example, no
+  section size meets the bookkeeping budget)? → A: The row is flagged rather than given a made-up
+  value. It shows the full curve, the measured reason and the next decision: widen the sweep, revise
+  the budget, or change the layout. A flagged row with that evidence counts as the memo's answer for
+  that value (FR-032, SC-005), because Principle VI wants the measurement, not a forced value.
+  (Added after the first-pass sweeps, 2026-11-03.)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -454,7 +460,8 @@ steady-state allocation test.
     - at least 200 trials per step.
 - **FR-032**: The memo generator MUST write a decision memo from a set of results, with a row for each
   value the simulator sets: its recommended value labeled as a measurement, the curve it was read from,
-  the margin, the seeds and the run IDs. Values that settle an item on the constitution's Open
+  the margin, the seeds and the run IDs. When the value's rule finds no value in the swept range, the
+  row MUST be flagged with the curve and the measured reason instead of a value. Values that settle an item on the constitution's Open
   decisions list MUST be written as recommendations recorded under Principle VI.
 
 ### Key Entities *(include if feature involves data)*
@@ -537,8 +544,9 @@ steady-state allocation test.
   the clean test map.
 - **SC-004**: Bookkeeping cost at 5,000 entities is recorded at p50, p95, p99 and max for Baseline and
   One base, with the serialized part separate, and compared with the 1 ms p99 budget.
-- **SC-005**: The decision memo recommends a value, with its curve, margin, seeds and runs, for each
-  of the eight values the simulator sets.
+- **SC-005**: The decision memo answers each of the eight values the simulator sets: either a
+  recommended value with its curve, margin, seeds and runs, or a flagged row with its curve and the
+  measured reason no value in the swept range meets the rule.
 - **SC-006**: The three analytic checks agree with simulator results within the tolerances FR-031
   sets.
 - **SC-007**: The regionizer core library has no dependency on the simulator, so sub-spec 10 can use it

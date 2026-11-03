@@ -18,6 +18,9 @@
     {
       "path": "scenarioParameters.travellers",
       "values": [
+        0,
+        2,
+        5,
         10,
         20,
         30,
