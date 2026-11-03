@@ -58,6 +58,30 @@ Staging or Production, and is Development when unset.
   `<out>/<sweep>/sweep.json` (the cell table) and `<out>/<sweep>/cells.csv`. The cells file has one
   row per cell and seed, with the summary's deterministic columns and the bookkeeping p99.
 
+`sweep.json` is the authoritative index that the memo generator reads. Run folders follow
+[run-output.md](run-output.md).
+
+```json
+{
+  "formatVersion": 1,
+  "name": "infantry-radius",
+  "scenario": "Baseline",
+  "mode": "OneAtATime",
+  "sweepSeed": 20261103,
+  "seeds": [ { "index": 0, "seed": 1234 } ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": { "regionizer.claimRadius.infantry": 8 },
+      "runs": [ { "seedIndex": 0, "seed": 1234, "folder": "c000/seed-0", "completed": true } ]
+    }
+  ]
+}
+```
+
+`parameters` holds only the swept paths and their values for that cell, keyed by JSON path. The
+`base` config's other values are in each run's manifest.
+
 ## `regionizer-sim` CLI
 
 | Command | Purpose | Exit codes |
