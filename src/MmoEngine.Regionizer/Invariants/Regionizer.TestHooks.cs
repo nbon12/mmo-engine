@@ -29,6 +29,7 @@ public sealed partial class Regionizer
         _entities.ClaimCount[entityId] = count + 1;
         buffer.AsSpan(0, count + 1).Sort();
         _claimCount[section]++;
+        TotalClaimCount++;
         if (_owner[section] == 0)
         {
             AssignSection(section, _regions[_entities.Region[entityId]]);
@@ -39,6 +40,11 @@ public sealed partial class Regionizer
     internal void TestHookGrowRegion(long regionId, int section)
     {
         var region = _regions[regionId];
+        if (_owner[section] == 0)
+        {
+            OwnedSectionCount++;
+        }
+
         _owner[section] = regionId;
         region.Sections.Add(section);
         region.SectionVersion++;

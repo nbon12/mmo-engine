@@ -178,6 +178,7 @@ public sealed partial class Regionizer
             }
 
             _owner[section] = 0;
+            OwnedSectionCount--;
             _observer.OnSectionOwnerChanged(section, region.Id, 0);
         }
 

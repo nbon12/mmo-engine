@@ -165,6 +165,7 @@ public sealed partial class Regionizer
 
     private void DecrementClaim(int section)
     {
+        TotalClaimCount--;
         if (--_claimCount[section] == 0 && _owner[section] != 0)
         {
             _regions[_owner[section]].DeadCount++;
@@ -175,6 +176,7 @@ public sealed partial class Regionizer
     private void IncrementClaim(int entityId, int section)
     {
         var owner = _owner[section];
+        TotalClaimCount++;
         if (++_claimCount[section] == 1 && owner != 0)
         {
             _regions[owner].DeadCount--;
@@ -201,6 +203,11 @@ public sealed partial class Regionizer
     private void AssignSection(int section, Region region)
     {
         var old = _owner[section];
+        if (old == 0)
+        {
+            OwnedSectionCount++;
+        }
+
         _owner[section] = region.Id;
         region.Sections.Add(section);
         region.SectionVersion++;

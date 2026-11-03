@@ -68,22 +68,36 @@ public static class InvariantChecker
             }
         }
 
-        for (var s = 0; s < topology.SectionCount; s++)
+        // The library keeps running totals of owned sections and claims, so the whole map is scanned
+        // only when a total disagrees with what the regions list, to name the section at fault.
+        long listedClaims = 0;
+        foreach (var section in listedBy.Keys)
         {
-            var owner = regionizer.OwnerOf(s);
-            if (owner != 0 && !listedBy.ContainsKey(s))
-            {
-                into.Add(new Violation(InvariantRule.SectionSingleOwner, $"section {topology.KeyOf(s)} is owned by region {owner} but not listed by it"));
-            }
+            listedClaims += regionizer.ClaimCountOf(section);
+        }
 
-            if (owner == 0 && regionizer.ClaimCountOf(s) > 0)
+        var fullScan = listedBy.Count != regionizer.OwnedSectionCount || listedClaims != regionizer.TotalClaimCount;
+        if (fullScan)
+        {
+            for (var s = 0; s < topology.SectionCount; s++)
             {
-                into.Add(new Violation(InvariantRule.SectionSingleOwner, $"live section {topology.KeyOf(s)} has no owner"));
+                var owner = regionizer.OwnerOf(s);
+                if (owner != 0 && !listedBy.ContainsKey(s))
+                {
+                    into.Add(new Violation(InvariantRule.SectionSingleOwner, $"section {topology.KeyOf(s)} is owned by region {owner} but not listed by it"));
+                }
+
+                if (owner == 0 && regionizer.ClaimCountOf(s) > 0)
+                {
+                    into.Add(new Violation(InvariantRule.SectionSingleOwner, $"live section {topology.KeyOf(s)} has no owner"));
+                }
             }
         }
 
         // Rules 2, 5 and 6: recompute claims and check membership.
         var entities = regionizer.Entities;
+        var walkSet = new HashSet<int>();
+        var walkQueue = new Queue<int>();
         var expectedCounts = new Dictionary<int, int>();
         var listedEntity = new Dictionary<int, long>();
         foreach (var id in regionizer.RegionIds)
@@ -145,8 +159,8 @@ public static class InvariantChecker
                 into.Add(new Violation(InvariantRule.EntitySingleOwner, $"entity {id}'s section {topology.KeyOf(anchor)} is owned by {regionizer.OwnerOf(anchor)}, not its region {regionId}"));
             }
 
-            var expected = IndependentClaim(regionizer, id);
-            var stored = new HashSet<int>(regionizer.GetEntity(id).ClaimedSections.ToArray());
+            var expected = IndependentClaim(regionizer, id, walkSet, walkQueue);
+            var stored = entities.Claims[id].AsSpan(0, entities.ClaimCount[id]);
             foreach (var section in stored)
             {
                 if (!expected.Contains(section))
@@ -160,7 +174,7 @@ public static class InvariantChecker
 
             foreach (var section in expected)
             {
-                if (!stored.Contains(section))
+                if (stored.BinarySearch(section) < 0)
                 {
                     into.Add(new Violation(InvariantRule.ClaimsInRegion, $"entity {id} does not claim {topology.KeyOf(section)}, which is inside its claim"));
                 }
@@ -174,13 +188,34 @@ public static class InvariantChecker
             }
         }
 
-        for (var s = 0; s < topology.SectionCount; s++)
+        // Claim counts: every claimed or owned section is compared; any other section must hold zero,
+        // which the running total confirms (a full scan names the section otherwise).
+        long expectedTotal = 0;
+        foreach (var value in expectedCounts.Values)
         {
-            var count = regionizer.ClaimCountOf(s);
-            var expected = expectedCounts.GetValueOrDefault(s);
-            if (count != expected)
+            expectedTotal += value;
+        }
+
+        if (fullScan || expectedTotal != regionizer.TotalClaimCount)
+        {
+            for (var s = 0; s < topology.SectionCount; s++)
             {
-                into.Add(new Violation(InvariantRule.ClaimsInRegion, $"section {topology.KeyOf(s)} has claim count {count}, expected {expected}"));
+                CheckCount(regionizer, topology, expectedCounts, s, into);
+            }
+        }
+        else
+        {
+            foreach (var s in listedBy.Keys)
+            {
+                CheckCount(regionizer, topology, expectedCounts, s, into);
+            }
+
+            foreach (var s in expectedCounts.Keys)
+            {
+                if (!listedBy.ContainsKey(s))
+                {
+                    CheckCount(regionizer, topology, expectedCounts, s, into);
+                }
             }
         }
 
@@ -207,8 +242,18 @@ public static class InvariantChecker
         return into.Count - before;
     }
 
+    private static void CheckCount(Regionizer regionizer, SectionTopology topology, Dictionary<int, int> expectedCounts, int section, List<Violation> into)
+    {
+        var count = regionizer.ClaimCountOf(section);
+        var expected = expectedCounts.GetValueOrDefault(section);
+        if (count != expected)
+        {
+            into.Add(new Violation(InvariantRule.ClaimsInRegion, $"section {topology.KeyOf(section)} has claim count {count}, expected {expected}"));
+        }
+    }
+
     /// <summary>Research D1 and D2, written out plainly: a walk over same-area neighbours and open portals.</summary>
-    private static HashSet<int> IndependentClaim(Regionizer regionizer, int entityId)
+    private static HashSet<int> IndependentClaim(Regionizer regionizer, int entityId, HashSet<int> claim, Queue<int> queue)
     {
         var topology = regionizer.Topology;
         var entities = regionizer.Entities;
@@ -238,13 +283,14 @@ public static class InvariantChecker
             return (dx * dx) + (dy * dy) <= r * r;
         }
 
-        var claim = new HashSet<int> { anchor };
+        claim.Clear();
+        claim.Add(anchor);
         if (r <= 0)
         {
             return claim;
         }
 
-        var queue = new Queue<int>();
+        queue.Clear();
         queue.Enqueue(anchor);
         while (queue.Count > 0)
         {

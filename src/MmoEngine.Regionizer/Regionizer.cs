@@ -524,4 +524,10 @@ public sealed partial class Regionizer
     internal IReadOnlyDictionary<long, Region> Regions => _regions;
 
     internal double ClaimRadiusOf(int entityId) => RadiusOf(entityId);
+
+    /// <summary>Sections with an owner, kept as a running total for the invariant checker.</summary>
+    internal int OwnedSectionCount { get; private set; }
+
+    /// <summary>The sum of every section's claim count, kept as a running total for the invariant checker.</summary>
+    internal long TotalClaimCount { get; private set; }
 }
