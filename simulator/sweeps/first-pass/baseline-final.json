@@ -1,0 +1,24 @@
+{
+  "name": "baseline-final",
+  "base": {
+    "scenario": "Baseline",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 9000
+  },
+  "seeds": 5,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "metrics.targetFightSize",
+      "values": [
+        1200
+      ]
+    }
+  ]
+}

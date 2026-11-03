@@ -1,0 +1,25 @@
+{
+  "name": "anchoring",
+  "base": {
+    "scenario": "Baseline",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 18000
+  },
+  "seeds": 10,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.anchoring",
+      "values": [
+        "Section",
+        "Position"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "merge-gap",
+  "base": {
+    "scenario": "Migration",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "scheduling": {
+      "mode": "Interleaved"
+    },
+    "durationTicks": 18000
+  },
+  "seeds": 10,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.mergeGap",
+      "values": [
+        0,
+        1
+      ]
+    }
+  ]
+}

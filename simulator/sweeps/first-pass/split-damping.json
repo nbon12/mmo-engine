@@ -1,0 +1,52 @@
+{
+  "name": "split-damping",
+  "base": {
+    "scenario": "Migration",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "scheduling": {
+      "mode": "Interleaved"
+    },
+    "durationTicks": 9000
+  },
+  "seeds": 5,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.split.minSections",
+      "values": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256
+      ]
+    },
+    {
+      "path": "regionizer.split.minDeadPercent",
+      "values": [
+        10,
+        20,
+        30,
+        40,
+        50
+      ]
+    },
+    {
+      "path": "regionizer.split.minAgeSeconds",
+      "values": [
+        0,
+        1,
+        2,
+        5,
+        10
+      ]
+    }
+  ]
+}

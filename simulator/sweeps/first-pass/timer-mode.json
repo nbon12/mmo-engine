@@ -1,0 +1,28 @@
+{
+  "name": "timer-mode",
+  "base": {
+    "scenario": "Migration",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "scheduling": {
+      "mode": "Interleaved"
+    },
+    "durationTicks": 9000
+  },
+  "seeds": 5,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.timerMode",
+      "values": [
+        "TickCounter",
+        "Absolute"
+      ]
+    }
+  ]
+}

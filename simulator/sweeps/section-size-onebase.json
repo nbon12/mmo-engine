@@ -1,0 +1,27 @@
+{
+  "name": "section-size-onebase",
+  "base": {
+    "scenario": "OneBase",
+    "population": {
+      "total": 5000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 18000
+  },
+  "seeds": 10,
+  "sweepSeed": 20261103,
+  "mode": "OneAtATime",
+  "parameters": [
+    {
+      "path": "regionizer.sectionSize",
+      "values": [
+        8,
+        16,
+        32,
+        64
+      ]
+    }
+  ]
+}

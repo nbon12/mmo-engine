@@ -141,4 +141,38 @@ public sealed class ScenarioParameterTests
 
         Assert.True(result.Succeeded, string.Join("; ", result.Errors));
     }
+
+    /// <summary>
+    /// Lane traffic keeps the swept traveller count exact at any population: only the two fights scale,
+    /// to population.total minus the travellers, so each point of the lane-traffic curve sits at its x.
+    /// </summary>
+    [Theory]
+    [InlineData(10, 2000)]
+    [InlineData(120, 2000)]
+    [InlineData(60, 1000)]
+    public void LaneTrafficTravellerCountIsExactAndOnlyTheFightsScale(int travellers, int total)
+    {
+        var config = TestRuns.Load(new JsonObject { ["scenario"] = "LaneTraffic" }
+            .With("scenarioParameters.travellers", travellers)
+            .With("population.total", total)).Config;
+
+        var world = MmoEngine.Regionizer.Simulator.Scenarios.ScenarioRegistry.Create("LaneTraffic").Build(config);
+
+        var counted = world.Entities.Count(e => e.Class == EntityClass.Traveller);
+        var fighters = world.Entities.Count(e => e.FightTag >= 0 || (e.IsPlayer && e.Class != EntityClass.Traveller));
+        Assert.Equal(travellers, counted);
+        Assert.Equal(total - travellers, world.Entities.Count(e => e.IsPlayer && e.Class != EntityClass.Traveller));
+        Assert.True(fighters >= total - travellers, $"population {total}, travellers {travellers}: {fighters} fighters");
+    }
+
+    /// <summary>Lane traffic refuses a population too small to hold its exact traveller count.</summary>
+    [Fact]
+    public void LaneTrafficPopulationMustHoldTheTravellers()
+    {
+        var errors = RunConfigLoader.Load(new JsonObject { ["scenario"] = "LaneTraffic" }
+            .With("scenarioParameters.travellers", 200)
+            .With("population.total", 150)).Errors;
+
+        Assert.Contains(errors, e => e.Path == "population.total");
+    }
 }

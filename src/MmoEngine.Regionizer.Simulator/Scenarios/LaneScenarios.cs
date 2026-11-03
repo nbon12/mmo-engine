@@ -143,6 +143,17 @@ public sealed class LaneTrafficScenario : IScenario
 
     public string Name => ScenarioNames.LaneTraffic;
 
+    /// <summary>
+    /// The traveller count is the swept traffic level, so it is exact: only the fights scale, to
+    /// <c>population.total</c> minus the travellers and aircraft. Scaling travellers with the population
+    /// would move every point of the lane-traffic curve off its x value.
+    /// </summary>
+    internal static (int[] Fights, int[] Others) Counts(LaneTrafficParameters p, int total)
+    {
+        var (fights, _) = PopulationScaler.Scale(p.Fights, [], total - p.Travellers - p.PointToPointAircraft);
+        return (fights, [p.Travellers, p.PointToPointAircraft]);
+    }
+
     public IEnumerable<ConfigError> Validate(RunConfig config)
     {
         var errors = new List<ConfigError>();
@@ -169,9 +180,14 @@ public sealed class LaneTrafficScenario : IScenario
             errors.Add(new ConfigError($"{P}.clumpSpreadMetres", "must be a finite number of metres, at least 0"));
         }
 
+        if (config.Population.Total < p.Travellers + p.PointToPointAircraft)
+        {
+            errors.Add(new ConfigError("population.total", $"must hold the {p.Travellers} travellers and {p.PointToPointAircraft} aircraft, which are exact counts here, was {config.Population.Total}"));
+        }
+
         if (errors.Count == 0)
         {
-            var (fights, _) = PopulationScaler.Scale(p.Fights, [p.Travellers, p.PointToPointAircraft], config.Population.Total);
+            var (fights, _) = Counts(p, config.Population.Total);
             var (x0, x1) = BaseXs(config, p, fights);
             if (x0 < 0 || x1 >= config.Map.WidthMetres)
             {
@@ -188,7 +204,7 @@ public sealed class LaneTrafficScenario : IScenario
     {
         var p = ScenarioParameters.Require<LaneTrafficParameters>(config);
         var map = config.Map;
-        var (fights, others) = PopulationScaler.Scale(p.Fights, [p.Travellers, p.PointToPointAircraft], config.Population.Total);
+        var (fights, others) = Counts(p, config.Population.Total);
         var (x0, x1) = BaseXs(config, p, fights);
         var layout = MapLayout.SingleLane(
             map.WidthMetres,
