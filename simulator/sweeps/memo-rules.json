@@ -1,0 +1,129 @@
+{
+  "formatVersion": 1,
+  "description": "Memo rules for regionizer-sim memo (research D15, FR-032). Each value names the sweep folder it reads (<results>/<sweep>/sweep.json), the metric it reads from each run's summary.json (contracts/run-output.md), and its margins and thresholds. Interaction ranges and closing speeds are placeholders until game design supplies real values (spec Assumptions); closing speeds are twice each class's default speed ceiling (7, 30 and 120 m/s).",
+  "values": [
+    {
+      "id": "claim-radius-infantry",
+      "title": "Claim radius, infantry",
+      "rule": "ClaimRadius",
+      "sweep": "infantry-radius",
+      "parameter": "regionizer.claimRadius.infantry",
+      "unit": "m",
+      "metric": { "paths": ["fusedFightPairs.p50"] },
+      "collapseAt": 1,
+      "stepsBelowCollapse": 1,
+      "floor": { "interactionRangeMetres": 10, "closingSpeedMetresPerSecond": 14, "tickRateHz": 30 },
+      "openDecision": 1,
+      "description": "Baseline with the infantry claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict."
+    },
+    {
+      "id": "claim-radius-ground-vehicle",
+      "title": "Claim radius, ground vehicle",
+      "rule": "ClaimRadius",
+      "sweep": "vehicle-radius",
+      "parameter": "regionizer.claimRadius.groundVehicle",
+      "unit": "m",
+      "metric": { "paths": ["fusedFightPairs.p50"] },
+      "collapseAt": 1,
+      "stepsBelowCollapse": 1,
+      "floor": { "interactionRangeMetres": 15, "closingSpeedMetresPerSecond": 60, "tickRateHz": 30 },
+      "openDecision": 1,
+      "description": "Baseline with the ground-vehicle claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor; if the floor is above it, the row is flagged as a conflict."
+    },
+    {
+      "id": "claim-radius-aircraft",
+      "title": "Claim radius, aircraft",
+      "rule": "ClaimRadius",
+      "sweep": "aircraft-radius",
+      "parameter": "regionizer.claimRadius.aircraft",
+      "unit": "m",
+      "metric": { "paths": ["fusedFightPairs.p50"] },
+      "collapseAt": 1,
+      "stepsBelowCollapse": 1,
+      "floor": { "interactionRangeMetres": 8, "closingSpeedMetresPerSecond": 240, "tickRateHz": 30 },
+      "openDecision": 1,
+      "description": "Baseline with the aircraft claim radius swept. Collapse is the smallest radius whose mean over seeds of the p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor (two aircraft closing at 240 m/s at 30 Hz: the range plus 8 m); if the floor is above it, the row is flagged as a conflict."
+    },
+    {
+      "id": "section-size",
+      "title": "Section size",
+      "rule": "SmallestWithin",
+      "sweep": "section-size",
+      "parameter": "regionizer.sectionSize",
+      "unit": "m",
+      "metric": { "paths": ["budget.bookkeepingP99Micros"] },
+      "threshold": 1000,
+      "inclusive": true,
+      "openDecision": 1,
+      "description": "Baseline and One base with the section size swept (the sweep's other parameter, scenario, makes each a series). The smallest size whose bookkeeping p99 is within the 1 ms budget (an estimate until measured) in every seed of both scenarios."
+    },
+    {
+      "id": "claim-anchoring",
+      "title": "Claim anchoring",
+      "rule": "Lowest",
+      "sweep": "anchoring",
+      "parameter": "regionizer.anchoring",
+      "metric": { "paths": ["rates.fusionsPerSecondByClass"] },
+      "description": "Baseline in both anchoring modes at equal bookkeeping cost. The mode with the lower fusion-event rate (fusions per second, every causing class summed)."
+    },
+    {
+      "id": "minimum-base-spacing",
+      "title": "Minimum base spacing",
+      "rule": "SmallestWithin",
+      "sweep": "spacing",
+      "unit": "m",
+      "metric": { "paths": ["totals.oversizedFusionTicks"], "divideBy": "ticks" },
+      "threshold": 0.01,
+      "inclusive": false,
+      "addMargin": 100,
+      "description": "Spacing with the base spacing swept. The smallest spacing whose oversized-fusion ticks are under 1% of ticks in every seed, plus a 100 m sprawl margin (a placeholder until fight sprawl is measured)."
+    },
+    {
+      "id": "lane-bridging-limit",
+      "title": "Lane bridging limit",
+      "rule": "LargestWithin",
+      "sweep": "lane-traffic",
+      "unit": "travellers",
+      "metric": { "paths": ["totals.oversizedFusionTicks"], "divideBy": "ticks" },
+      "threshold": 0.01,
+      "inclusive": false,
+      "description": "Lane traffic with the traveller count swept. The largest traffic level whose bridging (fight-fusion) ticks are under 1% of ticks in every seed. The lane-traffic sweep sets metrics.targetFightSize below the two fights' combined player count, so an oversized-fusion tick is a tick on which the fights are fused."
+    },
+    {
+      "id": "split-damping",
+      "title": "Split damping",
+      "rule": "Lowest",
+      "sweep": "split-damping",
+      "metric": { "paths": ["rates.mergesPerSecondByClass", "rates.splitsPerSecond"] },
+      "constraint": {
+        "metric": { "paths": ["metrics.splitLatencyTicks.p99"] },
+        "threshold": 150,
+        "inclusive": false
+      },
+      "description": "Migration with N_min, p_dead and T_min swept. The lowest merge-plus-split rate (per second, every causing class summed) among cells whose split latency p99 is under 5 s (150 ticks at 30 Hz) in every seed."
+    },
+    {
+      "id": "air-layer",
+      "title": "Air layer",
+      "rule": "AdoptIfDrop",
+      "sweep": "air-layer",
+      "parameter": "airLayer.enabled",
+      "baseline": false,
+      "candidate": true,
+      "metric": { "paths": ["rates.mergesPerSecondByClass.Aircraft"], "absentAsZero": true },
+      "minimumDropPercent": 25,
+      "guard": { "paths": ["rates.fusionsPerSecondByClass"] },
+      "description": "Air traffic with and without the air layer. Adopt only if aircraft-caused merges drop by at least 25% with no rise in fusion events."
+    },
+    {
+      "id": "target-fight-size",
+      "title": "Target fight size",
+      "rule": "Reading",
+      "sweep": "baseline-final",
+      "unit": "players",
+      "metric": { "paths": ["metrics.largestRegionPlayers.p99"] },
+      "openDecision": 2,
+      "description": "Baseline at the chosen values. The p99 of the largest region's player count, as a reading for the Phase 1 sweep."
+    }
+  ]
+}
