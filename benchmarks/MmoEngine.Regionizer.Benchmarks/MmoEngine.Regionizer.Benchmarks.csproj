@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MmoEngine.Regionizer\MmoEngine.Regionizer.csproj" />
+    <!-- For the shared seeded PRNG only; the benchmarks drive the core library directly. -->
+    <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
