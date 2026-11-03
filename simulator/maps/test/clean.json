@@ -1,0 +1,65 @@
+{
+  "formatVersion": 1,
+  "name": "clean",
+  "sectionSize": 16,
+  "layers": [
+    {
+      "id": 0,
+      "name": "surface",
+      "originX": 0,
+      "originY": 0,
+      "width": 32,
+      "height": 32,
+      "defaultArea": "open",
+      "areas": [ { "tag": "courtyard", "rects": [ [ 4, 4, 11, 11 ] ] } ],
+      "blocked": [ [ 16, 4, 16, 20 ], [ 4, 12, 11, 12 ] ]
+    },
+    {
+      "id": 1,
+      "name": "bunker",
+      "originX": 20,
+      "originY": 20,
+      "width": 8,
+      "height": 8,
+      "defaultArea": "bunker",
+      "blocked": [ [ 24, 24, 25, 25 ] ]
+    }
+  ],
+  "sealedAreas": [ "bunker" ],
+  "adjacency": [
+    { "id": "courtyard-gate", "kind": "walkway", "a": [ 0, 11, 8 ], "b": [ 0, 12, 8 ] },
+    { "id": "bunker-stairs", "kind": "stairs", "a": [ 1, 22, 22 ], "b": [ 0, 22, 22 ] },
+    { "id": "wall-ladder", "kind": "ladder", "a": [ 0, 15, 10 ], "b": [ 0, 17, 10 ] },
+    { "kind": "walkway", "a": [ 1, 21, 26 ], "b": [ 1, 26, 21 ] }
+  ],
+  "openings": [
+    { "id": "courtyard-window", "kind": "window", "a": [ 0, 11, 5 ], "b": [ 0, 12, 5 ] }
+  ],
+  "portals": [
+    {
+      "id": 1,
+      "name": "bunker-door",
+      "a": [ 0, 22, 22 ],
+      "b": [ 1, 22, 22 ],
+      "open": false,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": false }
+    },
+    {
+      "id": 2,
+      "name": "courtyard-gate",
+      "a": [ 0, 11, 8 ],
+      "b": [ 0, 12, 8 ],
+      "open": true,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": true, "deferredProjectiles": true }
+    },
+    {
+      "id": 3,
+      "name": "courtyard-window",
+      "a": [ 0, 12, 5 ],
+      "b": [ 0, 11, 5 ],
+      "open": true,
+      "closedPolicy": { "entityTransfers": false, "doorAndObjectiveEvents": false, "deferredProjectiles": true }
+    }
+  ],
+  "portalSchedule": [ { "portal": 1, "everySeconds": 60, "openSeconds": 20 } ]
+}
