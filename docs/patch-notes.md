@@ -75,6 +75,11 @@ The first application code in the repo:
 - **24-hour soak**: done at 1,000 players (`docs/simulator/results/soak-24h/`), with zero violations and zero timer faults. A rerun at the scenario's default population (5,900) would take several times longer and is a follow-up.
 - **Lockstep bookkeeping**: lockstep runs each region's tick to completion before the next, so its bookkeeping readings exclude merge-later work. An interleaved bookkeeping reading is a follow-up.
 - **Portal deferral in the server**: the core applies a deferred portal toggle when no region is ticking. Sub-spec 10's tick pool may never reach that point, so it must pick a guaranteed point.
+- **Small items from the PR #47 review**:
+  - per-layer portal-endpoint lists for `ClaimCalculator.PortalInBox`;
+  - a spatial lookup for portal toggles;
+  - an O(n) `LocationQueue.CompleteForRegion`;
+  - in interleaved mode, a region absorbed after ticking can roll synthetic timers twice in one step. Movement is unaffected, because each entity moves by its own elapsed time.
 - **Sub-spec 2** (the telemetry and test harness) is the next part of #13. It covers ClickHouse loading of these run folders, the fixed runner class and golden runs.
 
 ## 2026-11-03 — @claude mention agent on GitHub
