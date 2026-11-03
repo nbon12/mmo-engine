@@ -29,9 +29,10 @@ session: write the request on GitHub, mention `@claude`, and the reply arrives o
 The scheduled routines, in turn, leave findings and stories as issues that the owner can hand back
 with a mention.
 
-The workflow is the same one `nbon12/hoa_management_system` runs (its spec
-`032-claude-mention-agent`), minus the build toolchains, because this repo has no application code
-yet. It was added in PR #35.
+The workflow is based on the one `nbon12/hoa_management_system` runs (its spec
+`032-claude-mention-agent`). It drops the build toolchains, because this repo has no application
+code yet, and adds the `sweep-log` guard (FR-002). It was added in PR #35, together with its
+contract tests in `tests/workflows/test_claude_workflow.py`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -46,10 +47,11 @@ the PR.
 **Why this priority**: This is the whole feature. Without it, every piece of agent work needs a
 session opened by hand.
 
-**Independent Test**: On the default branch, with the credential secret set and the Claude GitHub
-App installed, open an issue as the owner whose body mentions `@claude` and asks for a one-line
-answer. A `Claude` workflow run starts for the `issues` event and succeeds, and `claude[bot]`
-comments on that issue with the answer and a link to the run.
+**Independent Test**: `tests/workflows/test_claude_workflow.py`, class
+`UserStory1MentionStartsARun`. It evaluates the job's condition, with GitHub's expression
+semantics, against issue, comment, review and review-comment payloads from write-access authors. It
+asserts that the job runs for a mention and is skipped without one. That `claude[bot]` then replies
+is a known gap (see Executable and living spec).
 
 **Acceptance Scenarios**:
 
@@ -80,9 +82,9 @@ outsider cannot spend the credential's quota or point an agent with write permis
 **Why this priority**: The job holds write permissions and a paid credential. Leaving it open to
 anyone would be a security hole, so this ships with Story 1, not after it.
 
-**Independent Test**: Read the workflow's job condition and confirm that every trigger path
-requires an author association of `OWNER`, `MEMBER` or `COLLABORATOR`. Then mention `@claude` from
-an account without write access and confirm that the job is skipped.
+**Independent Test**: `tests/workflows/test_claude_workflow.py`, class
+`UserStory2OutsidersCannotStartARun`. It evaluates the job's condition for every author association
+without write access, on all four event paths, and asserts that the job is skipped.
 
 **Acceptance Scenarios**:
 
@@ -91,6 +93,9 @@ an account without write access and confirm that the job is skipped.
    no Claude Code step runs, no credential is used and nothing is posted.
 2. **Given** a bot account such as Dependabot (author association `CONTRIBUTOR` or `NONE`), **When**
    it comments on its own PR, **Then** the job is skipped.
+3. **Given** the Done story sweep's log issue (label `sweep-log`), where agents post as the owner,
+   **When** a comment, issue or review on it mentions `@claude`, even one written by the owner,
+   **Then** the job is skipped.
 
 ---
 
@@ -103,9 +108,9 @@ missing, instead of silently doing nothing.
 mentions failed and the cause was only visible in the run log. The behavior already exists in the
 action; this story keeps it from regressing.
 
-**Independent Test**: In a repository with the workflow but neither secret set, mention `@claude`
-as the owner. The run fails, and its log says that `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`
-is required.
+**Independent Test**: `tests/workflows/test_claude_workflow.py`, class `UserStory3Credentials`. It
+asserts that both secrets are passed to the action from repository secrets, and that no credential
+is hard-coded. The missing-credential error itself is a known gap.
 
 **Acceptance Scenarios**:
 
@@ -119,13 +124,26 @@ is required.
 
 ### Edge Cases
 
-- **Several mentions on one issue or PR**: runs for the same issue or PR queue one behind another
-  (concurrency group per issue/PR number, `cancel-in-progress: false`). A later mention never
-  cancels work in progress.
+- **Several mentions on one issue or PR**: runs for one issue or PR never overlap, and a later
+  mention never cancels a run in progress (concurrency group per issue/PR number,
+  `cancel-in-progress: false`). GitHub keeps at most **one** run waiting per group, though. If a
+  third mention arrives while one run is going and a second is waiting, GitHub cancels the waiting
+  run, and only the newest mention gets a reply. To have every request handled, put them in one
+  comment, or wait for the reply before writing the next.
 - **Edited comments**: only newly created comments trigger. Editing an old comment to add
   `@claude` does nothing.
-- **Assigning an issue**: the `issues: assigned` trigger runs Claude again when an issue whose
-  title or body mentions `@claude` is assigned.
+- **Assigning an issue**: does not start a run. Only `opened` triggers on `issues`. Otherwise every
+  reassignment of an old `@claude` issue would start a new run, and the gate checks the issue's
+  author, not whoever assigned it.
+- **The sweep log issue**: scheduled routines post reports there as the owner. A report that quotes
+  an issue title containing a mention would otherwise start a run (it happened once, on
+  `hoa_management_system#290`), so the `sweep-log` label blocks every path.
+- **Claude pushes to a ready PR**: Claude can push to an owner's PR when asked to on it, for example
+  to resolve conflicts. `auto-merge.yml` never merges a PR whose head commit is from `claude[bot]`,
+  because no review has seen that commit. Merge it by hand, or push a reviewed commit on top.
+- **Other handles**: `contains()` also matches `@claudette` or `x@claude.ai`, so the job starts.
+  `claude-code-action` (v1.0.265, `src/github/validation/trigger.ts`) then matches its trigger phrase
+  on word boundaries and exits without running Claude. The only cost is a short runner job.
 - **Events created by `GITHUB_TOKEN`**: GitHub does not start workflows for events that another
   workflow created with `GITHUB_TOKEN`, so a workflow cannot trigger Claude by posting a comment.
   Scheduled routines that want Claude must post as a write-access user.
@@ -143,24 +161,28 @@ is required.
 
 - **FR-001**: The repository MUST define a `Claude` GitHub Actions workflow at
   `.github/workflows/claude.yml`. It MUST trigger on `issue_comment` (created),
-  `pull_request_review_comment` (created), `pull_request_review` (submitted) and `issues` (opened,
-  assigned).
+  `pull_request_review_comment` (created), `pull_request_review` (submitted) and `issues`
+  (opened).
 - **FR-002**: The job MUST run only when the triggering text mentions `@claude` (comment body,
   review body, or issue title or body) **and** the author association is `OWNER`, `MEMBER` or
-  `COLLABORATOR`. In every other case it MUST be skipped before any step runs.
+  `COLLABORATOR` **and** the issue or PR is not labeled `sweep-log`. In every other case it MUST be
+  skipped before any step runs.
 - **FR-003**: The job MUST authenticate with `CLAUDE_CODE_OAUTH_TOKEN` (Claude subscription) or
   `ANTHROPIC_API_KEY` (Console API key), whichever repository secret is set. No credential may
   appear in the workflow file.
 - **FR-004**: The job MUST request only these token permissions: `contents: write`,
   `pull-requests: write`, `issues: write`, `id-token: write` and `actions: read`.
 - **FR-005**: Every third-party action MUST be pinned to a full commit SHA with a version comment,
-  matching the repository's other workflows. Dependabot keeps the pins current.
+  matching the repository's other workflows. Dependabot (`.github/dependabot.yml`,
+  `github-actions` ecosystem) keeps the pins current.
 - **FR-006**: Runs MUST be serialized per issue or PR, and a new run MUST NOT cancel a run in
-  progress.
+  progress. At most one run waits behind it. A newer mention replaces the waiting one (GitHub's
+  concurrency rule; see Edge Cases).
 - **FR-007**: A run MUST be bounded at 60 minutes and 100 agent turns.
 - **FR-008**: Claude MUST report back on the triggering thread, with a link to the run.
 - **FR-009**: Claude MUST NOT merge pull requests or push directly to the default branch. Changes go
-  to a new branch, or to the head branch of the PR it was asked about.
+  to a new branch, or to the head branch of the PR it was asked about. `auto-merge.yml` MUST NOT
+  merge a PR whose head commit is from `claude[bot]`.
 - **FR-010**: While the repository holds only specs and docs, the job MUST NOT install build
   toolchains or allow build commands. When application code lands, the spec that introduces it MUST
   add the matching setup steps, and allow the same build and test commands CI runs, so that Claude
@@ -190,34 +212,42 @@ is required.
 - **Contracts**: N/A. No wire protocol or HTTP API. The workflow's triggers and job condition are
   its contract (FR-001, FR-002).
 - **Performance and evidence**: N/A for the tick path. Run duration is bounded by FR-007.
-- **Security and abuse controls**: Write-access gate (FR-002), credentials only in repository
-  secrets (FR-003), least-privilege token (FR-004), SHA-pinned actions (FR-005), no merge or direct
-  push to the default branch (FR-009), bounded runs (FR-007). The prompt-injection risk from
+- **Security and abuse controls**: Write-access gate and `sweep-log` guard (FR-002), credentials
+  only in repository secrets (FR-003), least-privilege token (FR-004), SHA-pinned actions (FR-005),
+  no merge or direct push to the default branch, and no auto-merge of Claude's commits (FR-009),
+  bounded runs (FR-007). The prompt-injection risk from
   untrusted thread text is listed under Edge Cases.
 - **Observability**: Each run's log and outcome are in the Actions tab, and the reply links to the
   run. No game telemetry is involved.
 - **Licensing and design sources**: `anthropics/claude-code-action` (MIT) and `actions/checkout`
-  (MIT). No new runtime dependency.
+  (MIT). The tests use PyYAML 6.0.2 (MIT). No new runtime dependency.
 - **Accessibility**: N/A. No web surface.
 - **Quality gates**: No application code, so coverage and Sonar targets do not apply. See below for
   how the scenarios are verified.
-- **Executable and living spec**: Each scenario maps to one of two automated checks. Neither exists
-  yet; building them is this spec's open follow-up.
-  - A **workflow contract check** parses `.github/workflows/claude.yml` and asserts FR-001 to FR-007
-    and FR-010: the triggers, the `@claude` and author-association condition on every path, both
-    secrets wired, the exact permission set, full-SHA pins, the concurrency settings and the
-    timeout and turn limits. It runs in CI on every PR that touches the workflow. It covers
-    Story 2's scenarios and the skip in Story 1, scenario 4.
-  - A **live smoke test** (`workflow_dispatch`, on demand) opens an issue as a write-access user,
-    mentions `@claude` with a one-line question, waits for a `claude[bot]` reply, asserts that
-    the reply links to the run, then closes the issue. It covers Story 1, scenarios 1 to 3. It must
-    post with a write-access user's token, not `GITHUB_TOKEN` (see Edge Cases).
-  - The contract check covers the configuration side of Story 1, scenario 5 and Story 3, scenario 2:
-    no step merges, and both secrets are wired with neither hard-coded.
-  - **Known gap**: Story 1, scenario 5 (Claude's own branch behavior) and Story 3, scenario 1 (the
-    missing-credential error) rely on `claude-code-action`'s behavior. No test of ours verifies
-    them yet. The error was observed in `hoa_management_system` runs 40960028942 and 41230905717.
-    Closing this gap is part of the follow-up.
+- **Executable and living spec**: `tests/workflows/test_claude_workflow.py` (Python `unittest` and
+  PyYAML) runs in CI as `Workflow tests` (`.github/workflows/workflow-tests.yml`) on every PR and
+  push to `main` that touches `.github/` or the tests. It evaluates the job's `if:` condition
+  against event payloads, using an evaluator for the GitHub expression subset the condition uses.
+  The evaluator has its own tests, in `ExpressionEvaluator`. The mapping:
+  - Story 1, scenarios 1–3 (a run starts): `test_us1_1_…`, `test_us1_2_…`, `test_us1_3_…`.
+  - Story 1, scenario 4 (no mention, no run): `test_us1_4_no_mention_means_the_job_is_skipped`,
+    `test_us1_4_other_events_never_start_a_run`.
+  - Story 1, scenario 5 (configuration side): `test_us1_5_job_has_no_merge_step`,
+    `test_fr009_auto_merge_never_merges_a_claude_bot_head_commit`.
+  - Story 2, scenarios 1–3: `test_us2_1_…` (both), `test_us2_2_…`, and `SweepLogGuard`.
+  - Story 3, scenario 2: `test_us3_2_either_secret_is_wired_from_repository_secrets`,
+    `test_no_credential_is_hard_coded`.
+  - FR-001, FR-004 to FR-007, FR-009 and FR-010: the `FunctionalRequirements` tests of the same
+    names.
+  - **Known gap**: three things are `claude-code-action`'s own behavior, and no test of ours runs
+    the action. They are: that `claude[bot]` replies on the thread (the second half of Story 1,
+    scenarios 1–3, and FR-008), which branch Claude pushes to (Story 1, scenario 5), and the
+    missing-credential error (Story 3, scenario 1, and FR-011). A live smoke test would close the
+    gap: a `workflow_dispatch` workflow that opens an issue, mentions `@claude`, waits for the
+    reply and closes the issue. It needs a write-access user's token stored as a secret, because
+    events created with `GITHUB_TOKEN` start no workflows. That secret is the one step left to the
+    maintainer. Until then, the evidence is `hoa_management_system` issue #292, run 41497347693
+    (reply in 31 seconds), and its runs 40960028942 and 41230905717 (missing-credential error).
 - **Spec independence and parallelism**: Individually completable. It does not depend on any other
   spec. `hoa_management_system`'s `032-claude-mention-agent` describes the same workflow there; the
   two can change independently.

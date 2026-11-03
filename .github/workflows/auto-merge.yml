@@ -11,7 +11,8 @@
 #
 # It decides on every pull request event:
 #   - Manual, so it leaves the pull request alone and turns off auto-merge it turned on: a draft;
-#     the `hold` label; a review that requested changes; a failed or cancelled check; a guarded path
+#     the `hold` label; a review that requested changes; a head commit from claude[bot] (the
+#     Claude workflow's push, which no review has seen); a failed or cancelled check; a guarded path
 #     (GUARDED_PATHS below, the list .routines/merge-policy.md points to); 300 or more changed
 #     files, more than the compare API lists; a base other than main.
 #   - Waiting: a check is still running, or a required check hasn't reported yet.
@@ -43,6 +44,10 @@ on:
   pull_request_target:
     # No branch filter: `edited` must also see a pull request retargeted away from main.
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+  # Every pull request workflow, so a pull request waiting on its checks hears when they finish.
+  workflow_run:
+    workflows: ["Workflow tests"]
+    types: [completed]
 
 permissions: {}
 
@@ -136,6 +141,12 @@ jobs:
             fi
             if [ "$(jq -r .reviewDecision <<<"$pr")" = "CHANGES_REQUESTED" ]; then
               reasons+=("a review requested changes")
+            fi
+            # A commit the Claude workflow (claude.yml) pushed has had no independent review, so it
+            # never merges on its own: merge it by hand, or push a reviewed commit on top.
+            head_by="$(gh api "repos/${REPO}/commits/${head}" --jq '[.author.login // "", .committer.login // ""] | join(" ")')"
+            if grep -qF 'claude[bot]' <<<"$head_by"; then
+              reasons+=("its head commit is from claude[bot]")
             fi
 
             # The files of the commit that would merge, compared from where it left the base, as the
