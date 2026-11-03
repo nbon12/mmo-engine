@@ -6,18 +6,18 @@ namespace MmoEngine.Regionizer.Tests.Architecture;
 
 /// <summary>
 /// The simulated path stays deterministic and lock-free (FR-016, FR-019, research D8, constitution
-/// Principle II): the core library and the simulator's movement models use no transcendental or
-/// single-precision math, no locks, no wall clock and no System.Random. A source scan stands in for a
-/// banned-API analyzer until gameplay assemblies exist (tasks T004).
+/// Principle II): the core library, the map library and every simulator folder except <c>Output/</c> and
+/// <c>Analysis/</c> use no transcendental or single-precision math, no locks, no wall clock and no
+/// System.Random. The run's wall-clock reads (manifest times, wall-clock seconds and the bookkeeping
+/// meter) live in <c>Output/</c>; <c>Analysis/</c> is offline arithmetic outside the simulated path. A
+/// source scan stands in for a banned-API analyzer until gameplay assemblies exist (tasks T004).
 /// </summary>
 public sealed class BannedApiTests
 {
-    /// <summary>The directories of the simulated path, relative to the repository root. Movement may not exist yet.</summary>
-    private static readonly string[] ScannedDirectories =
-    [
-        Path.Combine("src", "MmoEngine.Regionizer"),
-        Path.Combine("src", "MmoEngine.Regionizer.Simulator", "Movement"),
-    ];
+    private static readonly string Simulator = Path.Combine("src", "MmoEngine.Regionizer.Simulator");
+
+    /// <summary>The simulator folders the scan leaves out (tasks T004).</summary>
+    private static readonly string[] UnscannedSimulatorFolders = ["Output", "Analysis"];
 
     /// <summary>Each banned API: its name, the pattern that finds a use, and why it is banned.</summary>
     private static readonly Dictionary<string, (Regex Pattern, string Why)> Banned = new()
@@ -66,28 +66,43 @@ public sealed class BannedApiTests
     {
         var root = Kit1SourceScan.RepoRoot();
         var (pattern, why) = Banned[api];
-        var scanned = 0;
+        var files = ScannedFiles(root);
         var uses = new List<string>();
-        foreach (var relative in ScannedDirectories)
+        foreach (var file in files)
         {
-            var directory = Path.Combine(root, relative);
-            if (!Directory.Exists(directory))
+            foreach (var line in Kit1SourceScan.Hits(File.ReadAllText(file), pattern))
             {
-                continue;
-            }
-
-            foreach (var file in Kit1SourceScan.SourceFiles(directory))
-            {
-                scanned++;
-                foreach (var line in Kit1SourceScan.Hits(File.ReadAllText(file), pattern))
-                {
-                    uses.Add($"{Path.GetRelativePath(root, file)}:{line}");
-                }
+                uses.Add($"{Path.GetRelativePath(root, file)}:{line}");
             }
         }
 
-        Assert.True(scanned > 0, $"No C# files found under {string.Join(", ", ScannedDirectories)} in {root}; the scan would pass vacuously.");
+        Assert.True(files.Count > 0, $"No C# files found under {string.Join(", ", ScannedDirectories(root))} in {root}; the scan would pass vacuously.");
         Assert.True(uses.Count == 0, $"Banned API '{api}' is used on the simulated path ({why}): {string.Join(", ", uses)}");
+    }
+
+    /// <summary>
+    /// T004's scope: the core, the map library and every simulator folder except Output/ and Analysis/,
+    /// each holding source, so no part of the simulated path passes the scan by being left out.
+    /// </summary>
+    [Fact]
+    public void ScanCoversTheCoreTheMapsAndEverySimulatorFolderButOutputAndAnalysis()
+    {
+        var root = Kit1SourceScan.RepoRoot();
+
+        var scanned = ScannedDirectories(root);
+
+        string[] required =
+        [
+            Path.Combine("src", "MmoEngine.Regionizer"),
+            Path.Combine("src", "MmoEngine.Maps"),
+            .. new[] { "Config", "Metrics", "Monitors", "Movement", "Random", "Running", "Scenarios", "Scheduling", "Sweep", "Trace" }
+                .Select(folder => Path.Combine(Simulator, folder)),
+        ];
+        Assert.All(required, directory => Assert.Contains(directory, scanned));
+        Assert.All(UnscannedSimulatorFolders, folder => Assert.DoesNotContain(Path.Combine(Simulator, folder), scanned));
+        Assert.All(scanned, directory => Assert.True(
+            Kit1SourceScan.SourceFiles(Path.Combine(root, directory)).Length > 0,
+            $"{directory} holds no C# source in {root}"));
     }
 
     [Theory]
@@ -107,6 +122,8 @@ public sealed class BannedApiTests
     [InlineData("var r = new DeterministicRandom(seed);")]
     [InlineData("namespace MmoEngine.Regionizer.Simulator.Random;")]
     [InlineData("var t = Stopwatch.GetTimestamp();")]
+    [InlineData("var started = WallClock.UtcNow();")]
+    [InlineData("var wall = WallClock.StartTimer();")]
     [InlineData("var url = \"http://example.test\"; var a = Math.Abs(x);")]
     [InlineData("var blocked = true;")]
     public void ScanAllowsPermittedCode(string line)
@@ -115,6 +132,37 @@ public sealed class BannedApiTests
         {
             Assert.True(Kit1SourceScan.Hits(line, pattern).Length == 0, $"'{line}' was reported as a use of {api}");
         }
+    }
+
+    /// <summary>
+    /// The directories of the simulated path, relative to the repository root: the core library, the map
+    /// library and every simulator folder except <c>Output/</c> and <c>Analysis/</c>. The simulator's
+    /// folders are listed from disk, so a new folder is scanned without editing this test.
+    /// </summary>
+    private static string[] ScannedDirectories(string root)
+    {
+        var simulatorFolders = Directory.EnumerateDirectories(Path.Combine(root, Simulator))
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .Where(name => name is not ("bin" or "obj") && !UnscannedSimulatorFolders.Contains(name, StringComparer.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .Select(name => Path.Combine(Simulator, name));
+        return [Path.Combine("src", "MmoEngine.Regionizer"), Path.Combine("src", "MmoEngine.Maps"), .. simulatorFolders];
+    }
+
+    /// <summary>The C# files of <see cref="ScannedDirectories"/>, plus any at the simulator project's top level.</summary>
+    private static List<string> ScannedFiles(string root)
+    {
+        var files = new List<string>();
+        foreach (var relative in ScannedDirectories(root))
+        {
+            var directory = Path.Combine(root, relative);
+            Assert.True(Directory.Exists(directory), $"{relative} is missing from {root}; the scan would skip it.");
+            files.AddRange(Kit1SourceScan.SourceFiles(directory));
+        }
+
+        files.AddRange(Directory.EnumerateFiles(Path.Combine(root, Simulator), "*.cs", SearchOption.TopDirectoryOnly).Order(StringComparer.Ordinal));
+        return files;
     }
 
     private static Regex Use(string pattern) => new(pattern, RegexOptions.CultureInvariant);

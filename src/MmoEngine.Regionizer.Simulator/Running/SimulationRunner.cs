@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using MmoEngine.Regionizer.Simulator.Config;
 using MmoEngine.Regionizer.Simulator.Metrics;
 using MmoEngine.Regionizer.Simulator.Monitors;
@@ -15,6 +14,12 @@ namespace MmoEngine.Regionizer.Simulator.Running;
 /// continent tick, and writes the run folder. Single-threaded and deterministic: the same
 /// configuration and seed give the same hash sequence. Runs share no mutable state, so a sweep can
 /// run many on parallel threads. The run stops at the first violation or timer fault (FR-020).
+/// <para>
+/// Wall-clock reads go through <see cref="WallClock"/> and <see cref="BookkeepingMeter"/> in <c>Output/</c>,
+/// off the simulated path. The core calls the observers inside the timed core calls, where they only
+/// queue work; after each base step the runner flushes it (the timer monitor's shadow model and the
+/// events written to <c>events.csv</c>), so neither is counted as bookkeeping (FR-027).
+/// </para>
 /// </summary>
 public static class SimulationRunner
 {
@@ -43,8 +48,8 @@ public static class SimulationRunner
         var config = loaded.Config;
         var time = TimeBase.From(config.Scheduling);
         var log = options.Logger ?? Serilog.Core.Logger.None;
-        var wall = Stopwatch.StartNew();
-        var started = DateTime.UtcNow;
+        var wall = WallClock.StartTimer();
+        var started = WallClock.UtcNow();
         var overheadTicks = options.TimerOverheadNanos is { } nanos ? TimestampOverhead.NanosToTicks(nanos) : TimestampOverhead.CalibrateTicks();
         var overheadNanos = TimestampOverhead.TicksToNanos(overheadTicks);
 
@@ -89,7 +94,9 @@ public static class SimulationRunner
 
         observers.AddRange(options.Observers);
         var regionizer = new Regionizer(world.Topology, config.ToRegionizerOptions(), new CompositeObserver(observers));
-        var engine = new SimulationEngine(regionizer, world.State, movement, config, timerMonitor, listeners, overheadTicks);
+        var meter = options.Meter ?? new BookkeepingMeter();
+        meter.OverheadTicks = overheadTicks;
+        var engine = new SimulationEngine(regionizer, world.State, movement, config, timerMonitor, listeners, meter);
         var hasher = new StateHasher();
         var hashes = options.KeepTickHashes ? new List<ulong>((int)Math.Min(config.DurationTicks, 1 << 24)) : null;
 
@@ -120,6 +127,10 @@ public static class SimulationRunner
                 hook(new StepHookContext(regionizer, world.State, step, tick, config.Seed));
                 changed = true;
             }
+
+            // The observers queued their work inside the timed core calls; it runs now, outside them.
+            timerMonitor.Flush();
+            metrics.FlushEvents();
 
             if (changed && invariants.Check(regionizer) is { } violation)
             {
@@ -190,7 +201,7 @@ public static class SimulationRunner
 
         var completed = failure is null && ticksRun == config.DurationTicks;
         folder.WriteSummary(RunSummary.Build(runId, completed, ticksRun, failure, metrics, timerMonitor, config.Metrics, time, overheadNanos, wall.Elapsed.TotalSeconds));
-        folder.WriteManifest(RunManifest.Build(loaded, runId, gitSha, started, DateTime.UtcNow, ticksRun));
+        folder.WriteManifest(RunManifest.Build(loaded, runId, gitSha, started, WallClock.UtcNow(), ticksRun));
         folder.Complete();
 
         log.Information(

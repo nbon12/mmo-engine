@@ -56,12 +56,19 @@ On `simulator/maps/test/clean.json` the exit code is 0.
 dotnet run -c Release --project src/MmoEngine.Regionizer.Simulator.Cli -- check --out .runs/checks
 ```
 
+The memo reads every sweep that `simulator/sweeps/memo-rules.json` names. Run each spec in
+`simulator/sweeps/` (full scale) or `simulator/sweeps/first-pass/` (9,000 ticks and 5 seeds) into
+the same folder first, then generate the memo:
+
 ```bash
-dotnet run -c Release --project src/MmoEngine.Regionizer.Simulator.Cli -- memo .runs/sweeps --rules simulator/sweeps/memo-rules.json --out docs/simulator/decision-memo.md
+dotnet run -c Release --project src/MmoEngine.Regionizer.Simulator.Cli -- memo .runs/sweeps --rules simulator/sweeps/memo-rules.json --out .runs/decision-memo.md
 ```
 
 Expected: `checks.json` shows all three checks within tolerance (exit code 0). The memo has one row
-per value, each with its evidence.
+per value, each with its evidence. The committed memo is `docs/simulator/decision-memo.md`.
+
+`tests/MmoEngine.Regionizer.Simulator.Tests/Cli/QuickstartTests.cs` runs these commands at tiny
+sizes as an automated check.
 
 ## Benchmarks
 

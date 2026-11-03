@@ -9,11 +9,23 @@ namespace MmoEngine.Regionizer.Simulator.Metrics;
 /// Collects the run metrics (FR-024) as an <see cref="IRegionizerObserver"/>. It keeps per-region
 /// entity, player and fight-tag counts from <see cref="OnEntityOwnerChanged"/>; because the core raises
 /// <see cref="OnMerged"/> before the absorbed region's data moves, both sides are still intact when a
-/// merge is classified. A merge where both sides hold at least one entity is a merge (and a fusion
-/// when each side holds a fight tag the other lacks); one that takes in an entity-less region, such
-/// as the transient region collecting a ticking region's growth, is an absorption, kept out of merge
-/// rates, region lifetimes and section churn (research D16). Events go to the sink as they happen;
-/// <see cref="EndTick"/> produces each tick's row.
+/// merge is classified (research D16):
+/// <list type="bullet">
+/// <item>A merge is a <em>merge</em> only when both sides hold at least one entity. It counts toward its
+/// causing class, and it is a fusion when each side holds a fight tag the other lacks.</item>
+/// <item>Any other merge is an <em>absorption</em>, counted apart and kept out of merge rates and section
+/// churn. Usually the absorbed side holds no entity (the transient region that collected a ticking
+/// region's growth, or a region whose entities all left). The absorber can be the empty side too, because
+/// the core keeps the lower ID; that is also an absorption.</item>
+/// <item>A region absorbed while holding no entity, or one that never held an entity, has no region
+/// lifetime. An entity-holding region absorbed by an empty absorber ends a real lifetime, which is
+/// recorded.</item>
+/// </list>
+/// The core calls these methods inside its timed calls, so their work is O(1) in entities and regions
+/// (classifying a merge is O(fight tags), a per-run constant) and allocates only when a region is created
+/// or a buffer grows: nothing on steady-state ticks. Events are queued, not written: they reach the sink
+/// at <see cref="FlushEvents"/>, which the runner calls after each base step, outside the timed calls, and
+/// which <see cref="Emit"/> and <see cref="EndTick"/> also call. <see cref="EndTick"/> produces each tick's row.
 /// </summary>
 public sealed class MetricsCollector : IRegionizerObserver
 {
@@ -29,6 +41,9 @@ public sealed class MetricsCollector : IRegionizerObserver
     private readonly long[] _fusionsByClass = new long[ClassCount];
     private readonly Dictionary<string, List<double>> _samples = [];
     private readonly List<double> _fusedPairSamples = [];
+    private readonly List<double> _lifetimes;
+    private readonly List<double> _splitLatencies;
+    private readonly List<RunEvent> _pending = [];
     private IslandDetector? _islands;
     private long _tick;
     private long _step;
@@ -66,6 +81,9 @@ public sealed class MetricsCollector : IRegionizerObserver
         {
             _samples[name] = [];
         }
+
+        _lifetimes = _samples["regionLifetimeSteps"];
+        _splitLatencies = _samples["splitLatencyTicks"];
     }
 
     /// <summary>The metrics summarized at p50, p95, p99, max and mean, in summary order.</summary>
@@ -78,7 +96,7 @@ public sealed class MetricsCollector : IRegionizerObserver
     /// <summary>Merges where both sides held at least one entity.</summary>
     public long Merges { get; private set; }
 
-    /// <summary>Merges that took in, or were made by, a region holding no entity (research D16).</summary>
+    /// <summary>Merges in which a side held no entity: usually the absorbed side, sometimes the absorber (research D16).</summary>
     public long Absorptions { get; private set; }
 
     public long Splits { get; private set; }
@@ -121,16 +139,38 @@ public sealed class MetricsCollector : IRegionizerObserver
         _step = step;
     }
 
-    /// <summary>Records a violation or timer fault event.</summary>
-    public void Emit(in RunEvent e) => _emit(e);
+    /// <summary>Events queued by the observer methods and not yet written.</summary>
+    public int PendingEvents => _pending.Count;
+
+    /// <summary>Records a violation or timer fault event, after the events queued before it.</summary>
+    public void Emit(in RunEvent e)
+    {
+        _pending.Add(e);
+        FlushEvents();
+    }
 
     /// <summary>
-    /// Ends a continent tick: computes its row from the live regions in ascending ID, samples
-    /// cross-region pairs and islands when due, and resets the per-row counters when the row is recorded.
+    /// Writes the queued events to the sink, in the order they happened. Call it outside the timed core
+    /// calls: the runner does after each base step.
+    /// </summary>
+    public void FlushEvents()
+    {
+        for (var i = 0; i < _pending.Count; i++)
+        {
+            _emit(_pending[i]);
+        }
+
+        _pending.Clear();
+    }
+
+    /// <summary>
+    /// Ends a continent tick: writes the queued events, computes its row from the live regions in ascending
+    /// ID, samples cross-region pairs and islands when due, and resets the per-row counters when the row is recorded.
     /// </summary>
     public TickRow EndTick(Regionizer regionizer, long tick, long step, double bookkeepingMicros, double serializedMicros, int violations, ulong stateHash, bool record)
     {
         ArgumentNullException.ThrowIfNull(regionizer);
+        FlushEvents();
         SetClock(tick, step);
         var regionCount = 0;
         var largest = 0;
@@ -256,10 +296,12 @@ public sealed class MetricsCollector : IRegionizerObserver
     }
 
     /// <summary>
-    /// Classifies a merge (FR-024). When both sides hold an entity it is a merge, counted toward its
-    /// causing class, and possibly a fusion. Otherwise it is an absorption: the section moves that
-    /// follow are not churn and the absorbed region's death is not a lifetime, because the regions
-    /// themselves did not join (the merge it stands for is counted when they do).
+    /// Classifies a merge (FR-024, research D16). When both sides hold at least one entity it is a merge,
+    /// counted toward its causing class, and possibly a fusion. Otherwise it is an absorption, whichever
+    /// side is empty: its section moves are not churn, and it is not counted as a merge, because two
+    /// regions holding entities did not join (that merge is counted when they do). The absorbed region's
+    /// death that follows is left out of region lifetimes only when the absorbed region holds no entity;
+    /// an entity-holding region taken in by an empty absorber ends a real lifetime.
     /// </summary>
     public void OnMerged(long absorberId, long absorbedId, EntityClass causeClass, int causeEntityId)
     {
@@ -268,11 +310,12 @@ public sealed class MetricsCollector : IRegionizerObserver
             return;
         }
 
-        if (absorber.Entities == 0 || absorbed.Entities == 0)
+        var absorbedHoldsEntity = absorbed.Entities > 0;
+        if (absorber.Entities == 0 || !absorbedHoldsEntity)
         {
             Absorptions++;
             _rowAbsorptions++;
-            absorbed.Absorbed = true;
+            absorbed.Absorbed = !absorbedHoldsEntity;
             _absorbedFrom = absorbedId;
             _absorbedInto = absorberId;
             return;
@@ -283,13 +326,13 @@ public sealed class MetricsCollector : IRegionizerObserver
         Merges++;
         _rowMerges++;
         _mergesByClass[(int)causeClass]++;
-        _emit(new RunEvent(_tick, _step, RunEventType.Merge, absorberId, absorbedId, causeClass, causeEntityId));
+        _pending.Add(new RunEvent(_tick, _step, RunEventType.Merge, absorberId, absorbedId, causeClass, causeEntityId));
         if (IsFusion(absorber.TagCounts, absorbed.TagCounts))
         {
             Fusions++;
             _rowFusions++;
             _fusionsByClass[(int)causeClass]++;
-            _emit(new RunEvent(_tick, _step, RunEventType.Fusion, absorberId, absorbedId, causeClass, causeEntityId, absorber.Players + absorbed.Players));
+            _pending.Add(new RunEvent(_tick, _step, RunEventType.Fusion, absorberId, absorbedId, causeClass, causeEntityId, absorber.Players + absorbed.Players));
         }
     }
 
@@ -314,19 +357,20 @@ public sealed class MetricsCollector : IRegionizerObserver
     {
         Splits++;
         _rowSplits++;
-        _emit(new RunEvent(_tick, _step, RunEventType.Split, parentId, childIds.Length));
+        _pending.Add(new RunEvent(_tick, _step, RunEventType.Split, parentId, childIds.Length));
         if (_regions.TryGetValue(parentId, out var parent) && parent.FirstTwoIslandTick >= 0)
         {
             var latency = _tick - parent.FirstTwoIslandTick;
-            _samples["splitLatencyTicks"].Add(latency);
-            _emit(new RunEvent(_tick, _step, RunEventType.SplitLatency, parentId, Value: latency));
+            _splitLatencies.Add(latency);
+            _pending.Add(new RunEvent(_tick, _step, RunEventType.SplitLatency, parentId, Value: latency));
             parent.FirstTwoIslandTick = -1;
         }
     }
 
     /// <summary>
-    /// Records a region's lifetime, unless it died in an absorption or never held an entity (a
-    /// transient helper): those are bookkeeping, not regions that lived and died.
+    /// Records a region's lifetime, unless it was absorbed while holding no entity or never held an entity
+    /// (a transient helper): those are bookkeeping, not regions that lived and died. A region that held
+    /// entities when an empty absorber took it in is recorded (research D16).
     /// </summary>
     public void OnRegionDied(long regionId, long ageSteps)
     {
@@ -335,8 +379,8 @@ public sealed class MetricsCollector : IRegionizerObserver
             return;
         }
 
-        _emit(new RunEvent(_tick, _step, RunEventType.RegionDied, regionId, Value: ageSteps));
-        _samples["regionLifetimeSteps"].Add(ageSteps);
+        _pending.Add(new RunEvent(_tick, _step, RunEventType.RegionDied, regionId, Value: ageSteps));
+        _lifetimes.Add(ageSteps);
     }
 
     /// <summary>Counts a section owner change as churn, except the moves of an absorption.</summary>
@@ -423,7 +467,7 @@ public sealed class MetricsCollector : IRegionizerObserver
         /// <summary>It held an entity at some point of its life.</summary>
         public bool HeldEntity { get; private set; }
 
-        /// <summary>It was taken in by an absorption, which is about to end it.</summary>
+        /// <summary>It was taken in by an absorption while holding no entity, which is about to end it without a lifetime.</summary>
         public bool Absorbed { get; set; }
 
         /// <summary>The first sampled tick at which it held two or more islands, or −1.</summary>

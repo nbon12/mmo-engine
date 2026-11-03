@@ -106,7 +106,10 @@ The key rules:
 | Soak | Migration + Stacked areas + Air traffic | interleaved; 2,592,000 ticks (24 h); metrics every 30 ticks |
 
 `population.total` scales every count in proportion: each fight is rounded to the nearest integer,
-and the remainder goes to the first fight. A total of 2,000 gives the constitution-cap reading of
+and the remainder goes to the first fight. There is one exception. Lane traffic keeps its travellers
+and aircraft as exact counts, because the traveller count is the swept traffic level, and scales
+only its two fights, to `population.total` minus the travellers and aircraft. `population.total`
+must hold them. A total of 2,000 gives the constitution-cap reading of
 Baseline.
 
 ### Movement models

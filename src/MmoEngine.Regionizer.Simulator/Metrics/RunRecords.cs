@@ -12,7 +12,7 @@ public enum RunEventType
     /// <summary>A merge joining fight tags. A = absorber, B = absorbed, value = players after.</summary>
     Fusion,
 
-    /// <summary>A = region, value = age in steps. Regions ended by an absorption, or that never held an entity, are left out.</summary>
+    /// <summary>A = region, value = age in steps. A region absorbed while holding no entity, or one that never held an entity, is left out.</summary>
     RegionDied,
 
     /// <summary>A = region, value = ticks from the first sampled two-island tick to the split.</summary>
@@ -55,7 +55,7 @@ public readonly record struct RunEvent(
 /// <param name="FusedFightPairs">Distinct pairs of fight tags sharing a region after the tick.</param>
 /// <param name="Violations">Violations and timer faults found during the tick.</param>
 /// <param name="StateHash">The chained state hash after the tick (research D8).</param>
-/// <param name="Absorptions">Merges that took in an entity-less region, since the previous row (written after <c>merges</c>).</param>
+/// <param name="Absorptions">Merges in which a side held no entity, since the previous row (written after <c>merges</c>).</param>
 public readonly record struct TickRow(
     long Tick,
     long TimeSteps,

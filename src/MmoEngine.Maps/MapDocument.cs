@@ -113,17 +113,20 @@ public sealed class MapDocument
     public bool IsBlocked(SectionKey key) => LayerOf(key).IsBlocked(key.X, key.Y);
 
     /// <summary>
-    /// The core topology of this map: every layer with its area ids, and every portal with its
-    /// initial open flag. Blocked sections keep their area tag, since claims follow areas and
-    /// portals only (research D2). Call it on a map the validator accepts: a portal endpoint outside
-    /// every layer makes the core throw <see cref="ArgumentException"/>.
+    /// The core topology of this map: every layer with its area ids and its direct-entry flag, and
+    /// every portal with its initial open flag. Blocked sections keep their area tag, since claims
+    /// follow areas and portals only (research D2). Call it on a map the validator accepts: a portal
+    /// endpoint outside every layer makes the core throw <see cref="ArgumentException"/>.
     /// </summary>
     public SectionTopology ToTopology()
     {
         var layers = new List<LayerSpec>(Layers.Count);
         foreach (var layer in Layers)
         {
-            layers.Add(new LayerSpec(layer.Id, layer.OriginX, layer.OriginY, layer.Width, layer.Height, layer.AreaIds));
+            layers.Add(new LayerSpec(layer.Id, layer.OriginX, layer.OriginY, layer.Width, layer.Height, layer.AreaIds)
+            {
+                AllowsDirectEntry = layer.AllowsDirectEntry,
+            });
         }
 
         var portals = new List<PortalSpec>(Portals.Count);

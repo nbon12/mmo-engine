@@ -2,6 +2,7 @@ using MmoEngine.Regionizer.Simulator.Config;
 using MmoEngine.Regionizer.Simulator.Metrics;
 using MmoEngine.Regionizer.Simulator.Monitors;
 using MmoEngine.Regionizer.Simulator.Movement;
+using MmoEngine.Regionizer.Simulator.Output;
 using MmoEngine.Regionizer.Simulator.Scenarios;
 using MmoEngine.Regionizer.Simulator.Scheduling;
 
@@ -58,6 +59,12 @@ public sealed record RunOptions
     /// is calibrated at run start (research D9). Tests set it to check the subtraction.
     /// </summary>
     public double? TimerOverheadNanos { get; init; }
+
+    /// <summary>
+    /// The meter that times the run's core calls; a new one when null. Tests pass their own to watch
+    /// <see cref="BookkeepingMeter.InCall"/>. Its overhead is set when the run starts; one meter serves one run.
+    /// </summary>
+    internal BookkeepingMeter? Meter { get; init; }
 }
 
 /// <summary>The outcome of one run.</summary>
@@ -93,7 +100,7 @@ public sealed record RunResult
     /// <summary>Merges where both sides held an entity.</summary>
     public required long Merges { get; init; }
 
-    /// <summary>Merges that took in an entity-less region (research D16); not counted in <see cref="Merges"/>.</summary>
+    /// <summary>Merges in which a side held no entity, absorbed side or absorber (FR-024, research D16); not counted in <see cref="Merges"/>.</summary>
     public long Absorptions { get; init; }
 
     public required long Splits { get; init; }

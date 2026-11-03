@@ -133,8 +133,15 @@ Portal toggles requested while any region is ticking are queued by the library a
 last ticking region's tick ends (FR-013). Toggles requested with no region ticking apply at once.
 This keeps "no claim changes mid-tick" a library property, so the continent server, which has no
 global step boundary, gets it too.
-- **Lockstep**: every 2 steps, all ready regions start in ID order, each runs its tick body, then all
-  end in ID order.
+- **Lockstep**: every tick (2 steps with the defaults), each ready region in ID order starts, runs
+  its tick body and ends before the next region starts. No region ever ticks while another changes,
+  so lockstep never produces a merge against a ticking region or diverging tick counters. That
+  matches the issue: interleaved mode exists "so merges against ticking regions and diverging counters
+  actually happen". Lockstep is the fast mode for sweeps. Its bookkeeping readings therefore exclude
+  merge-later work, which the memo notes next to the section-size row.
+
+  The first draft of this note had all regions start before any ended. The implementation follows
+  the issue instead, and this note was corrected (review, 2026-11-03).
 - **Interleaved**: at each base step, the due regions' start and end events are shuffled into a random
   valid interleaving by the scheduling stream. A region's body runs at its start event, so other
   regions are ticking while it moves. At each tick end, a region drops to 20 Hz with probability
@@ -251,7 +258,7 @@ unblocks CsCheck 5.x.
 | --- | --- | --- |
 | Claim radius per class | Baseline, radius swept per class | The collapse radius is the smallest radius whose mean over seeds of p50 fused-fight count is at least 1. The recommendation is the largest radius at least one sweep step below collapse and at or above the analytic floor. If the floor is above that, the row is flagged as a conflict. |
 | Section size | Baseline and One base, section size swept | The smallest size whose bookkeeping p99 is within budget in both |
-| Claim anchoring | Baseline, both modes at equal bookkeeping cost | The mode with the lower fusion-event rate |
+| Claim anchoring | Baseline, both modes at the default section size | The mode with the lower fusion-event rate. The first-pass sweep compares the modes at the same section size, not at equal bookkeeping cost; an equal-cost grid (position at 16 m against section at 8 m) is a follow-up. |
 | Minimum base spacing | Spacing, spacing swept | The smallest spacing whose oversized-fusion ticks are under 1% in every seed, plus a sprawl margin |
 | Lane bridging limit | Lane traffic, travellers swept | The largest traffic level whose bridging (fight-fusion) ticks are under 1% |
 | Split damping | Migration, *N*min, *p*dead and *T*min swept | The lowest merge-plus-split rate with split latency p99 under 5 s |
@@ -285,8 +292,8 @@ Principle VI (open decision 1).
 - **Lane bridging check setup**: position anchoring, merge gap 0, 1 m sections and 15 m radii, so
   two claims merge between 30 and 30 + √2 ≈ 31.4 m. The lane is 600 m with a 15 m-radius entity at
   each end, and travellers are placed uniformly. It is compared with the formula at d = 30 m.
-- **Merges and absorptions**: a merge whose absorbed side holds no entity, typically the transient
-  region that collected a ticking region's growth, is bookkeeping rather than two regions joining.
+- **Merges and absorptions**: a merge in which either side holds no entity (typically the transient
+  region that collected a ticking region's growth) is bookkeeping rather than two regions joining.
   The metrics report it as an absorption and keep it out of merge rates, region lifetimes and
   section churn. That keeps the merge and split rates in D15 about real joins.
 - **Lane bridging**: P_bridge ≈ (1 − e^(−λd))^(λℓ + 1). With ℓ = 600 m and d = 30 m it gives

@@ -83,6 +83,9 @@ public sealed class MapLoaderTests
         new("fractional rectangle corner", m => AreaAt(m)["rects"] = new JsonArray(new JsonArray(1, 1, 2.5, 2)), "layers[0].areas[0].rects[0][2]: has the wrong type of value (line 1)"),
         new("null section coordinate", m => EntryAt(m, "adjacency")["a"] = new JsonArray(0, null, 1), "adjacency[0].a[1]: has the wrong type of value (line 1)"),
         new("open as a string", m => PortalAt(m, 0)["open"] = "yes", "portals[0].open: has the wrong type of value (line 1)"),
+        new("allows direct entry as a string", m => LayerAt(m, 2)["allowsDirectEntry"] = "yes", "layers[2].allowsDirectEntry: has the wrong type of value (line 1)"),
+        new("allows direct entry as a number", m => LayerAt(m, 0)["allowsDirectEntry"] = 1, "layers[0].allowsDirectEntry: has the wrong type of value (line 1)"),
+        new("allows direct entry in the wrong case", m => LayerAt(m, 0)["AllowsDirectEntry"] = true, "layers[0].AllowsDirectEntry: is not a field of map format version 1"),
     ];
 
     public static TheoryData<string> SchemaCaseNames => Names(SchemaCases);
@@ -381,6 +384,54 @@ public sealed class MapLoaderTests
         var ex = Assert.Throws<ArgumentException>(map.ToTopology);
 
         Assert.Contains("outside every layer", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AllowsDirectEntryIsReadFromTheLayer(bool value)
+    {
+        // The full map's sky (layer 2) sets the field to true and the surface (layer 0) leaves it out.
+        var map = Full();
+        LayerAt(map, 1)["allowsDirectEntry"] = value;
+
+        var parsed = Parse(map);
+
+        Assert.Equal([0, 1, 2], parsed.Layers.Select(l => l.Id));
+        Assert.Equal([false, value, true], parsed.Layers.Select(l => l.AllowsDirectEntry));
+    }
+
+    [Fact]
+    public void AllowsDirectEntryDefaultsToFalse()
+    {
+        var map = Parse(Map(Layer(0, 0, 0, 4, 4, "open"), Layer(1, 0, 0, 2, 2, "cellar")));
+
+        var topology = map.ToTopology();
+
+        Assert.Equal([false, false], map.Layers.Select(l => l.AllowsDirectEntry));
+        Assert.False(topology.AllowsDirectEntry(0));
+        Assert.False(topology.AllowsDirectEntry(1));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void ToTopologyCarriesAllowsDirectEntryIntoTheCoreLayer(int directEntryLayer)
+    {
+        // Only one layer sets the field; the others leave it out.
+        var map = Full();
+        for (var i = 0; i < 3; i++)
+        {
+            LayerAt(map, i).Remove("allowsDirectEntry");
+        }
+
+        LayerAt(map, directEntryLayer)["allowsDirectEntry"] = true;
+
+        var topology = Parse(map).ToTopology();
+
+        Assert.Equal(Enumerable.Range(0, 3).Select(id => id == directEntryLayer), Enumerable.Range(0, 3).Select(topology.AllowsDirectEntry));
+        Assert.False(topology.AllowsDirectEntry(3), "layer 3 does not exist");
     }
 
     [Fact]

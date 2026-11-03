@@ -77,15 +77,18 @@ internal static class TestMaps
 
     /// <summary>
     /// A valid map that uses every field: layer 0 is 16 × 16 "open" sections with a "courtyard"
-    /// [2,2]–[5,5] and a blocked wall [8,0]–[8,3]; layer 1 is a 4 × 4 sealed "cellar". Stairs
-    /// (portal 1) join them, and a window (portal 2) joins the courtyard to the open area.
+    /// [2,2]–[5,5] and a blocked wall [8,0]–[8,3]; layer 1 is a 4 × 4 sealed "cellar"; layer 2 is
+    /// a 16 × 16 "sky" air layer with <c>allowsDirectEntry</c>. Stairs (portal 1) join the surface
+    /// and the cellar, and a window (portal 2) joins the courtyard to the open area.
     /// </summary>
     public static JsonObject Full()
     {
         var surface = Layer(0, 0, 0, 16, 16, "open");
         surface["areas"] = new JsonArray(Area("courtyard", Rect(2, 2, 5, 5)));
         surface["blocked"] = new JsonArray(Rect(8, 0, 8, 3));
-        var map = Map(surface, Layer(1, 0, 0, 4, 4, "cellar"));
+        var sky = Layer(2, 0, 0, 16, 16, "sky");
+        sky["allowsDirectEntry"] = true;
+        var map = Map(surface, Layer(1, 0, 0, 4, 4, "cellar"), sky);
         map["sealedAreas"] = new JsonArray("cellar");
         map["adjacency"] = new JsonArray(Entry("stairs", "stairs", Key(0, 1, 1), Key(1, 1, 1)));
         map["openings"] = new JsonArray(Entry("window", "window", Key(0, 5, 3), Key(0, 6, 3)));

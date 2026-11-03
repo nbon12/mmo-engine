@@ -9,6 +9,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="MmoEngine.Maps.Tests" />
