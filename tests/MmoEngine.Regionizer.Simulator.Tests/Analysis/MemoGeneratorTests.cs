@@ -1,14 +1,14 @@
-using System.Globalization;
 using System.Text.Json.Nodes;
 using MmoEngine.Regionizer.Simulator.Analysis.Memo;
 using Xunit;
+using static MmoEngine.Regionizer.Simulator.Tests.Analysis.MemoResultSet;
 using static MmoEngine.Regionizer.Simulator.Tests.Analysis.SweepFixture;
 
 namespace MmoEngine.Regionizer.Simulator.Tests.Analysis;
 
 /// <summary>
-/// The decision memo (US6.4, FR-032) from small synthetic sweep folders that follow the output contracts,
-/// read with the committed <c>simulator/sweeps/memo-rules.json</c>.
+/// The decision memo (US6.4, FR-032, research D15) from small synthetic sweep folders that follow the output
+/// contracts, read with the committed <c>simulator/sweeps/memo-rules.json</c>.
 /// </summary>
 public sealed class MemoGeneratorTests : IDisposable
 {
@@ -33,16 +33,15 @@ public sealed class MemoGeneratorTests : IDisposable
     // US6.4: Given a set of sweep results, When the memo generator runs, Then the memo has a row for each of
     // claim radius per class, section size, claim anchoring, minimum base spacing, lane bridging limit, split
     // damping, air layer and target fight size, each with a recommended value labeled as a measurement, the
-    // curve it was read from, its margin, its seeds and its run IDs.
+    // curve it was read from, its margin, its seeds and its run IDs. Each row records the population it was
+    // read at; the open-decision-1 rows are labeled recommendations recorded under Principle VI and the target
+    // fight size a reading; and the measured options are reported side by side.
     [Fact]
     public void MemoHasARowPerValueWithEvidence()
     {
-        var cases = FullResultSet();
-        foreach (var value in cases)
-        {
-            value.Sweep.Write(Results);
-        }
-
+        Write(Results);
+        var values = Values();
+        var options = Options();
         var outPath = Path.Combine(_root, "memo", "decision-memo.md");
 
         var result = MemoGenerator.Write(Results, MemoRules.Load(RulesPath()), outPath);
@@ -50,34 +49,267 @@ public sealed class MemoGeneratorTests : IDisposable
         var markdown = File.ReadAllText(outPath);
         Assert.Equal(result.Markdown, markdown);
         Assert.True(result.Success);
-        Assert.Contains($"All {cases.Count} values were read.", markdown, StringComparison.Ordinal);
+        Assert.Contains($"All {values.Count} values and {options.Count} measured options were read.", markdown, StringComparison.Ordinal);
 
-        // One summary row per value, in order.
+        // One summary row per value, in order: title, population, recommended value, label, status and margin.
         var table = SummaryRows(markdown);
-        Assert.Equal(cases.Select(c => c.Title), table.Select(r => r[0]));
-        foreach (var (value, row) in cases.Zip(table))
+        Assert.Equal(values.Select(c => c.Title), table.Select(r => r[0]));
+        foreach (var (value, row) in values.Zip(table))
         {
-            Assert.Equal(value.Recommended, row[1]);
-            Assert.EndsWith(MemoGenerator.MeasurementLabel, row[1], StringComparison.Ordinal);
-            Assert.Equal("Recommended", row[2]);
-            Assert.False(string.IsNullOrWhiteSpace(row[3]), $"{value.Title}: no margin");
+            Assert.Equal(value.Population.ToString(System.Globalization.CultureInfo.InvariantCulture), row[1]);
+            Assert.Equal(value.Recommended, row[2]);
+            Assert.EndsWith(MemoGenerator.MeasurementLabel, row[2], StringComparison.Ordinal);
+            Assert.Equal(value.Label, row[3]);
+            Assert.Equal(value.Status, row[4]);
+            Assert.False(string.IsNullOrWhiteSpace(row[5]), $"{value.Title}: no margin");
 
-            // Each value's own section: the value, its margin, its seeds, its run IDs and its curve.
+            // Each value's own section: the value, its label, its population, its margin, its seeds, its run IDs and its curve.
             var section = Section(markdown, value.Title);
             Assert.Contains($"- **Recommended**: {value.Recommended}\n", section, StringComparison.Ordinal);
-            Assert.Contains($"- **Margin**: {row[3]}\n", section, StringComparison.Ordinal);
+            Assert.Contains($"- **Label**: {value.Label}\n", section, StringComparison.Ordinal);
+            Assert.Contains($"- **Population**: {value.Population} (`population.total`, as every run's manifest records)\n", section, StringComparison.Ordinal);
+            Assert.Contains($"- **Margin**: {row[5]}\n", section, StringComparison.Ordinal);
             Assert.Contains($"- **Seeds**: {string.Join(", ", Seeds)}\n", section, StringComparison.Ordinal);
-            Assert.Contains($"- **Runs**: {string.Join(", ", value.Sweep.RunIds().Select(id => $"`{id}`"))}\n", section, StringComparison.Ordinal);
-            Assert.Equal(value.CurveRows, CurveRows(section));
+            var runIds = value.Sweeps.SelectMany(s => s.RunIds()).Select(id => $"`{id}`");
+            Assert.Contains($"- **Runs**: {string.Join(", ", runIds)}\n", section, StringComparison.Ordinal);
+            Assert.Equal(value.CurveRows, Tables(section)[0]);
         }
+
+        // D15 populations: section size at the 5,000-entity stress bound, every other row at the 2,000-player cap.
+        Assert.Equal(
+            ["2000", "2000", "2000", "5000", "2000", "2000", "2000", "2000", "2000", "2000"],
+            table.Select(r => r[1]));
+        Assert.Equal([2000, 2000, 2000, 5000, 2000, 2000, 2000, 2000, 2000, 2000], result.Rows.Select(r => r.Population));
 
         // Open decision 1 values are recommendations recorded under Principle VI; the fight size is a reading.
         foreach (var title in new[] { "Claim radius, infantry", "Claim radius, ground vehicle", "Claim radius, aircraft", "Section size" })
         {
+            var row = Assert.Single(result.Rows, r => r.Title == title);
+            Assert.Equal(MemoLabel.Recommendation, row.Label);
+            Assert.Equal(OpenDecision1, row.LabelText);
             Assert.Contains("- **Principle VI**: A recommendation for open decision 1", Section(markdown, title), StringComparison.Ordinal);
         }
 
+        var fightSize = Assert.Single(result.Rows, r => r.Id == "target-fight-size");
+        Assert.Equal(MemoLabel.Reading, fightSize.Label);
+        Assert.Equal(TargetFightSizeLabel, fightSize.LabelText);
         Assert.Contains("open decision 2 (target fight size) is set by load tests", Section(markdown, "Target fight size"), StringComparison.OrdinalIgnoreCase);
+        Assert.All(result.Rows.Where(r => r.Id != "target-fight-size"), r => Assert.Equal(MemoLabel.Recommendation, r.Label));
+
+        // The measured options, side by side, after the values, each with its population, seeds and runs.
+        var measured = Section(markdown, "Measured options");
+        Assert.True(markdown.IndexOf("\n## Measured options\n", StringComparison.Ordinal) > markdown.IndexOf("\n## Target fight size\n", StringComparison.Ordinal));
+        Assert.Equal(options.Select(o => o.Id), result.MeasuredOptions.Select(o => o.Id));
+        Assert.All(result.MeasuredOptions, o => Assert.True(o.Readable, o.Problem));
+        foreach (var option in options)
+        {
+            var section = OptionSection(measured, option.Title);
+            Assert.Contains("- **Status**: Read\n", section, StringComparison.Ordinal);
+            Assert.Contains("- **Population**: 2000 (`population.total`, as every run's manifest records)\n", section, StringComparison.Ordinal);
+            Assert.Contains("Interleaved scheduling in every run's manifest", section, StringComparison.Ordinal);
+            Assert.Contains($"- **Seeds**: {string.Join(", ", Seeds)}\n", section, StringComparison.Ordinal);
+            Assert.Contains($"- **Runs**: {string.Join(", ", option.Sweep.RunIds().Select(id => $"`{id}`"))}\n", section, StringComparison.Ordinal);
+            Assert.Equal(option.TableRows, Tables(section)[0]);
+        }
+
+        Assert.Contains("| Metric | regionizer.mergeGap = 0 | regionizer.mergeGap = 1 |\n", measured, StringComparison.Ordinal);
+        Assert.Contains("| Metric | regionizer.timerMode = TickCounter | regionizer.timerMode = Absolute |\n", measured, StringComparison.Ordinal);
+    }
+
+    // D15: the claim-radius and spacing rows record the region-count and largest-share curves next to the
+    // fused-fight-pairs curve, and note where region count collapses.
+    [Fact]
+    public void ClaimRadiusAndSpacingRowsRecordTheConstitutionReading()
+    {
+        Write(Results);
+
+        var result = MemoGenerator.Generate(Results, MemoRules.Load(RulesPath()));
+
+        foreach (var value in Values())
+        {
+            var row = Assert.Single(result.Rows, r => r.Id == value.Id);
+            var section = Section(result.Markdown, value.Title);
+            if (value.ReadingRows.Count == 0)
+            {
+                Assert.Empty(row.Reading);
+                Assert.Null(row.RegionCountNote);
+                Assert.Single(Tables(section));
+                continue;
+            }
+
+            Assert.Contains("| x | Fused fight pairs | Region count | Largest share |\n", section, StringComparison.Ordinal);
+            Assert.Equal(value.ReadingRows, Tables(section)[1]);
+            Assert.Contains($"- **Region count**: {row.RegionCountNote}\n", section, StringComparison.Ordinal);
+        }
+
+        const string Condition = $"(mean {FusedPath} ≥ 1)";
+        static string At(string x, string regions, string share) =>
+            $"at {x} the mean {RegionCountPath} is {regions} and the mean {SharePath} is {share}";
+        Assert.Equal(
+            $"Region count collapses at 20 m and above {Condition}: {At("20 m", "39", "0.31")}; one step below, {At("16 m", "49", "0.16")}.",
+            Note(result, "claim-radius-infantry"));
+        Assert.Equal(
+            $"Region count collapses at 32 m and above {Condition}: {At("32 m", "34", "0.36")}; one step below, {At("24 m", "51", "0.12")}.",
+            Note(result, "claim-radius-ground-vehicle"));
+        Assert.Equal(
+            $"Region count does not collapse in the swept range: no value from 8 to 20 m has mean {FusedPath} ≥ 1; {At("8 m", "60", "0.1")}, and {At("20 m", "57", "0.1")}.",
+            Note(result, "claim-radius-aircraft"));
+        Assert.Equal(
+            $"Region count collapses at 400 m and below {Condition}: {At("400 m", "19", "0.41")}; one step above, {At("600 m", "30", "0.3")}.",
+            Note(result, "minimum-base-spacing"));
+    }
+
+    [Theory]
+    [InlineData("every", "Region count has collapsed at every swept value (mean fusedFightPairs.p50 ≥ 1 from 8 to 16 m)")]
+    [InlineData("middle", "Region count collapses at 12 m (mean fusedFightPairs.p50 ≥ 1), not at one end of the sweep")]
+    public void RegionCountNoteSaysWhenCollapseIsEverywhereOrInTheMiddle(string shape, string note)
+    {
+        double[] fused = shape == "every" ? [1, 2, 3] : [0, 2, 0];
+        var sweep = new SweepFixture("radius", "Baseline");
+        foreach (var (x, i) in new[] { (8, 0), (12, 1), (16, 2) })
+        {
+            sweep.Cell(P(("r", x)), S((FusedPath, fused[i]), (RegionCountPath, 10), (SharePath, 0.5)), S((FusedPath, fused[i]), (RegionCountPath, 10), (SharePath, 0.5)));
+        }
+
+        sweep.Write(Results);
+        var rules = OneRule("""
+            "rule": "SmallestWithin", "parameter": "r", "unit": "m", "threshold": 100,
+            "constitutionReading": {
+              "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] }, "regionCount": { "paths": ["metrics.regionCount.p50"] },
+              "largestShare": { "paths": ["metrics.largestRegionShare.p50"] }, "collapseAt": 1 }
+            """);
+
+        var row = Assert.Single(MemoGenerator.Generate(Results, rules).Rows);
+
+        Assert.StartsWith(note, row.RegionCountNote, StringComparison.Ordinal);
+        Assert.Equal(3, row.Reading.Count);
+    }
+
+    // D16: merge rates read real merges, not absorptions. When the results report absorptions (in summary.json
+    // or cells.csv) the row says they are left out; when they do not, the rate is read as written, with a note.
+    [Fact]
+    public void MergeRatesSayHowAbsorptionsAreCounted()
+    {
+        Write(Results);
+
+        var result = MemoGenerator.Generate(Results, MemoRules.Load(RulesPath()));
+
+        Assert.True(result.Success);
+        var damping = Assert.Single(result.Rows, r => r.Id == "split-damping");
+        Assert.Equal(
+            "Merge rates count real merges only, where both sides held an entity. Absorptions of entity-less regions are reported "
+                + "separately (summary.json `totals.absorptions`: mean 5 per run, 4 to 6) and are not in the rate.",
+            damping.MergeCounting);
+        Assert.Contains($"- **Merge counting**: {damping.MergeCounting}\n", Section(result.Markdown, "Split damping"), StringComparison.Ordinal);
+
+        var air = Assert.Single(result.Rows, r => r.Id == "air-layer");
+        Assert.StartsWith(
+            "The results report no absorptions (no `totals.absorptions` in summary.json or cells.csv column `absorptions`), so the merge rate is read as written",
+            air.MergeCounting,
+            StringComparison.Ordinal);
+        Assert.Equal(MemoRowStatus.Recommended, air.Status);
+
+        var gap = Assert.Single(result.MeasuredOptions, o => o.Id == "merge-gap");
+        Assert.Contains("(cells.csv `absorptions`: mean 3 per run, 3 to 3)", gap.MergeCounting, StringComparison.Ordinal);
+
+        // The stopped timer run is left out of the clean runs whose absorptions are read.
+        var timers = Assert.Single(result.MeasuredOptions, o => o.Id == "timer-mode");
+        Assert.Contains("(summary.json `totals.absorptions`: mean 2 per run, 2 to 2)", timers.MergeCounting, StringComparison.Ordinal);
+
+        Assert.All(result.Rows.Where(r => r.Id is not ("split-damping" or "air-layer")), r => Assert.Null(r.MergeCounting));
+    }
+
+    // cells.csv is optional evidence: a missing, empty or unkeyed file, or a malformed row, gives no absorptions and
+    // the rate is read as written; a summary field that is not a number falls back to cells.csv.
+    [Theory]
+    [InlineData("cells-present", true)]
+    [InlineData("cells-missing", false)]
+    [InlineData("cells-empty", false)]
+    [InlineData("cells-no-key-columns", false)]
+    [InlineData("cells-malformed-rows", false)]
+    [InlineData("summary-absorptions-not-number", true)]
+    public void AbsorptionsAreReadFromTheSummaryOrCellsCsvWhenPresent(string variant, bool reported)
+    {
+        var absorptions = variant == "summary-absorptions-not-number" ? "x" : null;
+        new SweepFixture("gap", "Migration")
+            .CellsColumn("absorptions", (_, _) => "3")
+            .Cell(P(("g", 0)), S(("fusedFightPairs.p50", 1), ("totals.absorptions", absorptions)), S(("fusedFightPairs.p50", 2), ("totals.absorptions", absorptions)))
+            .Write(Results);
+        var cells = Path.Combine(Results, "gap", SweepResults.CellsFile);
+        switch (variant)
+        {
+            case "cells-missing":
+                File.Delete(cells);
+                break;
+            case "cells-empty":
+                File.WriteAllText(cells, string.Empty);
+                break;
+            case "cells-no-key-columns":
+                File.WriteAllLines(cells, ["cell,seed,absorptions", "c000,11,3", "c000,22,3"]);
+                break;
+            case "cells-malformed-rows":
+                File.WriteAllLines(cells, ["cellId,seedIndex,absorptions", "c000,0", "c000,one,3"]);
+                break;
+        }
+
+        var row = Assert.Single(MemoGenerator.Generate(
+            Results,
+            OneRule(""" "rule": "Lowest", "absorptions": { "paths": ["totals.absorptions"], "cellsColumn": "absorptions" } """, "gap")).Rows);
+
+        Assert.Equal(MemoRowStatus.Recommended, row.Status);
+        if (reported)
+        {
+            Assert.Contains("(cells.csv `absorptions`: mean 3 per run, 3 to 3)", row.MergeCounting, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.StartsWith("The results report no absorptions", row.MergeCounting, StringComparison.Ordinal);
+        }
+    }
+
+    // A value read from two sweeps records its constitution reading per sweep, as series.
+    [Fact]
+    public void ConstitutionReadingFromSeveralSweepsIsBySeries()
+    {
+        foreach (var name in new[] { "a", "b" })
+        {
+            new SweepFixture(name, "Spacing")
+                .Cell(P(("x", 100)), S((FusedPath, 1), (RegionCountPath, 5), (SharePath, 0.5)), S((FusedPath, 1), (RegionCountPath, 5), (SharePath, 0.5)))
+                .Cell(P(("x", 200)), S((FusedPath, 0), (RegionCountPath, 9), (SharePath, 0.2)), S((FusedPath, 0), (RegionCountPath, 9), (SharePath, 0.2)))
+                .Write(Results);
+        }
+
+        var rules = MemoRules.Parse("""
+            { "formatVersion": 2, "values": [ {
+              "id": "spacing", "rule": "SmallestWithin", "sweeps": ["a", "b"], "unit": "m", "population": 2000, "threshold": 1,
+              "metric": { "paths": ["fusedFightPairs.p50"] },
+              "constitutionReading": {
+                "fusedFightPairs": { "paths": ["fusedFightPairs.p50"] }, "regionCount": { "paths": ["metrics.regionCount.p50"] },
+                "largestShare": { "paths": ["metrics.largestRegionShare.p50"] }, "collapseAt": 1 } } ] }
+            """);
+
+        var result = MemoGenerator.Generate(Results, rules);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(["a", "a", "b", "b"], row.Reading.Select(p => p.Series));
+        Assert.Contains("| Series | x | Fused fight pairs | Region count | Largest share |\n", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("| a | 100 | 1 (1 to 1) | 5 (5 to 5) | 0.5 (0.5 to 0.5) |\n", result.Markdown, StringComparison.Ordinal);
+        Assert.StartsWith("Region count collapses at 100 m and below", row.RegionCountNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SomeRunsReportingAbsorptionsIsSaid()
+    {
+        new SweepFixture("one", "Migration")
+            .Cell(P(), S(("fusedFightPairs.p50", 1), ("totals.absorptions", 7)), S(("fusedFightPairs.p50", 1)))
+            .Write(Results);
+
+        var row = Assert.Single(MemoGenerator.Generate(Results, OneRule(""" "rule": "Lowest", "absorptions": { "paths": ["totals.absorptions"] } """, "one")).Rows);
+
+        Assert.Equal(
+            "1 of 2 runs report absorptions separately (summary.json `totals.absorptions`: mean 7 per run, 7 to 7), and their merge rates "
+                + "count real merges only; the other runs' merge rates are read as written.",
+            row.MergeCounting);
     }
 
     [Theory]
@@ -96,6 +328,10 @@ public sealed class MemoGeneratorTests : IDisposable
     [InlineData("run-folder-escapes", "claim-radius-infantry", "outside the sweep folder")]
     [InlineData("run-incomplete-marker", "claim-radius-infantry", "still marked _incomplete")]
     [InlineData("manifest-seed-differs", "claim-radius-infantry", "manifest.json: seed 99 differs")]
+    [InlineData("manifest-population-differs", "claim-radius-infantry", "ran at population.total 5000, but the rules read this value at 2000")]
+    [InlineData("manifest-population-missing", "claim-radius-infantry", "manifest.json does not record parameters.population.total")]
+    [InlineData("manifest-population-not-whole", "claim-radius-infantry", "'parameters.population.total' is not a whole number")]
+    [InlineData("section-size-at-cap", "section-size", "ran at population.total 2000, but the rules read this value at 5000")]
     [InlineData("summary-missing", "claim-radius-infantry", "summary.json: cannot be read")]
     [InlineData("summary-run-id-differs", "claim-radius-infantry", "differs from the manifest's")]
     [InlineData("summary-not-completed", "claim-radius-infantry", "the run did not complete")]
@@ -103,6 +339,7 @@ public sealed class MemoGeneratorTests : IDisposable
     [InlineData("metric-missing", "claim-radius-infantry", "has no 'fusedFightPairs.p50'")]
     [InlineData("metric-parent-is-number", "claim-radius-infantry", "has no 'fusedFightPairs.p50'")]
     [InlineData("metric-not-number", "claim-radius-infantry", "'fusedFightPairs.p50' is not a number")]
+    [InlineData("reading-metric-missing", "claim-radius-infantry", "has no 'metrics.regionCount.p50'")]
     [InlineData("metric-class-not-number", "claim-anchoring", "'rates.fusionsPerSecondByClass.Infantry' is not a number")]
     [InlineData("metric-divisor-zero", "minimum-base-spacing", "'ticks' is 0, not positive")]
     [InlineData("x-missing", "claim-radius-infantry", "does not set 'regionizer.claimRadius.infantry'")]
@@ -112,10 +349,7 @@ public sealed class MemoGeneratorTests : IDisposable
     [InlineData("reading-two-cells", "target-fight-size", "exactly one cell, found 2")]
     public void UnreadableResultsMarkTheRowAndFailTheMemo(string mutation, string valueId, string reason)
     {
-        foreach (var value in FullResultSet())
-        {
-            value.Sweep.Write(Results);
-        }
+        Write(Results);
 
         Mutate(mutation);
 
@@ -127,14 +361,76 @@ public sealed class MemoGeneratorTests : IDisposable
         Assert.Equal(MemoRowStatus.Unreadable, row.Status);
         Assert.Contains(reason, row.Problem, StringComparison.Ordinal);
         Assert.Empty(row.Curve);
-        Assert.Contains($"**1 of {result.Rows.Count} values could not be read.**", result.Markdown, StringComparison.Ordinal);
+        Assert.All(result.MeasuredOptions, o => Assert.True(o.Readable, o.Problem));
+        Assert.Contains($"**1 of {result.Rows.Count} values and 0 of {result.MeasuredOptions.Count} measured options could not be read.**", result.Markdown, StringComparison.Ordinal);
         var tableRow = Assert.Single(SummaryRows(result.Markdown), r => r[0] == row.Title);
-        Assert.Equal(["**not read**", "**UNREADABLE**"], tableRow[1..3]);
+        Assert.Equal("**not read**", tableRow[2]);
+        Assert.Equal("**UNREADABLE**", tableRow[4]);
         var section = Section(result.Markdown, row.Title);
         Assert.Contains($"- **Why**: {row.Problem}\n", section, StringComparison.Ordinal);
+        Assert.Contains("(`population.total` the rules read it at; not confirmed, the results could not be read)", section, StringComparison.Ordinal);
         Assert.Contains("No curve: the results could not be read.", section, StringComparison.Ordinal);
         Assert.Contains("- **Seeds**: none\n", section, StringComparison.Ordinal);
         Assert.Contains("- **Runs**: none\n", section, StringComparison.Ordinal);
+    }
+
+    // A measured option that cannot be read is marked, and the memo does not succeed (the CLI exits 4).
+    [Theory]
+    [InlineData("option-missing", "timer-mode", "no cell with regionizer.timerMode = Absolute")]
+    [InlineData("option-extra-cell", "merge-gap", "cell c002 is not one of the options 0, 1")]
+    [InlineData("option-duplicate-cell", "merge-gap", "2 cells set regionizer.mergeGap = 1; an option needs exactly one")]
+    [InlineData("option-wrong-scenario", "merge-gap", "the sweep runs Baseline, but the option is measured in Migration")]
+    [InlineData("option-wrong-scheduling", "merge-gap", "scheduling Lockstep, but the option is measured with Interleaved")]
+    [InlineData("option-wrong-population", "timer-mode", "ran at population.total 5000, but the rules read this value at 2000")]
+    [InlineData("option-interrupted-run", "timer-mode", "the run did not complete")]
+    [InlineData("option-missing-sweep", "merge-gap", "merge-gap/sweep.json: cannot be read")]
+    public void UnreadableMeasuredOptionIsMarkedAndFailsTheMemo(string mutation, string optionId, string reason)
+    {
+        Write(Results);
+
+        Mutate(mutation);
+
+        var result = MemoGenerator.Generate(Results, MemoRules.Load(RulesPath()));
+
+        Assert.False(result.Success);
+        Assert.All(result.Rows, r => Assert.NotEqual(MemoRowStatus.Unreadable, r.Status));
+        var option = Assert.Single(result.MeasuredOptions, o => !o.Readable);
+        Assert.Equal(optionId, option.Id);
+        Assert.Contains(reason, option.Problem, StringComparison.Ordinal);
+        Assert.Empty(option.Table);
+        Assert.Contains($"**0 of {result.Rows.Count} values and 1 of {result.MeasuredOptions.Count} measured options could not be read.**", result.Markdown, StringComparison.Ordinal);
+        var section = OptionSection(Section(result.Markdown, "Measured options"), option.Title);
+        Assert.Contains("- **Status**: **UNREADABLE**\n", section, StringComparison.Ordinal);
+        Assert.Contains($"- **Why**: {option.Problem}\n", section, StringComparison.Ordinal);
+        Assert.Contains("No table: the results could not be read.", section, StringComparison.Ordinal);
+    }
+
+    // A run that stopped at an invariant violation is counted against its option, not read as a metric.
+    [Fact]
+    public void MeasuredOptionCountsRunsStoppedByAnInvariantViolation()
+    {
+        new SweepFixture("gap", "Migration")
+            .Cell(P(("g", 0)), S(("rates.splitsPerSecond", 0.5)), S(("rates.splitsPerSecond", 0.7)))
+            .Cell(P(("g", 1)), Join(S(("rates.splitsPerSecond", 9)), Stopped("Violation")), Join(S(("rates.splitsPerSecond", 9)), Stopped("Violation")))
+            .Write(Results);
+        var rules = MemoRules.Parse("""
+            { "formatVersion": 2, "values": [ { "id": "v", "rule": "Reading", "sweep": "gap", "population": 2000, "parameter": "g", "metric": { "paths": ["x"] } } ],
+              "measuredOptions": [ { "id": "o", "title": "Gap", "sweep": "gap", "parameter": "g", "options": [0, 1], "population": 2000,
+                "metrics": [ { "label": "Splits", "paths": ["rates.splitsPerSecond"] } ] } ] }
+            """);
+
+        var option = Assert.Single(MemoGenerator.Generate(Results, rules).MeasuredOptions);
+
+        Assert.True(option.Readable, option.Problem);
+        Assert.Equal(["g = 0", "g = 1"], option.Options);
+        Assert.Equal(
+            [
+                new OptionTableRow("Splits", ["0.6 (0.5 to 0.7)", "no clean run"]),
+                new OptionTableRow("Runs stopped by a timer fault", ["0 of 2", "0 of 2"]),
+                new OptionTableRow("Runs stopped by an invariant violation", ["0 of 2", "2 of 2"]),
+            ],
+            option.Table,
+            new TableRowComparer());
     }
 
     // D15: a claim radius whose floor is above the largest collapse-safe radius is flagged as a conflict, and
@@ -176,7 +472,8 @@ public sealed class MemoGeneratorTests : IDisposable
         Assert.Equal("none", row.Recommended);
         Assert.StartsWith(problem, row.Problem, StringComparison.Ordinal);
         Assert.Equal(3, row.Curve.Count);
-        Assert.Equal(["none", "**FLAGGED**", row.Problem], Assert.Single(SummaryRows(result.Markdown))[1..]);
+        var summary = Assert.Single(SummaryRows(result.Markdown));
+        Assert.Equal(["2000", "none", "Recommendation", "**FLAGGED**", row.Problem], summary[1..]);
     }
 
     // D15: adopt the air layer only if aircraft-caused merges drop by at least 25% with no rise in fusion events.
@@ -209,27 +506,28 @@ public sealed class MemoGeneratorTests : IDisposable
         Assert.Equal(fusionsOn > fusionsOff, row.Margin.Contains("(rises)", StringComparison.Ordinal));
     }
 
-    // A value read from two sweeps (for example Baseline and One base as separate sweeps) must qualify in both.
+    // A value read from two sweeps (Baseline and One base as separate sweeps) must qualify in both.
     [Fact]
     public void ValueReadFromSeveralSweepsMustQualifyInEach()
     {
-        new SweepFixture("size-baseline", "Baseline")
+        new SweepFixture("size-baseline", "Baseline", population: 5000)
             .Cell(P(("s", 8)), S(("budget.bookkeepingP99Micros", 900)), S(("budget.bookkeepingP99Micros", 800)))
             .Cell(P(("s", 16)), S(("budget.bookkeepingP99Micros", 500)), S(("budget.bookkeepingP99Micros", 400)))
             .Write(Results);
-        new SweepFixture("size-one-base", "OneBase")
+        new SweepFixture("size-one-base", "OneBase", population: 5000)
             .Cell(P(("s", 8)), S(("budget.bookkeepingP99Micros", 1200)), S(("budget.bookkeepingP99Micros", 800)))
             .Cell(P(("s", 16)), S(("budget.bookkeepingP99Micros", 700)), S(("budget.bookkeepingP99Micros", 600)))
             .Write(Results);
         var rules = MemoRules.Parse("""
-            { "formatVersion": 1, "values": [ {
-              "id": "size", "rule": "SmallestWithin", "sweeps": ["size-baseline", "size-one-base"], "unit": "m",
+            { "formatVersion": 2, "values": [ {
+              "id": "size", "rule": "SmallestWithin", "sweeps": ["size-baseline", "size-one-base"], "unit": "m", "population": 5000,
               "metric": { "paths": ["budget.bookkeepingP99Micros"] }, "threshold": 1000, "inclusive": true } ] }
             """);
 
         var row = Assert.Single(MemoGenerator.Generate(Results, rules).Rows);
 
         Assert.Equal($"16 m {MemoGenerator.MeasurementLabel}", row.Recommended);
+        Assert.Equal(5000, row.Population);
         Assert.Equal(["size-baseline", "size-baseline", "size-one-base", "size-one-base"], row.Curve.Select(p => p.Series));
         Assert.Contains("8 m measures 1200 (fails)", row.Margin, StringComparison.Ordinal);
         Assert.Contains("sweep `size-baseline` (Baseline) and `size-one-base` (OneBase)", row.Source, StringComparison.Ordinal);
@@ -262,6 +560,7 @@ public sealed class MemoGeneratorTests : IDisposable
         Assert.Equal($"base {MemoGenerator.MeasurementLabel}", row.Recommended);
         Assert.Equal("mean 3, the only candidate", row.Margin);
         Assert.Null(row.Note);
+        Assert.Equal("Recommendation", row.LabelText);
     }
 
     [Theory]
@@ -287,14 +586,41 @@ public sealed class MemoGeneratorTests : IDisposable
     {
         new SweepFixture("one", "Baseline").Cell(P(), S(("fusedFightPairs.p50", 2)), S(("fusedFightPairs.p50", 4))).Write(Results);
 
+        var row = Assert.Single(MemoGenerator.Generate(Results, OneRule(""" "rule": "Lowest", "openDecision": 8 """, "one")).Rows);
+
+        Assert.Equal($"base {MemoGenerator.MeasurementLabel}", row.Recommended);
+        Assert.StartsWith("Bears on open decision 8", row.Note, StringComparison.Ordinal);
+        Assert.Equal("Recommendation, recorded under Principle VI (open decision 8)", row.LabelText);
+    }
+
+    [Fact]
+    public void ReadingForAnotherOpenDecisionIsARecordedReading()
+    {
+        new SweepFixture("one", "Baseline").Cell(P(), S(("fusedFightPairs.p50", 2)), S(("fusedFightPairs.p50", 4))).Write(Results);
+
         var row = Assert.Single(MemoGenerator.Generate(Results, OneRule(""" "rule": "Reading", "openDecision": 8 """, "one")).Rows);
 
         Assert.Equal($"3 {MemoGenerator.MeasurementLabel}", row.Recommended);
+        Assert.Equal("Reading, recorded under Principle VI (open decision 8)", row.LabelText);
         Assert.StartsWith("Bears on open decision 8", row.Note, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CommittedRulesListEveryValueTheSimulatorSets()
+    public void ReadingWithoutAnOpenDecisionIsLabeledAReading()
+    {
+        new SweepFixture("one", "Baseline").Cell(P(), S(("fusedFightPairs.p50", 2)), S(("fusedFightPairs.p50", 4))).Write(Results);
+
+        var result = MemoGenerator.Generate(Results, OneRule(""" "rule": "Reading" """, "one"));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal($"3 {MemoGenerator.MeasurementLabel}", row.Recommended);
+        Assert.Equal(MemoLabel.Reading, row.Label);
+        Assert.Equal("Reading", row.LabelText);
+        Assert.Equal(["Reading", "Read"], Assert.Single(SummaryRows(result.Markdown))[3..5]);
+    }
+
+    [Fact]
+    public void CommittedRulesListEveryValueAndMeasuredOptionTheSimulatorSets()
     {
         var rules = MemoRules.Load(RulesPath());
 
@@ -304,9 +630,41 @@ public sealed class MemoGeneratorTests : IDisposable
                 "minimum-base-spacing", "lane-bridging-limit", "split-damping", "air-layer", "target-fight-size",
             ],
             rules.Values.Select(v => v.Id));
+        Assert.Equal(["merge-gap", "timer-mode"], rules.MeasuredOptions.Select(o => o.Id));
+
+        // D15 sweep names, in memo order.
         Assert.Equal(
-            ["infantry-radius", "vehicle-radius", "aircraft-radius", "section-size", "anchoring", "spacing", "lane-traffic", "split-damping", "air-layer", "baseline-final"],
-            rules.Values.Select(v => Assert.Single(v.Sweeps)));
+            [
+                "infantry-radius", "vehicle-radius", "aircraft-radius", "section-size", "section-size-onebase", "anchoring", "spacing",
+                "lane-traffic", "split-damping", "air-layer", "baseline-final", "merge-gap", "timer-mode",
+            ],
+            rules.Values.SelectMany(v => v.Sweeps).Concat(rules.MeasuredOptions.Select(o => o.Sweep)));
+
+        // D15 populations: every row reads the 2,000-player cap except section size, which reads 5,000.
+        Assert.Equal([2000, 2000, 2000, 5000, 2000, 2000, 2000, 2000, 2000, 2000], rules.Values.Select(v => v.Population));
+        Assert.All(rules.MeasuredOptions, o => Assert.Equal(2000, o.Population));
+
+        // The claim-radius and spacing rows record the constitution reading; merge-rate rows say how absorptions count.
+        Assert.Equal(
+            ["claim-radius-infantry", "claim-radius-ground-vehicle", "claim-radius-aircraft", "minimum-base-spacing"],
+            rules.Values.Where(v => v.ConstitutionReading is not null).Select(v => v.Id));
+        Assert.Equal(["split-damping", "air-layer"], rules.Values.Where(v => v.Absorptions is not null).Select(v => v.Id));
+
+        // Open decision 1 rows are recommendations; the target fight size (open decision 2) is the only reading.
+        Assert.Equal(
+            ["claim-radius-infantry", "claim-radius-ground-vehicle", "claim-radius-aircraft", "section-size"],
+            rules.Values.Where(v => v.OpenDecision == 1).Select(v => v.Id));
+        Assert.Equal(["target-fight-size"], rules.Values.Where(v => v.Label == MemoLabel.Reading).Select(v => v.Id));
+
+        // The measured options: merge gap 0 vs 1 and tick-counter vs absolute timers, from Migration in interleaved mode.
+        Assert.Equal(["0", "1"], rules.MeasuredOptions[0].Options);
+        Assert.Equal(["TickCounter", "Absolute"], rules.MeasuredOptions[1].Options);
+        Assert.All(rules.MeasuredOptions, o =>
+        {
+            Assert.Equal("Migration", o.Scenario);
+            Assert.Equal("Interleaved", o.Scheduling);
+            Assert.NotNull(o.Absorptions);
+        });
         Assert.All(rules.Values, v => Assert.False(string.IsNullOrWhiteSpace(v.Description)));
     }
 
@@ -314,43 +672,57 @@ public sealed class MemoGeneratorTests : IDisposable
     [InlineData("{", "not valid JSON")]
     [InlineData("[]", "$: must be an object")]
     [InlineData("""{ "values": [] }""", "formatVersion: is required")]
-    [InlineData("""{ "formatVersion": 2, "values": [] }""", "formatVersion: must be 1")]
-    [InlineData("""{ "formatVersion": "1", "values": [] }""", "formatVersion: must be a number")]
-    [InlineData("""{ "formatVersion": 1 }""", "values: is required")]
-    [InlineData("""{ "formatVersion": 1, "values": {} }""", "values: must be an array")]
-    [InlineData("""{ "formatVersion": 1, "values": [] }""", "values: must list at least one value")]
-    [InlineData("""{ "formatVersion": 1, "values": [ 3 ] }""", "values[0]: must be an object")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "rule": "Reading" } ] }""", "values[0].id: is required")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": " ", "rule": "Reading" } ] }""", "values[0].id: must be a non-empty string")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Median", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].rule: unknown rule 'Median'")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "metric": { "paths": ["x"] } } ] }""", "values[0].sweeps: a 'sweep' or 'sweeps' is required")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweeps": [], "metric": { "paths": ["x"] } } ] }""", "values[0].sweeps: must name at least one sweep")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s" } ] }""", "values[0].metric: is required")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": "x" } ] }""", "values[0].metric: must be an object with 'paths'")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": [] } } ] }""", "values[0].metric.paths: must list at least one summary path")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"], "absentAsZero": 1 } } ] }""", "values[0].metric.absentAsZero: must be true or false")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "SmallestWithin", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].threshold: is required for SmallestWithin")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "LargestWithin", "sweep": "s", "metric": { "paths": ["x"] }, "threshold": "1" } ] }""", "values[0].threshold: must be a number")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].collapseAt: is required for ClaimRadius")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1 } ] }""", "values[0].floor: is required for ClaimRadius")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": 1 } ] }""", "values[0].floor: must be an object")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": { "interactionRangeMetres": -1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30 } } ] }""", "values[0].floor: Must be finite and non-negative.")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "stepsBelowCollapse": 0, "floor": { "interactionRangeMetres": 1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30 } } ] }""", "values[0].stepsBelowCollapse: must be at least 1")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "stepsBelowCollapse": 1.5 } ] }""", "values[0].stepsBelowCollapse: must be a whole number")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "metric": { "paths": ["x"] }, "constraint": 1 } ] }""", "values[0].constraint: must be an object")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "metric": { "paths": ["x"] }, "constraint": { "threshold": 1 } } ] }""", "values[0].constraint.metric: is required")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "metric": { "paths": ["x"] }, "inclusive": "yes", "threshold": 1 } ] }""", "values[0].inclusive: must be true or false")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].parameter: is required for AdoptIfDrop")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "parameter": "p", "metric": { "paths": ["x"] } } ] }""", "values[0].baseline: is required for AdoptIfDrop")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "parameter": "p", "baseline": false, "metric": { "paths": ["x"] } } ] }""", "values[0].candidate: is required for AdoptIfDrop")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "parameter": "p", "baseline": false, "candidate": true, "metric": { "paths": ["x"] } } ] }""", "values[0].minimumDropPercent: is required for AdoptIfDrop")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "parameter": "p", "baseline": [], "metric": { "paths": ["x"] } } ] }""", "values[0].baseline: must be a string, number or boolean")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"] } }, { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[1].id: duplicate id 'a'")]
-    [InlineData("""{ "formatVersion": 1, "valeus": [] }""", "valeus: is not a known field")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"] }, "inclusiv": true } ] }""", "values[0].inclusiv: is not a known field")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"], "divide": "ticks" } } ] }""", "values[0].metric.divide: is not a known field")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "metric": { "paths": ["x"] }, "constraint": { "metric": { "paths": ["y"] }, "threshold": 1, "max": 2 } } ] }""", "values[0].constraint.max: is not a known field")]
-    [InlineData("""{ "formatVersion": 1, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": { "interactionRangeMetres": 1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30, "dt": 1 } } ] }""", "values[0].floor.dt: is not a known field")]
+    [InlineData("""{ "formatVersion": 1, "values": [] }""", "formatVersion: must be 2")]
+    [InlineData("""{ "formatVersion": "2", "values": [] }""", "formatVersion: must be a number")]
+    [InlineData("""{ "formatVersion": 2 }""", "values: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": {} }""", "values: must be an array")]
+    [InlineData("""{ "formatVersion": 2, "values": [] }""", "values: must list at least one value")]
+    [InlineData("""{ "formatVersion": 2, "values": [ 3 ] }""", "values[0]: must be an object")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "rule": "Reading" } ] }""", "values[0].id: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": " ", "rule": "Reading" } ] }""", "values[0].id: must be a non-empty string")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Median", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].rule: unknown rule 'Median'")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "metric": { "paths": ["x"] } } ] }""", "values[0].sweeps: a 'sweep' or 'sweeps' is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweeps": [], "metric": { "paths": ["x"] } } ] }""", "values[0].sweeps: must name at least one sweep")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s" } ] }""", "values[0].metric: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": "x" } ] }""", "values[0].metric: must be an object with 'paths'")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": [] } } ] }""", "values[0].metric.paths: must list at least one summary path")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"], "absentAsZero": 1 } } ] }""", "values[0].metric.absentAsZero: must be true or false")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"] } } ] }""", "values[0].population: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "population": 0, "metric": { "paths": ["x"] } } ] }""", "values[0].population: must be at least 1")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "population": 2000.5, "metric": { "paths": ["x"] } } ] }""", "values[0].population: must be a whole number")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "population": "2000", "metric": { "paths": ["x"] } } ] }""", "values[0].population: must be a number")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "SmallestWithin", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } } ] }""", "values[0].threshold: is required for SmallestWithin")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "LargestWithin", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "threshold": "1" } ] }""", "values[0].threshold: must be a number")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } } ] }""", "values[0].collapseAt: is required for ClaimRadius")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "collapseAt": 1 } ] }""", "values[0].floor: is required for ClaimRadius")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": 1 } ] }""", "values[0].floor: must be an object")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": { "interactionRangeMetres": -1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30 } } ] }""", "values[0].floor: Must be finite and non-negative.")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "collapseAt": 1, "stepsBelowCollapse": 0, "floor": { "interactionRangeMetres": 1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30 } } ] }""", "values[0].stepsBelowCollapse: must be at least 1")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "collapseAt": 1, "stepsBelowCollapse": 1.5 } ] }""", "values[0].stepsBelowCollapse: must be a whole number")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constraint": 1 } ] }""", "values[0].constraint: must be an object")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constraint": { "threshold": 1 } } ] }""", "values[0].constraint.metric: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "inclusive": "yes", "threshold": 1 } ] }""", "values[0].inclusive: must be true or false")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } } ] }""", "values[0].parameter: is required for AdoptIfDrop")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "population": 1, "parameter": "p", "metric": { "paths": ["x"] } } ] }""", "values[0].baseline: is required for AdoptIfDrop")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "population": 1, "parameter": "p", "baseline": false, "metric": { "paths": ["x"] } } ] }""", "values[0].candidate: is required for AdoptIfDrop")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "population": 1, "parameter": "p", "baseline": false, "candidate": true, "metric": { "paths": ["x"] } } ] }""", "values[0].minimumDropPercent: is required for AdoptIfDrop")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "AdoptIfDrop", "sweep": "s", "population": 1, "parameter": "p", "baseline": [], "metric": { "paths": ["x"] } } ] }""", "values[0].baseline: must be a string, number or boolean")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "openDecision": 1 } ] }""", "values[0].openDecision: open decision 1 values are recommendations recorded under Principle VI")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "openDecision": 2 } ] }""", "values[0].openDecision: open decision 2 (target fight size) is set by load tests")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constitutionReading": { "fusedFightPairs": { "paths": ["f"] }, "regionCount": { "paths": ["r"] }, "largestShare": { "paths": ["l"] }, "collapseAt": 1 } } ] }""", "values[0].constitutionReading: needs a rule with a numeric x")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "SmallestWithin", "threshold": 1, "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constitutionReading": 1 } ] }""", "values[0].constitutionReading: must be an object")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "SmallestWithin", "threshold": 1, "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constitutionReading": { "fusedFightPairs": { "paths": ["f"] }, "largestShare": { "paths": ["l"] }, "collapseAt": 1 } } ] }""", "values[0].constitutionReading.regionCount: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "SmallestWithin", "threshold": 1, "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constitutionReading": { "fusedFightPairs": { "paths": ["f"] }, "regionCount": { "paths": ["r"] }, "largestShare": { "paths": ["l"] } } } ] }""", "values[0].constitutionReading.collapseAt: is required")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "SmallestWithin", "threshold": 1, "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "constitutionReading": { "regionsCount": 1 } } ] }""", "values[0].constitutionReading.regionsCount: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "absorptions": "totals.absorptions" } ] }""", "values[0].absorptions: must be an object with 'paths'")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "absorptions": { "paths": [] } } ] }""", "values[0].absorptions.paths: must list at least one summary path")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "population": 1, "metric": { "paths": ["x"] }, "absorptions": { "paths": ["a"], "column": "b" } } ] }""", "values[0].absorptions.column: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } }, { "id": "a", "rule": "Reading", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } } ] }""", "values[1].id: duplicate id 'a'")]
+    [InlineData("""{ "formatVersion": 2, "valeus": [] }""", "valeus: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"] }, "inclusiv": true } ] }""", "values[0].inclusiv: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Reading", "sweep": "s", "metric": { "paths": ["x"], "divide": "ticks" } } ] }""", "values[0].metric.divide: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "Lowest", "sweep": "s", "metric": { "paths": ["x"] }, "constraint": { "metric": { "paths": ["y"] }, "threshold": 1, "max": 2 } } ] }""", "values[0].constraint.max: is not a known field")]
+    [InlineData("""{ "formatVersion": 2, "values": [ { "id": "a", "rule": "ClaimRadius", "sweep": "s", "metric": { "paths": ["x"] }, "collapseAt": 1, "floor": { "interactionRangeMetres": 1, "closingSpeedMetresPerSecond": 1, "tickRateHz": 30, "dt": 1 } } ] }""", "values[0].floor.dt: is not a known field")]
     public void InvalidRulesNameTheBadField(string json, string message)
     {
         var error = Assert.Throws<InvalidDataException>(() => MemoRules.Parse(json));
@@ -358,141 +730,50 @@ public sealed class MemoGeneratorTests : IDisposable
         Assert.Contains(message, error.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// One sweep per value of the committed rules, designed so each rule reads one known value. Each value's
-    /// expected curve rows are computed from the same per-seed numbers the fixture writes.
-    /// </summary>
-    private static List<ValueCase> FullResultSet()
+    [Theory]
+    [InlineData("""3""", "measuredOptions: must be an array")]
+    [InlineData("""[ 3 ]""", "measuredOptions[0]: must be an object")]
+    [InlineData("""[ { "title": "t" } ]""", "measuredOptions[0].id: is required")]
+    [InlineData("""[ { "id": "o", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].sweep: is required")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].parameter: is required")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].options: is required")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].options: must list at least two options to compare")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 0], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].options[1]: duplicate option '0'")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, {}], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].options[1]: must be a string, number or boolean")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].population: is required")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [] } ]""", "measuredOptions[0].metrics: must list at least one metric")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "paths": ["x"] } ] } ]""", "measuredOptions[0].metrics[0].label: is required")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": [] } ] } ]""", "measuredOptions[0].metrics[0].paths: must list at least one summary path")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": ["x"], "unit": "s" } ] } ]""", "measuredOptions[0].metrics[0].unit: is not a known field")]
+    [InlineData("""[ { "id": "o", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ], "recommend": true } ]""", "measuredOptions[0].recommend: is not a known field")]
+    [InlineData("""[ { "id": "v", "sweep": "s", "parameter": "p", "options": [0, 1], "population": 1, "metrics": [ { "label": "m", "paths": ["x"] } ] } ]""", "measuredOptions[0].id: duplicate id 'v'")]
+    public void InvalidMeasuredOptionsNameTheBadField(string measuredOptions, string message)
     {
-        var cases = new List<ValueCase>
-        {
-            // Collapse (mean p50 fused fights ≥ 1) at 20 m; one step below is 16 m, above the 10.47 m floor.
-            OneMetric("Claim radius, infantry", "16 m", new SweepFixture("infantry-radius", "Baseline"), "regionizer.claimRadius.infantry", "fusedFightPairs.p50",
-                (8, [0, 0]), (12, [0, 0]), (16, [0, 1]), (20, [1, 1]), (24, [2, 3])),
+        var json = $$"""
+            { "formatVersion": 2, "values": [ { "id": "v", "rule": "Reading", "sweep": "s", "population": 1, "metric": { "paths": ["x"] } } ],
+              "measuredOptions": {{measuredOptions}} }
+            """;
 
-            // Collapse at 32 m; one step below is 24 m, above the 17 m floor.
-            OneMetric("Claim radius, ground vehicle", "24 m", new SweepFixture("vehicle-radius", "Baseline"), "regionizer.claimRadius.groundVehicle", "fusedFightPairs.p50",
-                (16, [0, 0]), (24, [0, 0]), (32, [1, 2]), (40, [3, 3])),
+        var error = Assert.Throws<InvalidDataException>(() => MemoRules.Parse(json));
 
-            // No collapse in the sweep: the top radius, 20 m, above the 16 m floor.
-            OneMetric("Claim radius, aircraft", "20 m", new SweepFixture("aircraft-radius", "Baseline"), "regionizer.claimRadius.aircraft", "fusedFightPairs.p50",
-                (8, [0, 0]), (12, [0, 0]), (16, [0, 0]), (20, [0, 0])),
-        };
-
-        // Within the 1,000 µs budget in every seed of both scenarios first at 32 m (One base fails at 16 m).
-        var size = new SweepFixture("section-size", "Baseline", "Grid");
-        var sizeRows = new List<string>();
-        foreach (var (scenario, s, p99) in new (string, int, double[])[]
-        {
-            ("Baseline", 8, [1500, 1400]), ("Baseline", 16, [700, 900]), ("Baseline", 32, [400, 500]),
-            ("OneBase", 8, [2500, 2600]), ("OneBase", 16, [1100, 950]), ("OneBase", 32, [600, 700]),
-        })
-        {
-            size.Cell(
-                P(("scenario", scenario), ("regionizer.sectionSize", s)),
-                [.. p99.Select(v => S(("budget.bookkeepingP99Micros", v), ("budget.withinBudget", v <= 1000)))]);
-            sizeRows.Add(CurveRow($"scenario={scenario}", N(s), p99));
-        }
-
-        cases.Add(new ValueCase("Section size", $"32 m {MemoGenerator.MeasurementLabel}", size, sizeRows));
-
-        // Fusion rates summed over classes: Section 0.04 and 0.03, Position 0.01 and 0.02.
-        var anchoring = new SweepFixture("anchoring", "Baseline")
-            .Cell(
-                P(("regionizer.anchoring", "Section")),
-                S(("rates.fusionsPerSecondByClass.Infantry", 0.03), ("rates.fusionsPerSecondByClass.GroundVehicle", 0.01)),
-                S(("rates.fusionsPerSecondByClass.Infantry", 0.02), ("rates.fusionsPerSecondByClass.GroundVehicle", 0.01)))
-            .Cell(
-                P(("regionizer.anchoring", "Position")),
-                S(("rates.fusionsPerSecondByClass.Infantry", 0.01)),
-                S(("rates.fusionsPerSecondByClass.Infantry", 0.02)));
-        cases.Add(new ValueCase(
-            "Claim anchoring", $"Position {MemoGenerator.MeasurementLabel}", anchoring,
-            [CurveRow(null, "Section", 0.03 + 0.01, 0.02 + 0.01), CurveRow(null, "Position", 0.01, 0.02)]));
-
-        // Oversized-fusion ticks out of 1,000: under 1% in every seed first at 600 m, plus the 100 m sprawl margin.
-        cases.Add(TickShare("Minimum base spacing", "700 m", new SweepFixture("spacing", "Spacing"), "scenarioParameters.spacingMetres",
-            (200, [300, 250]), (400, [40, 5]), (600, [9, 3]), (800, [0, 0])));
-
-        // Bridged ticks out of 1,000: under 1% in every seed up to 30 travellers.
-        cases.Add(TickShare("Lane bridging limit", "30 travellers", new SweepFixture("lane-traffic", "LaneTraffic"), "scenarioParameters.travellers",
-            (10, [0, 0]), (30, [5, 2]), (60, [30, 10]), (120, [400, 500])));
-
-        // Merge-plus-split rates; minSections 64 is lowest but its split latency p99 reaches 200 ticks (over 150).
-        var damping = new SweepFixture("split-damping", "Migration");
-        var dampingRows = new List<string>();
-        foreach (var (path, value, merges, splits, latency) in new (string, int, double, double, double[])[]
-        {
-            ("regionizer.split.minSections", 16, 0.5, 0.4, [100, 120]),
-            ("regionizer.split.minSections", 64, 0.3, 0.2, [200, 140]),
-            ("regionizer.split.minDeadPercent", 10, 0.4, 0.3, [90, 100]),
-            ("regionizer.split.minAgeSeconds", 4, 0.6, 0.5, [50, 60]),
-        })
-        {
-            damping.Cell(
-                P((path, value)),
-                [.. latency.Select(l => S(("rates.mergesPerSecondByClass.Infantry", merges), ("rates.splitsPerSecond", splits), ("metrics.splitLatencyTicks.p99", l)))]);
-            dampingRows.Add(CurveRow(null, $"{path}={value}", merges + splits, merges + splits));
-        }
-
-        cases.Add(new ValueCase("Split damping", $"regionizer.split.minDeadPercent=10 {MemoGenerator.MeasurementLabel}", damping, dampingRows));
-
-        // Aircraft merges 0.9 → 0.2 (a 78% drop; one run writes no Aircraft rate at all), fusions 0.1 → 0.075.
-        var air = new SweepFixture("air-layer", "AirTraffic")
-            .Cell(
-                P(("airLayer.enabled", false)),
-                S(("rates.mergesPerSecondByClass.Aircraft", 0.8), ("rates.fusionsPerSecondByClass.Infantry", 0.1)),
-                S(("rates.mergesPerSecondByClass.Aircraft", 1.0), ("rates.fusionsPerSecondByClass.Infantry", 0.1)))
-            .Cell(
-                P(("airLayer.enabled", true)),
-                S(("rates.mergesPerSecondByClass.Aircraft", null), ("rates.fusionsPerSecondByClass.Infantry", 0.1)),
-                S(("rates.mergesPerSecondByClass.Aircraft", 0.4), ("rates.fusionsPerSecondByClass.Infantry", 0.05)));
-        cases.Add(new ValueCase(
-            "Air layer", $"adopt: airLayer.enabled = true {MemoGenerator.MeasurementLabel}", air,
-            [CurveRow(null, "false", 0.8, 1.0), CurveRow(null, "true", 0, 0.4)]));
-
-        // One cell at the chosen values: the reading is the mean over seeds of the largest region's p99.
-        cases.Add(OneMetric("Target fight size", "1200 players", new SweepFixture("baseline-final", "Baseline"), null, "metrics.largestRegionPlayers.p99",
-            (16, [1180, 1220])));
-        return cases;
+        Assert.Contains($"memo rules: {message}", error.Message, StringComparison.Ordinal);
     }
 
-    private static ValueCase OneMetric(string title, string recommended, SweepFixture sweep, string? parameter, string metric, params (int X, double[] PerSeed)[] cells)
+    // A rules file with no measured options is valid: the memo then has none.
+    [Fact]
+    public void RulesWithoutMeasuredOptionsGiveAMemoWithoutThem()
     {
-        var rows = new List<string>();
-        foreach (var (x, perSeed) in cells)
-        {
-            // The reading's single cell is labeled by its parameters, since its rule names no parameter.
-            sweep.Cell(P((parameter ?? "regionizer.claimRadius.infantry", x)), [.. perSeed.Select(v => S((metric, v)))]);
-            rows.Add(CurveRow(null, parameter is null ? $"regionizer.claimRadius.infantry={x}" : N(x), perSeed));
-        }
+        new SweepFixture("one", "Baseline").Cell(P(), S(("fusedFightPairs.p50", 2)), S(("fusedFightPairs.p50", 4))).Write(Results);
 
-        return new ValueCase(title, $"{recommended} {MemoGenerator.MeasurementLabel}", sweep, rows);
+        var result = MemoGenerator.Generate(Results, OneRule(""" "rule": "Lowest" """, "one"));
+
+        Assert.Empty(result.MeasuredOptions);
+        Assert.True(result.Success);
+        Assert.Contains("All 1 values were read.", result.Markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Measured options", result.Markdown, StringComparison.Ordinal);
     }
 
-    private static ValueCase TickShare(string title, string recommended, SweepFixture sweep, string parameter, params (int X, double[] OversizedTicks)[] cells)
-    {
-        var rows = new List<string>();
-        foreach (var (x, oversized) in cells)
-        {
-            sweep.Cell(P((parameter, x)), [.. oversized.Select(v => S(("totals.oversizedFusionTicks", v)))]);
-            rows.Add(CurveRow(null, N(x), [.. oversized.Select(v => v / Ticks)]));
-        }
-
-        return new ValueCase(title, $"{recommended} {MemoGenerator.MeasurementLabel}", sweep, rows);
-    }
-
-    private static string CurveRow(string? series, string x, params double[] perSeed)
-    {
-        var columns = new List<string>();
-        if (series is not null)
-        {
-            columns.Add(series);
-        }
-
-        columns.AddRange([x, N(perSeed.Average()), N(perSeed.Min()), N(perSeed.Max()), perSeed.Length.ToString(CultureInfo.InvariantCulture)]);
-        return $"| {string.Join(" | ", columns)} |";
-    }
+    private static string? Note(MemoResult result, string id) => Assert.Single(result.Rows, r => r.Id == id).RegionCountNote;
 
     private void Mutate(string mutation)
     {
@@ -552,6 +833,18 @@ public sealed class MemoGeneratorTests : IDisposable
             case "manifest-seed-differs":
                 EditJson(Run("infantry-radius", "manifest.json"), j => j["seed"] = 99);
                 break;
+            case "manifest-population-differs":
+                EditJson(Run("infantry-radius", "manifest.json"), j => j["parameters"]!["population"]!["total"] = 5000);
+                break;
+            case "manifest-population-missing":
+                EditJson(Run("infantry-radius", "manifest.json"), j => j["parameters"] = new JsonObject());
+                break;
+            case "manifest-population-not-whole":
+                EditJson(Run("infantry-radius", "manifest.json"), j => j["parameters"]!["population"]!["total"] = 2000.5);
+                break;
+            case "section-size-at-cap":
+                EditJson(Run("section-size-onebase", "manifest.json"), j => j["parameters"]!["population"]!["total"] = 2000);
+                break;
             case "summary-missing":
                 File.Delete(Run("infantry-radius", "summary.json"));
                 break;
@@ -572,6 +865,9 @@ public sealed class MemoGeneratorTests : IDisposable
                 break;
             case "metric-not-number":
                 EditJson(Run("infantry-radius", "summary.json"), j => j["fusedFightPairs"]!["p50"] = "many");
+                break;
+            case "reading-metric-missing":
+                EditJson(Run("infantry-radius", "summary.json"), j => j["metrics"]!["regionCount"]!.AsObject().Remove("p50"));
                 break;
             case "metric-class-not-number":
                 EditJson(Run("anchoring", "summary.json"), j => j["rates"]!["fusionsPerSecondByClass"]!["Infantry"] = "many");
@@ -596,6 +892,40 @@ public sealed class MemoGeneratorTests : IDisposable
                     .Cell(P(("regionizer.claimRadius.infantry", 16)), S(), S())
                     .Cell(P(("regionizer.claimRadius.infantry", 20)), S(), S()));
                 break;
+            case "option-missing":
+                Rewrite(new SweepFixture("timer-mode", "Migration", scheduling: "Interleaved").Cell(P(("regionizer.timerMode", "TickCounter")), S(), S()));
+                break;
+            case "option-extra-cell":
+                EditJson(Sweep("merge-gap"), j => j["cells"]!.AsArray().Add(new JsonObject
+                {
+                    ["cellId"] = "c002",
+                    ["parameters"] = new JsonObject { ["regionizer.mergeGap"] = 2 },
+                    ["runs"] = j["cells"]![0]!["runs"]!.DeepClone(),
+                }));
+                break;
+            case "option-duplicate-cell":
+                EditJson(Sweep("merge-gap"), j => j["cells"]!.AsArray().Add(new JsonObject
+                {
+                    ["cellId"] = "c002",
+                    ["parameters"] = new JsonObject { ["regionizer.mergeGap"] = 1 },
+                    ["runs"] = j["cells"]![1]!["runs"]!.DeepClone(),
+                }));
+                break;
+            case "option-wrong-scenario":
+                EditJson(Sweep("merge-gap"), j => j["scenario"] = "Baseline");
+                break;
+            case "option-wrong-scheduling":
+                EditJson(Run("merge-gap", "manifest.json"), j => j["scheduling"] = "Lockstep");
+                break;
+            case "option-wrong-population":
+                EditJson(Run("timer-mode", "manifest.json"), j => j["parameters"]!["population"]!["total"] = 5000);
+                break;
+            case "option-interrupted-run":
+                EditJson(Run("timer-mode", "summary.json"), j => j["completed"] = false);
+                break;
+            case "option-missing-sweep":
+                Directory.Delete(Path.Combine(Results, "merge-gap"), recursive: true);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "unknown mutation");
         }
@@ -608,36 +938,24 @@ public sealed class MemoGeneratorTests : IDisposable
         File.WriteAllText(path, json.ToJsonString());
     }
 
-    /// <summary>A rules file holding just the committed rules with these ids.</summary>
+    /// <summary>A rules file holding just the committed rules with these ids, and no measured options.</summary>
     private static MemoRules RulesFor(params string[] ids)
     {
         var json = JsonNode.Parse(File.ReadAllText(RulesPath()))!;
         var kept = json["values"]!.AsArray().Where(v => ids.Contains((string)v!["id"]!)).Select(v => v!.DeepClone()).ToArray();
         json["values"] = new JsonArray(kept);
+        json.AsObject().Remove("measuredOptions");
         return MemoRules.Parse(json.ToJsonString());
     }
 
-    /// <summary>A one-value rules file reading <c>fusedFightPairs.p50</c> from a sweep, with the given rule fields.</summary>
+    /// <summary>A one-value rules file reading <c>fusedFightPairs.p50</c> at population 2,000 from a sweep, with the given rule fields.</summary>
     private static MemoRules OneRule(string fields, string sweep = "radius") => MemoRules.Parse(
-        $$"""{ "formatVersion": 1, "values": [ { "id": "value", "sweep": "{{sweep}}", "metric": { "paths": ["fusedFightPairs.p50"] }, {{fields}} } ] }""");
+        $$"""{ "formatVersion": 2, "values": [ { "id": "value", "sweep": "{{sweep}}", "population": 2000, "metric": { "paths": ["fusedFightPairs.p50"] }, {{fields}} } ] }""");
 
-    private static string RulesPath()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "MmoEngine.sln")))
-            {
-                return Path.Combine(dir.FullName, "simulator", "sweeps", "memo-rules.json");
-            }
-        }
-
-        throw new InvalidOperationException("MmoEngine.sln not found above the test output folder.");
-    }
-
-    /// <summary>The summary table's rows, each split into its four cells.</summary>
+    /// <summary>The summary table's rows, each split into its six cells.</summary>
     private static List<string[]> SummaryRows(string markdown) =>
         [.. markdown.Split('\n')
-            .SkipWhile(line => !line.StartsWith("| Value | Recommended | Status | Margin |", StringComparison.Ordinal))
+            .SkipWhile(line => !line.StartsWith("| Value | Population | Recommended | Label | Status | Margin |", StringComparison.Ordinal))
             .Skip(2)
             .TakeWhile(line => line.StartsWith('|'))
             .Select(line => line[2..^2].Split(" | "))];
@@ -651,11 +969,46 @@ public sealed class MemoGeneratorTests : IDisposable
         return end < 0 ? markdown[start..] : markdown[start..end];
     }
 
-    /// <summary>A section's curve rows, without the header and separator.</summary>
-    private static List<string> CurveRows(string section) =>
-        [.. section.Split('\n').Where(line => line.StartsWith('|')).Skip(2)];
+    /// <summary>A measured option's subsection, from its heading to the next.</summary>
+    private static string OptionSection(string measured, string title)
+    {
+        var start = measured.IndexOf($"\n### {title}\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"no measured option {title}");
+        var end = measured.IndexOf("\n### ", start + 1, StringComparison.Ordinal);
+        return end < 0 ? measured[start..] : measured[start..end];
+    }
 
-    private static string N(double value) => value.ToString("0.####", CultureInfo.InvariantCulture);
+    /// <summary>A section's tables, each as its rows without the header and separator.</summary>
+    private static List<List<string>> Tables(string section)
+    {
+        var tables = new List<List<string>>();
+        List<string>? current = null;
+        foreach (var line in section.Split('\n'))
+        {
+            if (!line.StartsWith('|'))
+            {
+                current = null;
+                continue;
+            }
 
-    private sealed record ValueCase(string Title, string Recommended, SweepFixture Sweep, IReadOnlyList<string> CurveRows);
+            if (current is null)
+            {
+                current = [];
+                tables.Add(current);
+            }
+
+            current.Add(line);
+        }
+
+        return [.. tables.Select(t => t.Skip(2).ToList())];
+    }
+
+    /// <summary>Compares table rows by value (records holding lists compare their lists by reference).</summary>
+    private sealed class TableRowComparer : IEqualityComparer<OptionTableRow>
+    {
+        public bool Equals(OptionTableRow? x, OptionTableRow? y) =>
+            x is not null && y is not null && x.Metric == y.Metric && x.Cells.SequenceEqual(y.Cells);
+
+        public int GetHashCode(OptionTableRow obj) => obj.Metric.GetHashCode(StringComparison.Ordinal);
+    }
 }

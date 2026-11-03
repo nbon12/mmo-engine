@@ -9,12 +9,15 @@ namespace MmoEngine.Regionizer.Simulator.Tests.Analysis;
 /// <c>events.csv</c> and <c>summary.json</c>). Every value is explicit or a contract-shaped zero; the
 /// fixture holds no memo rule.
 /// </summary>
-internal sealed class SweepFixture(string name, string scenario, string mode = "OneAtATime")
+internal sealed class SweepFixture(string name, string scenario, string mode = "OneAtATime", int population = SweepFixture.DefaultPopulation, string scheduling = "Lockstep")
 {
     /// <summary>The seeds every cell runs, by seed index (common random numbers across cells).</summary>
     public static readonly ulong[] Seeds = [11, 22];
 
     public const int Ticks = 1000;
+
+    /// <summary>The population.total every run's manifest records unless the sweep says otherwise: the constitution's cap.</summary>
+    public const int DefaultPopulation = 2000;
 
     private const string TicksHeader = "tick,timeSteps,regionCount,largestRegionPlayers,largestRegionShare,merges,splits,fusions,"
         + "sectionChurn,crossPairsDeferred,crossPairsReadOnly,bookkeepingMicros,serializedMicros,oversizedFusion,violations,stateHash";
@@ -24,6 +27,7 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
     private static readonly string[] Classes = ["Infantry", "GroundVehicle", "Aircraft", "Traveller", "CapturePoint", "HeavyProjectile"];
 
     private readonly List<(string CellId, JsonObject Parameters, Action<JsonObject>[] Seeds)> _cells = [];
+    private readonly List<(string Column, Func<string, int, string> Value)> _cellsColumns = [];
 
     public string Name { get; } = name;
 
@@ -58,6 +62,13 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
         return this;
     }
 
+    /// <summary>Adds a column to cells.csv, its text given by cell ID and seed index.</summary>
+    public SweepFixture CellsColumn(string column, Func<string, int, string> value)
+    {
+        _cellsColumns.Add((column, value));
+        return this;
+    }
+
     /// <summary>The run IDs of every cell and seed, in cell then seed order.</summary>
     public IEnumerable<string> RunIds() =>
         _cells.SelectMany(c => Enumerable.Range(0, c.Seeds.Length).Select(i => RunId(Name, c.CellId, i)));
@@ -68,7 +79,7 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
         var sweepDir = Path.Combine(results, Name);
         Directory.CreateDirectory(sweepDir);
         var cells = new JsonArray();
-        var csv = new List<string> { "cellId,seedIndex,seed,runId,bookkeepingP99Micros" };
+        var csv = new List<string> { string.Join(',', ["cellId", "seedIndex", "seed", "runId", "bookkeepingP99Micros", .. _cellsColumns.Select(c => c.Column)]) };
         foreach (var (cellId, parameters, seeds) in _cells)
         {
             // A sweep that steps the scenario itself (a grid over scenarios) runs each cell's own scenario.
@@ -80,9 +91,12 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
                 var runId = RunId(Name, cellId, i);
                 var summary = Summary(runId);
                 seeds[i](summary);
-                WriteRun(Path.Combine(sweepDir, cellId, $"seed-{i}"), runId, cellScenario, Seeds[i], summary);
-                runs.Add(new JsonObject { ["seedIndex"] = i, ["seed"] = Seeds[i], ["folder"] = folder, ["completed"] = true });
-                csv.Add($"{cellId},{i},{Seeds[i]},{runId},{summary["budget"]!["bookkeepingP99Micros"]}");
+                WriteRun(Path.Combine(sweepDir, cellId, $"seed-{i}"), runId, cellScenario, Seeds[i], summary, population, scheduling);
+
+                // The sweep lists a run as completed exactly when its summary says so (a run stopped at a fault is not).
+                runs.Add(new JsonObject { ["seedIndex"] = i, ["seed"] = Seeds[i], ["folder"] = folder, ["completed"] = summary["completed"]!.GetValue<bool>() });
+                var index = i;
+                csv.Add(string.Join(',', [cellId, $"{i}", $"{Seeds[i]}", runId, $"{summary["budget"]!["bookkeepingP99Micros"]}", .. _cellsColumns.Select(c => c.Value(cellId, index))]));
             }
 
             cells.Add(new JsonObject { ["cellId"] = cellId, ["parameters"] = parameters.DeepClone(), ["runs"] = runs });
@@ -128,7 +142,7 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
         }
     }
 
-    private static void WriteRun(string runDir, string runId, string scenario, ulong seed, JsonObject summary)
+    private static void WriteRun(string runDir, string runId, string scenario, ulong seed, JsonObject summary, int population, string scheduling)
     {
         Directory.CreateDirectory(runDir);
         var manifest = new JsonObject
@@ -140,8 +154,12 @@ internal sealed class SweepFixture(string name, string scenario, string mode = "
             ["configHash"] = "0123456789abcdef",
             ["scenario"] = scenario,
             ["seed"] = seed,
-            ["scheduling"] = "Lockstep",
-            ["parameters"] = new JsonObject(),
+            ["scheduling"] = scheduling,
+            ["parameters"] = new JsonObject
+            {
+                ["population"] = new JsonObject { ["total"] = population, ["limit"] = 10000 },
+                ["scheduling"] = new JsonObject { ["mode"] = scheduling },
+            },
             ["runtime"] = new JsonObject
             {
                 ["framework"] = ".NET 9.0.0",
