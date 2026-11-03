@@ -69,12 +69,14 @@ internal static class SweepSpecs
 
     /// <summary>
     /// A summary without the values that depend on wall-clock time (contracts/run-output.md): the
-    /// bookkeeping and serialized costs, the budget reading and the wall clock.
+    /// bookkeeping and serialized costs, the budget reading, the timer-overhead calibration and the
+    /// wall clock.
     /// </summary>
     public static string DeterministicSummary(string runFolder)
     {
         var summary = ReadJson(Path.Combine(runFolder, RunFolder.SummaryFile));
         summary.Remove("wallClock");
+        summary["scheduling"]?.AsObject().Remove("timerOverheadNanos");
         summary["metrics"]!.AsObject().Remove("bookkeepingMicros");
         summary["metrics"]!.AsObject().Remove("serializedMicros");
         summary["budget"]!.AsObject().Remove("bookkeepingP99Micros");

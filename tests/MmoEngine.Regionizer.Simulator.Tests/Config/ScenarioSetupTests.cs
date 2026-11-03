@@ -25,12 +25,14 @@ public sealed class ScenarioSetupTests
         Assert.False(ScenarioNames.IsKnown("baseline"));
     }
 
+    /// <summary>All nine scenario names are registered and nothing else is.</summary>
     [Fact]
-    public void AScenarioNotYetImplementedCannotBeBuilt()
+    public void EveryScenarioNameIsRegisteredAndUnknownNamesAreNot()
     {
-        var config = TestRuns.Load(new JsonObject { ["scenario"] = "OneBase" }).Config;
-
-        Assert.Throws<NotImplementedException>(() => ScenarioRegistry.Create("OneBase").Build(config));
+        Assert.Equal(9, ScenarioNames.All.Count);
+        Assert.All(ScenarioNames.All, name => Assert.True(ScenarioRegistry.TryCreate(name, out _), name));
+        Assert.False(ScenarioRegistry.TryCreate("NoSuchScenario", out _));
+        Assert.False(ScenarioNames.IsKnown("NoSuchScenario"));
     }
 
     /// <summary>

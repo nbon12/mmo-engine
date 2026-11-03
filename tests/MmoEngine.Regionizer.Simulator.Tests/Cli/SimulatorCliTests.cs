@@ -110,17 +110,24 @@ public sealed class SimulatorCliTests
         Assert.False(Directory.Exists(output));
     }
 
+    /// <summary>An unexpected error during a run (here, a step hook that throws) exits 1 and logs it as fatal.</summary>
     [Fact]
-    public void AScenarioThatCannotBeBuiltExitsOne()
+    public void AnUnexpectedErrorDuringARunExitsOne()
     {
-        var config = TestRuns.WriteConfig(new JsonObject { ["scenario"] = "OneBase", ["durationTicks"] = 5 });
+        var config = TestRuns.WriteConfig(new JsonObject
+        {
+            ["scenario"] = "Baseline",
+            ["durationTicks"] = 5,
+            ["population"] = new JsonObject { ["total"] = 50 },
+        });
+        var options = new RunOptions { AfterStep = _ => throw new InvalidOperationException("step hook failed on purpose") };
 
-        var (code, stdout, stderr) = Invoke(["run", config, "--out", TestRuns.TempDir()]);
+        var (code, stdout, stderr) = Invoke(["run", config, "--out", TestRuns.TempDir()], options);
 
         Assert.Equal(ExitCodes.Error, code);
         Assert.Equal(string.Empty, stdout);
         Assert.Contains("\"@l\":\"Fatal\"", stderr, StringComparison.Ordinal);
-        Assert.Contains("NotImplementedException", stderr, StringComparison.Ordinal);
+        Assert.Contains("step hook failed on purpose", stderr, StringComparison.Ordinal);
     }
 
     [Fact]

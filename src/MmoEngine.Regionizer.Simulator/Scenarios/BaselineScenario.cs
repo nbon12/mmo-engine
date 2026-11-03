@@ -358,7 +358,7 @@ public sealed class MigrationScenario : IScenario
 
         LaneMapWorld.RequireNoMapFile(config, errors);
         LaneMapWorld.Validate(config, parameters, errors);
-        ValidateMigration(parameters, errors);
+        ValidateMigration(parameters, TimeBase.From(config.Scheduling), errors);
         return errors;
     }
 
@@ -370,9 +370,9 @@ public sealed class MigrationScenario : IScenario
     }
 
     /// <summary>The migration timing checks, shared with Soak.</summary>
-    internal static void ValidateMigration(MigrationParameters parameters, List<ConfigError> errors)
+    internal static void ValidateMigration(MigrationParameters parameters, TimeBase time, List<ConfigError> errors)
     {
-        if (!RunConfigValidator.IsFinite(parameters.MigrationEverySeconds) || TimeBase.SecondsToSteps(parameters.MigrationEverySeconds) < 1)
+        if (!RunConfigValidator.IsFinite(parameters.MigrationEverySeconds) || time.ToSteps(parameters.MigrationEverySeconds) < 1)
         {
             errors.Add(new ConfigError($"{ScenarioParameters.Path}.migrationEverySeconds", "must be a finite number of seconds, at least one base step"));
         }
@@ -388,7 +388,7 @@ public sealed class MigrationScenario : IScenario
         new(
             [.. fights],
             layout,
-            TimeBase.SecondsToSteps(parameters.MigrationEverySeconds),
+            TimeBase.From(config.Scheduling).ToSteps(parameters.MigrationEverySeconds),
             parameters.InstantActionShare,
             DeterministicRandom.ForStream(config.Seed, "migration"));
 }

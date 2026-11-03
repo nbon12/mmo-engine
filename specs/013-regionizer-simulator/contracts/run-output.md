@@ -104,5 +104,8 @@ Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in th
 ```
 
 Percentiles use the nearest-rank method over every recorded tick (or every sample, for sampled
-metrics). Every value except `bookkeeping*`, `serialized*`, `budget.bookkeepingP99Micros`,
-`budget.withinBudget` and `wallClock` is deterministic for a given manifest.
+metrics). Every value is deterministic for a given manifest except these wall-clock measurements:
+- `bookkeeping*` and `serialized*`;
+- `budget.bookkeepingP99Micros` and `budget.withinBudget`;
+- `scheduling.timerOverheadNanos`;
+- `wallClock`.

@@ -122,7 +122,7 @@ public sealed class SoakScenario : IScenario
 
         StackedBase.ValidateFights(p, errors);
         LaneMapWorld.Validate(config, p, errors, extraEntities: 2L * p.ObjectivesPerBase);
-        MigrationScenario.ValidateMigration(p, errors);
+        MigrationScenario.ValidateMigration(p, TimeBase.From(config.Scheduling), errors);
         if (errors.Count == 0)
         {
             StackedBase.Load(config, p.UndergroundLayer, errors);
@@ -162,13 +162,14 @@ internal sealed class StackedBase
 {
     private const string P = ScenarioParameters.Path;
 
-    private StackedBase(MapDocument map, int offsetX, int offsetY, MapLayer underground, long[] scheduleSteps)
+    private StackedBase(MapDocument map, int offsetX, int offsetY, MapLayer underground, long[] scheduleSteps, TimeBase time)
     {
         Map = map;
         OffsetX = offsetX;
         OffsetY = offsetY;
         Underground = underground;
         ScheduleSteps = scheduleSteps;
+        Time = time;
         AirLayerId = map.Layers.Max(l => l.Id) + 1;
     }
 
@@ -186,6 +187,9 @@ internal sealed class StackedBase
 
     /// <summary>Each <c>portalSchedule</c> entry's cycle length in base steps.</summary>
     private long[] ScheduleSteps { get; }
+
+    /// <summary>The run's time base, which turns the schedule's seconds into base steps.</summary>
+    private TimeBase Time { get; }
 
     /// <summary>Fight sizes must not be negative.</summary>
     public static void ValidateFights(IStackedBaseParameters p, List<ConfigError> errors)
@@ -280,7 +284,7 @@ internal sealed class StackedBase
         var steps = new long[map.PortalSchedule.Count];
         for (var i = 0; i < steps.Length; i++)
         {
-            steps[i] = TimeBase.SecondsToSteps(map.PortalSchedule[i].EverySeconds);
+            steps[i] = TimeBase.From(config.Scheduling).ToSteps(map.PortalSchedule[i].EverySeconds);
             if (steps[i] < 1)
             {
                 errors.Add(new ConfigError("map.file", $"portalSchedule[{i}].everySeconds ({map.PortalSchedule[i].EverySeconds}) of '{path}' is shorter than one base step"));
@@ -292,7 +296,7 @@ internal sealed class StackedBase
             return null;
         }
 
-        return new StackedBase(map, (int)(((w - spanX) / 2) - minX), (int)(((h - spanY) / 2) - minY), underground, steps);
+        return new StackedBase(map, (int)(((w - spanX) / 2) - minX), (int)(((h - spanY) / 2) - minY), underground, steps, TimeBase.From(config.Scheduling));
     }
 
     /// <summary>The stacked base of a configuration that already passed validation.</summary>
@@ -391,7 +395,7 @@ internal sealed class StackedBase
         {
             var entry = Map.PortalSchedule[i];
             var initiallyOpen = Map.Portals.First(p => p.Id == entry.PortalId).Open;
-            events[i] = new MapPortalCycle(entry.PortalId, ScheduleSteps[i], TimeBase.SecondsToSteps(entry.OpenSeconds), initiallyOpen);
+            events[i] = new MapPortalCycle(entry.PortalId, ScheduleSteps[i], Time.ToSteps(entry.OpenSeconds), initiallyOpen);
         }
 
         return events;

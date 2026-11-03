@@ -111,7 +111,8 @@ internal sealed class WorldBuilder
     {
         var state = new WorldState(_entities);
         var airLayer = AirLayerId >= 0 ? AirLayerPolicy.From(Config.AirLayer, AirLayerId) : AirLayerPolicy.None;
-        var context = new MovementContext(state, Layout, Fights, Config.Movement, Config.Regionizer.ClaimRadius.CapturePointZone, airLayer);
+        var time = TimeBase.From(Config.Scheduling);
+        var context = new MovementContext(state, Layout, Fights, Config.Movement, Config.Regionizer.ClaimRadius.CapturePointZone, time, airLayer);
         var specs = new List<EntitySpec>(_entities.Count);
         for (var id = 0; id < _pending.Count; id++)
         {
@@ -130,7 +131,7 @@ internal sealed class WorldBuilder
             Topology = Topology,
             Entities = specs,
             State = state,
-            Movement = new SyntheticMovement([.. _models]),
+            Movement = new SyntheticMovement([.. _models], time),
             StepEvents = stepEvents,
             Layout = Layout,
             Fights = Fights,

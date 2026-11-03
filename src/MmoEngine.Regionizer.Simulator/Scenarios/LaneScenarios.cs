@@ -1,6 +1,7 @@
 using MmoEngine.Regionizer.Simulator.Config;
 using MmoEngine.Regionizer.Simulator.Movement;
 using MmoEngine.Regionizer.Simulator.Random;
+using MmoEngine.Regionizer.Simulator.Scheduling;
 
 namespace MmoEngine.Regionizer.Simulator.Scenarios;
 
@@ -357,7 +358,7 @@ public sealed class VehicleColumnsScenario : IScenario
             var from = fights[c % fights.Count].Base;
             var to = fights[(c + 1) % fights.Count].Base;
             var length = Math.Sqrt(Planar.DistanceSquared(from.X, from.Y, to.X, to.Y));
-            var route = new ColumnRoute(from.X, from.Y, to.X, to.Y, random.NextDouble() * 2 * length, p.ColumnSpeedMetresPerSecond);
+            var route = new ColumnRoute(from.X, from.Y, to.X, to.Y, random.NextDouble() * 2 * length, p.ColumnSpeedMetresPerSecond, TimeBase.From(builder.Config.Scheduling));
             var count = (vehicles / p.Columns) + (c < vehicles % p.Columns ? 1 : 0);
             for (var k = 0; k < count; k++)
             {

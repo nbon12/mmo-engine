@@ -63,63 +63,18 @@ public sealed class ConfigValidationTests
         Assert.False(Directory.Exists(output));
     }
 
-    [Fact]
-    public void EachPortalValidatorFindingIsAnErrorOnTheMapFile()
-    {
-        // seeded-leaks.expected.json lists the map's five seeded leaks.
-        var runConfig = new JsonObject { ["scenario"] = "Baseline" }.With("map.file", "simulator/maps/test/seeded-leaks.json");
-
-        var errors = RunConfigLoader.Load(runConfig).Errors;
-
-        Assert.Equal(5, errors.Count);
-        Assert.All(errors, e => Assert.Equal(MapFileCheck.ConfigPath, e.Path));
-        Assert.All(errors, e => Assert.Contains("fails the portal validator: Leak ", e.Message, StringComparison.Ordinal));
-        Assert.Contains(errors, e => e.Message.Contains("adjacency:walkway-east", StringComparison.Ordinal));
-        Assert.Contains(errors, e => e.Message.Contains("openings:murder-hole", StringComparison.Ordinal));
-    }
-
-    [Theory]
-    [InlineData("missing", "was not found")]
-    [InlineData("not-json", "is not a valid map")]
-    public void AMapFileThatCannotBeLoadedIsAnErrorOnTheMapFile(string variant, string message)
-    {
-        var dir = TestRuns.TempDir();
-        Directory.CreateDirectory(dir);
-        var file = Path.Combine(dir, "map.json");
-        if (variant == "not-json")
-        {
-            File.WriteAllText(file, "{ nope");
-        }
-
-        var error = Assert.Single(RunConfigLoader.Load(new JsonObject { ["scenario"] = "Baseline" }.With("map.file", file)).Errors);
-
-        Assert.Equal("map.file", error.Path);
-        Assert.Contains(message, error.Message, StringComparison.Ordinal);
-    }
-
+    /// <summary>
+    /// A scenario that reads a map file accepts one that loads and passes the portal validator. Refusing a
+    /// map with findings, or one that can't be read, is the scenario's job (Scenarios/ScenarioTests.cs and
+    /// ScenarioParameterTests.cs cover it), so the check runs once, where the map is used.
+    /// </summary>
     [Fact]
     public void AMapFileThatPassesTheValidatorIsAccepted()
     {
-        var result = RunConfigLoader.Load(new JsonObject { ["scenario"] = "Baseline" }.With("map.file", "simulator/maps/test/clean.json"));
+        var result = RunConfigLoader.Load(new JsonObject { ["scenario"] = "StackedAreas" }.With("map.file", "simulator/maps/stacked-base.json"));
 
         Assert.True(result.Succeeded, string.Join("; ", result.Errors));
-        Assert.Equal("simulator/maps/test/clean.json", result.Loaded!.Config.Map.File);
-    }
-
-    [Fact]
-    public void MapFilesResolveAbsoluteOrUpwardFromTheWorkingOrToolDirectory()
-    {
-        var root = TestRuns.RepositoryRoot();
-        var elsewhere = TestRuns.TempDir();
-        Directory.CreateDirectory(elsewhere);
-        var relative = Path.Combine("simulator", "maps", "test", "clean.json");
-        var absolute = Path.Combine(root, relative);
-
-        Assert.Equal(absolute, MapFileCheck.Resolve(absolute, elsewhere, elsewhere));
-        Assert.Equal(absolute, MapFileCheck.Resolve(relative, Path.Combine(root, "src", "MmoEngine.Maps"), elsewhere));
-        Assert.Equal(absolute, MapFileCheck.Resolve(relative, elsewhere, Path.Combine(root, "tests")));
-        Assert.Null(MapFileCheck.Resolve(relative, elsewhere, elsewhere));
-        Assert.Null(MapFileCheck.Resolve(Path.Combine(elsewhere, "none.json"), root, root));
+        Assert.Equal("simulator/maps/stacked-base.json", result.Loaded!.Config.Map.File);
     }
 
     /// <summary>The tick rates (FR-018, research D7): valid combinations load, with 60, 30 and 20 Hz when the config leaves them out.</summary>

@@ -12,8 +12,12 @@ internal sealed class MovementContext(
     FightTable fights,
     MovementConfig movement,
     double captureZoneRadius,
+    TimeBase time,
     AirLayerPolicy? airLayer = null)
 {
+    /// <summary>The run's time base (FR-018): every seconds-to-steps conversion goes through it.</summary>
+    public TimeBase Time { get; } = time;
+
     public WorldState State { get; } = state;
 
     public MapLayout Layout { get; } = layout;
@@ -44,7 +48,7 @@ internal sealed class MovementContext(
 
     /// <summary>When the next waypoint is picked: U[min, max] seconds after <paramref name="now"/>.</summary>
     public long NextRepick(DeterministicRandom random, long now) =>
-        now + Math.Max(1, TimeBase.SecondsToSteps(random.NextDouble(Models.WaypointIntervalSecondsMin, Models.WaypointIntervalSecondsMax)));
+        now + Math.Max(1, Time.ToSteps(random.NextDouble(Models.WaypointIntervalSecondsMin, Models.WaypointIntervalSecondsMax)));
 
     /// <summary>Clamps a point into a fight's area: its own bounds (a bunker layer) or else the map.</summary>
     public (double X, double Y) Clamp(Fight fight, double x, double y) =>
@@ -77,16 +81,18 @@ public sealed class SyntheticMovement : IMovementSource
 {
     private readonly MotionModel[] _models;
     private readonly long[] _lastUpdate;
+    private readonly TimeBase _time;
 
-    internal SyntheticMovement(MotionModel[] models)
+    internal SyntheticMovement(MotionModel[] models, TimeBase time)
     {
         _models = models;
         _lastUpdate = new long[models.Length];
+        _time = time;
     }
 
     public MovementUpdate Next(int entityId, long now)
     {
-        var dt = TimeBase.StepsToSeconds(now - _lastUpdate[entityId]);
+        var dt = _time.ToSeconds(now - _lastUpdate[entityId]);
         _lastUpdate[entityId] = now;
         return _models[entityId].Step(entityId, now, dt);
     }
@@ -423,8 +429,11 @@ internal sealed class CapturePointModel(DeterministicRandom random, MovementCont
 /// </summary>
 internal sealed class ColumnRoute
 {
-    public ColumnRoute(double ax, double ay, double bx, double by, double startArcMetres, double speedMetresPerSecond)
+    private readonly TimeBase _time;
+
+    public ColumnRoute(double ax, double ay, double bx, double by, double startArcMetres, double speedMetresPerSecond, TimeBase time)
     {
+        _time = time;
         AX = ax;
         AY = ay;
         BX = bx;
@@ -459,7 +468,7 @@ internal sealed class ColumnRoute
         }
 
         var loop = 2 * Length;
-        var arc = (StartArcMetres + (Speed * TimeBase.StepsToSeconds(step)) - behindMetres) % loop;
+        var arc = (StartArcMetres + (Speed * _time.ToSeconds(step)) - behindMetres) % loop;
         if (arc < 0)
         {
             arc += loop;

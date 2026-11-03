@@ -136,14 +136,18 @@ public sealed class ScenarioWorldTests
     [Fact]
     public void ColumnRouteRunsBackAndForthAlongItsLine()
     {
-        var route = new ColumnRoute(0, 0, 100, 0, startArcMetres: 0, speedMetresPerSecond: 10);
+        var route = new ColumnRoute(0, 0, 100, 0, startArcMetres: 0, speedMetresPerSecond: 10, TimeBase.Default);
 
         Assert.Equal((0.0, 0.0), route.At(0, 0));
         Assert.Equal((10.0, 0.0), route.At(TimeBase.StepsPerSecond, 0));
         Assert.Equal((50.0, 0.0), route.At(15 * TimeBase.StepsPerSecond, 0));
         Assert.Equal((20.0, 0.0), route.At(0, 20));
         Assert.Equal((0.0, 0.0), route.At(20 * TimeBase.StepsPerSecond, 0));
-        Assert.Equal((5.0, 5.0), new ColumnRoute(5, 5, 5, 5, 0, 10).At(600, 0));
+        Assert.Equal((5.0, 5.0), new ColumnRoute(5, 5, 5, 5, 0, 10, TimeBase.Default).At(600, 0));
+
+        // At a 120 Hz base step rate the same route covers the same ground per second of game time.
+        var fast = new ColumnRoute(0, 0, 100, 0, startArcMetres: 0, speedMetresPerSecond: 10, new TimeBase(120, 30, 20));
+        Assert.Equal((10.0, 0.0), fast.At(120, 0));
     }
 
     [Fact]

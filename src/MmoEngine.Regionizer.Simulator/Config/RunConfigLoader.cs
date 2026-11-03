@@ -111,18 +111,14 @@ public static class RunConfigLoader
     }
 
     /// <summary>
-    /// Every error in a typed configuration: the common rules, then the map file (it must load and
-    /// pass the portal validator), then the scenario's own.
+    /// Every error in a typed configuration: the common rules, then the scenario's own. A scenario that
+    /// reads a map file loads it, runs the portal validator and refuses it on any finding; the others
+    /// refuse a map file outright (Scenarios/StackedScenarios.cs).
     /// </summary>
     public static IReadOnlyList<ConfigError> Validate(RunConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
         var errors = new List<ConfigError>(RunConfigValidator.Errors(config));
-        if (errors.Count == 0 && config.Map.File is { } mapFile)
-        {
-            errors.AddRange(MapFileCheck.Validate(mapFile));
-        }
-
         if (errors.Count == 0 && ScenarioRegistry.TryCreate(config.Scenario, out var scenario))
         {
             errors.AddRange(scenario.Validate(config));
