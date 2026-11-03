@@ -427,7 +427,7 @@ allocate nothing.
 - [x] T071 Run the 24-hour simulated Soak in interleaved mode, and record its manifest and summary in
   `docs/simulator/results/soak-24h/` (SC-002). As run: 1,000 players, zero violations and zero timer
   faults.
-- [ ] T072 [P] Run the benchmarks, and attach the results to the PR and to
+- [x] T072 [P] Run the benchmarks, and attach the results to the PR and to
   `docs/simulator/results/benchmarks.md` (SC-004)
 - [x] T073 [P] Add an automated quickstart check, `tests/MmoEngine.Regionizer.Simulator.Tests/Cli/QuickstartTests.cs`,
   that runs quickstart.md's commands at small sizes
