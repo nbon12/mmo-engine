@@ -49,3 +49,9 @@ dotnet run --project src/MmoEngine.Regionizer.Simulator.Cli -- run harness/golde
 dotnet run --project src/MmoEngine.Harness.Cli -- golden check --golden harness/golden/<name> --run out/replay
 echo $?   # 0 match, 7 diverged, 8 not comparable
 ```
+
+## The replay viewer
+
+```bash
+dotnet run --project src/MmoEngine.Regionizer.Simulator.Cli -- view out/baseline --tick 120 --out out/tick-120.svg [--layer 0]
+```
