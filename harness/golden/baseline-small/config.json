@@ -1,0 +1,1 @@
+{ "scenario": "Baseline", "seed": 20261104, "durationTicks": 600, "population": { "total": 600, "limit": 10000 }, "scheduling": { "mode": "Interleaved" } }

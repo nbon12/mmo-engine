@@ -182,9 +182,14 @@ internal static class NetworkCommands
                 }
 
                 var calibration = Calibration.Evaluate(profile, records);
-                if (calibration.Passed && parse.GetValue(write))
+                var file = Path.Combine(parse.GetValue(profiles)!.FullName, $"{profile.Name.ToLowerInvariant()}.json");
+                if (calibration.Passed && parse.GetValue(write) && !File.Exists(file))
                 {
-                    var file = Path.Combine(parse.GetValue(profiles)!.FullName, $"{profile.Name.ToLowerInvariant()}.json");
+                    // A reordering variant has no file of its own: it is derived from its base profile.
+                    context.Logger.Warning("Profile {Profile} has no file of its own ({File}); its calibrated settings are not stored", profile.Name, file);
+                }
+                else if (calibration.Passed && parse.GetValue(write))
+                {
                     var calibrated = profile with
                     {
                         Calibrated = new CalibratedSettings

@@ -1,0 +1,23 @@
+# The optional observability profile (spec 014, FR-030): the core plus Prometheus and Grafana.
+# Grafana is AGPLv3 and runs unmodified as a separate process, in local development and CI only
+# (constitution, Principle VII).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: harness
+resources:
+  - ../base
+  - prometheus.yaml
+  - grafana.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml=prometheus.yml
+  - name: grafana-datasources
+    files:
+      - datasources.yaml=grafana-datasources.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - providers.yaml=grafana-dashboard-providers.yaml
+  - name: grafana-dashboards
+    files:
+      - harness-runs.json=dashboards/harness-runs.json

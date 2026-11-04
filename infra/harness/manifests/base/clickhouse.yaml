@@ -1,0 +1,66 @@
+# The store (spec 014, FR-001). One replica with emptyDir: the cluster is a test environment, and
+# runs worth keeping are in the retained tables of a store you point the tools at, or in CI artifacts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clickhouse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clickhouse
+        app.kubernetes.io/part-of: harness
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.8
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef: { name: clickhouse-credentials, key: username }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clickhouse-credentials, key: password }
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            periodSeconds: 3
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 2Gi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    app.kubernetes.io/part-of: harness
+spec:
+  selector:
+    app.kubernetes.io/name: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000

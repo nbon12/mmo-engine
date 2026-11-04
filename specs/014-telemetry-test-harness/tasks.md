@@ -20,7 +20,7 @@ automated checks are green.
 | --- | --- | --- |
 | 1 | Setup, US1, US2, US3 | Done (first PR) |
 | 2 | US4, US5 | Done (second PR) |
-| 3 | US6, including the CI workflow and the golden-run job | Not started |
+| 3 | US6, including the CI workflow, the golden-run job and the netem job | Done (third PR) |
 | 4 | US7 | Not started |
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -168,14 +168,37 @@ with a changed parameter.
 
 ## Phase 7: User Story 6 - The harness comes up with one command (P3), slice 3
 
-- [ ] T060 [US6] `infra/harness/up.sh`, `kind-config.yaml`, and the kustomize base and observability overlay
-  (research R9).
-- [ ] T061 [US6] `.github/workflows/harness.yml`:
-  - the stack job runs scenarios 1 to 5 by running `up.sh` twice, checking the tables, loading a run and running
-    the rules;
-  - the golden-run job runs T034.
+**Independent Test**: the `stack` job in `.github/workflows/harness.yml` runs on a fresh GitHub runner. It runs
+`infra/harness/up.sh` twice, then `infra/harness/smoke.sh`, then adds the observability profile.
 
-  It touches guarded paths, so it gets the independent review.
+- [x] T060 [US6] The one command and its manifests:
+  - `infra/harness/up.sh`, `down.sh`, `kind-config.yaml`;
+  - `manifests/base`: ClickHouse and the OpenTelemetry Collector, with the credentials secret created at run time;
+  - `manifests/observability`: Prometheus and Grafana, with a dashboard;
+  - Chaos Mesh 2.8.4 from its Helm chart (research R9).
+- [x] T061 [US6] The collector's tables in the repo's DDL (`014`-`017_otel_*.sql`, as exporter v0.161.0 creates them, with
+  a 14-day TTL), with `create_schema: false`. Checked locally against the real collector: an OTLP log and span landed
+  in them, and the metric was exposed for Prometheus. `LoaderTests` covers the tables and TTLs.
+- [x] T062 [US6] `.github/workflows/harness.yml`, with these checks:
+  - Scenario 1: the `stack` job's "Bring up the harness" step.
+  - Scenario 2: "Run the one command again", which must exit 0.
+  - Scenario 3: `smoke.sh` without `--observability` asserts Prometheus and Grafana are absent; with it, it waits for
+    them to be ready.
+  - Scenario 4: `smoke.sh` step 1 checks every table.
+  - Scenario 5: `smoke.sh` step 2 sends OTLP and finds the log and span in ClickHouse and the metric on the collector's
+    Prometheus endpoint.
+  - Its configuration is pinned by `tests/workflows/test_harness_workflow.py`.
+- [x] T063 [US3] The `golden` job (`infra/harness/golden.sh`) replays `harness/golden/*`.
+  - A divergence fails the job.
+  - A missing or other-class recording uploads a candidate recorded on the runner. CI never writes into
+    `harness/golden/` (FR-020).
+  - The golden configs are committed: `baseline-small` and `stacked-doors`.
+- [ ] T034 [US3] Commit the golden recordings from the `golden-candidates` artifact of a `main` run. This is the follow-up
+  after this slice merges.
+- [x] T064 [US4] The `netem` job (`infra/harness/calibrate.sh`) applies a profile with `tc netem` on loopback and probes it.
+  Each PR calibrates LAN for 30 s. A `workflow_dispatch` with `calibrate: true` runs every profile for 5 minutes and
+  uploads the calibrated profile files (T045).
+- [ ] T045 [US4] Commit the calibrated settings from a full `calibrate: true` run.
 
 ## Phase 8: User Story 7 - The replay viewer (P4), slice 4
 

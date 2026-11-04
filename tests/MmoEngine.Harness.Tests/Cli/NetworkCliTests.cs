@@ -216,5 +216,11 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         Assert.Equal(runId, written.Calibrated.SourceRunId);
         Assert.Equal(RunnerClass.Current().Id, written.Calibrated.RunnerClass);
         Assert.False(string.IsNullOrEmpty(written.Calibrated.Kernel));
+
+        // A reordering variant is derived from its base profile, so it has no file to store settings in.
+        var variant = Run("calibrate", "--run-id", runId, "--profile", "Loop-reorder", "--profiles", profiles, "--write-calibrated");
+        Assert.Equal(0, variant.ExitCode);
+        Assert.Contains("no file of its own", variant.Stderr, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(profiles, "loop-reorder.json")));
     }
 }

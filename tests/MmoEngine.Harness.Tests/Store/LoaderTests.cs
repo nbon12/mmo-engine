@@ -185,6 +185,7 @@ public sealed class LoaderTests(ClickHouseFixture clickHouse)
     [
         "runs", "sim_ticks", "sim_events", "net_samples", "bot_frames", "rule_results", "baselines", "run_aggregates", "sweep_cells",
         "sim_ticks_retained", "sim_events_retained", "net_samples_retained", "bot_frames_retained",
+        "otel_logs", "otel_traces", "otel_traces_trace_id_ts", "otel_traces_trace_id_ts_mv",
     ];
 
     /// <summary>FR-002: raw tables expire after 14 days; retained tables and aggregates don't.</summary>
@@ -197,13 +198,15 @@ public sealed class LoaderTests(ClickHouseFixture clickHouse)
     [InlineData("bot_frames_retained", false)]
     [InlineData("run_aggregates", false)]
     [InlineData("rule_results", false)]
+    [InlineData("otel_logs", true)]
+    [InlineData("otel_traces", true)]
     public async Task RawTablesExpireAfterFourteenDaysAndRetainedTablesDoNot(string table, bool expires)
     {
         using var store = clickHouse.CreateStore();
         var ddl = (string)(await store.ScalarAsync(
             "SELECT create_table_query FROM system.tables WHERE database = currentDatabase() AND name = {run_id:String}", table, Ct))!;
 
-        Assert.Equal(expires, ddl.Contains("TTL loaded_at + toIntervalDay(14)", StringComparison.Ordinal));
+        Assert.Equal(expires, ddl.Contains("TTL loaded_at + toIntervalDay(14)", StringComparison.Ordinal) || ddl.Contains("TTL toDateTime(Timestamp) + toIntervalDay(14)", StringComparison.Ordinal));
     }
 
     /// <summary>FR-008: inserts are batched at 5,000 rows.</summary>

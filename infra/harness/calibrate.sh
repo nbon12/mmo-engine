@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Calibrates network profiles with tc netem on this machine's loopback (spec 014, US4, FR-022 to FR-026).
+# On loopback both directions leave through `lo`, so one netem qdisc applies each direction's settings.
+# Needs root for tc (sudo), Docker for a scratch ClickHouse unless MMO_CLICKHOUSE is set, and the .NET SDK.
+#
+#   infra/harness/calibrate.sh [--seconds 300] [--write-calibrated] [profile ...]   (default: every profile)
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SECONDS_PER_PROFILE=300
+WRITE=""
+PROFILES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --seconds) SECONDS_PER_PROFILE="$2"; shift 2 ;;
+    --write-calibrated) WRITE="--write-calibrated"; shift ;;
+    *) PROFILES+=("$1"); shift ;;
+  esac
+done
+harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release --no-build -- "$@"; }
+dotnet build "$ROOT/src/MmoEngine.Harness.Cli" -c Release >/dev/null
+if [ ${#PROFILES[@]} -eq 0 ]; then
+  mapfile -t PROFILES < <(harness profile list | python3 -c 'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)))')
+fi
+if [ -z "${MMO_CLICKHOUSE:-}" ]; then
+  docker rm -f harness-calibration-clickhouse >/dev/null 2>&1 || true
+  docker run -d --name harness-calibration-clickhouse -p 18125:8123 \
+    -e CLICKHOUSE_USER=harness -e CLICKHOUSE_PASSWORD=calibration clickhouse/clickhouse-server:25.8 >/dev/null
+  for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:18125/ping >/dev/null 2>&1 && break; sleep 1; done
+  export MMO_CLICKHOUSE="Host=127.0.0.1;Port=18125;Username=harness;Password=calibration"
+fi
+harness schema apply >/dev/null
+harness probe serve --bind 127.0.0.1:7400 >/dev/null &
+SERVER=$!
+cleanup() { sudo tc qdisc del dev lo root 2>/dev/null || true; kill "$SERVER" 2>/dev/null || true; }
+trap cleanup EXIT
+sleep 2
+status=0
+for profile in "${PROFILES[@]}"; do
+  sudo tc qdisc del dev lo root 2>/dev/null || true
+  harness profile netem --profile "$profile" --device lo --seed 20261104 | sudo bash
+  run_id="calibration-$(tr '[:upper:]' '[:lower:]' <<<"$profile")-$(date -u +%Y%m%dT%H%M%SZ)"
+  set +e
+  harness probe run --target 127.0.0.1:7400 --profile "$profile" --seconds "$SECONDS_PER_PROFILE" --run-id "$run_id"
+  code=$?
+  set -e
+  sudo tc qdisc del dev lo root 2>/dev/null || true
+  if [ "$code" -eq 0 ] && [ -n "$WRITE" ]; then
+    harness calibrate --run-id "$run_id" --profile "$profile" $WRITE >/dev/null || true
+  fi
+  if [ "$code" -ne 0 ]; then echo "::error::profile $profile outside tolerance (exit $code)"; status=9; fi
+done
+exit "$status"
