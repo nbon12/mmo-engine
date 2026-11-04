@@ -16,14 +16,27 @@ while [ $# -gt 0 ]; do
     *) PROFILES+=("$1"); shift ;;
   esac
 done
-harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release --no-build -- "$@"; }
 PROFILES_DIR="$ROOT/harness/profiles"
-dotnet build "$ROOT/src/MmoEngine.Harness.Cli" -c Release >/dev/null
+BUILD_OUT="$(mktemp -d)"
+dotnet build "$ROOT/src/MmoEngine.Harness.Cli" -c Release -o "$BUILD_OUT" >/dev/null
+# Run the built DLL directly (not `dotnet run`), so a background server's $! is the server process itself.
+harness() { dotnet "$BUILD_OUT/harness.dll" "$@"; }
+CONTAINER=""
+SERVER=""
+SERVER_OUT=""
+cleanup() {
+  sudo tc qdisc del dev lo root 2>/dev/null || true
+  if [ -n "$SERVER" ]; then kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true; fi
+  if [ -n "$CONTAINER" ]; then docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; fi
+  rm -rf "$BUILD_OUT" "$SERVER_OUT"
+}
+trap cleanup EXIT
 if [ ${#PROFILES[@]} -eq 0 ]; then
   mapfile -t PROFILES < <(harness profile list --profiles "$PROFILES_DIR" | python3 -c 'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)))')
 fi
 if [ -z "${MMO_CLICKHOUSE:-}" ]; then
-  docker rm -f harness-calibration-clickhouse >/dev/null 2>&1 || true
+  CONTAINER=harness-calibration-clickhouse
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker run -d --name harness-calibration-clickhouse -p 18125:8123 \
     -e CLICKHOUSE_USER=harness -e CLICKHOUSE_PASSWORD=calibration clickhouse/clickhouse-server:25.8 >/dev/null
   for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:18125/ping >/dev/null 2>&1 && break; sleep 1; done
@@ -31,10 +44,8 @@ if [ -z "${MMO_CLICKHOUSE:-}" ]; then
 fi
 harness schema apply >/dev/null
 SERVER_OUT="$(mktemp)"
-harness probe serve --bind 127.0.0.1:7400 >"$SERVER_OUT" &
+dotnet "$BUILD_OUT/harness.dll" probe serve --bind 127.0.0.1:7400 >"$SERVER_OUT" &
 SERVER=$!
-cleanup() { sudo tc qdisc del dev lo root 2>/dev/null || true; kill "$SERVER" 2>/dev/null || true; }
-trap cleanup EXIT
 # Probe only once the server says it is listening, so no early probe is counted as lost.
 for _ in $(seq 1 120); do
   grep -q '"listening"' "$SERVER_OUT" && break

@@ -13,6 +13,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
+# The transient references are discarded when the script ends (FR-020).
+trap 'rm -rf "$WORK"' EXIT
 sim() { dotnet run --project "$ROOT/src/MmoEngine.Regionizer.Simulator.Cli" -c Release -- "$@"; }
 harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
 status=0

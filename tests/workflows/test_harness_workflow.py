@@ -154,6 +154,14 @@ class Scripts(unittest.TestCase):
         self.assertIn('METRICS="$(curl', script)
         self.assertIn("api/v1/query?query=harness_smoke_total", script)
 
+    def test_scripts_clean_up_what_they_start(self):
+        calibrate = (INFRA / "calibrate.sh").read_text()
+        self.assertIn('dotnet "$BUILD_OUT/harness.dll" probe serve', calibrate)
+        self.assertNotIn("dotnet run --project", calibrate)
+        self.assertIn('docker rm -f "$CONTAINER"', calibrate)
+        self.assertIn("trap cleanup EXIT", calibrate)
+        self.assertIn("""trap 'rm -rf "$WORK"' EXIT""", (INFRA / "golden.sh").read_text())
+
     def test_up_refuses_a_port_it_does_not_own_and_calibrate_waits_for_the_server(self):
         self.assertIn("/dev/tcp/127.0.0.1/", (INFRA / "up.sh").read_text())
         self.assertIn("listening", (INFRA / "calibrate.sh").read_text())
