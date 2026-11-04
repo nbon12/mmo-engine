@@ -43,7 +43,7 @@ public sealed class ImpairmentTests
     public void LanHasNoJitterOrLossArgumentsAndCalibratedSettingsWin()
     {
         var lan = new NetworkProfile { Name = "LAN", Version = 1, RoundTripMs = 1, JitterMs = 0, LossPercent = 0 };
-        Assert.Equal("netem delay 0.5ms seed 3", NetemScript.NetemArguments(lan, 3));
+        Assert.Equal("netem delay 0.5ms", NetemScript.NetemArguments(lan, 3));
 
         var calibrated = Typical with
         {

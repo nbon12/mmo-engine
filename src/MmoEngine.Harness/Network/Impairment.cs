@@ -64,10 +64,10 @@ public static class NetemScript
 
         if (d.LossPercent > 0)
         {
-            text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}%");
+            // The seed only drives netem's random loss, so it is set only when there is loss to repeat.
+            text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}% seed {seed}");
         }
 
-        text.Append(CultureInfo.InvariantCulture, $" seed {seed}");
         return text.ToString();
     }
 

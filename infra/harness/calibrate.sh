@@ -34,10 +34,17 @@ SERVER=$!
 cleanup() { sudo tc qdisc del dev lo root 2>/dev/null || true; kill "$SERVER" 2>/dev/null || true; }
 trap cleanup EXIT
 sleep 2
+# Older iproute2 builds don't know netem's `seed`; without it the loss pattern isn't repeatable, which only
+# matters for impaired runs that are replayed, not for calibration (spec 014, research R7).
+SEED_FILTER=cat
+if ! tc qdisc add dev lo root netem help 2>&1 | grep -q seed; then
+  echo "::warning::this tc has no netem seed option; calibrating with unseeded loss"
+  SEED_FILTER="sed -e s/[[:space:]]seed[[:space:]][0-9]*//"
+fi
 status=0
 for profile in "${PROFILES[@]}"; do
   sudo tc qdisc del dev lo root 2>/dev/null || true
-  harness profile netem --profile "$profile" --device lo --seed 20261104 | sudo bash
+  harness profile netem --profile "$profile" --device lo --seed 20261104 | $SEED_FILTER | sudo bash
   run_id="calibration-$(tr '[:upper:]' '[:lower:]' <<<"$profile")-$(date -u +%Y%m%dT%H%M%SZ)"
   set +e
   harness probe run --target 127.0.0.1:7400 --profile "$profile" --seconds "$SECONDS_PER_PROFILE" --run-id "$run_id"
