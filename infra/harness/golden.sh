@@ -32,4 +32,16 @@ for dir in "$ROOT"/harness/golden/*/; do
     harness golden record --run "$WORK/$name" --config "$dir/config.json" --out "$CANDIDATES/$name" --name "$name" >/dev/null
   fi
 done
+# Also print each candidate into the log, so it can be committed from the log when the artifact store can't
+# be reached (one line: a gzip tarball in base64, between markers).
+if [ -d "$CANDIDATES" ]; then
+  for candidate in "$CANDIDATES"/*/; do
+    [ -d "$candidate" ] || continue
+    name="$(basename "$candidate")"
+    echo "golden-candidate-begin $name"
+    tar -czf - -C "$CANDIDATES" "$name" | base64 -w0
+    echo
+    echo "golden-candidate-end $name"
+  done
+fi
 exit "$status"
