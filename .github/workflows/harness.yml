@@ -70,8 +70,12 @@ jobs:
       - name: Bring up the harness (the one command)
         run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
 
-      - name: Run the one command again (idempotent)
-        run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+      - name: Run the one command again (idempotent, nothing recreated)
+        run: |
+          infra/harness/identity.sh > "$RUNNER_TEMP/identity-before"
+          infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+          infra/harness/identity.sh > "$RUNNER_TEMP/identity-after"
+          diff -u "$RUNNER_TEMP/identity-before" "$RUNNER_TEMP/identity-after"
 
       - name: Smoke check (core profile)
         run: |
@@ -149,15 +153,13 @@ jobs:
 
       - name: Calibrate every profile (5 minutes each)
         if: ${{ inputs.calibrate }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/profiles"
-          infra/harness/calibrate.sh --seconds 300 --write-calibrated
-          cp harness/profiles/*.json "$RUNNER_TEMP/profiles/"
+        run: infra/harness/calibrate.sh --seconds 300 --write-calibrated
 
       - name: Upload calibrated profiles
         if: ${{ always() && inputs.calibrate }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: calibrated-profiles
-          path: ${{ runner.temp }}/profiles
+          # Uploaded even when a profile is out of tolerance, so the ones that calibrated are kept.
+          path: harness/profiles/*.json
           if-no-files-found: ignore

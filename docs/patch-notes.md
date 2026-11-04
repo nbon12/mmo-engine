@@ -45,9 +45,13 @@ Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-har
   `workflow_dispatch` with `calibrate: true` calibrates every profile for 5 minutes each.
 - **Workflow tests** now also run for changes under `infra/`.
 - **`harness calibrate --write-calibrated`** skips reordering variants, which have no file of their own.
-- **`harness profile netem`** writes `seed` only after `loss random`, because the seed only drives loss.
-  `calibrate.sh` strips the seed when the machine's `tc` doesn't support it. GitHub's `ubuntu-latest` runner is one
-  such machine.
+- **`harness profile netem`** writes `seed` whenever jitter, reorder or loss is random. netem's seeded PRNG
+  drives all three on Linux 6.3+. A fixed delay gets no seed.
+- **`calibrate.sh`** strips the seed when the machine's `tc` doesn't know it. On GitHub's `ubuntu-latest`, `tc`
+  answered `What is "seed"?`. It also passes the repo's profiles folder explicitly, and fails when storing calibrated
+  settings fails.
+- **The `stack` job** checks that a second `up.sh` recreates nothing (`infra/harness/identity.sh` before and after).
+  The workflow runs with pipefail. `smoke.sh` checks every table that `schema apply` lists.
 
 ### Open follow-ups
 

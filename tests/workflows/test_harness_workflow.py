@@ -70,7 +70,15 @@ class StackJob(unittest.TestCase):
     """US6 scenarios 1 to 5, as the stack job runs them."""
 
     def test_the_one_command_runs_twice_for_idempotence(self):
-        self.assertEqual(2, len(re.findall(r"^infra/harness/up\.sh \|", runs("stack"), re.M)))
+        self.assertEqual(2, len(re.findall(r"^\s*infra/harness/up\.sh \|", runs("stack"), re.M)))
+
+    def test_the_rerun_asserts_nothing_was_recreated(self):
+        """US6 scenario 2: identity (cluster node, namespaces, secret and password hash, workload UIDs) is unchanged."""
+        step = next(s for s in steps("stack") if "idempotent" in s["name"])
+        text = step["run"]
+        self.assertLess(text.index("identity.sh > \"$RUNNER_TEMP/identity-before\""), text.index("infra/harness/up.sh"))
+        self.assertLess(text.index("infra/harness/up.sh"), text.index("identity.sh > \"$RUNNER_TEMP/identity-after\""))
+        self.assertIn('diff -u "$RUNNER_TEMP/identity-before" "$RUNNER_TEMP/identity-after"', text)
 
     def test_core_smoke_then_observability_profile(self):
         text = runs("stack")
@@ -97,7 +105,7 @@ class GoldenAndNetemJobs(unittest.TestCase):
 
 class Scripts(unittest.TestCase):
     def test_scripts_are_executable_and_parse(self):
-        for script in ("up.sh", "down.sh", "smoke.sh", "golden.sh", "calibrate.sh"):
+        for script in ("up.sh", "down.sh", "smoke.sh", "golden.sh", "calibrate.sh", "identity.sh"):
             path = INFRA / script
             self.assertTrue(os.access(path, os.X_OK), f"{script} is not executable")
             subprocess.run(["bash", "-n", str(path)], check=True)
@@ -125,6 +133,31 @@ class Scripts(unittest.TestCase):
         self.assertEqual(["clickhouse"], pipelines["logs"]["exporters"])
         self.assertEqual(["clickhouse"], pipelines["traces"]["exporters"])
         self.assertEqual(["prometheus"], pipelines["metrics"]["exporters"])
+
+    def test_smoke_checks_every_table_schema_apply_lists(self):
+        text = (INFRA / "smoke.sh").read_text()
+        self.assertIn("harness schema apply", text)
+        self.assertNotIn("for table in runs sim_ticks", text)
+
+    def test_calibrate_uses_repo_paths_and_reports_storage_failures(self):
+        text = (INFRA / "calibrate.sh").read_text()
+        self.assertIn('PROFILES_DIR="$ROOT/harness/profiles"', text)
+        self.assertNotIn("$WRITE >/dev/null || true", text)
+        self.assertIn("storing calibrated settings", text)
+
+    def test_calibrated_profiles_upload_does_not_depend_on_a_copy_step(self):
+        uploads = [s for s in steps("netem") if s.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual("harness/profiles/*.json", uploads[0]["with"]["path"])
+        self.assertNotIn("cp harness/profiles", runs("netem"))
+
+    def test_dashboard_panels_bind_to_the_provisioned_clickhouse_uid(self):
+        import json
+        datasources = yaml.safe_load((INFRA / "manifests" / "observability" / "grafana-datasources.yaml").read_text())
+        uids = {d["type"]: d.get("uid") for d in datasources["datasources"]}
+        dashboard = json.loads((INFRA / "manifests" / "observability" / "dashboards" / "harness-runs.json").read_text())
+        for panel in dashboard["panels"]:
+            self.assertEqual(uids["grafana-clickhouse-datasource"], panel["datasource"]["uid"])
+            self.assertTrue(panel["datasource"]["uid"])
 
     def test_core_profile_has_no_prometheus_or_grafana(self):
         base = yaml.safe_load((INFRA / "manifests" / "base" / "kustomization.yaml").read_text())

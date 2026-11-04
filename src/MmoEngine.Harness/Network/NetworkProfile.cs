@@ -48,6 +48,10 @@ public sealed record NetworkProfile
     public Tolerances Tolerances { get; init; } = new();
     public CalibratedSettings? Calibrated { get; init; }
 
+    /// <summary>The file the catalog loaded this profile from; null for a derived reordering variant.</summary>
+    [JsonIgnore]
+    public string? SourceFile { get; init; }
+
     /// <summary>The suffix of a reordering variant's name.</summary>
     public const string ReorderSuffix = "-reorder";
 
@@ -59,7 +63,7 @@ public sealed record NetworkProfile
 
     /// <summary>The profile's reordering variant (FR-021): the same targets, with reordering allowed.</summary>
     public NetworkProfile ReorderingVariant() =>
-        this with { Name = Name + ReorderSuffix, AllowReordering = true, Calibrated = null };
+        this with { Name = Name + ReorderSuffix, AllowReordering = true, Calibrated = null, SourceFile = null };
 
     /// <summary>
     /// The per-direction settings to apply: the calibrated ones when stored, else the arithmetic split
@@ -138,7 +142,7 @@ public static class ProfileCatalog
         var catalog = new Dictionary<string, NetworkProfile>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in Directory.EnumerateFiles(folder, "*.json").Order(StringComparer.Ordinal))
         {
-            var profile = NetworkProfile.Parse(File.ReadAllText(file), Path.GetFileName(file));
+            var profile = NetworkProfile.Parse(File.ReadAllText(file), Path.GetFileName(file)) with { SourceFile = Path.GetFullPath(file) };
             foreach (var p in new[] { profile, profile.ReorderingVariant() })
             {
                 if (!catalog.TryAdd(p.Name, p))

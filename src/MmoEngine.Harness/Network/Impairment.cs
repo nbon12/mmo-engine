@@ -64,8 +64,14 @@ public static class NetemScript
 
         if (d.LossPercent > 0)
         {
-            // The seed only drives netem's random loss, so it is set only when there is loss to repeat.
-            text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}% seed {seed}");
+            text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}%");
+        }
+
+        // netem's seeded PRNG drives jitter, reorder and loss (Linux 6.3+), so the seed is set whenever any of
+        // them is random. A profile with none of them has nothing to repeat.
+        if (d.JitterMs > 0 || d.LossPercent > 0 || profile.AllowReordering)
+        {
+            text.Append(CultureInfo.InvariantCulture, $" seed {seed}");
         }
 
         return text.ToString();

@@ -17,9 +17,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release --no-build -- "$@"; }
+PROFILES_DIR="$ROOT/harness/profiles"
 dotnet build "$ROOT/src/MmoEngine.Harness.Cli" -c Release >/dev/null
 if [ ${#PROFILES[@]} -eq 0 ]; then
-  mapfile -t PROFILES < <(harness profile list | python3 -c 'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)))')
+  mapfile -t PROFILES < <(harness profile list --profiles "$PROFILES_DIR" | python3 -c 'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)))')
 fi
 if [ -z "${MMO_CLICKHOUSE:-}" ]; then
   docker rm -f harness-calibration-clickhouse >/dev/null 2>&1 || true
@@ -46,16 +47,20 @@ fi
 status=0
 for profile in "${PROFILES[@]}"; do
   sudo tc qdisc del dev lo root 2>/dev/null || true
-  harness profile netem --profile "$profile" --device lo --seed 20261104 | $SEED_FILTER | sudo bash
+  harness profile netem --profiles "$PROFILES_DIR" --profile "$profile" --device lo --seed 20261104 | $SEED_FILTER | sudo bash
   run_id="calibration-$(tr '[:upper:]' '[:lower:]' <<<"$profile")-$(date -u +%Y%m%dT%H%M%SZ)"
   set +e
-  harness probe run --target 127.0.0.1:7400 --profile "$profile" --seconds "$SECONDS_PER_PROFILE" --run-id "$run_id"
+  harness probe run --target 127.0.0.1:7400 --profiles "$PROFILES_DIR" --profile "$profile" --seconds "$SECONDS_PER_PROFILE" --run-id "$run_id"
   code=$?
   set -e
   sudo tc qdisc del dev lo root 2>/dev/null || true
   if [ "$code" -eq 0 ] && [ -n "$WRITE" ]; then
-    harness calibrate --run-id "$run_id" --profile "$profile" $WRITE >/dev/null || true
+    set +e
+    harness calibrate --run-id "$run_id" --profiles "$PROFILES_DIR" --profile "$profile" $WRITE >/dev/null
+    stored=$?
+    set -e
+    if [ "$stored" -ne 0 ]; then echo "::error::storing calibrated settings for $profile failed (exit $stored)"; status=1; fi
   fi
-  if [ "$code" -ne 0 ]; then echo "::error::profile $profile outside tolerance (exit $code)"; status=9; fi
+  if [ "$code" -ne 0 ]; then echo "::error::profile $profile outside tolerance (exit $code)"; [ "$status" -eq 0 ] && status=9; fi
 done
 exit "$status"

@@ -14,9 +14,10 @@ query() { curl -fsS -u "$USER_NAME:$PASSWORD" "http://127.0.0.1:$PORT/" --data-b
 harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 
-echo "1. tables"
-for table in runs sim_ticks sim_events net_samples bot_frames rule_results baselines run_aggregates sweep_cells \
-             sim_ticks_retained sim_events_retained net_samples_retained bot_frames_retained otel_logs otel_traces; do
+echo "1. tables: every table the schema defines"
+mapfile -t TABLES < <(harness schema apply | python3 -c 'import json,sys; print("\n".join(json.loads(sys.stdin.readlines()[-1])["tables"]))')
+[ "${#TABLES[@]}" -gt 0 ] || fail "schema apply listed no tables"
+for table in "${TABLES[@]}"; do
   [ "$(query "EXISTS TABLE $table")" = "1" ] || fail "table $table is missing"
 done
 
@@ -49,7 +50,7 @@ dotnet run --project "$ROOT/src/MmoEngine.Regionizer.Simulator.Cli" -c Release -
   run "$ROOT/tests/MmoEngine.Harness.Tests/Fixtures/runs/tiny-config.json" --out "$OUT/run" >/dev/null
 RUN_ID="$(harness load "$OUT/run" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"
 [ -n "$RUN_ID" ] || fail "load printed no runId"
-harness rules run --run-id "$RUN_ID" --rules "$ROOT/harness/rules" --artifacts "$OUT/artifacts" >/dev/null || fail "rules did not pass the clean run"
+harness rules run --run-id "$RUN_ID" --rules "$ROOT/harness/rules" --baselines "$ROOT/harness/baselines" --artifacts "$OUT/artifacts" >/dev/null || fail "rules did not pass the clean run"
 
 if [ "${1:-}" = "--observability" ]; then
   echo "4. observability profile: Prometheus and Grafana are ready"

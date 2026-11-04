@@ -182,11 +182,11 @@ internal static class NetworkCommands
                 }
 
                 var calibration = Calibration.Evaluate(profile, records);
-                var file = Path.Combine(parse.GetValue(profiles)!.FullName, $"{profile.Name.ToLowerInvariant()}.json");
-                if (calibration.Passed && parse.GetValue(write) && !File.Exists(file))
+                var file = profile.SourceFile;
+                if (calibration.Passed && parse.GetValue(write) && file is null)
                 {
-                    // A reordering variant has no file of its own: it is derived from its base profile.
-                    context.Logger.Warning("Profile {Profile} has no file of its own ({File}); its calibrated settings are not stored", profile.Name, file);
+                    // A reordering variant has no file of its own: the catalog derives it from its base profile.
+                    context.Logger.Warning("Profile {Profile} is a derived reordering variant with no file of its own; its calibrated settings are not stored", profile.Name);
                 }
                 else if (calibration.Passed && parse.GetValue(write))
                 {
@@ -201,7 +201,7 @@ internal static class NetworkCommands
                             SourceRunId = id,
                         },
                     };
-                    await File.WriteAllTextAsync(file, calibrated.ToJson(), cancellationToken).ConfigureAwait(false);
+                    await File.WriteAllTextAsync(file!, calibrated.ToJson(), cancellationToken).ConfigureAwait(false);
                 }
 
                 return Report(context, id, calibration);
