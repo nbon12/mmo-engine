@@ -18,8 +18,8 @@ automated checks are green.
 
 | Slice | Stories | Status |
 | --- | --- | --- |
-| 1 | Setup, US1, US2, US3 | This PR |
-| 2 | US4, US5 | Not started |
+| 1 | Setup, US1, US2, US3 | Done (first PR) |
+| 2 | US4, US5 | Done (second PR) |
 | 3 | US6, including the CI workflow and the golden-run job | Not started |
 | 4 | US7 | Not started |
 
@@ -120,20 +120,51 @@ with a changed parameter.
 
 ## Phase 5: User Story 4 - Network profiles are defined, applied and calibrated (P2), slice 2
 
-- [ ] T040 [P] [US4] Profile catalogue tests, scenario 1, in `tests/MmoEngine.Harness.Tests/Network/ProfileTests.cs`.
-- [ ] T041 [P] [US4] Calibration tests, scenarios 2 to 6, Theories over synthetic samples, in `CalibrationTests.cs`.
-- [ ] T042 [P] [US4] netem and NetworkChaos generator tests, scenarios 7 and 8, in `ImpairmentTests.cs`.
-- [ ] T043 [P] [US4] A probe-pair loopback test, scenario 9, in `ProbePairTests.cs`.
-- [ ] T044 [US4] `harness/profiles/*.json`, `NetworkProfile`, `Calibration`, `NetemScript`, `NetworkChaosManifest`,
-  `ProbeServer` and `ProbeClient`; the `net_samples` writer; `contracts/network-profile.md`; and the `harness profile`,
-  `harness probe` and `harness calibrate` commands.
+**Independent Test**: `CalibrationTests` gives synthetic sample sets their documented verdicts, and
+`ProbePairTests.LoopbackProbeRunRecordsEverySentPacketAndLosesNone` runs the probe pair over loopback.
+
+- [x] T040 [P] [US4] Scenario 1: `NetworkProfileTests.CatalogueHoldsEachProfileAndItsReorderingVariant`, with
+  `TolerancesAreTheIssuesProposals`, the profile-file refusals and `CalibratedSettingsRoundTripAndTakePrecedence`
+  (FR-026).
+- [x] T041 [P] [US4] `tests/MmoEngine.Harness.Tests/Network/CalibrationTests.cs`:
+  - Scenario 2: `SamplesWithinToleranceOfTheProfilePass`, for each profile.
+  - Scenario 3: `JitterBeyondToleranceFailsNamingJitter`, plus `RoundTripBeyondToleranceFailsNamingRoundTrip`.
+  - Scenario 4: `LossBeyondToleranceInOneDirectionFailsNamingThatDirection`.
+  - Scenario 5: `ReorderingFailsUnlessTheProfileAllowsIt`.
+  - Scenario 6: `InterarrivalJitterIsReportedForEachDirection` and `InterarrivalJitterFollowsTheRfcRecurrence`.
+- [x] T042 [P] [US4] `tests/MmoEngine.Harness.Tests/Network/ImpairmentTests.cs`:
+  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndAddsAFifoChild`, `NetemReorderingVariantAddsReorderAndNoFifoChild`
+    and `TcpIngressRedirectsThroughIfb`.
+  - Scenario 8: `NetworkChaosSetsDelayJitterLossDirectionAndTargetPods`.
+- [x] T043 [P] [US4] Scenario 9: `ProbePairTests.LoopbackProbeRunRecordsEverySentPacketAndLosesNone`, plus
+  `ProbeRowsRoundTripThroughNetSamples`, `LostPacketsMapToTheirDirection`, `ServerDropsForeignAndOversizedDatagrams` and
+  `NoServerMeansEveryPacketIsLostAndTheReportIsIncomplete`.
+- [x] T044 [US4] The implementation:
+  - `harness/profiles/*.json`;
+  - `src/MmoEngine.Harness/Network/`: `NetworkProfile`, `ProfileCatalog`, `Calibration`, `NetemScript`,
+    `NetworkChaosManifest`, `ProbeServer`, `ProbeClient` and `NetSamples`;
+  - `contracts/network-profile.md`;
+  - the commands `harness profile list|netem|chaos`, `harness probe serve|run` and `harness calibrate`, tested in
+    `Cli/NetworkCliTests.cs`.
+- [ ] T045 [US4] Calibrate the four profiles and their variants with netem on the CI runner class, 5 minutes each,
+  and commit the calibrated settings. This is slice 3: it needs root or Chaos Mesh, which only the CI job has.
 
 ## Phase 6: User Story 5 - Bots and a stub target prove the measurement path (P3), slice 2
 
-- [ ] T050 [P] [US5] Tests for scenarios 1 to 4 in `tests/MmoEngine.Harness.Tests/Bots/BotHostTests.cs`. They use a
-  memory frame sink, and the store sink is tested against ClickHouse.
-- [ ] T051 [US5] `StubTarget`, `BotHost`, the frame loop (research R8) and `BatchWriter`, and the `harness stub-target`
-  and `harness bots` commands.
+**Independent Test**: `BotHostTests` runs the stub target and a bot host over loopback.
+
+- [x] T050 [P] [US5] `tests/MmoEngine.Harness.Tests/Bots/BotHostTests.cs`. These run in a collection with parallelism
+  off, for frame timing.
+  - Scenario 1: `FourBotsForTwoSecondsWriteEachFrameOnceAndInOrder`.
+  - Scenario 2: `BotsRecordSnapshotsAndTheStubEchoesEveryInput`, plus `UdpEdgeCaseTests.BotsAgainstAClosedPortRecordUnderrunsAndNoSnapshots`.
+  - Scenario 3: `HostThatMissesDeadlinesIsInvalidAndHostHealthIsInconclusive`, against ClickHouse with the committed
+    `bot.host_health` rule. Also `HealthyHostPassesHostHealth`.
+  - Scenario 4: `WriterFlushesAtFiveThousandRowsAndFinallyAtCompletion` and `WriterFlushesATrickleOnceASecond`.
+- [x] T051 [US5] The implementation:
+  - `src/MmoEngine.Harness/Bots/`: `StubTarget`, `BotHost` (research R8), `BatchWriter`, `StoreFrameSink` and
+    `MemoryFrameSink`;
+  - `ClickHouseStore.MarkBotHostInvalidAsync`;
+  - the commands `harness stub-target` and `harness bots run`, tested by `NetworkCliTests.BotsRunWritesFramesAndARunRow`.
 
 ## Phase 7: User Story 6 - The harness comes up with one command (P3), slice 3
 
@@ -153,6 +184,6 @@ with a changed parameter.
 
 ## Phase 9: Polish
 
-- [x] T090 A patch-notes entry for slice 1.
+- [x] T090 A patch-notes entry for each slice.
 - [x] T091 The quickstart commands run against a local ClickHouse container: an 18,000-tick run loaded in 1.2 s
   (SC-001, a measurement on this session's x64 container), and all 13 first-pass sweeps loaded.

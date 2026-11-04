@@ -1,0 +1,220 @@
+using System.Net;
+using System.Text.Json.Nodes;
+using MmoEngine.Harness.Bots;
+using MmoEngine.Harness.Cli;
+using MmoEngine.Harness.Network;
+using MmoEngine.Harness.Tests.Bots;
+using MmoEngine.Harness.Tests.Rules;
+using MmoEngine.Harness.Tests.Support;
+
+namespace MmoEngine.Harness.Tests.Cli;
+
+/// <summary>The profile, probe, calibrate, stub-target and bots commands end to end (contracts/harness-cli.md).</summary>
+[Collection(nameof(FrameTimingCollection))]
+public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
+{
+    private static string Profiles => Path.Combine(RuleFileParserTests.RepoRoot(), "harness", "profiles");
+
+    private HarnessCliOptions Options() => new()
+    {
+        GetEnvironmentVariable = name => name == HarnessSettings.ClickHouseVariable ? clickHouse.ConnectionString : null,
+    };
+
+    private (int ExitCode, string Stdout, string Stderr) Run(params string[] args)
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var exit = Program.Run(args, stdout, stderr, Options());
+        return (exit, stdout.ToString(), stderr.ToString());
+    }
+
+    [Fact]
+    public void ProfileListShowsEightProfiles()
+    {
+        var (exit, stdout, _) = Run("profile", "list", "--profiles", Profiles);
+
+        Assert.Equal(0, exit);
+        var names = JsonNode.Parse(stdout)!.AsArray().Select(p => p!["name"]!.GetValue<string>()).ToList();
+        Assert.Equal(8, names.Count);
+        Assert.Contains("Poor-reorder", names);
+    }
+
+    [Fact]
+    public void ProfileNetemAndChaosPrintTheGeneratedSettings()
+    {
+        var netem = Run("profile", "netem", "--profiles", Profiles, "--profile", "Poor", "--device", "eth0", "--seed", "5");
+        var chaos = Run("profile", "chaos", "--profiles", Profiles, "--profile", "typical-reorder", "--namespace", "ns", "--label", "app=probe");
+
+        Assert.Equal(0, netem.ExitCode);
+        Assert.Contains("netem delay 125ms 35.355ms loss random 3% seed 5", netem.Stdout, StringComparison.Ordinal);
+        Assert.Equal(0, chaos.ExitCode);
+        Assert.Contains("      app: \"probe\"", chaos.Stdout, StringComparison.Ordinal);
+        Assert.Contains("reorder:", chaos.Stdout, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("profile", "netem", "--profile", "Nowhere")]
+    [InlineData("profile", "chaos", "--profile", "Typical", "--label", "novalue")]
+    [InlineData("probe", "run", "--target", "not-an-endpoint", "--profile", "LAN")]
+    [InlineData("bots", "run", "--target", "127.0.0.1:9", "--bots", "0")]
+    public void InvalidNetworkArgumentsExitTwo(params string[] args)
+    {
+        var (exit, _, _) = Run([.. args, .. args[0] == "bots" ? Array.Empty<string>() : ["--profiles", Profiles]]);
+
+        Assert.Equal(HarnessExitCodes.Invalid, exit);
+    }
+
+    [Fact]
+    public void InvalidProfileFolderExitsTwo()
+    {
+        var folder = RunFolders.TempFolder();
+        File.WriteAllText(Path.Combine(folder, "bad.json"), "{");
+
+        Assert.Equal(HarnessExitCodes.Invalid, Run("profile", "list", "--profiles", folder).ExitCode);
+    }
+
+    /// <summary>US4 end to end on loopback: probe run writes net_samples and calibrates LAN; calibrate re-reads the store.</summary>
+    [Fact]
+    public async Task ProbeRunThenCalibrateAgainstLan()
+    {
+        await using var server = new ProbeServer(new IPEndPoint(IPAddress.Loopback, 0));
+        var runId = RunFolders.UniqueId("probe");
+        var profiles = RunFolders.TempFolder();
+        RunFolders.CopyDirectory(Profiles, profiles);
+
+        var probe = Run("probe", "run", "--target", server.LocalEndPoint.ToString(), "--profile", "LAN", "--seconds", "1", "--profiles", profiles, "--run-id", runId);
+        var calibrate = Run("calibrate", "--run-id", runId, "--profile", "LAN", "--profiles", profiles, "--write-calibrated");
+
+        var report = JsonNode.Parse(probe.Stdout)!;
+        Assert.Equal(30, report["sent"]!.GetValue<int>());
+        Assert.Equal(0, report["upLossPercent"]!.GetValue<double>());
+        Assert.Contains(probe.ExitCode, new[] { HarnessExitCodes.Ok, HarnessExitCodes.OutsideTolerance });
+        Assert.Equal(probe.ExitCode, calibrate.ExitCode);
+        Assert.Equal(report["medianRoundTripMs"]!.GetValue<double>(), JsonNode.Parse(calibrate.Stdout)!["medianRoundTripMs"]!.GetValue<double>(), 9);
+        var written = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "lan.json")), "lan.json");
+        Assert.Equal(calibrate.ExitCode == 0, written.Calibrated is not null);
+    }
+
+    [Fact]
+    public void CalibrateWithoutSamplesExitsTwo()
+    {
+        var (exit, _, stderr) = Run("calibrate", "--run-id", RunFolders.UniqueId("none"), "--profile", "LAN", "--profiles", Profiles);
+
+        Assert.Equal(HarnessExitCodes.Invalid, exit);
+        Assert.Contains("no net_samples rows", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>US5 end to end: a stub target, the bots command writing bot_frames, then rules run on the bot run.</summary>
+    [Fact]
+    public async Task BotsRunWritesFramesAndARunRow()
+    {
+        await using var target = new StubTarget(new IPEndPoint(IPAddress.Loopback, 0));
+        var runId = RunFolders.UniqueId("bot");
+
+        var bots = Run("bots", "run", "--target", target.LocalEndPoint.ToString(), "--bots", "2", "--seconds", "1", "--run-id", runId);
+        var rules = Run("rules", "run", "--run-id", runId, "--rules", Path.Combine(RuleFileParserTests.RepoRoot(), "harness", "rules"));
+
+        Assert.Equal(0, bots.ExitCode);
+        var report = JsonNode.Parse(bots.Stdout)!;
+        Assert.True(report["frames"]!.GetValue<long>() > 50);
+        var results = JsonNode.Parse(rules.Stdout)!["results"]!.AsArray();
+        Assert.Contains(results, r => r!["ruleId"]!.GetValue<string>() == "bot.host_health");
+
+        // bot.correction_p99 needs 100,000 samples, so a 1-second run is inconclusive by design.
+        Assert.Equal("inconclusive", results.Single(r => r!["ruleId"]!.GetValue<string>() == "bot.correction_p99")!["outcome"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ServeCommandsListenAndStop()
+    {
+        var probe = Task.Run(() => Run("probe", "serve", "--bind", "127.0.0.1:0", "--seconds", "0.2"), TestContext.Current.CancellationToken);
+        var stub = Task.Run(() => Run("stub-target", "--bind", "127.0.0.1:0", "--seconds", "0.2"), TestContext.Current.CancellationToken);
+
+        var (probeExit, probeOut, _) = await probe;
+        var (stubExit, stubOut, _) = await stub;
+
+        Assert.Equal(0, probeExit);
+        Assert.StartsWith("127.0.0.1:", JsonNode.Parse(probeOut)!["listening"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(0, stubExit);
+        Assert.StartsWith("127.0.0.1:", JsonNode.Parse(stubOut)!["listening"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("localhost:7400", true)]
+    [InlineData("127.0.0.1:7400", true)]
+    [InlineData("[::1]:7400", true)]
+    [InlineData("127.0.0.1", false)]
+    [InlineData("host:notaport", false)]
+    [InlineData("no-such-host.invalid:7400", false)]
+    public void EndPointsParse(string text, bool valid)
+    {
+        using var stderr = new StringWriter();
+        var context = new CliContext(TextWriter.Null, Serilog.Core.Logger.None, Options());
+
+        Assert.Equal(valid, NetworkCommands.TryEndPoint(context, text, out _));
+    }
+
+    [Theory]
+    [InlineData("profile", "list")]
+    [InlineData("probe", "serve", "--bind", "nowhere")]
+    [InlineData("stub-target", "--bind", "nowhere")]
+    [InlineData("bots", "run", "--target", "nowhere")]
+    public void DefaultProfilesFolderOrBadEndpointsExitTwo(params string[] args) =>
+        Assert.Equal(HarnessExitCodes.Invalid, Run(args).ExitCode);
+
+    [Fact]
+    public void BadProfilesFolderOrUnknownProfileExitTwo()
+    {
+        var folder = RunFolders.TempFolder();
+        File.WriteAllText(Path.Combine(folder, "bad.json"), "{");
+
+        Assert.Equal(HarnessExitCodes.Invalid, Run("profile", "netem", "--profiles", folder, "--profile", "LAN").ExitCode);
+        Assert.Equal(HarnessExitCodes.Invalid, Run("calibrate", "--run-id", "x", "--profiles", Profiles, "--profile", "Nowhere").ExitCode);
+    }
+
+    [Fact]
+    public void ChaosUsesTheProbeLabelByDefault()
+    {
+        var (exit, stdout, _) = Run("profile", "chaos", "--profiles", Profiles, "--profile", "LAN");
+
+        Assert.Equal(0, exit);
+        Assert.Contains("app.kubernetes.io/part-of: \"harness-probe\"", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnreachableStoreExitsOne()
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var options = new HarnessCliOptions
+        {
+            GetEnvironmentVariable = name => name == HarnessSettings.ClickHouseVariable ? "Host=127.0.0.1;Port=1;Username=x;Timeout=5" : null,
+        };
+
+        var exit = Program.Run(["calibrate", "--run-id", "x", "--profiles", Profiles, "--profile", "LAN"], stdout, stderr, options);
+
+        Assert.Equal(HarnessExitCodes.Error, exit);
+    }
+
+    /// <summary>FR-026: a profile that passes calibration gets its calibrated settings, runner class and kernel stored in its file.</summary>
+    [Fact]
+    public async Task PassingCalibrationWritesCalibratedSettingsToTheProfileFile()
+    {
+        await using var server = new ProbeServer(new IPEndPoint(IPAddress.Loopback, 0));
+        var profiles = RunFolders.TempFolder();
+        File.WriteAllText(Path.Combine(profiles, "loop.json"),
+            "{\"name\":\"Loop\",\"version\":1,\"roundTripMs\":0.5,\"jitterMs\":0,\"lossPercent\":0,\"tolerances\":{\"absoluteMs\":20,\"lossPoints\":0.25}}");
+        var runId = RunFolders.UniqueId("probe");
+
+        var probe = Run("probe", "run", "--target", server.LocalEndPoint.ToString(), "--profile", "Loop", "--seconds", "1", "--profiles", profiles, "--run-id", runId);
+        var calibrate = Run("calibrate", "--run-id", runId, "--profile", "Loop", "--profiles", profiles, "--write-calibrated");
+
+        Assert.Equal(0, probe.ExitCode);
+        Assert.Equal(0, calibrate.ExitCode);
+        var written = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "loop.json")), "loop.json");
+        Assert.NotNull(written.Calibrated);
+        Assert.Equal(runId, written.Calibrated.SourceRunId);
+        Assert.Equal(RunnerClass.Current().Id, written.Calibrated.RunnerClass);
+        Assert.False(string.IsNullOrEmpty(written.Calibrated.Kernel));
+    }
+}

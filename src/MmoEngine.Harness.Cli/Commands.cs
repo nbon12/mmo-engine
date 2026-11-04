@@ -18,6 +18,10 @@ internal static class Commands
         yield return Load(context);
         yield return RulesCommand(context);
         yield return GoldenCommand(context);
+        foreach (var command in NetworkCommands.All(context))
+        {
+            yield return command;
+        }
     }
 
     private static Option<string?> ClickHouseOption() =>
@@ -235,6 +239,10 @@ internal static class Commands
         }
     }
 
+    /// <summary>An exception that means the store couldn't be reached or failed (exit 1).</summary>
+    internal static bool IsStoreFailure(Exception ex) =>
+        ex is HttpRequestException or ClickHouseServerException or TaskCanceledException or IOException;
+
     /// <summary>Validates the settings, opens the store and runs an action; infrastructure failures exit 1.</summary>
     private static int WithStore(CliContext context, string? clickHouse, Func<IHarnessStore, Task<int>> action)
     {
@@ -249,7 +257,7 @@ internal static class Commands
         {
             return action(store).GetAwaiter().GetResult();
         }
-        catch (Exception ex) when (ex is HttpRequestException or ClickHouseServerException or TaskCanceledException or IOException)
+        catch (Exception ex) when (IsStoreFailure(ex))
         {
             context.Logger.Error("Store error: {Error}", ex.Message);
             return HarnessExitCodes.Error;

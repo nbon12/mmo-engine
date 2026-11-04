@@ -17,6 +17,13 @@ one JSON line on stdout.
 | `rules baselines sync [--baselines harness/baselines]` | Mirrors the committed baselines into the `baselines` table | 0; 1; 2 |
 | `golden record --run <folder> --config <file> --out <folder> [--name <name>]` | Records a golden run | 0; 1 I/O error; 2 refused run folder |
 | `golden check --golden <folder> --run <folder>` | Compares a replay with a golden run | 0 match; 7 diverged; 8 not comparable; 2 refused input |
+| `profile list [--profiles harness/profiles]` | Lists the catalogue, including the reordering variants | 0; 2 invalid profile file |
+| `profile netem --profile <name> [--device lo] [--seed 1] [--tcp-ingress]` | Prints a `tc` netem script | 0; 2 |
+| `profile chaos --profile <name> [--namespace harness] [--label k=v ...]` | Prints a Chaos Mesh NetworkChaos | 0; 2 |
+| `probe serve [--bind 127.0.0.1:7400] [--seconds N]` | Runs the probe server | 0; 2 bad bind |
+| `probe run --target host:port --profile <name> [--seconds 300] [--rate 30] [--run-id <id>]` | Probes, writes `net_samples` and a `probe` run row, and calibrates | 0 within tolerance; 9 outside; 1 store error; 2 |
+| `calibrate --run-id <id> --profile <name> [--write-calibrated]` | Calibrates a stored probe run; when it passes, `--write-calibrated` stores the settings in `<profiles>/<name lowercased>.json` | 0; 9; 1; 2 no samples or bad profile |
+| `stub-target [--bind 127.0.0.1:7500] [--seconds N]` | Runs the stub target | 0; 2 |
+| `bots run --target host:port [--bots 4] [--seconds 10] [--run-id <id>] [--profile none]` | Runs a bot host, writing `bot_frames` and a `bot` run row; then run `rules run` | 0; 1; 2 |
 
-Exit codes 5 to 9 don't collide with the simulator's 3 (violation) and 4 (outside tolerance). Exit
-code 9 (calibration outside tolerance) is reserved for the network commands in a later slice.
+Exit codes 5 to 9 don't collide with the simulator's 3 (violation) and 4 (outside tolerance).

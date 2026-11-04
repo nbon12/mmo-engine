@@ -1,0 +1,12 @@
+{
+  "name": "Cross-region",
+  "version": 1,
+  "roundTripMs": 160,
+  "jitterMs": 25,
+  "lossPercent": 1,
+  "allowReordering": false,
+  "tolerances": {
+    "relativeFraction": 0.1,
+    "lossPoints": 0.25
+  }
+}

@@ -66,6 +66,12 @@ public interface IHarnessStore
     /// <summary>Copies a run's raw rows to the retained tables (FR-016).</summary>
     Task RetainAsync(string runId, CancellationToken cancellationToken = default);
 
+    /// <summary>Marks every <c>bot_frames</c> row of one host in one run invalid (FR-029).</summary>
+    Task MarkBotHostInvalidAsync(string runId, string hostId, CancellationToken cancellationToken = default);
+
+    /// <summary>Every row of a query with <c>{run_id:String}</c> bound.</summary>
+    Task<IReadOnlyList<object?[]>> QueryRowsAsync(string sql, string runId, CancellationToken cancellationToken = default);
+
     /// <summary>A scalar query with <c>{run_id:String}</c> bound, for reports and tests.</summary>
     Task<object?> ScalarAsync(string sql, string runId, CancellationToken cancellationToken = default);
 }
