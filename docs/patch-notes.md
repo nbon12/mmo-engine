@@ -20,9 +20,56 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-04 — Telemetry and test harness, slice 1: store, loader, pass rules, golden runs (Pre-Phase 1, sub-spec 2)
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+
+### Behavior and contract changes
+
+- **`src/MmoEngine.Harness`** and the **`harness`** CLI (`schema apply`, `load`, `rules run`,
+  `rules baselines sync`, `golden record`, `golden check`).
+  - The ClickHouse store's DDL is embedded and idempotent: `runs`, `sim_ticks`, `sim_events`,
+    `net_samples`, `bot_frames`, `rule_results`, `baselines`, `run_aggregates`, `sweep_cells`, and
+    `*_retained` twins. Raw rows expire after 14 days.
+  - The loader reads sub-spec 1's run folders and sweep folders. It is idempotent by run ID, and the
+    `runs` row is the commit marker.
+  - Pass rules are YAML files in `harness/rules/`: SQL, plus a fixed threshold or a baseline.
+    - Exit codes: 0 pass, 5 failed, 6 inconclusive, 2 invalid rule.
+    - A run that doesn't pass is copied to the retained tables, and its manifest, seed and inputs are
+      written to `--artifacts`.
+  - Golden runs compare a replay's `ticks.csv` with a recording, tick by tick. Exit codes: 7 diverged,
+    with the first divergent tick; 8 not comparable, for another runner class.
+  - Connection settings come from `--clickhouse` or `MMO_CLICKHOUSE`.
+- **Simulator manifest**: `runtime.cpuModel` and `runtime.runnerClass` (from `MMO_RUNNER_CLASS`) are
+  added. They are additive, so the run-output format is still version 1.
+- **Tests need Docker**: `tests/MmoEngine.Harness.Tests` starts `clickhouse/clickhouse-server:25.8`
+  through Testcontainers. GitHub's hosted runners have Docker.
+
+### Shared pieces to reuse
+
+- **`IHarnessStore` / `ClickHouseStore`**: batched inserts (5,000 rows), rule queries with
+  `{run_id:String}`, and retention copies. New run kinds (probe, bot) write through it.
+- **`RunnerClass`**: the fingerprint that makes hashes and timings comparable (spec 014, research R5).
+- **`harness/rules/`**: add a gate as a rule file, not as code. `harness/baselines/` changes only by
+  commit.
+
+### Open follow-ups
+
+- Slices 2 to 4 of spec 014 (`tasks.md`):
+  - network profiles, calibration and the probe pair;
+  - the bot host and stub target;
+  - the one-command kind/k3d stack and its CI workflow, plus the committed golden runs recorded on the
+    CI runner class;
+  - the replay viewer.
+
+  Exit criteria in #13 that wait on them: the one-command harness, calibrated profiles, and determinism
+  on the fixed runner class in CI.
+- kind can't create a cluster inside a Claude cloud session's container (kubeadm fails there), so the
+  stack slice is proven by a GitHub Actions job instead.
+
 ## 2026-11-04 — Move to .NET 10
 
-PR: (this PR) · Issue: #13
+PR: #48 · Issue: #13
 
 ### Behavior and contract changes
 

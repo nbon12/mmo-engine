@@ -1,0 +1,14 @@
+# Rows from a bot host that missed frame deadlines are invalid, and the run is inconclusive
+# (issue #13, Bot scaffolding; spec 014 FR-029). The query returns NULL, so the result is
+# inconclusive rather than failed, when any row is invalid.
+id: bot.host_health
+description: Every bot host kept its frame deadlines.
+applies_to: [bot]
+min_samples: 1
+query: |
+  SELECT if(countIf(valid = 0) > 0, NULL, toFloat64(countIf(valid = 0))), count()
+  FROM bot_frames
+  WHERE run_id = {run_id:String}
+mode: fixed
+comparison: "<="
+threshold: 0

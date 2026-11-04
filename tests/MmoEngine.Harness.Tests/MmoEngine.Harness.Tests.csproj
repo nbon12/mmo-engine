@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MmoEngine.Harness\MmoEngine.Harness.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.Harness.Cli\MmoEngine.Harness.Cli.csproj" />
+    <!-- Test-only: golden-run tests replay real simulator runs. The harness library itself never references the simulator. -->
+    <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Testcontainers.ClickHouse" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>harness</AssemblyName>
+    <RootNamespace>MmoEngine.Harness.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.Harness\MmoEngine.Harness.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.Harness.Tests" />
+  </ItemGroup>
+</Project>

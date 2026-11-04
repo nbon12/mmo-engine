@@ -1,0 +1,43 @@
+{
+  "formatVersion": 1,
+  "name": "tiny-radius",
+  "scenario": "Baseline",
+  "mode": "OneAtATime",
+  "sweepSeed": 20261104,
+  "seeds": [
+    {
+      "index": 0,
+      "seed": 6685702061437231981
+    }
+  ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 8
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 6685702061437231981,
+          "folder": "c000/seed-0",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c001",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 6685702061437231981,
+          "folder": "c001/seed-0",
+          "completed": true
+        }
+      ]
+    }
+  ]
+}

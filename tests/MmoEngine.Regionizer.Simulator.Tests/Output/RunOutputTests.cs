@@ -66,6 +66,8 @@ public sealed class RunOutputTests
         Assert.False(string.IsNullOrEmpty(runtime["machineName"]!.GetValue<string>()));
         Assert.Contains("DOTNET_EnableAVX2", runtime["hardwareIntrinsics"]!.AsObject().Select(kv => kv.Key));
         Assert.NotNull(runtime["vectorIsHardwareAccelerated"]);
+        Assert.Equal(RunManifest.CpuModel(), runtime["cpuModel"]!.GetValue<string>());
+        Assert.NotNull(runtime["runnerClass"]);
         Assert.NotNull(manifest["startedUtc"]);
         Assert.NotNull(manifest["finishedUtc"]);
         Assert.Equal(Ticks, manifest["ticks"]!.GetValue<long>());
@@ -367,5 +369,20 @@ public sealed class RunOutputTests
                 cancel.Cancel();
             }
         }
+    }
+
+    /// <summary>Spec 014 research R5: the manifest's CPU model comes from /proc/cpuinfo, or "unknown".</summary>
+    [Fact]
+    public void CpuModelReadsCpuInfoOrFallsBackToUnknown()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "mmo-sim-cpuinfo", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var cpuinfo = Path.Combine(folder, "cpuinfo");
+        File.WriteAllText(cpuinfo, "processor\t: 0\nmodel name\t: Test CPU @ 1.00GHz\n");
+
+        Assert.Equal("Test CPU @ 1.00GHz", RunManifest.CpuModel(cpuinfo));
+        Assert.Equal("unknown", RunManifest.CpuModel(Path.Combine(folder, "missing")));
+        File.WriteAllText(cpuinfo, "processor\t: 0\nModel without a colon\n");
+        Assert.Equal("unknown", RunManifest.CpuModel(cpuinfo));
     }
 }
