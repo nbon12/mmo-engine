@@ -21,7 +21,7 @@ automated checks are green.
 | 1 | Setup, US1, US2, US3 | Done (first PR) |
 | 2 | US4, US5 | Done (second PR) |
 | 3 | US6, including the CI workflow, the golden-run job and the netem job | Done (third PR) |
-| 4 | US7 | Not started |
+| 4 | US7 | Done (fourth PR) |
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -202,8 +202,22 @@ with a changed parameter.
 
 ## Phase 8: User Story 7 - The replay viewer (P4), slice 4
 
-- [ ] T070 [P] [US7] Tests for scenarios 1 and 2 that compare the SVG's elements with the regionizer state at the tick.
-- [ ] T071 [US7] `regionizer-sim view` (research R10).
+**Independent Test**: `ReplayViewerTests` records real runs, replays them to tick 40, and compares the SVG's elements
+with the core's own state at that tick.
+
+- [x] T070 [P] [US7] Tests in `tests/MmoEngine.Regionizer.Simulator.Tests/View/ReplayViewerTests.cs`:
+  - Scenario 1: `EveryOwnedSectionAndEntityIsDrawnAsTheRecordedRunHadThem`. Section-by-section owner and colour, and
+    entity-by-entity position and region, are checked against an independent capture from the recorded run's
+    `AfterStep` hook.
+  - Scenario 2: `ClosedPortalIsDrawnClosedAndNoClaimCrossesIt`, on StackedAreas.
+  - Also `ReplayThatDoesNotMatchTheRecordingIsRefused` (exit 7), `InvalidRunFoldersAreRefusedWithExitTwo` and
+    `ViewCommandWritesTheSvgAndReportsIt`.
+- [x] T071 [US7] `src/MmoEngine.Regionizer.Simulator/View/ReplayViewer.cs` and the `regionizer-sim view` command
+  (research R10).
+  - The viewer replays the run from its manifest's parameters and seed.
+  - It checks the replay's state hash at the tick against the recorded `ticks.csv`, so the picture is the recorded
+    run's state.
+  - It draws one layer as SVG with data attributes.
 
 ## Phase 9: Polish
 

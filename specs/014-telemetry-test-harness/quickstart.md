@@ -67,3 +67,9 @@ echo $?   # 0 match, 7 diverged, 8 not comparable
 infra/harness/calibrate.sh --seconds 30 LAN
 infra/harness/calibrate.sh --seconds 300 --write-calibrated     # every profile, 5 minutes each
 ```
+
+## The replay viewer
+
+```bash
+dotnet run --project src/MmoEngine.Regionizer.Simulator.Cli -- view out/baseline --tick 120 --out out/tick-120.svg [--layer 0]
+```

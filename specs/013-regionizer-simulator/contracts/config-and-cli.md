@@ -96,6 +96,7 @@ Staging or Production, and is Development when unset.
 | `replay <trace.csv> --config <config.json> --out <dir> [--scenarios <dir>]` | A run driven by a recorded trace | as `run` |
 | `check --out <dir> [--options <check-options.json>]` | The analytic checks (floor, merge distance, lane bridging); writes `checks.json` | 0 all within tolerance, 4 any outside |
 | `memo <results-dir> --rules <memo-rules.json> --out <memo.md>` | Writes the decision memo from sweep results | 0, or 4 when a value can't be read (the row is marked) |
+| `view <run-folder> --tick N --out <file.svg> [--layer L] [--scenarios <dir>]` | The replay viewer (added by spec 014, US7). It replays the run to tick N, checks the state hash against the recording, and draws sections by region, claims, portals and entities | 0 drawn, 7 the replay's hash differs, 2 invalid run folder or tick, 1 other error |
 
 ## `portal-validator` CLI
 
