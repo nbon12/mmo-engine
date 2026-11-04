@@ -20,9 +20,47 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
-## 2026-11-04 — Telemetry and test harness, slice 1: store, loader, pass rules, golden runs (Pre-Phase 1, sub-spec 2)
+## 2026-11-04 — Telemetry and test harness, slice 2: network profiles, calibration, probe pair, bots (Pre-Phase 1, sub-spec 2)
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+
+### Behavior and contract changes
+
+- **Network profiles**: `harness/profiles/` holds LAN, Typical, Cross-region and Poor, each with an
+  automatic `-reorder` variant.
+  - Definitions: round trip is the median, jitter is the round-trip standard deviation, and loss is
+    measured per direction.
+  - `harness profile netem` prints a `tc` script: per-direction delay, jitter and seeded loss, with a
+    pfifo child unless the profile allows reordering. `--tcp-ingress` puts the impairment on ifb0.
+  - `harness profile chaos` prints a Chaos Mesh `NetworkChaos`.
+- **Probe pair**: `harness probe serve` and `harness probe run` exchange sequenced UDP at 30 Hz. A
+  receive-bitmap report separates loss on the way up from loss on the way down.
+  - Every packet is written to `net_samples`.
+  - `harness calibrate` re-reads a stored run. `--write-calibrated` stores the passing per-direction
+    settings, runner class and kernel in the profile file.
+  - Exit codes: 0 within tolerance, 9 outside.
+- **Bots**: `harness stub-target` sends fake 30 Hz snapshots and echoes inputs. `harness bots run` runs
+  a 60 Hz bot host that writes `bot_frames` in 5,000-row batches.
+  - A host that misses more than 1% of its frame deadlines marks its rows `valid = 0`, and then
+    `bot.host_health` is inconclusive.
+- Probe and stub datagrams: `contracts/network-profile.md`.
+
+### Shared pieces to reuse
+
+- `UdpIo`: one policy for UDP errors, where socket errors are skipped and cancellation or disposal
+  stops.
+- `BatchWriter` and `IFrameSink`: batched, off-loop row writing.
+
+### Open follow-ups
+
+- Calibrating the profiles with real netem needs root or Chaos Mesh, so it moves to slice 3's CI job
+  (`tasks.md` T045). Until then, profiles carry no calibrated settings and use the arithmetic split.
+- The auto-merge workflow fails on this repo with `gh: Resource not accessible by personal access
+  token (HTTP 403)`. Sessions merge their own PRs until the token's permissions are fixed.
+
+## 2026-11-04 — Telemetry and test harness, slice 1: store, loader, pass rules, golden runs (Pre-Phase 1, sub-spec 2)
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #49 · Issue: #13
 
 ### Behavior and contract changes
 

@@ -143,6 +143,35 @@ public sealed class ClickHouseStore : IHarnessStore, IDisposable
         }
     }
 
+    public async Task MarkBotHostInvalidAsync(string runId, string hostId, CancellationToken cancellationToken = default)
+    {
+        var parameters = Parameters(runId);
+        parameters.AddParameter("host_id", hostId);
+
+        // A synchronous mutation, so the rule runner that follows sees it.
+        await client.ExecuteNonQueryAsync(
+            "ALTER TABLE bot_frames UPDATE valid = 0 WHERE run_id = {run_id:String} AND host_id = {host_id:String} SETTINGS mutations_sync = 1",
+            parameters, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<object?[]>> QueryRowsAsync(string sql, string runId, CancellationToken cancellationToken = default)
+    {
+        using var reader = await client.ExecuteReaderAsync(sql, Parameters(runId), null, cancellationToken).ConfigureAwait(false);
+        var rows = new List<object?[]>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var row = new object?[reader.FieldCount];
+            for (var i = 0; i < row.Length; i++)
+            {
+                row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            }
+
+            rows.Add(row);
+        }
+
+        return rows;
+    }
+
     public Task<object?> ScalarAsync(string sql, string runId, CancellationToken cancellationToken = default) =>
         client.ExecuteScalarAsync(sql, Parameters(runId), null, cancellationToken)!;
 

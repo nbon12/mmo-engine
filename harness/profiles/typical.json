@@ -1,0 +1,12 @@
+{
+  "name": "Typical",
+  "version": 1,
+  "roundTripMs": 80,
+  "jitterMs": 10,
+  "lossPercent": 0.5,
+  "allowReordering": false,
+  "tolerances": {
+    "relativeFraction": 0.1,
+    "lossPoints": 0.25
+  }
+}

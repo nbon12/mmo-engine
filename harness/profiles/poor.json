@@ -1,0 +1,12 @@
+{
+  "name": "Poor",
+  "version": 1,
+  "roundTripMs": 250,
+  "jitterMs": 50,
+  "lossPercent": 3,
+  "allowReordering": false,
+  "tolerances": {
+    "relativeFraction": 0.1,
+    "lossPoints": 0.25
+  }
+}

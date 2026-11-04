@@ -1,0 +1,13 @@
+{
+  "name": "LAN",
+  "version": 1,
+  "roundTripMs": 1,
+  "jitterMs": 0,
+  "lossPercent": 0,
+  "allowReordering": false,
+  "tolerances": {
+    "relativeFraction": 0.1,
+    "absoluteMs": 0.5,
+    "lossPoints": 0.25
+  }
+}
