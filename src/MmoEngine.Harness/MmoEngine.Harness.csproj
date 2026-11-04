@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="ClickHouse.Driver" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Store\Schema\*.sql" LogicalName="Schema.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.Harness.Tests" />
+  </ItemGroup>
+</Project>

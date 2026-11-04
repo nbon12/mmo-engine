@@ -1,0 +1,13 @@
+# Every synthetic timer fires once, after exactly its delay: zero TimerFault events (issue #13, Invariant monitors).
+# The sample count is the run's tick rows, so a run with no ticks loaded is inconclusive, not a pass.
+id: sim.timer_faults
+description: Zero timer faults.
+applies_to: [simulator, sweep-cell]
+min_samples: 1
+query: |
+  SELECT
+    (SELECT countIf(type = 'TimerFault') FROM sim_events WHERE run_id = {run_id:String}),
+    (SELECT count() FROM sim_ticks WHERE run_id = {run_id:String})
+mode: fixed
+comparison: "<="
+threshold: 0

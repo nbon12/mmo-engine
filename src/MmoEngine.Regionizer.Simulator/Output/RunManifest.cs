@@ -69,6 +69,8 @@ public static class RunManifest
             ["architecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
             ["processorCount"] = Environment.ProcessorCount,
             ["machineName"] = Environment.MachineName,
+            ["cpuModel"] = CpuModel(),
+            ["runnerClass"] = Environment.GetEnvironmentVariable("MMO_RUNNER_CLASS") ?? "",
             ["hardwareIntrinsics"] = intrinsics,
             ["vectorIsHardwareAccelerated"] = Vector.IsHardwareAccelerated,
         };
@@ -80,6 +82,24 @@ public static class RunManifest
         string[] candidates = File.Exists("/usr/bin/git") ? ["/usr/bin/git", "git"] : ["git"];
         var directory = workingDirectory ?? Environment.CurrentDirectory;
         return candidates.Select(git => TryGit(git, directory)).FirstOrDefault(sha => sha is not null) ?? "unknown";
+    }
+
+    /// <summary>
+    /// The CPU model, which the harness's runner class is keyed on (spec 014, research R5):
+    /// <c>/proc/cpuinfo</c>'s "model name" on Linux, else "unknown".
+    /// </summary>
+    public static string CpuModel() => CpuModel("/proc/cpuinfo");
+
+    internal static string CpuModel(string cpuInfoPath)
+    {
+        if (!File.Exists(cpuInfoPath))
+        {
+            return "unknown";
+        }
+
+        var line = File.ReadLines(cpuInfoPath)
+            .FirstOrDefault(l => (l.StartsWith("model name", StringComparison.Ordinal) || l.StartsWith("Model", StringComparison.Ordinal)) && l.Contains(':', StringComparison.Ordinal));
+        return line is null ? "unknown" : line[(line.IndexOf(':', StringComparison.Ordinal) + 1)..].Trim();
     }
 
     private static readonly string[] IntrinsicVariables =

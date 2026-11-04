@@ -1,0 +1,12 @@
+# Zero invariant violations in a simulator run (issue #13, Invariant monitors; spec 014 US2).
+id: sim.violations
+description: Every invariant monitor reports zero violations.
+applies_to: [simulator, sweep-cell]
+min_samples: 1
+query: |
+  SELECT sum(violations), count()
+  FROM sim_ticks
+  WHERE run_id = {run_id:String}
+mode: fixed
+comparison: "<="
+threshold: 0

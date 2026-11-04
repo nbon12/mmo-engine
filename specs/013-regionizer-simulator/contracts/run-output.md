@@ -31,6 +31,7 @@ before finishing keeps `_incomplete`.
   "runtime": {
     "framework": ".NET 9.0.x", "os": "...", "architecture": "Arm64",
     "processorCount": 10, "machineName": "<host>",
+    "cpuModel": "<CPU model or 'unknown'>", "runnerClass": "<MMO_RUNNER_CLASS or ''>",
     "hardwareIntrinsics": { "DOTNET_EnableAVX2": "<env or unset>", "...": "..." },
     "vectorIsHardwareAccelerated": true
   },
@@ -38,6 +39,10 @@ before finishing keeps `_incomplete`.
   "metricsEveryTicks": 1, "islandCheckEveryTicks": 1, "crossRegionPairsEveryTicks": 30
 }
 ```
+
+`runtime.cpuModel` and `runtime.runnerClass` were added by spec 014 (the harness's runner class,
+its research R5). They are additive, so the format version stays 1, and a loader treats them as
+optional.
 
 ## ticks.csv
 

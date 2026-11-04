@@ -1,0 +1,13 @@
+# The issue's example rule: p99 client correction distance, against the baseline gate 9 records.
+# Reports only until harness/baselines/ has a value for the run's profile.
+id: bot.correction_p99
+description: p99 correction distance does not regress more than 10% from baseline.
+applies_to: [bot]
+min_samples: 100000
+query: |
+  SELECT quantile(0.99)(correction_m), count()
+  FROM bot_frames
+  WHERE run_id = {run_id:String} AND valid = 1
+mode: baseline
+direction: lower_is_better
+max_regression: 10%
