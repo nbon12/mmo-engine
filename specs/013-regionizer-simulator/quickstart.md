@@ -5,7 +5,7 @@ shows the commands those tests run, for use during development.
 
 ## Prerequisites
 
-- .NET SDK 9.0.300 or a later 9.0 patch (`global.json`)
+- .NET SDK 10.0.100 or a later 10.0.1xx patch (`global.json`)
 
 ## Build and test
 

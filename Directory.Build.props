@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -15,5 +15,9 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>
+    <!-- Keep `dotnet test` on VSTest (xunit.runner.visualstudio and coverlet.collector). The .NET 10
+         SDK refuses VSTest for Microsoft.Testing.Platform apps, and xunit.v3 makes every test project
+         one unless this is off. -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
   </PropertyGroup>
 </Project>

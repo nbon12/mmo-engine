@@ -20,6 +20,24 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-04 — Move to .NET 10
+
+PR: (this PR) · Issue: #13
+
+### Behavior and contract changes
+
+- The SDK pin is now **10.0.100** (`global.json`, `rollForward: latestPatch`) and every project targets
+  **net10.0** (`Directory.Build.props`). .NET 10 is the current LTS; .NET 9 support ends on 2026-11-10.
+- Test projects set `IsTestingPlatformApplication=false`, so `dotnet test` stays on VSTest
+  (`xunit.runner.visualstudio` and `coverlet.collector`). The .NET 10 SDK otherwise refuses VSTest for
+  xunit.v3 projects, which are Microsoft.Testing.Platform apps by default. CI commands are unchanged.
+
+### Assumptions that no longer hold
+
+- "The SDK is pinned to .NET 9" (the 2026-11-03 entry's .NET 10 follow-up is done). CsCheck 5.x is now
+  possible but not adopted here.
+- Run manifests and benchmark notes recorded before this change name .NET 9; they stay as recorded.
+
 ## 2026-11-03 — Regionizer core library and offline simulator (Pre-Phase 1, sub-spec 1)
 
 Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #47 · Issue: #13
