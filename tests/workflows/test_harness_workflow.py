@@ -134,6 +134,16 @@ class Scripts(unittest.TestCase):
         self.assertEqual(["clickhouse"], pipelines["traces"]["exporters"])
         self.assertEqual(["prometheus"], pipelines["metrics"]["exporters"])
 
+    def test_identity_includes_pods_and_up_reuses_an_installed_chaos_mesh(self):
+        self.assertIn("get pods", (INFRA / "identity.sh").read_text())
+        up = (INFRA / "up.sh").read_text()
+        self.assertIn("reusing Chaos Mesh", up)
+        self.assertLess(up.index("helm -n chaos-mesh list --deployed"), up.index("helm upgrade --install"))
+
+    def test_core_profile_removes_an_earlier_observability_install(self):
+        up = (INFRA / "up.sh").read_text()
+        self.assertIn("delete deployment/prometheus deployment/grafana", up)
+
     def test_smoke_checks_every_table_schema_apply_lists(self):
         text = (INFRA / "smoke.sh").read_text()
         self.assertIn("harness schema apply", text)

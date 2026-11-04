@@ -67,13 +67,25 @@ fi
 log "applying manifests ($OVERLAY)"
 kubectl apply -k "$ROOT/infra/harness/manifests/$OVERLAY" >/dev/null
 
-log "installing Chaos Mesh $CHAOS_MESH_VERSION"
-helm repo add chaos-mesh https://charts.chaos-mesh.org >/dev/null 2>&1 || true
-helm repo update chaos-mesh >/dev/null
-helm upgrade --install chaos-mesh chaos-mesh/chaos-mesh --namespace chaos-mesh --create-namespace \
-  --version "$CHAOS_MESH_VERSION" \
-  --set chaosDaemon.runtime=containerd --set chaosDaemon.socketPath="$RUNTIME_SOCKET" \
-  --set dashboard.create=false --wait --timeout 10m >/dev/null
+if [ "$OVERLAY" = base ]; then
+  # kubectl apply doesn't prune: remove the observability profile if an earlier run installed it.
+  kubectl -n harness delete deployment/prometheus deployment/grafana service/prometheus service/grafana \
+    --ignore-not-found >/dev/null
+fi
+
+# The chart regenerates its webhook certificates and rolls the controller on every upgrade, so an
+# installed release at the wanted version is left alone (idempotence, spec 014 US6 scenario 2).
+if helm -n chaos-mesh list --deployed -o json 2>/dev/null | grep -q "\"chart\":\"chaos-mesh-$CHAOS_MESH_VERSION\""; then
+  log "reusing Chaos Mesh $CHAOS_MESH_VERSION"
+else
+  log "installing Chaos Mesh $CHAOS_MESH_VERSION"
+  helm repo add chaos-mesh https://charts.chaos-mesh.org >/dev/null 2>&1 || true
+  helm repo update chaos-mesh >/dev/null
+  helm upgrade --install chaos-mesh chaos-mesh/chaos-mesh --namespace chaos-mesh --create-namespace \
+    --version "$CHAOS_MESH_VERSION" \
+    --set chaosDaemon.runtime=containerd --set chaosDaemon.socketPath="$RUNTIME_SOCKET" \
+    --set dashboard.create=false --wait --timeout 10m >/dev/null
+fi
 
 log "waiting for rollouts"
 deployments=(clickhouse otel-collector)
