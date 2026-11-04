@@ -91,10 +91,14 @@ class StackJob(unittest.TestCase):
 
 
 class GoldenAndNetemJobs(unittest.TestCase):
-    def test_golden_job_replays_and_uploads_candidates(self):
+    def test_golden_job_replays_twice_per_config_and_writes_no_recordings(self):
         self.assertIn("infra/harness/golden.sh", runs("golden"))
         uploads = [s for s in steps("golden") if s.get("uses", "").startswith("actions/upload-artifact@")]
-        self.assertEqual("golden-candidates", uploads[0]["with"]["name"])
+        self.assertEqual([], uploads)
+        script = (INFRA / "golden.sh").read_text()
+        self.assertIn('--out "$WORK/$name-reference"', script)
+        self.assertIn('--out "$WORK/$name-replay"', script)
+        self.assertNotRegex(script, r"--out \"?\$ROOT/harness/golden")
 
     def test_netem_job_loads_the_module_and_calibrates(self):
         text = runs("netem")
@@ -143,6 +147,16 @@ class Scripts(unittest.TestCase):
     def test_core_profile_removes_an_earlier_observability_install(self):
         up = (INFRA / "up.sh").read_text()
         self.assertIn("delete deployment/prometheus deployment/grafana", up)
+
+    def test_smoke_checks_the_contract_tables_and_prometheus(self):
+        script = (INFRA / "smoke.sh").read_text()
+        self.assertIn("contracts/store-ddl.md", script)
+        self.assertIn('METRICS="$(curl', script)
+        self.assertIn("api/v1/query?query=harness_smoke_total", script)
+
+    def test_up_refuses_a_port_it_does_not_own_and_calibrate_waits_for_the_server(self):
+        self.assertIn("/dev/tcp/127.0.0.1/", (INFRA / "up.sh").read_text())
+        self.assertIn("listening", (INFRA / "calibrate.sh").read_text())
 
     def test_smoke_checks_every_table_schema_apply_lists(self):
         text = (INFRA / "smoke.sh").read_text()

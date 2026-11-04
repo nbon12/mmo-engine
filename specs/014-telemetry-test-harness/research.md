@@ -175,9 +175,10 @@ Kubernetes. kind is the most common CI choice.
 - **Calibration**: it runs on the CI runner's loopback with `tc netem`, where one qdisc on `lo` impairs both
   directions with the per-direction settings. The runner may need `linux-modules-extra` for `sch_netem`.
 - **Golden runs**: GitHub's hosted runners are not one CPU model, so a golden run recorded on one class can be
-  "not comparable" on the next run. The `golden` job then records a candidate for the new class instead of
-  passing silently. A self-hosted runner of one fixed CPU model would remove this, and only changes
-  `MMO_RUNNER_CLASS`.
+  "not comparable" on the next run. The `golden` job therefore runs each config twice on the runner and
+  compares the two (a transient reference, never committed), so determinism is checked on every run, and
+  compares with a committed recording only when one of the same class exists. A self-hosted runner of one
+  fixed CPU model would make committed recordings comparable, and only changes `MMO_RUNNER_CLASS`.
 
 ## R10. Replay viewer
 

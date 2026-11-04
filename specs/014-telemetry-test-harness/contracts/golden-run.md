@@ -32,4 +32,5 @@ ticks.csv      # the recorded ticks.csv without its wall-clock columns (bookkeep
 | Another golden format version, run format version, or runner class | 8 | "not comparable", naming both classes or versions |
 
 The runner class ID is defined in research R5. Recording is `harness golden record`, and its output
-is committed. CI never records (FR-020).
+is committed. CI never records into `harness/golden/` (FR-020). The `golden` job records a transient
+reference in a temporary folder, so a second run on the same runner can be compared with it.

@@ -14,10 +14,18 @@ query() { curl -fsS -u "$USER_NAME:$PASSWORD" "http://127.0.0.1:$PORT/" --data-b
 harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 
-echo "1. tables: every table the schema defines"
-mapfile -t TABLES < <(harness schema apply | python3 -c 'import json,sys; print("\n".join(json.loads(sys.stdin.readlines()[-1])["tables"]))')
-[ "${#TABLES[@]}" -gt 0 ] || fail "schema apply listed no tables"
-for table in "${TABLES[@]}"; do
+echo "1. tables: every table the store contract lists, and every table the schema defines"
+CONTRACT="$ROOT/specs/014-telemetry-test-harness/contracts/store-ddl.md"
+mapfile -t EXPECTED < <(python3 -c '
+import re, sys
+for line in open(sys.argv[1]):
+    if line.startswith("| 0"):
+        for name in re.findall(r"`([a-z_]+)`", line.split("|")[2]):
+            print(name)' "$CONTRACT")
+[ "${#EXPECTED[@]}" -ge 16 ] || fail "could not read the table list from $CONTRACT"
+APPLY_OUT="$(harness schema apply)"
+mapfile -t APPLIED < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.stdin.read().strip().splitlines()[-1])["tables"]))' <<<"$APPLY_OUT")
+for table in "${EXPECTED[@]}" "${APPLIED[@]}"; do
   [ "$(query "EXISTS TABLE $table")" = "1" ] || fail "table $table is missing"
 done
 
@@ -42,7 +50,8 @@ for _ in $(seq 1 30); do
 done
 [ "$logs" = "1" ] || fail "the OTLP log did not reach otel_logs"
 [ "$traces" = "1" ] || fail "the OTLP span did not reach otel_traces"
-curl -fsS http://127.0.0.1:18889/metrics | grep -q harness_smoke_total || fail "the collector does not expose OTLP metrics for Prometheus"
+METRICS="$(curl -fsS http://127.0.0.1:18889/metrics)" || fail "the collector's metrics endpoint did not answer"
+grep -q harness_smoke_total <<<"$METRICS" || fail "the collector does not expose OTLP metrics for Prometheus"
 
 echo "3. a simulator run loads and passes the committed rules"
 OUT="$(mktemp -d)"
@@ -56,6 +65,20 @@ if [ "${1:-}" = "--observability" ]; then
   echo "4. observability profile: Prometheus and Grafana are ready"
   kubectl -n harness rollout status deployment/prometheus --timeout=5m >/dev/null || fail "prometheus is not ready"
   kubectl -n harness rollout status deployment/grafana --timeout=5m >/dev/null || fail "grafana is not ready"
+  echo "5. observability profile: Prometheus scraped the collector's OTLP metric"
+  kubectl -n harness port-forward svc/prometheus 19090:9090 >/dev/null 2>&1 &
+  PROM_PF=$!
+  trap 'kill $PF $PROM_PF 2>/dev/null || true' EXIT
+  scraped=""
+  for _ in $(seq 1 60); do
+    answer="$(curl -fsS 'http://127.0.0.1:19090/api/v1/query?query=harness_smoke_total' 2>/dev/null || true)"
+    if python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["data"]["result"] else 1)' "$answer" 2>/dev/null; then
+      scraped=yes
+      break
+    fi
+    sleep 2
+  done
+  [ -n "$scraped" ] || fail "Prometheus has no harness_smoke_total series"
 else
   echo "4. core profile: Prometheus and Grafana are not installed"
   if kubectl -n harness get deployment prometheus >/dev/null 2>&1 || kubectl -n harness get deployment grafana >/dev/null 2>&1; then

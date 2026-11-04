@@ -39,7 +39,8 @@ Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-har
 - **`.github/workflows/harness.yml`** runs three jobs on PRs and on `main` for `src/`, `harness/`, `infra/harness/` and
   itself:
   - `stack`: the one command twice, the smoke check, and the observability profile;
-  - `golden`: replays `harness/golden/*` and uploads recorded candidates;
+  - `golden`: runs each `harness/golden/*` config twice on the runner and fails on any divergence between the two, and
+    compares with a committed recording of the same runner class when there is one;
   - `netem`: LAN calibration on loopback for 30 s.
 
   `workflow_dispatch` with `calibrate: true` calibrates every profile for 5 minutes each.
@@ -51,11 +52,14 @@ Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-har
   answered `What is "seed"?`. It also passes the repo's profiles folder explicitly, and fails when storing calibrated
   settings fails.
 - **The `stack` job** checks that a second `up.sh` recreates nothing (`infra/harness/identity.sh` before and after).
-  The workflow runs with pipefail. `smoke.sh` checks every table that `schema apply` lists.
+  The workflow runs with pipefail. `smoke.sh` checks every table that the store contract and `schema apply` list, and
+  with `--observability` that Prometheus scraped the collector's metric.
+- **`up.sh`** refuses a local port held by something other than the harness's ClickHouse. **`calibrate.sh`** waits for
+  the probe server to say it is listening before probing.
 
 ### Open follow-ups
 
-- Commit the golden recordings from the first `golden-candidates` artifact on `main` (T034).
+- Commit cross-machine golden recordings once a fixed runner class exists (T034).
 - Commit calibrated profile settings from a `calibrate: true` run (T045).
 - Hosted runners vary in CPU model, so a golden run may be "not comparable" on another class. A self-hosted runner of one
   model gives the issue's fixed runner class.

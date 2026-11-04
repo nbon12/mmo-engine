@@ -30,11 +30,18 @@ if [ -z "${MMO_CLICKHOUSE:-}" ]; then
   export MMO_CLICKHOUSE="Host=127.0.0.1;Port=18125;Username=harness;Password=calibration"
 fi
 harness schema apply >/dev/null
-harness probe serve --bind 127.0.0.1:7400 >/dev/null &
+SERVER_OUT="$(mktemp)"
+harness probe serve --bind 127.0.0.1:7400 >"$SERVER_OUT" &
 SERVER=$!
 cleanup() { sudo tc qdisc del dev lo root 2>/dev/null || true; kill "$SERVER" 2>/dev/null || true; }
 trap cleanup EXIT
-sleep 2
+# Probe only once the server says it is listening, so no early probe is counted as lost.
+for _ in $(seq 1 120); do
+  grep -q '"listening"' "$SERVER_OUT" && break
+  kill -0 "$SERVER" 2>/dev/null || { echo "the probe server exited before listening" >&2; exit 1; }
+  sleep 0.5
+done
+grep -q '"listening"' "$SERVER_OUT" || { echo "the probe server did not start listening within 60 s" >&2; exit 1; }
 # Older iproute2 builds don't know netem's `seed`; without it the loss pattern isn't repeatable, which only
 # matters for impaired runs that are replayed, not for calibration (spec 014, research R7).
 SEED_FILTER=cat

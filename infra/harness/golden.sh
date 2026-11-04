@@ -1,47 +1,59 @@
 #!/usr/bin/env bash
-# Replays every golden run in harness/golden/ and compares it tick by tick (spec 014, US3, FR-019).
-#   - golden.json present: `harness golden check`. Exit 0 match, 7 diverged (fails), 8 not comparable.
-#   - Not comparable, or golden.json missing: records a candidate on this runner class into
-#     $GOLDEN_CANDIDATES/<name>/ (default out/golden-candidates), for CI to upload and an agent to commit.
-#     That is reported as a warning, never as a pass of the comparison.
-# Recording is never written into harness/golden/ by this script (FR-020).
+# Golden-run determinism check (spec 014, US3, FR-018 to FR-020).
+#
+# For every config in harness/golden/<name>/:
+#   1. Run the simulator twice, in separate processes, on this machine (one runner class).
+#      The first run is recorded as a transient reference in a temp folder; the second must
+#      match it tick by tick (`harness golden check`, exit 0). Any divergence fails (exit 7).
+#      This is what proves "the same seed gives the same per-tick state hash" on the runner
+#      class the job runs on. Nothing is written into harness/golden/ (FR-020).
+#   2. If a committed recording (golden.json) exists, compare the second run with it too:
+#      0 passes, 7 (diverged) fails, 8 (recorded on another runner class) is a warning,
+#      because hosted runners are not one CPU model (research R5, R9).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CANDIDATES="${GOLDEN_CANDIDATES:-$ROOT/out/golden-candidates}"
 WORK="$(mktemp -d)"
 sim() { dotnet run --project "$ROOT/src/MmoEngine.Regionizer.Simulator.Cli" -c Release -- "$@"; }
 harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
 status=0
+# Keep the most serious status: a divergence (7) outranks any other failure.
+fail() { if [ "$1" -eq 7 ] || [ "$status" -eq 0 ]; then status="$1"; fi; }
+
 for dir in "$ROOT"/harness/golden/*/; do
   name="$(basename "$dir")"
-  sim run "$dir/config.json" --out "$WORK/$name" >/dev/null
+  set +e
+  sim run "$dir/config.json" --out "$WORK/$name-reference" >/dev/null &&
+    sim run "$dir/config.json" --out "$WORK/$name-replay" >/dev/null &&
+    harness golden record --run "$WORK/$name-reference" --config "$dir/config.json" --out "$WORK/$name-golden" --name "$name" >/dev/null
+  code=$?
+  set -e
+  if [ "$code" -ne 0 ]; then
+    echo "::error::golden $name: running or recording the reference failed (exit $code)"
+    fail 1
+    continue
+  fi
+
+  set +e
+  harness golden check --golden "$WORK/$name-golden" --run "$WORK/$name-replay"
+  code=$?
+  set -e
+  case "$code" in
+    0) echo "golden $name: two runs on this runner class match tick for tick" ;;
+    7) echo "::error::golden $name: two runs of the same seed diverged on one machine"; fail 7 ;;
+    *) echo "::error::golden $name: the replay check failed with exit $code"; fail "$code" ;;
+  esac
+
   if [ -f "$dir/golden.json" ]; then
     set +e
-    harness golden check --golden "$dir" --run "$WORK/$name"
+    harness golden check --golden "$dir" --run "$WORK/$name-replay"
     code=$?
     set -e
     case "$code" in
-      0) echo "golden $name: match" ;;
-      7) echo "::error::golden $name diverged (see the report above)"; status=7 ;;
-      8) echo "::warning::golden $name was recorded on another runner class; recording a candidate for this one"
-         harness golden record --run "$WORK/$name" --config "$dir/config.json" --out "$CANDIDATES/$name" --name "$name" >/dev/null ;;
-      *) echo "::error::golden $name check failed with exit $code"; status=$code ;;
+      0) echo "golden $name: matches the committed recording" ;;
+      7) echo "::error::golden $name diverged from the committed recording"; fail 7 ;;
+      8) echo "::warning::golden $name: the committed recording is from another runner class; not compared" ;;
+      *) echo "::error::golden $name: the committed-recording check failed with exit $code"; fail "$code" ;;
     esac
-  else
-    echo "::warning::golden $name has no recording yet; recording a candidate on this runner class"
-    harness golden record --run "$WORK/$name" --config "$dir/config.json" --out "$CANDIDATES/$name" --name "$name" >/dev/null
   fi
 done
-# Also print each candidate into the log, so it can be committed from the log when the artifact store can't
-# be reached (one line: a gzip tarball in base64, between markers).
-if [ -d "$CANDIDATES" ]; then
-  for candidate in "$CANDIDATES"/*/; do
-    [ -d "$candidate" ] || continue
-    name="$(basename "$candidate")"
-    echo "golden-candidate-begin $name"
-    tar -czf - -C "$CANDIDATES" "$name" | base64 -w0
-    echo
-    echo "golden-candidate-end $name"
-  done
-fi
 exit "$status"

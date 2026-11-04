@@ -33,7 +33,9 @@ need docker; need kubectl; need helm; need dotnet
 case "$TOOL" in
   kind)
     need kind
-    if ! kind get clusters 2>/dev/null | grep -qx "$NAME"; then
+    # Capture first: under pipefail, `grep -q` exiting early can SIGPIPE the producer.
+    clusters="$(kind get clusters 2>/dev/null || true)"
+    if ! grep -qx "$NAME" <<<"$clusters"; then
       log "creating kind cluster $NAME"
       kind create cluster --name "$NAME" --config "$ROOT/infra/harness/kind-config.yaml" --wait 180s
     else
@@ -44,7 +46,8 @@ case "$TOOL" in
     ;;
   k3d)
     need k3d
-    if ! k3d cluster list -o json 2>/dev/null | grep -q "\"name\":\"$NAME\""; then
+    clusters="$(k3d cluster list -o json 2>/dev/null || true)"
+    if ! grep -q "\"name\":\"$NAME\"" <<<"$clusters"; then
       log "creating k3d cluster $NAME"
       k3d cluster create "$NAME" --wait
     else
@@ -75,7 +78,8 @@ fi
 
 # The chart regenerates its webhook certificates and rolls the controller on every upgrade, so an
 # installed release at the wanted version is left alone (idempotence, spec 014 US6 scenario 2).
-if helm -n chaos-mesh list --deployed -o json 2>/dev/null | grep -q "\"chart\":\"chaos-mesh-$CHAOS_MESH_VERSION\""; then
+releases="$(helm -n chaos-mesh list --deployed -o json 2>/dev/null || true)"
+if grep -q "\"chart\":\"chaos-mesh-$CHAOS_MESH_VERSION\"" <<<"$releases"; then
   log "reusing Chaos Mesh $CHAOS_MESH_VERSION"
 else
   log "installing Chaos Mesh $CHAOS_MESH_VERSION"
@@ -98,7 +102,19 @@ kubectl -n chaos-mesh rollout status daemonset/chaos-daemon --timeout=10m >/dev/
 
 USER_NAME="$(kubectl -n harness get secret clickhouse-credentials -o jsonpath='{.data.username}' | base64 -d)"
 PASSWORD="$(kubectl -n harness get secret clickhouse-credentials -o jsonpath='{.data.password}' | base64 -d)"
-if ! curl -fsS "http://127.0.0.1:$PORT/ping" >/dev/null 2>&1; then
+# Something already answering on the port must be this cluster's ClickHouse: it must accept the cluster
+# secret's credentials. Anything else (a throwaway container, a stale forward) is refused clearly.
+if curl -fsS "http://127.0.0.1:$PORT/ping" >/dev/null 2>&1; then
+  if ! curl -fsS -u "$USER_NAME:$PASSWORD" "http://127.0.0.1:$PORT/" --data-binary "SELECT 1" >/dev/null 2>&1; then
+    echo "127.0.0.1:$PORT is taken by a ClickHouse that is not this cluster's (it rejects the cluster's credentials)." >&2
+    echo "Stop it, or set HARNESS_CLICKHOUSE_PORT to a free port." >&2
+    exit 1
+  fi
+  log "reusing the port-forward on 127.0.0.1:$PORT"
+elif (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+  echo "127.0.0.1:$PORT is taken by something that is not ClickHouse; set HARNESS_CLICKHOUSE_PORT to a free port." >&2
+  exit 1
+else
   log "port-forwarding ClickHouse to 127.0.0.1:$PORT"
   nohup kubectl -n harness port-forward svc/clickhouse "$PORT:8123" >"${TMPDIR:-/tmp}/mmo-harness-port-forward.log" 2>&1 &
   for _ in $(seq 1 60); do

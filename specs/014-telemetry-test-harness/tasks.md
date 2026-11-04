@@ -189,12 +189,14 @@ with a changed parameter.
     Prometheus endpoint.
   - Its configuration is pinned by `tests/workflows/test_harness_workflow.py`.
 - [x] T063 [US3] The `golden` job (`infra/harness/golden.sh`) replays `harness/golden/*`.
-  - A divergence fails the job.
-  - A missing or other-class recording uploads a candidate recorded on the runner. CI never writes into
-    `harness/golden/` (FR-020).
+  - Each config runs twice, in separate processes, on the runner. The first run is a transient reference in a temp
+    folder; the second must match it tick by tick. A divergence fails the job (exit 7).
+  - A committed recording, when present, is compared too: a divergence fails, and another runner class (exit 8) is a
+    warning. CI never writes into `harness/golden/` (FR-020).
   - The golden configs are committed: `baseline-small` and `stacked-doors`.
-- [ ] T034 [US3] Commit the golden recordings from the `golden-candidates` artifact of a `main` run. This is the follow-up
-  after this slice merges.
+- [ ] T034 [US3] Commit cross-machine golden recordings once a fixed runner class exists (a self-hosted runner of one CPU
+  model). Until then, the in-job double run proves determinism on each hosted runner, and a recording from a hosted
+  runner would be "not comparable" on the next one.
 - [x] T064 [US4] The `netem` job (`infra/harness/calibrate.sh`) applies a profile with `tc netem` on loopback and probes it.
   Each PR calibrates LAN for 30 s. A `workflow_dispatch` with `calibrate: true` runs every profile for 5 minutes and
   uploads the calibrated profile files (T045).
