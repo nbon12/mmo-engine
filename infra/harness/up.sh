@@ -46,8 +46,9 @@ case "$TOOL" in
     ;;
   k3d)
     need k3d
-    clusters="$(k3d cluster list -o json 2>/dev/null || true)"
-    if ! grep -q "\"name\":\"$NAME\"" <<<"$clusters"; then
+    # Parse the JSON rather than grep it, so the check doesn't depend on k3d's formatting.
+    clusters="$(k3d cluster list -o json 2>/dev/null || echo '[]')"
+    if ! python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in [c["name"] for c in json.loads(sys.argv[2] or "[]")] else 1)' "$NAME" "$clusters"; then
       log "creating k3d cluster $NAME"
       k3d cluster create "$NAME" --wait
     else
@@ -126,7 +127,9 @@ fi
 
 export MMO_CLICKHOUSE="Host=127.0.0.1;Port=$PORT;Username=$USER_NAME;Password=$PASSWORD"
 log "applying the store schema"
-dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- schema apply >/dev/null
+# shellcheck source=infra/harness/lib.sh
+source "$ROOT/infra/harness/lib.sh"
+harness schema apply >/dev/null
 
 log "ready"
 # The last line is the connection setting for the harness tools.

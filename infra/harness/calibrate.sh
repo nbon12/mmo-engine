@@ -17,10 +17,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 PROFILES_DIR="$ROOT/harness/profiles"
-BUILD_OUT="$(mktemp -d)"
-dotnet build "$ROOT/src/MmoEngine.Harness.Cli" -c Release -o "$BUILD_OUT" >/dev/null
-# Run the built DLL directly (not `dotnet run`), so a background server's $! is the server process itself.
-harness() { dotnet "$BUILD_OUT/harness.dll" "$@"; }
+# shellcheck source=infra/harness/lib.sh
+source "$ROOT/infra/harness/lib.sh"
+harness_build harness
 CONTAINER=""
 SERVER=""
 SERVER_OUT=""
@@ -28,7 +27,7 @@ cleanup() {
   sudo tc qdisc del dev lo root 2>/dev/null || true
   if [ -n "$SERVER" ]; then kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true; fi
   if [ -n "$CONTAINER" ]; then docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; fi
-  rm -rf "$BUILD_OUT" "$SERVER_OUT"
+  if [ -n "$SERVER_OUT" ]; then rm -f "$SERVER_OUT"; fi
 }
 trap cleanup EXIT
 if [ ${#PROFILES[@]} -eq 0 ]; then
@@ -44,7 +43,8 @@ if [ -z "${MMO_CLICKHOUSE:-}" ]; then
 fi
 harness schema apply >/dev/null
 SERVER_OUT="$(mktemp)"
-dotnet "$BUILD_OUT/harness.dll" probe serve --bind 127.0.0.1:7400 >"$SERVER_OUT" &
+# The built DLL runs directly (no `dotnet run` parent), so $! is the server process itself.
+dotnet "$HARNESS_BUILD_DIR/harness/harness.dll" probe serve --bind 127.0.0.1:7400 >"$SERVER_OUT" &
 SERVER=$!
 # Probe only once the server says it is listening, so no early probe is counted as lost.
 for _ in $(seq 1 120); do

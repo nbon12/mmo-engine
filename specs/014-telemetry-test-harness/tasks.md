@@ -114,9 +114,11 @@ with a changed parameter.
   manifest. These are additive, so the run-output format stays at version 1, and the contract is updated.
 - [x] T033 [US3] `GoldenRuns.Record` and `GoldenRuns.Compare` (FR-018 to FR-020, contracts/golden-run.md), and
   `harness golden record` and `harness golden check`. Tested by `GoldenRecordThenCheckReportsMatchAndDivergence`.
-- [ ] T034 [US3] Commit golden runs in `harness/golden/` recorded on the CI runner class, and a CI job that replays
-  them (slice 3). This needs the workflow, because a golden run recorded on any other machine is "not comparable"
-  in CI by design.
+- [x] T034 [US3] Golden runs replayed in CI (slice 3). Done by T063: the `golden` job runs each committed config twice
+  on the runner and fails on any divergence. Committing recordings is not applicable on GitHub's hosted runners,
+  whose CPU model varies, so a recording from one would be "not comparable" on the next (research R9). If a fixed
+  runner class is ever provisioned (an owner step, never a task here), `harness golden record` output can be
+  committed and the job already compares it.
 
 ## Phase 5: User Story 4 - Network profiles are defined, applied and calibrated (P2), slice 2
 
@@ -180,8 +182,9 @@ with a changed parameter.
   a 14-day TTL), with `create_schema: false`. Checked locally against the real collector: an OTLP log and span landed
   in them, and the metric was exposed for Prometheus. `LoaderTests` covers the tables and TTLs.
 - [x] T062 [US6] `.github/workflows/harness.yml`, with these checks:
-  - Scenario 1: the `stack` job's "Bring up the harness" step.
-  - Scenario 2: "Run the one command again", which must exit 0.
+  - Scenario 1: the `stack` job's "Bring up the harness" step, on a kind and k3d matrix.
+  - Scenario 2: "Run the one command again", which must exit 0, with `identity.sh` before and after showing nothing
+    was recreated.
   - Scenario 3: `smoke.sh` without `--observability` asserts Prometheus and Grafana are absent; with it, it waits for
     them to be ready.
   - Scenario 4: `smoke.sh` step 1 checks every table.
@@ -194,13 +197,9 @@ with a changed parameter.
   - A committed recording, when present, is compared too: a divergence fails, and another runner class (exit 8) is a
     warning. CI never writes into `harness/golden/` (FR-020).
   - The golden configs are committed: `baseline-small` and `stacked-doors`.
-- [ ] T034 [US3] Commit cross-machine golden recordings once a fixed runner class exists (a self-hosted runner of one CPU
-  model). Until then, the in-job double run proves determinism on each hosted runner, and a recording from a hosted
-  runner would be "not comparable" on the next one.
 - [x] T064 [US4] The `netem` job (`infra/harness/calibrate.sh`) applies a profile with `tc netem` on loopback and probes it.
   Each PR calibrates LAN for 30 s. A `workflow_dispatch` with `calibrate: true` runs every profile for 5 minutes and
   uploads the calibrated profile files (T045).
-- [ ] T045 [US4] Commit the calibrated settings from a full `calibrate: true` run.
 
 ## Phase 8: User Story 7 - The replay viewer (P4), slice 4
 

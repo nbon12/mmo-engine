@@ -1,7 +1,7 @@
 name: Harness
 
 # The telemetry and test harness in CI (spec 014-telemetry-test-harness, US6 and US3; issue #13).
-#   stack:     the one command (infra/harness/up.sh) on kind, run twice (idempotent), then the smoke
+#   stack:     the one command (infra/harness/up.sh) on kind and on k3d, run twice (idempotent), then the smoke
 #              check: tables, the collector's OTLP paths, a run loaded and gated by the rules, and the
 #              optional observability profile.
 #   golden:    runs each harness/golden/* config twice on this runner and requires identical per-tick
@@ -16,6 +16,12 @@ on:
       - "infra/harness/**"
       - "harness/**"
       - "src/**"
+      # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
+      - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
+      - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      - "global.json"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
   push:
     branches: [main]
     paths:
@@ -23,6 +29,12 @@ on:
       - "infra/harness/**"
       - "harness/**"
       - "src/**"
+      # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
+      - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
+      - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      - "global.json"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
   workflow_dispatch:
     inputs:
       calibrate:
@@ -49,9 +61,16 @@ env:
 
 jobs:
   stack:
-    name: stack
+    name: stack (${{ matrix.cluster }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # US6 scenario 1: the one command works on kind and on k3d.
+        cluster: [kind, k3d]
+    env:
+      HARNESS_CLUSTER: ${{ matrix.cluster }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,9 +83,17 @@ jobs:
           global-json-file: global.json
 
       - name: Install kind
+        if: matrix.cluster == 'kind'
         run: |
           go install sigs.k8s.io/kind@v0.30.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install k3d
+        if: matrix.cluster == 'k3d'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/k3d" https://github.com/k3d-io/k3d/releases/download/v5.8.3/k3d-linux-amd64
+          echo "dbaa79a76ace7f4ca230a1ff41dc7d8a5036a8ad0309e9c54f9bf3836dbe853e  $RUNNER_TEMP/k3d" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
 
       - name: Bring up the harness (the one command)
         run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"

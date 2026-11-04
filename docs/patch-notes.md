@@ -55,11 +55,17 @@ Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-har
   The workflow runs with pipefail. `smoke.sh` checks every table that the store contract and `schema apply` list, and
   with `--observability` that Prometheus scraped the collector's metric.
 - **`up.sh`** refuses a local port held by something other than the harness's ClickHouse. **`calibrate.sh`** waits for
-  the probe server to say it is listening before probing.
+  the probe server to say it is listening before probing, and its cleanup stops the server and removes its scratch
+  ClickHouse container.
+- **`infra/harness/lib.sh`** is the shared `harness`/`sim` helper: it builds each CLI once (compile errors go to the
+  log on stderr) into `HARNESS_BUILD_DIR` (default `~/.cache/mmo-harness/build`) and runs the DLL. Source it from
+  any new harness script instead of calling `dotnet run`.
+- **The `stack` job** runs on kind and on k3d (v5.8.3, checksum-verified).
 
 ### Open follow-ups
 
-- Commit cross-machine golden recordings once a fixed runner class exists (T034).
+- Committed cross-machine golden recordings need a fixed runner class (a self-hosted runner of one CPU model), which is
+  an owner step. Until then the in-job double run checks determinism on every run.
 - Commit calibrated profile settings from a `calibrate: true` run (T045).
 - Hosted runners vary in CPU model, so a golden run may be "not comparable" on another class. A self-hosted runner of one
   model gives the issue's fixed runner class.

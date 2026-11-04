@@ -10,6 +10,7 @@ Run: python3 -m unittest discover -s tests/workflows -v   (needs PyYAML)
 import os
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -120,10 +121,38 @@ class Scripts(unittest.TestCase):
         self.assertIn("unknown argument", result.stderr)
 
     def test_up_refuses_an_unknown_cluster_tool_with_exit_2(self):
-        env = dict(os.environ, HARNESS_CLUSTER="minikube", PATH=os.environ["PATH"])
-        result = subprocess.run([str(INFRA / "up.sh")], capture_output=True, text=True, env=env)
-        # Exit 2 either for the missing tools this machine lacks or for the unknown cluster tool.
+        # Stub the tools up.sh needs first, so the only way to exit 2 is the unknown cluster tool.
+        with tempfile.TemporaryDirectory() as stubs:
+            for tool in ("docker", "kubectl", "helm", "dotnet"):
+                stub = Path(stubs) / tool
+                stub.write_text("#!/bin/sh\nexit 0\n")
+                stub.chmod(0o755)
+            env = dict(os.environ, HARNESS_CLUSTER="minikube", PATH=f"{stubs}:{os.environ['PATH']}")
+            result = subprocess.run([str(INFRA / "up.sh")], capture_output=True, text=True, env=env)
         self.assertEqual(2, result.returncode)
+        self.assertIn("HARNESS_CLUSTER must be kind or k3d, was minikube", result.stderr)
+
+    def test_stack_job_runs_on_kind_and_k3d_with_a_verified_k3d(self):
+        job = WORKFLOW["jobs"]["stack"]
+        self.assertEqual(["kind", "k3d"], job["strategy"]["matrix"]["cluster"])
+        self.assertEqual("${{ matrix.cluster }}", job["env"]["HARNESS_CLUSTER"])
+        self.assertRegex(runs("stack"), r"k3d/releases/download/v\d+\.\d+\.\d+/k3d-linux-amd64")
+        self.assertRegex(runs("stack"), r"[0-9a-f]{64}  \$RUNNER_TEMP/k3d\" \| sha256sum -c -")
+
+    def test_paths_cover_the_files_the_jobs_read(self):
+        for trigger in ("pull_request", "push"):
+            for path in ("specs/014-telemetry-test-harness/contracts/store-ddl.md",
+                         "tests/MmoEngine.Harness.Tests/Fixtures/runs/**", "global.json",
+                         "Directory.Build.props", "Directory.Packages.props"):
+                self.assertIn(path, TRIGGERS[trigger]["paths"])
+
+    def test_scripts_build_once_through_lib_with_visible_output(self):
+        lib = (INFRA / "lib.sh").read_text()
+        self.assertIn(">&2", lib)
+        for script in ("up.sh", "smoke.sh", "golden.sh", "calibrate.sh"):
+            text = (INFRA / script).read_text()
+            self.assertIn("infra/harness/lib.sh", text, script)
+            self.assertNotIn("dotnet run --project", text, script)
 
     def test_manifests_never_hold_the_clickhouse_password(self):
         for path in (INFRA / "manifests").rglob("*.yaml"):
@@ -156,7 +185,7 @@ class Scripts(unittest.TestCase):
 
     def test_scripts_clean_up_what_they_start(self):
         calibrate = (INFRA / "calibrate.sh").read_text()
-        self.assertIn('dotnet "$BUILD_OUT/harness.dll" probe serve', calibrate)
+        self.assertIn('dotnet "$HARNESS_BUILD_DIR/harness/harness.dll" probe serve', calibrate)
         self.assertNotIn("dotnet run --project", calibrate)
         self.assertIn('docker rm -f "$CONTAINER"', calibrate)
         self.assertIn("trap cleanup EXIT", calibrate)

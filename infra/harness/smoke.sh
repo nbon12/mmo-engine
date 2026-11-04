@@ -11,7 +11,10 @@ PORT="$(sed -n 's/.*Port=\([0-9]*\).*/\1/p' <<<"$MMO_CLICKHOUSE")"
 USER_NAME="$(sed -n 's/.*Username=\([^;]*\).*/\1/p' <<<"$MMO_CLICKHOUSE")"
 PASSWORD="$(sed -n 's/.*Password=\([^;]*\).*/\1/p' <<<"$MMO_CLICKHOUSE")"
 query() { curl -fsS -u "$USER_NAME:$PASSWORD" "http://127.0.0.1:$PORT/" --data-binary "$1"; }
-harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
+# shellcheck source=infra/harness/lib.sh
+source "$ROOT/infra/harness/lib.sh"
+harness_build harness
+harness_build sim
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 
 echo "1. tables: every table the store contract lists, and every table the schema defines"
@@ -55,8 +58,7 @@ grep -q harness_smoke_total <<<"$METRICS" || fail "the collector does not expose
 
 echo "3. a simulator run loads and passes the committed rules"
 OUT="$(mktemp -d)"
-dotnet run --project "$ROOT/src/MmoEngine.Regionizer.Simulator.Cli" -c Release -- \
-  run "$ROOT/tests/MmoEngine.Harness.Tests/Fixtures/runs/tiny-config.json" --out "$OUT/run" >/dev/null
+sim run "$ROOT/tests/MmoEngine.Harness.Tests/Fixtures/runs/tiny-config.json" --out "$OUT/run" >/dev/null
 RUN_ID="$(harness load "$OUT/run" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"
 [ -n "$RUN_ID" ] || fail "load printed no runId"
 harness rules run --run-id "$RUN_ID" --rules "$ROOT/harness/rules" --baselines "$ROOT/harness/baselines" --artifacts "$OUT/artifacts" >/dev/null || fail "rules did not pass the clean run"

@@ -15,8 +15,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 # The transient references are discarded when the script ends (FR-020).
 trap 'rm -rf "$WORK"' EXIT
-sim() { dotnet run --project "$ROOT/src/MmoEngine.Regionizer.Simulator.Cli" -c Release -- "$@"; }
-harness() { dotnet run --project "$ROOT/src/MmoEngine.Harness.Cli" -c Release -- "$@"; }
+# shellcheck source=infra/harness/lib.sh
+source "$ROOT/infra/harness/lib.sh"
+# Build both CLIs up front (compile errors go to the log), so a build failure stops here with its output.
+harness_build sim
+harness_build harness
 status=0
 # Keep the most serious status: a divergence (7) outranks any other failure.
 fail() { if [ "$1" -eq 7 ] || [ "$status" -eq 0 ]; then status="$1"; fi; }
