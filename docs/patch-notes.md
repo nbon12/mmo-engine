@@ -20,6 +20,22 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-04 — Telemetry and test harness, slice 4: the replay viewer (Pre-Phase 1, sub-spec 2)
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+
+### Behavior and contract changes
+
+- **`regionizer-sim view <run-folder> --tick N --out tick.svg [--layer L]`**:
+  - It re-runs a recorded run from its manifest's effective configuration and seed, up to tick N.
+  - It checks the state hash at N against the recorded `ticks.csv`, and exits 7 if they differ.
+  - It draws one layer as SVG: sections filled by region, claimed sections outlined, portals green when open and
+    red when closed, and entities as dots.
+  - Elements carry `data-*` attributes (`data-region`, `data-entity`, `data-portal`, `data-section`), so tools
+    can read the picture back.
+- `ReplayFrame.Capture(regionizer, tick, hash)` is a reusable snapshot of owned sections, portals and entities with
+  their claims.
+
 ## 2026-11-04 — Telemetry and test harness, slice 2: network profiles, calibration, probe pair, bots (Pre-Phase 1, sub-spec 2)
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
