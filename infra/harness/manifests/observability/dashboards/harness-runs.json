@@ -1,0 +1,38 @@
+{
+  "title": "Harness runs",
+  "uid": "harness-runs",
+  "schemaVersion": 39,
+  "time": { "from": "now-14d", "to": "now" },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Latest runs and verdicts",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "rawSql": "SELECT run_id, kind, scenario, profile, verdict, started FROM runs FINAL ORDER BY started DESC LIMIT 100",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Failing or inconclusive rule results",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "rawSql": "SELECT evaluated_at, run_id, rule_id, outcome, value, threshold, samples, note FROM rule_results WHERE outcome != 'passed' ORDER BY evaluated_at DESC LIMIT 100",
+          "format": 1
+        }
+      ]
+    }
+  ]
+}

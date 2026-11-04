@@ -18,6 +18,19 @@ public sealed class ImpairmentTests
         Assert.Equal("tc qdisc replace dev eth0 parent 1:1 handle 10: pfifo limit 1000", commands[1]);
     }
 
+    /// <summary>netem's seeded PRNG drives jitter and reorder too, so any random element gets the seed; a fixed delay doesn't.</summary>
+    [Theory]
+    [InlineData(1d, 0d, 0d, false, false)]
+    [InlineData(1d, 2d, 0d, false, true)]
+    [InlineData(1d, 0d, 1d, false, true)]
+    [InlineData(1d, 0d, 0d, true, true)]
+    public void SeedIsSetWheneverJitterReorderOrLossIsRandom(double rtt, double jitter, double loss, bool reorder, bool seeded)
+    {
+        var profile = new NetworkProfile { Name = "P", Version = 1, RoundTripMs = rtt, JitterMs = jitter, LossPercent = loss, AllowReordering = reorder };
+
+        Assert.Equal(seeded, NetemScript.NetemArguments(profile, 9).EndsWith(" seed 9", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void NetemReorderingVariantAddsReorderAndNoFifoChild()
     {
@@ -43,7 +56,7 @@ public sealed class ImpairmentTests
     public void LanHasNoJitterOrLossArgumentsAndCalibratedSettingsWin()
     {
         var lan = new NetworkProfile { Name = "LAN", Version = 1, RoundTripMs = 1, JitterMs = 0, LossPercent = 0 };
-        Assert.Equal("netem delay 0.5ms seed 3", NetemScript.NetemArguments(lan, 3));
+        Assert.Equal("netem delay 0.5ms", NetemScript.NetemArguments(lan, 3));
 
         var calibrated = Typical with
         {

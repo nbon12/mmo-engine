@@ -1,0 +1,183 @@
+name: Harness
+
+# The telemetry and test harness in CI (spec 014-telemetry-test-harness, US6 and US3; issue #13).
+#   stack:     the one command (infra/harness/up.sh) on kind and on k3d, run twice (idempotent), then the smoke
+#              check: tables, the collector's OTLP paths, a run loaded and gated by the rules, and the
+#              optional observability profile.
+#   golden:    runs each harness/golden/* config twice on this runner and requires identical per-tick
+#              hashes, and compares with committed recordings of the same runner class
+#              (infra/harness/golden.sh). Any divergence fails.
+#   netem:     calibrates the LAN profile with tc netem on loopback for 30 s (the full calibration of
+#              every profile, 5 minutes each, runs on workflow_dispatch with calibrate: true).
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/harness.yml"
+      - "infra/harness/**"
+      - "harness/**"
+      - "src/**"
+      # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
+      - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
+      - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      - "global.json"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/harness.yml"
+      - "infra/harness/**"
+      - "harness/**"
+      - "src/**"
+      # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
+      - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
+      - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      - "global.json"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
+  workflow_dispatch:
+    inputs:
+      calibrate:
+        description: "Calibrate every network profile for 5 minutes each"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# bash with -o pipefail (GitHub's default `bash -e {0}` has none), so `up.sh | tail -1` fails when up.sh does.
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # The runner class name (spec 014, research R5). Its ID also hashes the CPU model and the pinned
+  # hardware-intrinsic settings below, so a different machine shows up as a different class.
+  MMO_RUNNER_CLASS: gha-ubuntu-latest-x64
+  DOTNET_EnableAVX512F: "0"
+  DOTNET_TieredPGO: "0"
+
+jobs:
+  stack:
+    name: stack (${{ matrix.cluster }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # US6 scenario 1: the one command works on kind and on k3d.
+        cluster: [kind, k3d]
+    env:
+      HARNESS_CLUSTER: ${{ matrix.cluster }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Install kind
+        if: matrix.cluster == 'kind'
+        run: |
+          go install sigs.k8s.io/kind@v0.30.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install k3d
+        if: matrix.cluster == 'k3d'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/k3d" https://github.com/k3d-io/k3d/releases/download/v5.8.3/k3d-linux-amd64
+          echo "dbaa79a76ace7f4ca230a1ff41dc7d8a5036a8ad0309e9c54f9bf3836dbe853e  $RUNNER_TEMP/k3d" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
+
+      - name: Bring up the harness (the one command)
+        run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+
+      - name: Run the one command again (idempotent, nothing recreated)
+        run: |
+          infra/harness/identity.sh > "$RUNNER_TEMP/identity-before"
+          infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+          infra/harness/identity.sh > "$RUNNER_TEMP/identity-after"
+          diff -u "$RUNNER_TEMP/identity-before" "$RUNNER_TEMP/identity-after"
+
+      - name: Smoke check (core profile)
+        run: |
+          eval "$(cat "$RUNNER_TEMP/harness.env")"
+          infra/harness/smoke.sh
+
+      - name: Add the observability profile and check it
+        run: |
+          infra/harness/up.sh --observability | tail -1 > "$RUNNER_TEMP/harness.env"
+          eval "$(cat "$RUNNER_TEMP/harness.env")"
+          infra/harness/smoke.sh --observability
+
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n harness describe pods || true
+          kubectl -n harness logs deployment/otel-collector --tail=200 || true
+
+  golden:
+    name: golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Replay the golden runs (two runs per config on this runner; committed recordings when comparable)
+        run: infra/harness/golden.sh
+
+  netem:
+    name: netem
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Load the netem kernel module
+        run: |
+          sudo apt-get install -y -qq iproute2 >/dev/null
+          if ! sudo modprobe sch_netem; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe sch_netem
+          fi
+
+      - name: Calibrate LAN on loopback (30 s)
+        if: ${{ !inputs.calibrate }}
+        run: infra/harness/calibrate.sh --seconds 30 LAN
+
+      - name: Calibrate every profile (5 minutes each)
+        if: ${{ inputs.calibrate }}
+        run: infra/harness/calibrate.sh --seconds 300 --write-calibrated
+
+      - name: Upload calibrated profiles
+        if: ${{ always() && inputs.calibrate }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: calibrated-profiles
+          # Uploaded even when a profile is out of tolerance, so the ones that calibrated are kept.
+          path: harness/profiles/*.json
+          if-no-files-found: ignore

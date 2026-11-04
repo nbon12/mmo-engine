@@ -14,6 +14,17 @@ dotnet build MmoEngine.sln -warnaserror
 dotnet test tests/MmoEngine.Harness.Tests
 ```
 
+## The one command
+
+Needs Docker, kubectl, helm, kind (or k3d with `HARNESS_CLUSTER=k3d`) and the .NET SDK:
+
+```bash
+eval "$(infra/harness/up.sh | tail -1)"        # ClickHouse, OTel Collector, Chaos Mesh; prints MMO_CLICKHOUSE
+infra/harness/up.sh --observability             # adds Prometheus and Grafana
+infra/harness/smoke.sh                          # the checks CI runs
+infra/harness/down.sh                           # deletes the cluster
+```
+
 ## A ClickHouse to point the tools at
 
 Without the cluster, use a throwaway container:
@@ -48,6 +59,13 @@ done
 dotnet run --project src/MmoEngine.Regionizer.Simulator.Cli -- run harness/golden/<name>/config.json --out out/replay
 dotnet run --project src/MmoEngine.Harness.Cli -- golden check --golden harness/golden/<name> --run out/replay
 echo $?   # 0 match, 7 diverged, 8 not comparable
+```
+
+## Network calibration on one machine (needs root and the netem module)
+
+```bash
+infra/harness/calibrate.sh --seconds 30 LAN
+infra/harness/calibrate.sh --seconds 300 --write-calibrated     # every profile, 5 minutes each
 ```
 
 ## The replay viewer

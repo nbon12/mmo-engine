@@ -20,9 +20,59 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-04 — Telemetry and test harness, slice 3: one-command stack and the Harness workflow (Pre-Phase 1, sub-spec 2)
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #51 · Issue: #13
+
+### Behavior and contract changes
+
+- **`infra/harness/up.sh`** is the one command:
+  - It brings up kind (or k3d with `HARNESS_CLUSTER=k3d`) with ClickHouse, the OpenTelemetry Collector and Chaos
+    Mesh 2.8.4.
+  - `--observability` adds Prometheus and Grafana.
+  - It applies the schema, port-forwards ClickHouse to `127.0.0.1:18123`, and prints `export MMO_CLICKHOUSE=...`
+    as its last line.
+  - It is idempotent. The ClickHouse password is generated into a cluster secret, never committed.
+- **New scripts**: `smoke.sh`, `golden.sh`, `calibrate.sh` and `down.sh`.
+- **Store DDL** gains `otel_logs`, `otel_traces` and the trace-ID index tables, as the collector's ClickHouse
+  exporter v0.161.0 expects them. The exporter runs with `create_schema: false`.
+- **`.github/workflows/harness.yml`** runs three jobs on PRs and on `main` for `src/`, `harness/`, `infra/harness/` and
+  itself:
+  - `stack`: the one command twice, the smoke check, and the observability profile;
+  - `golden`: runs each `harness/golden/*` config twice on the runner and fails on any divergence between the two, and
+    compares with a committed recording of the same runner class when there is one;
+  - `netem`: LAN calibration on loopback for 30 s.
+
+  `workflow_dispatch` with `calibrate: true` calibrates every profile for 5 minutes each.
+- **Workflow tests** now also run for changes under `infra/`.
+- **`harness calibrate --write-calibrated`** skips reordering variants, which have no file of their own.
+- **`harness profile netem`** writes `seed` whenever jitter, reorder or loss is random. netem's seeded PRNG
+  drives all three on Linux 6.3+. A fixed delay gets no seed.
+- **`calibrate.sh`** strips the seed when the machine's `tc` doesn't know it. On GitHub's `ubuntu-latest`, `tc`
+  answered `What is "seed"?`. It also passes the repo's profiles folder explicitly, and fails when storing calibrated
+  settings fails.
+- **The `stack` job** checks that a second `up.sh` recreates nothing (`infra/harness/identity.sh` before and after).
+  The workflow runs with pipefail. `smoke.sh` checks every table that the store contract and `schema apply` list, and
+  with `--observability` that Prometheus scraped the collector's metric.
+- **`up.sh`** refuses a local port held by something other than the harness's ClickHouse. **`calibrate.sh`** waits for
+  the probe server to say it is listening before probing, and its cleanup stops the server and removes its scratch
+  ClickHouse container.
+- **`infra/harness/lib.sh`** is the shared `harness`/`sim` helper: it builds each CLI once (compile errors go to the
+  log on stderr) into `HARNESS_BUILD_DIR` (default `~/.cache/mmo-harness/build`) and runs the DLL. Source it from
+  any new harness script instead of calling `dotnet run`.
+- **The `stack` job** runs on kind and on k3d (v5.8.3, checksum-verified).
+
+### Open follow-ups
+
+- Committed cross-machine golden recordings need a fixed runner class (a self-hosted runner of one CPU model), which is
+  an owner step. Until then the in-job double run checks determinism on every run.
+- Commit calibrated profile settings from a `calibrate: true` run (T045).
+- Hosted runners vary in CPU model, so a golden run may be "not comparable" on another class. A self-hosted runner of one
+  model gives the issue's fixed runner class.
+
 ## 2026-11-04 — Telemetry and test harness, slice 4: the replay viewer (Pre-Phase 1, sub-spec 2)
 
-Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #52 · Issue: #13
 
 ### Behavior and contract changes
 
@@ -38,7 +88,7 @@ Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-har
 
 ## 2026-11-04 — Telemetry and test harness, slice 2: network profiles, calibration, probe pair, bots (Pre-Phase 1, sub-spec 2)
 
-Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #50 · Issue: #13
 
 ### Behavior and contract changes
 

@@ -23,14 +23,10 @@ public static class SchemaScripts
 
     internal static string TableName(string sql)
     {
-        const string marker = "CREATE TABLE IF NOT EXISTS ";
-        var start = sql.IndexOf(marker, StringComparison.Ordinal);
-        if (start < 0)
-        {
-            throw new InvalidOperationException("A schema file has no CREATE TABLE IF NOT EXISTS statement.");
-        }
-
-        start += marker.Length;
+        string[] markers = ["CREATE TABLE IF NOT EXISTS ", "CREATE MATERIALIZED VIEW IF NOT EXISTS "];
+        var marker = markers.FirstOrDefault(m => sql.Contains(m, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException("A schema file has no CREATE TABLE IF NOT EXISTS or CREATE MATERIALIZED VIEW IF NOT EXISTS statement.");
+        var start = sql.IndexOf(marker, StringComparison.Ordinal) + marker.Length;
         var end = start;
         while (end < sql.Length && (char.IsAsciiLetterOrDigit(sql[end]) || sql[end] == '_'))
         {

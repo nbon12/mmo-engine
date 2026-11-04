@@ -1,0 +1,1 @@
+{ "scenario": "StackedAreas", "seed": 20261104, "durationTicks": 600, "scheduling": { "mode": "Interleaved" } }

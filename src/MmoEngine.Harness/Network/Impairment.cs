@@ -67,7 +67,13 @@ public static class NetemScript
             text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}%");
         }
 
-        text.Append(CultureInfo.InvariantCulture, $" seed {seed}");
+        // netem's seeded PRNG drives jitter, reorder and loss (Linux 6.3+), so the seed is set whenever any of
+        // them is random. A profile with none of them has nothing to repeat.
+        if (d.JitterMs > 0 || d.LossPercent > 0 || profile.AllowReordering)
+        {
+            text.Append(CultureInfo.InvariantCulture, $" seed {seed}");
+        }
+
         return text.ToString();
     }
 

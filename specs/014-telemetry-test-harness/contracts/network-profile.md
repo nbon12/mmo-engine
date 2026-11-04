@@ -42,9 +42,12 @@ direction gets half the round trip as delay, jitter divided by √2, and the ful
 **netem** (`harness profile netem`):
 
 ```text
-tc qdisc replace dev <dev> root handle 1: netem delay <d>ms <j>ms [reorder 25% 50%] [loss random <l>%] seed <seed>
+tc qdisc replace dev <dev> root handle 1: netem delay <d>ms <j>ms [reorder 25% 50%] [loss random <l>%] [seed <seed>]
 tc qdisc replace dev <dev> parent 1:1 handle 10: pfifo limit 1000   # only when reordering is not allowed
 ```
+
+`seed <seed>` is present whenever jitter, reordering or loss is (each is random), and is dropped only on a `tc`
+that has no `seed` option, such as GitHub's ubuntu-latest runner.
 
 With `--tcp-ingress`, the netem qdisc goes on `ifb0`, and the device's ingress is redirected to it.
 

@@ -343,7 +343,8 @@ that the sections, regions and entities match the regionizer's state at that tic
   side, and exit 7. Against a golden run from another runner class or format version, it MUST report
   "not comparable" and exit 8.
 - **FR-020**: Re-recording a golden run MUST be an explicit command whose output is committed. CI MUST
-  never re-record.
+  never re-record into `harness/golden/`. It MAY record a transient reference in a temporary folder, to
+  compare a second run of the same config on the same runner against it, and MUST discard it afterwards.
 
 **Network profiles and calibration**
 

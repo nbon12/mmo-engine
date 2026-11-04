@@ -202,7 +202,8 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
     {
         await using var server = new ProbeServer(new IPEndPoint(IPAddress.Loopback, 0));
         var profiles = RunFolders.TempFolder();
-        File.WriteAllText(Path.Combine(profiles, "loop.json"),
+        // The file name deliberately differs from the profile name: the catalog records where each profile came from.
+        File.WriteAllText(Path.Combine(profiles, "loopback_profile.json"),
             "{\"name\":\"Loop\",\"version\":1,\"roundTripMs\":0.5,\"jitterMs\":0,\"lossPercent\":0,\"tolerances\":{\"absoluteMs\":20,\"lossPoints\":0.25}}");
         var runId = RunFolders.UniqueId("probe");
 
@@ -211,10 +212,16 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
 
         Assert.Equal(0, probe.ExitCode);
         Assert.Equal(0, calibrate.ExitCode);
-        var written = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "loop.json")), "loop.json");
+        var written = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "loopback_profile.json")), "loopback_profile.json");
         Assert.NotNull(written.Calibrated);
         Assert.Equal(runId, written.Calibrated.SourceRunId);
         Assert.Equal(RunnerClass.Current().Id, written.Calibrated.RunnerClass);
         Assert.False(string.IsNullOrEmpty(written.Calibrated.Kernel));
+
+        // A reordering variant is derived from its base profile, so it has no file to store settings in.
+        var variant = Run("calibrate", "--run-id", runId, "--profile", "Loop-reorder", "--profiles", profiles, "--write-calibrated");
+        Assert.Equal(0, variant.ExitCode);
+        Assert.Contains("derived reordering variant", variant.Stderr, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(profiles, "loop-reorder.json")));
     }
 }
