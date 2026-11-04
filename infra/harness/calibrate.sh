@@ -37,7 +37,9 @@ sleep 2
 # Older iproute2 builds don't know netem's `seed`; without it the loss pattern isn't repeatable, which only
 # matters for impaired runs that are replayed, not for calibration (spec 014, research R7).
 SEED_FILTER=cat
-if ! tc qdisc add dev lo root netem help 2>&1 | grep -q seed; then
+# `netem help` prints its usage and exits non-zero, so capture the text first (pipefail would hide a match).
+netem_help="$(tc qdisc add dev lo root netem help 2>&1 || true)"
+if ! grep -q seed <<<"$netem_help"; then
   echo "::warning::this tc has no netem seed option; calibrating with unseeded loss"
   SEED_FILTER="sed -e s/[[:space:]]seed[[:space:]][0-9]*//"
 fi

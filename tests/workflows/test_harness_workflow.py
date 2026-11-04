@@ -42,6 +42,10 @@ class TriggersAndPermissions(unittest.TestCase):
     def test_full_calibration_is_a_manual_input(self):
         self.assertEqual("boolean", TRIGGERS["workflow_dispatch"]["inputs"]["calibrate"]["type"])
 
+    def test_steps_run_with_pipefail(self):
+        # `shell: bash` runs `bash --noprofile --norc -eo pipefail {0}`, so `up.sh | tail -1` keeps up.sh's failure.
+        self.assertEqual("bash", WORKFLOW["defaults"]["run"]["shell"])
+
     def test_token_is_read_only(self):
         self.assertEqual({"contents": "read"}, WORKFLOW["permissions"])
 

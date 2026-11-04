@@ -32,6 +32,11 @@ on:
 permissions:
   contents: read
 
+# bash with -o pipefail (GitHub's default `bash -e {0}` has none), so `up.sh | tail -1` fails when up.sh does.
+defaults:
+  run:
+    shell: bash
+
 env:
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
