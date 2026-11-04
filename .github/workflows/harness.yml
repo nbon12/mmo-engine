@@ -1,0 +1,158 @@
+name: Harness
+
+# The telemetry and test harness in CI (spec 014-telemetry-test-harness, US6 and US3; issue #13).
+#   stack:     the one command (infra/harness/up.sh) on kind, run twice (idempotent), then the smoke
+#              check: tables, the collector's OTLP paths, a run loaded and gated by the rules, and the
+#              optional observability profile.
+#   golden:    replays harness/golden/* on this runner class. A divergence fails; a missing or
+#              other-class recording uploads a candidate recorded here (infra/harness/golden.sh).
+#   netem:     calibrates the LAN profile with tc netem on loopback for 30 s (the full calibration of
+#              every profile, 5 minutes each, runs on workflow_dispatch with calibrate: true).
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/harness.yml"
+      - "infra/harness/**"
+      - "harness/**"
+      - "src/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/harness.yml"
+      - "infra/harness/**"
+      - "harness/**"
+      - "src/**"
+  workflow_dispatch:
+    inputs:
+      calibrate:
+        description: "Calibrate every network profile for 5 minutes each"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # The runner class name (spec 014, research R5). Its ID also hashes the CPU model and the pinned
+  # hardware-intrinsic settings below, so a different machine shows up as a different class.
+  MMO_RUNNER_CLASS: gha-ubuntu-latest-x64
+  DOTNET_EnableAVX512F: "0"
+  DOTNET_TieredPGO: "0"
+
+jobs:
+  stack:
+    name: stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Install kind
+        run: |
+          go install sigs.k8s.io/kind@v0.30.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Bring up the harness (the one command)
+        run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+
+      - name: Run the one command again (idempotent)
+        run: infra/harness/up.sh | tail -1 > "$RUNNER_TEMP/harness.env"
+
+      - name: Smoke check (core profile)
+        run: |
+          eval "$(cat "$RUNNER_TEMP/harness.env")"
+          infra/harness/smoke.sh
+
+      - name: Add the observability profile and check it
+        run: |
+          infra/harness/up.sh --observability | tail -1 > "$RUNNER_TEMP/harness.env"
+          eval "$(cat "$RUNNER_TEMP/harness.env")"
+          infra/harness/smoke.sh --observability
+
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n harness describe pods || true
+          kubectl -n harness logs deployment/otel-collector --tail=200 || true
+
+  golden:
+    name: golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Replay the golden runs
+        env:
+          GOLDEN_CANDIDATES: ${{ runner.temp }}/golden-candidates
+        run: infra/harness/golden.sh
+
+      - name: Upload recorded candidates
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-candidates
+          path: ${{ runner.temp }}/golden-candidates
+          if-no-files-found: ignore
+
+  netem:
+    name: netem
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Load the netem kernel module
+        run: |
+          sudo apt-get install -y -qq iproute2 >/dev/null
+          if ! sudo modprobe sch_netem; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe sch_netem
+          fi
+
+      - name: Calibrate LAN on loopback (30 s)
+        if: ${{ !inputs.calibrate }}
+        run: infra/harness/calibrate.sh --seconds 30 LAN
+
+      - name: Calibrate every profile (5 minutes each)
+        if: ${{ inputs.calibrate }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/profiles"
+          infra/harness/calibrate.sh --seconds 300 --write-calibrated
+          cp harness/profiles/*.json "$RUNNER_TEMP/profiles/"
+
+      - name: Upload calibrated profiles
+        if: ${{ always() && inputs.calibrate }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: calibrated-profiles
+          path: ${{ runner.temp }}/profiles
+          if-no-files-found: ignore

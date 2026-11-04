@@ -20,6 +20,39 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-04 — Telemetry and test harness, slice 3: one-command stack and the Harness workflow (Pre-Phase 1, sub-spec 2)
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13
+
+### Behavior and contract changes
+
+- **`infra/harness/up.sh`** is the one command:
+  - It brings up kind (or k3d with `HARNESS_CLUSTER=k3d`) with ClickHouse, the OpenTelemetry Collector and Chaos
+    Mesh 2.8.4.
+  - `--observability` adds Prometheus and Grafana.
+  - It applies the schema, port-forwards ClickHouse to `127.0.0.1:18123`, and prints `export MMO_CLICKHOUSE=...`
+    as its last line.
+  - It is idempotent. The ClickHouse password is generated into a cluster secret, never committed.
+- **New scripts**: `smoke.sh`, `golden.sh`, `calibrate.sh` and `down.sh`.
+- **Store DDL** gains `otel_logs`, `otel_traces` and the trace-ID index tables, as the collector's ClickHouse
+  exporter v0.161.0 expects them. The exporter runs with `create_schema: false`.
+- **`.github/workflows/harness.yml`** runs three jobs on PRs and on `main` for `src/`, `harness/`, `infra/harness/` and
+  itself:
+  - `stack`: the one command twice, the smoke check, and the observability profile;
+  - `golden`: replays `harness/golden/*` and uploads recorded candidates;
+  - `netem`: LAN calibration on loopback for 30 s.
+
+  `workflow_dispatch` with `calibrate: true` calibrates every profile for 5 minutes each.
+- **Workflow tests** now also run for changes under `infra/`.
+- **`harness calibrate --write-calibrated`** skips reordering variants, which have no file of their own.
+
+### Open follow-ups
+
+- Commit the golden recordings from the first `golden-candidates` artifact on `main` (T034).
+- Commit calibrated profile settings from a `calibrate: true` run (T045).
+- Hosted runners vary in CPU model, so a golden run may be "not comparable" on another class. A self-hosted runner of one
+  model gives the issue's fixed runner class.
+
 ## 2026-11-04 — Telemetry and test harness, slice 2: network profiles, calibration, probe pair, bots (Pre-Phase 1, sub-spec 2)
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: (this PR) · Issue: #13

@@ -1,15 +1,18 @@
 name: Workflow tests
 
-# Contract tests for this repo's GitHub workflows: tests/workflows/ (spec 001-claude-mention-agent).
+# Contract tests for this repo's GitHub workflows and harness infrastructure: tests/workflows/
+# (specs 001-claude-mention-agent and 014-telemetry-test-harness).
 on:
   pull_request:
     paths:
       - ".github/**"
+      - "infra/**"
       - "tests/workflows/**"
   push:
     branches: [main]
     paths:
       - ".github/**"
+      - "infra/**"
       - "tests/workflows/**"
 
 permissions:

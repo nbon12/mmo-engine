@@ -15,6 +15,7 @@ NOT EXISTS`, so applying the schema is idempotent (FR-001).
 | 011 | `baselines` | `ReplacingMergeTree(set_at)`, `(rule_id, profile)` | none |
 | 012 | `run_aggregates` | `ReplacingMergeTree`, `(run_id, metric)` | none |
 | 013 | `sweep_cells` | `ReplacingMergeTree`, `(sweep, cell_id, seed_index)` | none |
+| 014 to 017 | `otel_logs`, `otel_traces`, `otel_traces_trace_id_ts` and its materialized view | as the OpenTelemetry Collector ClickHouse exporter v0.161.0 creates them | 14 days on `Timestamp` (or `Start`) |
 
 ## Column mapping from the run folder
 
