@@ -135,7 +135,7 @@ with a changed parameter.
   - Scenario 5: `ReorderingFailsUnlessTheProfileAllowsIt`.
   - Scenario 6: `InterarrivalJitterIsReportedForEachDirection` and `InterarrivalJitterFollowsTheRfcRecurrence`.
 - [x] T042 [P] [US4] `tests/MmoEngine.Harness.Tests/Network/ImpairmentTests.cs`:
-  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndAddsAFifoChild`, `NetemReorderingVariantAddsReorderAndNoFifoChild`
+  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndKeepsPacketsInOrder`, `NetemReorderingVariantLetsJitterReorderWithoutUndelayedPackets`
     and `TcpIngressRedirectsThroughIfb`.
   - Scenario 8: `NetworkChaosSetsDelayJitterLossDirectionAndTargetPods`.
 - [x] T043 [P] [US4] Scenario 9: `ProbePairTests.LoopbackProbeRunRecordsEverySentPacketAndLosesNone`, plus

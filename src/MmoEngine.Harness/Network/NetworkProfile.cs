@@ -55,12 +55,6 @@ public sealed record NetworkProfile
     /// <summary>The suffix of a reordering variant's name.</summary>
     public const string ReorderSuffix = "-reorder";
 
-    /// <summary>Netem's reorder settings for reordering variants (research R7): 25% of packets, 50% correlation.</summary>
-    public const double ReorderPercent = 25;
-
-    /// <summary>The correlation of reordering variants' reorder setting.</summary>
-    public const double ReorderCorrelationPercent = 50;
-
     /// <summary>The profile's reordering variant (FR-021): the same targets, with reordering allowed.</summary>
     public NetworkProfile ReorderingVariant() =>
         this with { Name = Name + ReorderSuffix, AllowReordering = true, Calibrated = null, SourceFile = null };
@@ -70,6 +64,22 @@ public sealed record NetworkProfile
     /// (research R7): half the round trip each way, jitter divided by √2 so the round-trip standard
     /// deviation comes out at the target, and the full per-direction loss.
     /// </summary>
+    /// <summary>
+    /// This profile with explicit per-direction settings, as calibration tries them (FR-026). They are stored
+    /// only once a calibration with them passes.
+    /// </summary>
+    public NetworkProfile WithPerDirection(DirectionSettings settings) => this with
+    {
+        Calibrated = new CalibratedSettings
+        {
+            PerDirection = settings,
+            RunnerClass = Calibrated?.RunnerClass ?? "",
+            Kernel = Calibrated?.Kernel ?? "",
+            MeasuredAt = Calibrated?.MeasuredAt ?? default,
+            SourceRunId = Calibrated?.SourceRunId ?? "",
+        },
+    };
+
     public DirectionSettings PerDirection() =>
         Calibrated?.PerDirection ?? new DirectionSettings(RoundTripMs / 2, JitterMs / Math.Sqrt(2), LossPercent);
 

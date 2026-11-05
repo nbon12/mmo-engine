@@ -26,7 +26,7 @@ public sealed class CalibrationTests
     {
         var upLost = (int)Math.Round(n * upLossPercent / 100);
         var downLost = (int)Math.Round((n - upLost) * downLossPercent / 100);
-        // 4 Hz, so even Poor's jitter can't reorder consecutive packets (netem's FIFO child keeps order in real runs).
+        // 4 Hz, so even Poor's jitter can't reorder consecutive packets (netem's in-order rate keeps order in real runs).
         var period = 250 * Ms;
         var echoedCount = n - upLost - downLost;
         var records = new List<ProbeRecord>(n);
@@ -111,6 +111,30 @@ public sealed class CalibrationTests
 
         Assert.False(result.Passed);
         Assert.StartsWith(reason + ":", Assert.Single(result.Failures), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The loss tolerance widens to three binomial standard deviations when the sample can't resolve the profile's:
+    /// Poor's 3% over 9,000 packets gets ±0.539 points; Typical's 0.5% keeps its ±0.25.
+    /// </summary>
+    [Theory]
+    [InlineData("Poor", 9000, 0.539)]
+    [InlineData("Typical", 9000, 0.25)]
+    [InlineData("LAN", 9000, 0.25)]
+    [InlineData("Poor", 0, 0.25)]
+    public void LossToleranceAccountsForTheSampleSize(string name, int packets, double expected) =>
+        Assert.Equal(expected, Calibration.LossTolerancePoints(Profile(name), packets), 3);
+
+    /// <summary>The CI run that measured 3.32% up loss on Poor over 9,000 packets is within sampling error, and 4% is not.</summary>
+    [Theory]
+    [InlineData(3.32, true)]
+    [InlineData(4.0, false)]
+    public void PoorLossIsJudgedAgainstItsSamplingError(double upLoss, bool passes)
+    {
+        var result = Calibration.Evaluate(Profile("Poor"), Samples(250, 50, upLoss, 3, n: 9000));
+
+        Assert.Equal(passes, result.Passed);
+        Assert.Equal(passes, !result.Failures.Any(f => f.StartsWith("loss up:", StringComparison.Ordinal)));
     }
 
     /// <summary>US4 scenario 5: any reordered packet fails a profile that allows none, and passes its reordering variant.</summary>

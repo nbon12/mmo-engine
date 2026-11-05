@@ -71,8 +71,8 @@ public static class Calibration
             CheckTiming("jitter", jitter, profile.JitterMs, profile.Tolerances, failures);
         }
 
-        CheckLoss("loss up", upLoss, profile, failures);
-        CheckLoss("loss down", downLoss, profile, failures);
+        CheckLoss("loss up", upLoss, sent, profile, failures);
+        CheckLoss("loss down", downLoss, upReceived.Count, profile, failures);
         if (!profile.AllowReordering && (upReordered > 0 || downReordered > 0))
         {
             failures.Add(string.Create(CultureInfo.InvariantCulture,
@@ -174,12 +174,27 @@ public static class Calibration
         }
     }
 
-    private static void CheckLoss(string name, double measured, NetworkProfile profile, List<string> failures)
+    /// <summary>
+    /// The loss tolerance in percentage points for a sample of <paramref name="packets"/>: the profile's
+    /// tolerance, widened to three binomial standard deviations when the sample can't resolve it. At 3% loss
+    /// over 9,000 packets one standard deviation is 0.18 points, so a fixed ±0.25 would fail a correct link
+    /// about a third of the time (spec 014 research R7).
+    /// </summary>
+    public static double LossTolerancePoints(NetworkProfile profile, int packets)
     {
-        if (Math.Abs(measured - profile.LossPercent) > profile.Tolerances.LossPoints + 1e-9)
+        ArgumentNullException.ThrowIfNull(profile);
+        var p = profile.LossPercent / 100;
+        var sampling = packets > 0 ? 3 * 100 * Math.Sqrt(p * (1 - p) / packets) : 0;
+        return Math.Max(profile.Tolerances.LossPoints, sampling);
+    }
+
+    private static void CheckLoss(string name, double measured, int packets, NetworkProfile profile, List<string> failures)
+    {
+        var tolerance = LossTolerancePoints(profile, packets);
+        if (Math.Abs(measured - profile.LossPercent) > tolerance + 1e-9)
         {
             failures.Add(string.Create(CultureInfo.InvariantCulture,
-                $"{name}: measured {measured:0.###}%, target {profile.LossPercent:0.###}% ± {profile.Tolerances.LossPoints:0.###} points"));
+                $"{name}: measured {measured:0.###}%, target {profile.LossPercent:0.###}% ± {tolerance:0.###} points"));
         }
     }
 }

@@ -20,6 +20,31 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-05 — Network calibration: normal jitter, in-order rate, per-direction veth, search
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #54
+
+### Behavior and contract changes
+
+The first full calibration (`calibrate: true`, run 42113574741) passed only LAN. Three causes, all fixed:
+
+- **Jitter was 0.58 of every target.** netem's default jitter is uniform on ±j, whose standard deviation is j/√3. `harness profile netem` now writes `distribution normal`, whose parameter is the standard deviation.
+- **Profiles that forbid reordering still reordered.** On current kernels the manual's `pfifo` child gets packets only once they are due, already reordered. Those profiles now get `rate 10gbit` instead, and the pfifo child is gone.
+- **Reordering variants missed their targets.** netem's `reorder 25% 50%` sends a quarter of packets undelayed. Variants now just drop the in-order rate, so jitter reorders packets. Chaos Mesh manifests are unchanged.
+- **`calibrate.sh`** runs the probe server in a network namespace on a veth pair, so each direction has its own netem. On loopback they shared one queue. It searches for per-direction delay and jitter with short runs, then checks them with one full-length run (`--search-seconds`, default 60, up to 5 steps).
+- **`harness profile netem` and `harness calibrate`** take `--delay-ms`, `--jitter-ms` and `--loss-percent` to override the per-direction settings. `calibrate --write-calibrated` stores the settings it was given.
+- **Loss tolerance** widens to three binomial standard deviations of the run's sample when that is wider than the profile's points (FR-025): Poor at 9,000 packets gets ±0.54 points.
+- **The `netem` job** has a `calibrate_seconds` dispatch input (default 300), prints the calibrated profile files to the log, and has a 120-minute timeout.
+
+### Assumptions that no longer hold
+
+- "A pfifo child keeps netem's packets in order" (the tc-netem manual, and FR-022's earlier wording).
+- "netem's jitter parameter is the standard deviation." It is only with `distribution normal`.
+
+### Open follow-ups
+
+- Chaos Mesh's NetworkChaos has no in-order rate or normal distribution, so in-cluster impairment isn't calibrated yet.
+
 ## 2026-11-05 — Done story sweep: lost-dispatcher detection; dispatchers refuse to be archivable
 
 Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/53), with [nbon12/hoa_management_system#320](https://github.com/nbon12/hoa_management_system/pull/320)

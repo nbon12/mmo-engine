@@ -176,7 +176,7 @@ for a few seconds and check that every sent packet appears in the samples.
 6. **Given** a calibration, **When** it reports, **Then** it also reports RFC 3550 interarrival jitter
    for each direction.
 7. **Given** a profile, **When** its netem settings are generated, **Then** the delay, jitter and loss
-   are split per direction, a seed is set for the loss, and a plain FIFO child queue is added unless the
+   are split per direction, a seed is set for the loss, and packets are kept in order unless the
    profile allows reordering.
 8. **Given** a profile, **When** its NetworkChaos resource is generated, **Then** it sets delay,
    jitter, loss, the direction and the target pods, and adds reordering only for a reordering variant.
@@ -352,15 +352,16 @@ that the sections, regions and entities match the regionizer's state at that tic
   trip is the median; jitter is the standard deviation of round-trip time; loss is per packet in each
   direction. Each profile has a reordering variant.
 - **FR-022**: The harness MUST generate netem settings for a profile: per-direction delay and jitter,
-  per-direction loss with a recorded seed, and a plain FIFO child queue when reordering is not
-  allowed. For TCP runs, the impairment sits on the receiver's ingress.
+  per-direction loss with a recorded seed, and packets kept in order when reordering is not allowed.
+  For TCP runs, the impairment sits on the receiver's ingress.
 - **FR-023**: The harness MUST generate a Chaos Mesh NetworkChaos resource for a profile, with delay,
   jitter, loss, direction and pod selector, and reordering only in a reordering variant.
 - **FR-024**: The probe pair MUST exchange sequenced UDP packets at 30 Hz for a configured duration (5
   minutes by default), and write every packet's sequence number, direction, and send and receive
   timestamps to `net_samples`.
 - **FR-025**: Calibration MUST pass a profile only when the median round trip and the jitter are within
-  10% of target (LAN: within 0.5 ms), loss is within 0.25 percentage points in each direction, and
+  10% of target (LAN: within 0.5 ms), loss is within 0.25 percentage points in each direction (or
+  three binomial standard deviations of the run's sample, when that is wider), and
   reordering is zero unless the profile allows it. It MUST also report RFC 3550 interarrival jitter for
   each direction.
 - **FR-026**: A profile's calibrated settings MUST be stored with the profile, along with the runner
@@ -499,5 +500,11 @@ that the sections, regions and entities match the regionizer's state at that tic
 - Playwright browser clients join load runs from Phase 1, when there is a browser client. Here, bots
   are native .NET only.
 - The proposed tolerances (10% for round trip and jitter, 0.5 ms for LAN, 0.25 percentage points for
-  loss) and the 14-day retention are the issue's proposals. They are configuration, not code.
+  loss) and the 14-day retention are the issue's proposals. They are configuration, not code. The
+  loss tolerance widens to three binomial standard deviations when a run's sample can't resolve
+  0.25 points: at 3% over 9,000 packets one standard deviation is 0.18 points, so a fixed 0.25 fails
+  a correct link about a third of the time (measured in the first full calibration run).
+- The issue's "plain FIFO child queue" no longer keeps netem's packets in order on current kernels
+  (the first full calibration measured reordering through it), so packets are kept in order with
+  netem's `rate` instead. The intent, no reordering unless the profile allows it, is unchanged.
 - Exit codes 5 to 8 are new and don't collide with sub-spec 1's 0 to 4.

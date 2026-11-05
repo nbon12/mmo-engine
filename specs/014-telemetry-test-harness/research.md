@@ -113,17 +113,32 @@ re-running anything.
     offset between the clocks cancels in D.
   - Up direction: from the server's receive times against the client's send times.
 - **Tolerances**: median and jitter within 10% of target, with LAN as an absolute 0.5 ms; loss within
-  0.25 percentage points per direction; reordering zero unless the variant allows it. These come from
-  the issue, and live in the profile file.
+  0.25 percentage points per direction, widened to three binomial standard deviations of the run's
+  sample when that is wider (Poor's 3% over 9,000 packets: ±0.54 points); reordering zero unless the
+  variant allows it. These come from the issue, and live in the profile file.
 
 **netem**: netem impairs egress, so a round trip of R splits into R/2 of delay per direction, and
 jitter J splits into J/√2 per direction, so the round-trip standard deviation comes out at J. Loss per
-direction equals the profile's per-direction loss. Without reordering, the `delay` qdisc gets a
-`pfifo` child (`tc qdisc add ... parent 1:1 handle 10: pfifo`), as the tc-netem manual shows.
-Reordering variants use the manual's `reorder` with a 25% probability and a 50% correlation. The
-`seed` option fixes loss sequences. The generator writes a script, and doesn't run `tc` itself. The
-calibration step stores the per-direction settings that measured within tolerance, which may differ
-from the arithmetic above.
+direction equals the profile's per-direction loss. The generator writes a script, and doesn't run `tc`
+itself. What the first full calibration on GitHub's runner (2026-11-05) showed, and what follows:
+
+- netem's default jitter is uniform on ±j, whose standard deviation is j/√3: every profile measured
+  0.58 of its jitter target. The jitter is drawn from netem's `distribution normal`, whose parameter
+  is the standard deviation.
+- The manual's `pfifo` child no longer keeps packets in order: current kernels hand packets to the
+  child only once they are due, already reordered, and Cross-region and Poor reordered through it.
+  Profiles without reordering get `rate 10gbit` instead: with a rate, netem schedules each packet no
+  earlier than the one before it, and the rate's serialization time is negligible.
+- netem's `reorder 25% 50%` sends a share of packets with no delay at all, which broke the reordering
+  variants' round trip and jitter. Variants drop the in-order rate instead, so jitter reorders packets
+  and the variant keeps its base profile's targets. (Chaos Mesh, which has neither the rate nor the
+  normal distribution, keeps its `reorder` block and isn't calibrated yet.)
+- On loopback both directions shared one queue, so keeping packets in order coupled them. Calibration
+  runs the probe server in a network namespace joined by a veth pair, with a netem on each end.
+- Keeping packets in order clips the delay distribution, so per-direction jitter doesn't map one to one
+  onto round-trip jitter. Calibration searches for the per-direction delay and jitter with short runs
+  (`infra/harness/calibration_search.py`), checks them with a full-length run, and stores the settings
+  that pass. `seed` fixes the jitter and loss sequences.
 
 **NetworkChaos**: `action: netem`, with `delay.latency`, `delay.jitter`, `loss.loss` and, for a
 reordering variant, `delay.reorder`; `direction: both` and a label selector; `mode: all`. Chaos Mesh

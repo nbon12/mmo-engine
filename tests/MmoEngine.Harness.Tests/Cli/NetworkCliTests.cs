@@ -46,14 +46,27 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         var chaos = Run("profile", "chaos", "--profiles", Profiles, "--profile", "typical-reorder", "--namespace", "ns", "--label", "app=probe");
 
         Assert.Equal(0, netem.ExitCode);
-        Assert.Contains("netem delay 125ms 35.355ms loss random 3% seed 5", netem.Stdout, StringComparison.Ordinal);
+        Assert.Contains("netem delay 125ms 35.355ms distribution normal loss random 3% rate 10gbit seed 5", netem.Stdout, StringComparison.Ordinal);
         Assert.Equal(0, chaos.ExitCode);
         Assert.Contains("      app: \"probe\"", chaos.Stdout, StringComparison.Ordinal);
         Assert.Contains("reorder:", chaos.Stdout, StringComparison.Ordinal);
     }
 
+    /// <summary>FR-026: a calibration search applies per-direction settings other than the profile's.</summary>
+    [Fact]
+    public void ProfileNetemAppliesPerDirectionOverrides()
+    {
+        var netem = Run("profile", "netem", "--profiles", Profiles, "--profile", "Typical", "--device", "mmo-up", "--seed", "2",
+            "--delay-ms", "39.5", "--jitter-ms", "8.25");
+
+        Assert.Equal(0, netem.ExitCode);
+        Assert.Contains("dev mmo-up root handle 1: netem delay 39.5ms 8.25ms distribution normal loss random 0.5% rate 10gbit seed 2", netem.Stdout, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("profile", "netem", "--profile", "Nowhere")]
+    [InlineData("profile", "netem", "--profile", "LAN", "--jitter-ms", "-1")]
+    [InlineData("profile", "netem", "--profile", "LAN", "--loss-percent", "101")]
     [InlineData("profile", "chaos", "--profile", "Typical", "--label", "novalue")]
     [InlineData("probe", "run", "--target", "not-an-endpoint", "--profile", "LAN")]
     [InlineData("bots", "run", "--target", "127.0.0.1:9", "--bots", "0")]
@@ -217,6 +230,14 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         Assert.Equal(runId, written.Calibrated.SourceRunId);
         Assert.Equal(RunnerClass.Current().Id, written.Calibrated.RunnerClass);
         Assert.False(string.IsNullOrEmpty(written.Calibrated.Kernel));
+
+        // The settings a calibration search applied are the ones stored.
+        var tried = Run("calibrate", "--run-id", runId, "--profile", "Loop", "--profiles", profiles, "--write-calibrated",
+            "--delay-ms", "0.125", "--jitter-ms", "0", "--loss-percent", "0");
+        Assert.Equal(0, tried.ExitCode);
+        var stored = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "loopback_profile.json")), "loopback_profile.json");
+        Assert.Equal(new DirectionSettings(0.125, 0, 0), stored.Calibrated!.PerDirection);
+        Assert.Equal(0.5, stored.RoundTripMs);
 
         // A reordering variant is derived from its base profile, so it has no file to store settings in.
         var variant = Run("calibrate", "--run-id", runId, "--profile", "Loop-reorder", "--profiles", profiles, "--write-calibrated");
