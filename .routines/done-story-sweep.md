@@ -10,8 +10,9 @@ This repo's issues may be on https://github.com/users/nbon12/projects/1 or anoth
 
 This routine runs from two scheduled tasks, and each acts differently:
 
-- Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh. This session must never be archived: archiving it breaks its scheduled task, as happened to the hoa_management_system dispatcher on 2026-11-02. Whenever you are asked whether this chat can be archived, the answer is no.
-- Watchdog mode. You don't have that tool. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), which uses "Finding the newest report" from section 6, then stop.
+- Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine (scheduled daily; do not archive)", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh. This session must never be archived: archiving it breaks its scheduled task, as happened to the hoa_management_system dispatcher on 2026-11-02. End every reply in this session by saying this chat must not be archived, and whenever you are asked whether it can be archived, the answer is no.
+- Lost dispatcher. You don't have that tool, but the message that started this run is the dispatch task's own prompt (it says you are this repo's dispatcher session). Then the dispatcher session is gone: its task now fires into a fresh session that can't sweep. Send one PushNotification, such as "Done sweep: mmo-engine dispatcher session lost; recreate it (repair steps in hoa_management_system's patch notes)", end with the same note, and stop. Don't run the watchdog check.
+- Watchdog mode. You don't have that tool, and this isn't a lost dispatcher. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), which uses "Finding the newest report" from section 6, then stop.
 
 ## 0. Tools
 
@@ -97,11 +98,11 @@ Only in watchdog mode. Check both repos, nbon12/mmo-engine and nbon12/hoa_manage
 2. The dispatcher ran today if that report was posted in the last 20 hours and starts with "Done story sweep report <today's date in America/New_York>".
 3. If it ran in both repos, end with one line: "Dispatcher ran today in both repos." Don't notify.
 4. Otherwise send one PushNotification covering both repos. For a repo marked "couldn't check" (a failed lookup), say "couldn't check <repo>" rather than "didn't run", and don't list the causes below for it. For a missing report, write a line such as: "Done sweep dispatcher didn't run today (mmo-engine). Check the 'Done story sweep dispatch: mmo-engine' scheduled task and its session." Then end with a short note. Say which repos are missing a report, and give the newest report date you found in each. Also give the likely causes:
-   - the dispatcher session was archived, which disables its scheduled task;
+   - the dispatcher session was archived: its task keeps running, but in a fresh session that can't sweep;
    - the task was paused;
    - a run is still going.
 
-   The repair steps are under "Dispatcher setup / repair" in nbon12/hoa_management_system's docs/patch-notes.md, entry "2026-11-02 · Done story sweep: dispatcher session + watchdog" (https://github.com/nbon12/hoa_management_system/blob/main/docs/patch-notes.md).
+   The repair steps are under "Dispatcher setup / repair" in nbon12/hoa_management_system's docs/patch-notes.md, entry "2026-11-02 · Done story sweep: dispatcher session + watchdog", corrected by the 2026-11-05 entry (https://github.com/nbon12/hoa_management_system/blob/main/docs/patch-notes.md).
 
 ## 8. Worker message
 

@@ -20,13 +20,21 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
-## 2026-11-05 — Done story sweep: dispatchers refuse to be archivable
+## 2026-11-05 — Done story sweep: lost-dispatcher detection; dispatchers refuse to be archivable
 
 Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/53), with [nbon12/hoa_management_system#320](https://github.com/nbon12/hoa_management_system/pull/320)
 
 ### Behavior and contract changes
 
-Tooling only. Section "Which mode you are in": the dispatcher session must never be archived, and must always answer no when asked whether the chat can be archived. hoa_management_system's dispatcher was archived on 2026-11-02, and its task then silently ran in a session with no tools for three days; the watchdog caught it. This repo's dispatcher was not affected.
+Tooling only. Changes to `.routines/done-story-sweep.md`, "Which mode you are in":
+
+- **Lost dispatcher:** a run that starts from the dispatch task's own prompt but has no session tools means the dispatcher session is gone. It pushes "dispatcher session lost; recreate it" at once and stops, instead of falling into watchdog mode.
+- **Never archivable:** the dispatcher ends every reply by saying the chat must not be archived, and answers no when asked. The title in the routine now includes the "(scheduled daily; do not archive)" suffix.
+- **Watchdog wording:** the likely-cause text no longer says archiving disables the task.
+
+### Assumptions that no longer hold
+
+- **"Archiving the dispatcher disables its scheduled task"** (the #33 entry and hoa_management_system's #289 repair steps). On 2026-11-02 hoa_management_system's dispatcher was archived, and its task kept running, rebound to a fresh session with no session tools or repo. Three runs did nothing, and the watchdog flagged each day. This repo's dispatcher wasn't affected.
 
 ## 2026-11-04 — Telemetry and test harness, slice 3: one-command stack and the Harness workflow (Pre-Phase 1, sub-spec 2)
 
