@@ -10,7 +10,7 @@ This repo's issues may be on https://github.com/users/nbon12/projects/1 or anoth
 
 This routine runs from two scheduled tasks, and each acts differently:
 
-- Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh.
+- Dispatch mode. You have mcp__claude-code-remote__list_sessions (check with ToolSearch "select:mcp__claude-code-remote__list_sessions"). Only the long-lived dispatcher session for this repo has it. It is titled "Done story sweep dispatcher: mmo-engine", and its daily scheduled task "Done story sweep dispatch: mmo-engine" messages it every morning. Do sections 0 to 6 below. This session keeps its earlier days' turns, so treat them as history only. Re-read every issue, PR and session fresh. This session must never be archived: archiving it breaks its scheduled task, as happened to the hoa_management_system dispatcher on 2026-11-02. Whenever you are asked whether this chat can be archived, the answer is no.
 - Watchdog mode. You don't have that tool. A scheduled task that starts a fresh session (such as "Daily done checker") never gets the session tools. Don't triage anything and don't hand anything off. Do only the watchdog check (section 7), which uses "Finding the newest report" from section 6, then stop.
 
 ## 0. Tools

@@ -20,6 +20,14 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-05 — Done story sweep: dispatchers refuse to be archivable
+
+Spec: none (maintenance) · PR: #PR_MMO
+
+### Behavior and contract changes
+
+Tooling only. Section "Which mode you are in": the dispatcher session must never be archived, and must always answer no when asked whether the chat can be archived. hoa_management_system's dispatcher was archived on 2026-11-02, and its task then silently ran in a session with no tools for three days; the watchdog caught it. This repo's dispatcher was not affected.
+
 ## 2026-11-04 — Telemetry and test harness, slice 3: one-command stack and the Harness workflow (Pre-Phase 1, sub-spec 2)
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #51 · Issue: #13
