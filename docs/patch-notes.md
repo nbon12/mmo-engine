@@ -20,6 +20,22 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-05 — Done story sweep: lost-dispatcher detection; dispatchers refuse to be archivable
+
+Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/53), with [nbon12/hoa_management_system#320](https://github.com/nbon12/hoa_management_system/pull/320)
+
+### Behavior and contract changes
+
+Tooling only. Changes to `.routines/done-story-sweep.md`, "Which mode you are in":
+
+- **Lost dispatcher:** a run that starts from the dispatch task's own prompt but has no session tools means the dispatcher session is gone, or someone pressed "Run now" on the dispatch task. It pushes at once, saying to check that the dispatcher session is still active and to recreate it only if not, and stops, instead of falling into watchdog mode. This only fires if that session can read the routine: the fresh sessions seen on 2026-11-02 had no GitHub access, so it may not, and the 6:30 watchdog stays the guaranteed signal.
+- **Never archivable:** the dispatcher ends every reply by saying the chat must not be archived, and answers no when asked. The title in the routine now includes the "(scheduled daily; do not archive)" suffix.
+- **Watchdog wording:** the likely-cause text no longer says archiving disables the task.
+
+### Assumptions that no longer hold
+
+- **"Archiving the dispatcher disables its scheduled task"** (the #33 entry and hoa_management_system's #289 repair steps). On 2026-11-02 hoa_management_system's dispatcher was archived, and its task kept running, rebound to a fresh session with no session tools or repo. Three runs did nothing, and the watchdog flagged each day. This repo's dispatcher wasn't affected.
+
 ## 2026-11-04 — Telemetry and test harness, slice 3: one-command stack and the Harness workflow (Pre-Phase 1, sub-spec 2)
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #51 · Issue: #13
