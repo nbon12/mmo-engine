@@ -248,8 +248,20 @@ class CalibrationSearch(unittest.TestCase):
         cls.search = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.search)
 
-    def test_within_tolerance_keeps_the_settings(self):
-        self.assertEqual(("done", 40, 7.071), self.search.step({"failures": []}, 80, 10, 40, 7.071))
+    def test_within_the_search_band_keeps_the_settings(self):
+        result = {"failures": [], "medianRoundTripMs": 81, "jitterMs": 9.7}
+        self.assertEqual(("done", 40, 7.071), self.search.step(result, 80, 10, 40, 7.071))
+
+    def test_inside_tolerance_but_outside_the_band_takes_another_step(self):
+        # Cross-region in run 42123464780: within ±10% on a 60 s run, then outside it over 5 minutes.
+        result = {"failures": [], "medianRoundTripMs": 163, "jitterMs": 22.6}
+        verdict, delay, jitter = self.search.step(result, 160, 25, 80, 17.678)
+        self.assertEqual(("next", 80), (verdict, delay))
+        self.assertAlmostEqual(17.678 * 25 / 22.6, jitter, places=6)
+
+    def test_lan_round_trip_uses_the_absolute_floor(self):
+        result = {"failures": [], "medianRoundTripMs": 1.09, "jitterMs": 0.08}
+        self.assertEqual(("done", 0.5, 0), self.search.step(result, 1, 0, 0.5, 0))
 
     def test_low_jitter_scales_the_netem_jitter_up(self):
         verdict, delay, jitter = self.search.step(
@@ -270,6 +282,7 @@ class CalibrationSearch(unittest.TestCase):
 
     def test_loss_and_reordering_failures_are_not_searched(self):
         result = {"failures": ["loss up: x", "reordering: x"], "medianRoundTripMs": 80, "jitterMs": 10}
+        # (They are reported by the full run instead.)
         self.assertEqual(("done", 40, 7), self.search.step(result, 80, 10, 40, 7))
 
     def test_cli_reads_the_last_json_line(self):
