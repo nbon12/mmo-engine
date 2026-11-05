@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-05 — Done story sweep: dispatchers refuse to be archivable
 
-Spec: none (maintenance) · PR: #PR_MMO
+Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/53), with [nbon12/hoa_management_system#320](https://github.com/nbon12/hoa_management_system/pull/320)
 
 ### Behavior and contract changes
 
