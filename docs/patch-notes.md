@@ -28,7 +28,7 @@ Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/
 
 Tooling only. Changes to `.routines/done-story-sweep.md`, "Which mode you are in":
 
-- **Lost dispatcher:** a run that starts from the dispatch task's own prompt but has no session tools means the dispatcher session is gone, or someone pressed "Run now" on the dispatch task. It pushes at once, saying to check that the dispatcher session is still active and to recreate it only if not, and stops, instead of falling into watchdog mode.
+- **Lost dispatcher:** a run that starts from the dispatch task's own prompt but has no session tools means the dispatcher session is gone, or someone pressed "Run now" on the dispatch task. It pushes at once, saying to check that the dispatcher session is still active and to recreate it only if not, and stops, instead of falling into watchdog mode. This only fires if that session can read the routine: the fresh sessions seen on 2026-11-02 had no GitHub access, so it may not, and the 6:30 watchdog stays the guaranteed signal.
 - **Never archivable:** the dispatcher ends every reply by saying the chat must not be archived, and answers no when asked. The title in the routine now includes the "(scheduled daily; do not archive)" suffix.
 - **Watchdog wording:** the likely-cause text no longer says archiving disables the task.
 
