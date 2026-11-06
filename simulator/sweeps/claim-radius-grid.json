@@ -1,0 +1,34 @@
+{
+  "name": "claim-radius-grid",
+  "base": {
+    "scenario": "Baseline",
+    "population": {
+      "total": 2000
+    },
+    "metrics": {
+      "islandCheckEveryTicks": 15
+    },
+    "durationTicks": 18000
+  },
+  "seeds": 10,
+  "sweepSeed": 20261106,
+  "mode": "Grid",
+  "parameters": [
+    {
+      "path": "regionizer.claimRadius.infantry",
+      "values": [16, 40]
+    },
+    {
+      "path": "regionizer.claimRadius.groundVehicle",
+      "values": [24, 48]
+    },
+    {
+      "path": "regionizer.claimRadius.aircraft",
+      "values": [16, 32]
+    },
+    {
+      "path": "regionizer.split.minDeadPercent",
+      "values": [25, 50]
+    }
+  ]
+}
