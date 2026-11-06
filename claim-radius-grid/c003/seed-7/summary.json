@@ -1,0 +1,128 @@
+{
+  "formatVersion": 1,
+  "runId": "baseline-s16-r16-seed5812534252437889985-e59e4f6b",
+  "completed": true,
+  "ticks": 18000,
+  "firstViolation": null,
+  "metrics": {
+    "regionCount": {
+      "p50": 123,
+      "p95": 142,
+      "p99": 151,
+      "max": 163,
+      "mean": 122.93761111111111
+    },
+    "largestRegionPlayers": {
+      "p50": 478,
+      "p95": 819,
+      "p99": 842,
+      "max": 865,
+      "mean": 498.44388888888886
+    },
+    "largestRegionShare": {
+      "p50": 0.239,
+      "p95": 0.40970485242621313,
+      "p99": 0.421,
+      "max": 0.4325,
+      "mean": 0.24923338014266133
+    },
+    "sectionChurn": {
+      "p50": 337,
+      "p95": 1083,
+      "p99": 2247,
+      "max": 16524,
+      "mean": 440.27627777777775
+    },
+    "crossPairsDeferred": {
+      "p50": 1158,
+      "p95": 2837,
+      "p99": 3552,
+      "max": 4862,
+      "mean": 1334.4783333333332
+    },
+    "crossPairsReadOnly": {
+      "p50": 33880,
+      "p95": 42683,
+      "p99": 44625,
+      "max": 47075,
+      "mean": 33731.84
+    },
+    "bookkeepingMicros": {
+      "p50": 306.91890034363615,
+      "p95": 416.64176632301553,
+      "p99": 727.8606426117258,
+      "max": 6486.025288659156,
+      "mean": 327.45277175600995
+    },
+    "serializedMicros": {
+      "p50": 51.433,
+      "p95": 125.495,
+      "p99": 371.993,
+      "max": 4814.261,
+      "mean": 67.06443111111132
+    },
+    "regionLifetimeSteps": {
+      "p50": 96,
+      "p95": 978,
+      "p99": 2232,
+      "max": 20170,
+      "mean": 248.7310785376148
+    },
+    "splitLatencyTicks": {
+      "p50": 15,
+      "p95": 56,
+      "p99": 99,
+      "max": 208,
+      "mean": 20.27525022747953
+    }
+  },
+  "rates": {
+    "mergesPerSecondByClass": {
+      "Infantry": 0.14166666666666666,
+      "GroundVehicle": 1.6266666666666667,
+      "Aircraft": 20.185,
+      "Traveller": 7.266666666666667,
+      "CapturePoint": 0.0016666666666666668,
+      "HeavyProjectile": 0
+    },
+    "splitsPerSecond": 9.483333333333333,
+    "fusionsPerSecondByClass": {
+      "Infantry": 0,
+      "GroundVehicle": 0,
+      "Aircraft": 0.03,
+      "Traveller": 0.028333333333333332,
+      "CapturePoint": 0,
+      "HeavyProjectile": 0
+    }
+  },
+  "totals": {
+    "merges": 17533,
+    "absorptions": 501454,
+    "splits": 5690,
+    "fusions": 35,
+    "oversizedFusionTicks": 0,
+    "timersSet": 12183,
+    "timersFired": 11871
+  },
+  "fusedFightPairs": {
+    "p50": 0,
+    "p95": 1,
+    "p99": 1,
+    "max": 2,
+    "mean": 0.08677777777777777
+  },
+  "scheduling": {
+    "baseStepHz": 60,
+    "tickHz": 30,
+    "degradedTickHz": 20,
+    "timerOverheadNanos": 31.0446735395189
+  },
+  "budget": {
+    "bookkeepingP99Micros": 727.8606426117258,
+    "budgetMicros": 1000,
+    "withinBudget": true
+  },
+  "wallClock": {
+    "seconds": 389.5384574
+  }
+}
