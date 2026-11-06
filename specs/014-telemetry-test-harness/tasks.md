@@ -135,7 +135,9 @@ with a changed parameter.
   - Scenario 5: `ReorderingFailsUnlessTheProfileAllowsIt`.
   - Scenario 6: `InterarrivalJitterIsReportedForEachDirection` and `InterarrivalJitterFollowsTheRfcRecurrence`.
 - [x] T042 [P] [US4] `tests/MmoEngine.Harness.Tests/Network/ImpairmentTests.cs`:
-  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndAddsAFifoChild`, `NetemReorderingVariantAddsReorderAndNoFifoChild`
+  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndKeepsPacketsInOrder`, `NetemReorderingVariantKeepsTheBaseSettingsAndAddsReorder`,
+    and on real netem the `netem` job's "Calibrate LAN, Poor and Poor-reorder" step on every PR: Poor fails on any
+    reordered packet, and Poor-reorder fails if none reorders (`CalibrationTests.VariantThatCanReorderMustReorder`).
     and `TcpIngressRedirectsThroughIfb`.
   - Scenario 8: `NetworkChaosSetsDelayJitterLossDirectionAndTargetPods`.
 - [x] T043 [P] [US4] Scenario 9: `ProbePairTests.LoopbackProbeRunRecordsEverySentPacketAndLosesNone`, plus
@@ -148,8 +150,9 @@ with a changed parameter.
   - `contracts/network-profile.md`;
   - the commands `harness profile list|netem|chaos`, `harness probe serve|run` and `harness calibrate`, tested in
     `Cli/NetworkCliTests.cs`.
-- [ ] T045 [US4] Calibrate the four profiles and their variants with netem on the CI runner class, 5 minutes each,
-  and commit the calibrated settings. This is slice 3: it needs root or Chaos Mesh, which only the CI job has.
+- [x] T045 [US4] Calibrate the four profiles and their variants with netem on the CI runner class, 5 minutes each,
+  and commit the calibrated settings. Done by run 42130656210 (`calibrate: true` on PR #54): all eight passed with
+  no reordering, and the four base profiles' settings are committed in `harness/profiles/`.
 
 ## Phase 6: User Story 5 - Bots and a stub target prove the measurement path (P3), slice 2
 

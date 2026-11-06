@@ -11,14 +11,21 @@ namespace MmoEngine.Harness.Network;
 /// </summary>
 public static class NetemScript
 {
-    /// <summary>The pfifo limit used to keep packets in order (the tc-netem manual's example).</summary>
-    public const int FifoLimit = 1000;
+    /// <summary>
+    /// The rate every profile gets. With a rate set, netem schedules each delayed packet no earlier than the one
+    /// queued before it, so jitter can't reorder packets (a variant's netem reorder still sends a share ahead). A pfifo child, the manual's older
+    /// recipe, no longer does this: current kernels hand packets to the child only once they are due, already
+    /// reordered (measured on GitHub's ubuntu-latest, spec 014 research R7). The rate is high enough that
+    /// serialization time is negligible.
+    /// </summary>
+    public const string InOrderRate = "10gbit";
 
     /// <summary>
-    /// Commands impairing egress on <paramref name="device"/>. On loopback both directions leave through
-    /// <c>lo</c>, so one device carries both directions' impairment. With <paramref name="tcpIngress"/>,
-    /// the impairment sits on the receiver's ingress through an IFB device instead, as the manual requires
-    /// for realistic TCP results.
+    /// Commands impairing egress on <paramref name="device"/>, one direction's settings. Give each direction its
+    /// own device (calibrate.sh uses the two ends of a veth pair): on a device that carries both directions,
+    /// such as loopback, keeping packets in order couples them. With <paramref name="tcpIngress"/>, the
+    /// impairment sits on the receiver's ingress through an IFB device instead, as the manual requires for
+    /// realistic TCP results.
     /// </summary>
     public static IReadOnlyList<string> Commands(NetworkProfile profile, string device, ulong seed, bool tcpIngress = false)
     {
@@ -35,12 +42,6 @@ public static class NetemScript
         }
 
         lines.Add($"tc qdisc replace dev {target} root handle 1: {NetemArguments(profile, seed)}");
-        if (!profile.AllowReordering)
-        {
-            // netem's internal tfifo orders by send time, so jitter reorders packets; a plain FIFO child keeps order.
-            lines.Add(string.Create(CultureInfo.InvariantCulture, $"tc qdisc replace dev {target} parent 1:1 handle 10: pfifo limit {FifoLimit}"));
-        }
-
         return lines;
     }
 
@@ -53,13 +54,9 @@ public static class NetemScript
         text.Append(CultureInfo.InvariantCulture, $" delay {Ms(d.DelayMs)}");
         if (d.JitterMs > 0)
         {
-            text.Append(CultureInfo.InvariantCulture, $" {Ms(d.JitterMs)}");
-        }
-
-        if (profile.AllowReordering)
-        {
-            text.Append(CultureInfo.InvariantCulture,
-                $" reorder {Number(NetworkProfile.ReorderPercent)}% {Number(NetworkProfile.ReorderCorrelationPercent)}%");
+            // netem's default jitter is uniform on ±jitter, whose standard deviation is jitter/√3. The profile's
+            // jitter is a standard deviation (FR-021), so the normal table, whose parameter is sigma, is used.
+            text.Append(CultureInfo.InvariantCulture, $" {Ms(d.JitterMs)} distribution normal");
         }
 
         if (d.LossPercent > 0)
@@ -67,8 +64,20 @@ public static class NetemScript
             text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}%");
         }
 
+        // The in-order rate keeps every delayed packet behind the one before it, for a variant too, so its delayed
+        // packets queue exactly as its base profile's do and the base's calibrated settings apply to it.
+        text.Append(" rate ").Append(InOrderRate);
+        if (profile.AllowReordering)
+        {
+            // Jitter alone didn't reorder packets in the calibration runs, so a variant uses netem's reorder: it
+            // puts a share of packets at the head of the queue, sent at once, ahead of the delayed ones. That
+            // changes the delay distribution, so a variant's jitter isn't checked against its base's (FR-025).
+            text.Append(CultureInfo.InvariantCulture,
+                $" reorder {Number(NetworkProfile.ReorderPercent)}% {Number(NetworkProfile.ReorderCorrelationPercent)}%");
+        }
+
         // netem's seeded PRNG drives jitter, reorder and loss (Linux 6.3+), so the seed is set whenever any of
-        // them is random. A profile with none of them has nothing to repeat.
+        // them is random. A fixed delay has nothing to repeat.
         if (d.JitterMs > 0 || d.LossPercent > 0 || profile.AllowReordering)
         {
             text.Append(CultureInfo.InvariantCulture, $" seed {seed}");

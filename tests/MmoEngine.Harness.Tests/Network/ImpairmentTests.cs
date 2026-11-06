@@ -7,23 +7,27 @@ public sealed class ImpairmentTests
 {
     private static readonly NetworkProfile Typical = new() { Name = "Typical", Version = 1, RoundTripMs = 80, JitterMs = 10, LossPercent = 0.5 };
 
-    /// <summary>US4 scenario 7: per-direction delay, jitter and loss, a loss seed, and a FIFO child unless reordering is allowed.</summary>
+    /// <summary>
+    /// US4 scenario 7: per-direction delay, normally distributed jitter (its parameter is the standard deviation),
+    /// loss with a seed, and an in-order rate because the profile doesn't allow reordering.
+    /// </summary>
     [Fact]
-    public void NetemSplitsPerDirectionSeedsLossAndAddsAFifoChild()
+    public void NetemSplitsPerDirectionSeedsLossAndKeepsPacketsInOrder()
     {
         var commands = NetemScript.Commands(Typical, "eth0", seed: 42);
 
-        Assert.Equal(2, commands.Count);
-        Assert.Equal("tc qdisc replace dev eth0 root handle 1: netem delay 40ms 7.071ms loss random 0.5% seed 42", commands[0]);
-        Assert.Equal("tc qdisc replace dev eth0 parent 1:1 handle 10: pfifo limit 1000", commands[1]);
+        Assert.Equal(
+            ["tc qdisc replace dev eth0 root handle 1: netem delay 40ms 7.071ms distribution normal loss random 0.5% rate 10gbit seed 42"],
+            commands);
     }
 
-    /// <summary>netem's seeded PRNG drives jitter and reorder too, so any random element gets the seed; a fixed delay doesn't.</summary>
+    /// <summary>netem's seeded PRNG drives jitter, reorder and loss, so any of them gets the seed; a fixed delay doesn't.</summary>
     [Theory]
     [InlineData(1d, 0d, 0d, false, false)]
     [InlineData(1d, 2d, 0d, false, true)]
     [InlineData(1d, 0d, 1d, false, true)]
     [InlineData(1d, 0d, 0d, true, true)]
+    [InlineData(1d, 2d, 0d, true, true)]
     public void SeedIsSetWheneverJitterReorderOrLossIsRandom(double rtt, double jitter, double loss, bool reorder, bool seeded)
     {
         var profile = new NetworkProfile { Name = "P", Version = 1, RoundTripMs = rtt, JitterMs = jitter, LossPercent = loss, AllowReordering = reorder };
@@ -31,14 +35,30 @@ public sealed class ImpairmentTests
         Assert.Equal(seeded, NetemScript.NetemArguments(profile, 9).EndsWith(" seed 9", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// US4 scenario 7: a reordering variant keeps its base's settings and in-order rate, so its delayed packets queue
+    /// as the base's do, and adds netem's reorder, which sends a share of packets at once, ahead of them.
+    /// </summary>
     [Fact]
-    public void NetemReorderingVariantAddsReorderAndNoFifoChild()
+    public void NetemReorderingVariantKeepsTheBaseSettingsAndAddsReorder()
     {
-        var commands = NetemScript.Commands(Typical.ReorderingVariant(), "eth0", seed: 7);
+        var calibrated = Typical.WithPerDirection(new DirectionSettings(39, 8, 0.5));
 
-        Assert.Single(commands);
-        Assert.Contains("reorder 25% 50%", commands[0], StringComparison.Ordinal);
-        Assert.DoesNotContain(commands, c => c.Contains("pfifo", StringComparison.Ordinal));
+        Assert.Equal(
+            ["tc qdisc replace dev eth0 root handle 1: netem delay 40ms 7.071ms distribution normal loss random 0.5% rate 10gbit reorder 25% 50% seed 7"],
+            NetemScript.Commands(Typical.ReorderingVariant(), "eth0", seed: 7));
+        Assert.Equal(
+            "netem delay 39ms 8ms distribution normal loss random 0.5% rate 10gbit reorder 25% 50% seed 7",
+            NetemScript.NetemArguments(calibrated.ReorderingVariant(), 7));
+    }
+
+    [Fact]
+    public void WithPerDirectionReplacesTheSettingsAndKeepsTheTargets()
+    {
+        var tried = Typical.WithPerDirection(new DirectionSettings(37.5, 9.25, 0.5));
+
+        Assert.Equal("netem delay 37.5ms 9.25ms distribution normal loss random 0.5% rate 10gbit seed 1", NetemScript.NetemArguments(tried, 1));
+        Assert.Equal((80d, 10d, 0.5), (tried.RoundTripMs, tried.JitterMs, tried.LossPercent));
     }
 
     /// <summary>FR-022: for TCP, the impairment sits on the receiver's ingress through an IFB device.</summary>
@@ -56,7 +76,7 @@ public sealed class ImpairmentTests
     public void LanHasNoJitterOrLossArgumentsAndCalibratedSettingsWin()
     {
         var lan = new NetworkProfile { Name = "LAN", Version = 1, RoundTripMs = 1, JitterMs = 0, LossPercent = 0 };
-        Assert.Equal("netem delay 0.5ms", NetemScript.NetemArguments(lan, 3));
+        Assert.Equal("netem delay 0.5ms rate 10gbit", NetemScript.NetemArguments(lan, 3));
 
         var calibrated = Typical with
         {
@@ -68,7 +88,7 @@ public sealed class ImpairmentTests
                 MeasuredAt = DateTime.UnixEpoch,
             },
         };
-        Assert.Equal("netem delay 38ms 6ms loss random 0.4% seed 3", NetemScript.NetemArguments(calibrated, 3));
+        Assert.Equal("netem delay 38ms 6ms distribution normal loss random 0.4% rate 10gbit seed 3", NetemScript.NetemArguments(calibrated, 3));
     }
 
     [Fact]

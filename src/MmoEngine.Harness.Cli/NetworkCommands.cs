@@ -47,6 +47,7 @@ internal static class NetworkCommands
                 ["lossPercent"] = p.LossPercent,
                 ["allowReordering"] = p.AllowReordering,
                 ["calibrated"] = p.Calibrated is not null,
+                ["perDirection"] = PerDirectionJson(p.PerDirection()),
             })]).ToJsonString());
             return HarnessExitCodes.Ok;
         }));
@@ -56,10 +57,19 @@ internal static class NetworkCommands
         var device = new Option<string>("--device") { Description = "The interface to impair.", DefaultValueFactory = _ => "lo" };
         var seed = new Option<ulong>("--seed") { Description = "netem's loss seed, recorded with the run.", DefaultValueFactory = _ => 1UL };
         var tcp = new Option<bool>("--tcp-ingress") { Description = "Impair the receiver's ingress through ifb0, for TCP runs." };
-        var netem = new Command("netem", "Prints a tc netem script that applies a profile on one machine.") { netemProfiles, netemName, device, seed, tcp };
+        var (netemDelay, netemJitter, netemLoss) = DirectionOptions();
+        var netem = new Command("netem", "Prints a tc netem script that applies a profile on one machine.")
+        {
+            netemProfiles, netemName, device, seed, tcp, netemDelay, netemJitter, netemLoss,
+        };
         netem.SetAction(parse => WithProfile(context, parse.GetValue(netemProfiles)!, parse.GetValue(netemName)!, profile =>
         {
-            context.Stdout.Write(NetemScript.Script(profile, parse.GetValue(device)!, parse.GetValue(seed), parse.GetValue(tcp)));
+            if (!TryOverride(context, profile, parse.GetValue(netemDelay), parse.GetValue(netemJitter), parse.GetValue(netemLoss), out var applied))
+            {
+                return HarnessExitCodes.Invalid;
+            }
+
+            context.Stdout.Write(NetemScript.Script(applied, parse.GetValue(device)!, parse.GetValue(seed), parse.GetValue(tcp)));
             return HarnessExitCodes.Ok;
         }));
 
@@ -149,6 +159,41 @@ internal static class NetworkCommands
         return new Command("probe", "The UDP probe pair (FR-024).") { serve, run };
     }
 
+    /// <summary>
+    /// Per-direction settings to apply or store instead of the profile's: the values a calibration search
+    /// tried (FR-026). Without them the profile's calibrated settings, or the arithmetic split, apply.
+    /// </summary>
+    private static (Option<double?> Delay, Option<double?> Jitter, Option<double?> Loss) DirectionOptions() => (
+        new Option<double?>("--delay-ms") { Description = "Per-direction delay to use instead of the profile's." },
+        new Option<double?>("--jitter-ms") { Description = "Per-direction jitter (standard deviation) to use instead of the profile's." },
+        new Option<double?>("--loss-percent") { Description = "Per-direction loss to use instead of the profile's." });
+
+    private static bool TryOverride(CliContext context, NetworkProfile profile, double? delay, double? jitter, double? loss, out NetworkProfile applied)
+    {
+        applied = profile;
+        if (delay is null && jitter is null && loss is null)
+        {
+            return true;
+        }
+
+        if (delay < 0 || jitter < 0 || loss is < 0 or > 100)
+        {
+            context.Logger.Error("Per-direction overrides must be non-negative, and loss at most 100%");
+            return false;
+        }
+
+        var d = profile.PerDirection();
+        applied = profile.WithPerDirection(new DirectionSettings(delay ?? d.DelayMs, jitter ?? d.JitterMs, loss ?? d.LossPercent));
+        return true;
+    }
+
+    private static JsonObject PerDirectionJson(DirectionSettings d) => new()
+    {
+        ["delayMs"] = d.DelayMs,
+        ["jitterMs"] = d.JitterMs,
+        ["lossPercent"] = d.LossPercent,
+    };
+
     private static Command CalibrateCommand(CliContext context)
     {
         var runId = new Option<string>("--run-id") { Description = "A loaded probe run.", Required = true };
@@ -159,14 +204,16 @@ internal static class NetworkCommands
             Description = "If the profile passes, store the per-direction settings, runner class and kernel in its file (FR-026).",
         };
         var clickHouse = new Option<string?>("--clickhouse") { Description = $"ClickHouse connection string; default: ${HarnessSettings.ClickHouseVariable}." };
+        var (delay, jitter, loss) = DirectionOptions();
         var command = new Command("calibrate", "Calibrates a stored probe run against a profile; exit 0 within tolerance, 9 outside.")
         {
-            runId, profiles, name, write, clickHouse,
+            runId, profiles, name, write, clickHouse, delay, jitter, loss,
         };
         command.SetAction(async (parse, cancellationToken) =>
         {
             var settings = context.Settings(parse.GetValue(clickHouse));
-            if (settings is null || !TryProfile(context, parse.GetValue(profiles)!, parse.GetValue(name)!, out var profile))
+            if (settings is null || !TryProfile(context, parse.GetValue(profiles)!, parse.GetValue(name)!, out var loaded)
+                || !TryOverride(context, loaded, parse.GetValue(delay), parse.GetValue(jitter), parse.GetValue(loss), out var profile))
             {
                 return HarnessExitCodes.Invalid;
             }

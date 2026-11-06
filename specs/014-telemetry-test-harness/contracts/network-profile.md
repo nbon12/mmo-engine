@@ -42,12 +42,19 @@ direction gets half the round trip as delay, jitter divided by √2, and the ful
 **netem** (`harness profile netem`):
 
 ```text
-tc qdisc replace dev <dev> root handle 1: netem delay <d>ms <j>ms [reorder 25% 50%] [loss random <l>%] [seed <seed>]
-tc qdisc replace dev <dev> parent 1:1 handle 10: pfifo limit 1000   # only when reordering is not allowed
+tc qdisc replace dev <dev> root handle 1: netem delay <d>ms [<j>ms distribution normal] [loss random <l>%] rate 10gbit [reorder 25% 50%] [seed <seed>]
 ```
 
-`seed <seed>` is present whenever jitter, reordering or loss is (each is random), and is dropped only on a `tc`
-that has no `seed` option, such as GitHub's ubuntu-latest runner.
+- `<j>` is a standard deviation, so the jitter uses netem's normal table.
+- `rate 10gbit` is always present. With a rate, netem never schedules a delayed packet before the one queued
+  ahead of it, so packets stay in order.
+- `reorder 25% 50%` is present only for a reordering variant: it sends a share of packets at once, ahead of the
+  delayed ones. A variant applies its base profile's per-direction settings, calibrated ones included.
+- `seed <seed>` is present whenever jitter, reordering or loss is (each is random), and is dropped only on a `tc`
+  that has no `seed` option, such as GitHub's ubuntu-latest runner.
+- `--delay-ms`, `--jitter-ms` and `--loss-percent` replace the per-direction settings, as calibration's search
+  does. `harness calibrate` takes the same options and stores those settings when the run passes.
+- `harness profile list` reports each profile's `perDirection` settings (what it applies).
 
 With `--tcp-ingress`, the netem qdisc goes on `ifb0`, and the device's ingress is redirected to it.
 
@@ -57,6 +64,8 @@ With `--tcp-ingress`, the netem qdisc goes on `ifb0`, and the device's ingress i
 - the namespace, and label selectors;
 - `delay.latency`, `delay.jitter` and `loss.loss`;
 - `delay.reorder` only for a reordering variant.
+
+Chaos Mesh has no in-order rate or normal distribution, so its settings aren't calibrated yet.
 
 ## Probe datagrams (UDP, little-endian)
 

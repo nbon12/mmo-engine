@@ -41,6 +41,10 @@ on:
         description: "Calibrate every network profile for 5 minutes each"
         type: boolean
         default: false
+      calibrate_seconds:
+        description: "Seconds per profile (300 or more stores settings; shorter is a check that stores nothing)"
+        type: number
+        default: 300
 
 permissions:
   contents: read
@@ -144,7 +148,8 @@ jobs:
   netem:
     name: netem
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Every profile: up to five 1-minute search runs, then one 5-minute run.
+    timeout-minutes: 120
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,13 +170,26 @@ jobs:
             sudo modprobe sch_netem
           fi
 
-      - name: Calibrate LAN on loopback (30 s)
+      # US4 scenario 7 on real netem: LAN, Poor (jitter larger than the probe spacing, so it must stay in order)
+      # and Poor-reorder (which must reorder), against the committed calibrated settings.
+      - name: Calibrate LAN, Poor and Poor-reorder (60 s each)
         if: ${{ !inputs.calibrate }}
-        run: infra/harness/calibrate.sh --seconds 30 LAN
+        run: infra/harness/calibrate.sh --seconds 60 LAN Poor Poor-reorder
 
       - name: Calibrate every profile (5 minutes each)
         if: ${{ inputs.calibrate }}
-        run: infra/harness/calibrate.sh --seconds 300 --write-calibrated
+        env:
+          CALIBRATE_SECONDS: ${{ inputs.calibrate_seconds }}
+        # Settings are stored only from 5-minute runs (FR-024); a shorter dispatch is a check that writes nothing.
+        run: |
+          write=()
+          if [ "$CALIBRATE_SECONDS" -ge 300 ]; then write=(--write-calibrated); fi
+          infra/harness/calibrate.sh --seconds "$CALIBRATE_SECONDS" "${write[@]}"
+
+      - name: Print calibrated profiles
+        if: ${{ always() && inputs.calibrate }}
+        run: |
+          for f in harness/profiles/*.json; do echo "== $f"; cat "$f"; done
 
       - name: Upload calibrated profiles
         if: ${{ always() && inputs.calibrate }}

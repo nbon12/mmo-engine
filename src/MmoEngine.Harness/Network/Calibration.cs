@@ -68,15 +68,30 @@ public static class Calibration
         else
         {
             CheckTiming("round trip", median, profile.RoundTripMs, profile.Tolerances, failures);
-            CheckTiming("jitter", jitter, profile.JitterMs, profile.Tolerances, failures);
+            // A reordering variant's netem reorder sends a share of packets undelayed, so its round-trip spread
+            // isn't its base profile's jitter (FR-025): only the round trip, loss and reordering are checked.
+            if (!profile.AllowReordering)
+            {
+                CheckTiming("jitter", jitter, profile.JitterMs, profile.Tolerances, failures);
+            }
         }
 
-        CheckLoss("loss up", upLoss, profile, failures);
-        CheckLoss("loss down", downLoss, profile, failures);
+        CheckLoss("loss up", upLoss, sent, profile, failures);
+        CheckLoss("loss down", downLoss, upReceived.Count, profile, failures);
         if (!profile.AllowReordering && (upReordered > 0 || downReordered > 0))
         {
             failures.Add(string.Create(CultureInfo.InvariantCulture,
                 $"reordering: {upReordered} up and {downReordered} down, but the profile allows none"));
+        }
+
+        // A reordering variant must reorder when it can: a packet sent at once overtakes a delayed one only when
+        // the per-direction delay is longer than the gap between probes (LAN's 0.5 ms can't at 30 Hz).
+        var spacingMs = MedianSpacingMs(records);
+        var delayMs = profile.PerDirection().DelayMs;
+        if (profile.AllowReordering && echoed.Count > 0 && delayMs > spacingMs && upReordered == 0 && downReordered == 0)
+        {
+            failures.Add(string.Create(CultureInfo.InvariantCulture,
+                $"reordering: none measured, but a reordering variant must reorder (per-direction delay {delayMs:0.###} ms > probe spacing {spacingMs:0.###} ms)"));
         }
 
         return new CalibrationResult
@@ -95,6 +110,15 @@ public static class Calibration
             UpInterarrivalJitterMs = upJitter,
             DownInterarrivalJitterMs = downJitter,
         };
+    }
+
+    /// <summary>The median gap between consecutive probes' send times, in milliseconds.</summary>
+    public static double MedianSpacingMs(IReadOnlyList<ProbeRecord> records)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        var sends = records.OrderBy(r => r.Seq).Select(r => r.ClientSendNs).ToList();
+        var gaps = sends.Zip(sends.Skip(1), (a, b) => (b - a) / 1e6).Order().ToList();
+        return gaps.Count == 0 ? double.PositiveInfinity : Median(gaps);
     }
 
     /// <summary>Packets that arrived after a higher sequence number had already arrived.</summary>
@@ -174,12 +198,27 @@ public static class Calibration
         }
     }
 
-    private static void CheckLoss(string name, double measured, NetworkProfile profile, List<string> failures)
+    /// <summary>
+    /// The loss tolerance in percentage points for a sample of <paramref name="packets"/>: the profile's
+    /// tolerance, widened to three binomial standard deviations when the sample can't resolve it. At 3% loss
+    /// over 9,000 packets one standard deviation is 0.18 points, so a fixed ±0.25 would fail a correct link
+    /// about a third of the time (spec 014 research R7).
+    /// </summary>
+    public static double LossTolerancePoints(NetworkProfile profile, int packets)
     {
-        if (Math.Abs(measured - profile.LossPercent) > profile.Tolerances.LossPoints + 1e-9)
+        ArgumentNullException.ThrowIfNull(profile);
+        var p = profile.LossPercent / 100;
+        var sampling = packets > 0 ? 3 * 100 * Math.Sqrt(p * (1 - p) / packets) : 0;
+        return Math.Max(profile.Tolerances.LossPoints, sampling);
+    }
+
+    private static void CheckLoss(string name, double measured, int packets, NetworkProfile profile, List<string> failures)
+    {
+        var tolerance = LossTolerancePoints(profile, packets);
+        if (Math.Abs(measured - profile.LossPercent) > tolerance + 1e-9)
         {
             failures.Add(string.Create(CultureInfo.InvariantCulture,
-                $"{name}: measured {measured:0.###}%, target {profile.LossPercent:0.###}% ± {profile.Tolerances.LossPoints:0.###} points"));
+                $"{name}: measured {measured:0.###}%, target {profile.LossPercent:0.###}% ± {tolerance:0.###} points"));
         }
     }
 }

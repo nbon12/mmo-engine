@@ -7,9 +7,11 @@ the smoke checks, and the scripts' argument handling.
 Run: python3 -m unittest discover -s tests/workflows -v   (needs PyYAML)
 """
 
+import importlib.util
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -104,8 +106,14 @@ class GoldenAndNetemJobs(unittest.TestCase):
     def test_netem_job_loads_the_module_and_calibrates(self):
         text = runs("netem")
         self.assertIn("modprobe sch_netem", text)
-        self.assertIn("infra/harness/calibrate.sh --seconds 30 LAN", text)
-        self.assertIn("infra/harness/calibrate.sh --seconds 300 --write-calibrated", text)
+        # Every PR checks ordering on real netem: Poor must stay in order, Poor-reorder must reorder.
+        self.assertIn("infra/harness/calibrate.sh --seconds 60 LAN Poor Poor-reorder", text)
+        self.assertIn('infra/harness/calibrate.sh --seconds "$CALIBRATE_SECONDS" "${write[@]}"', text)
+        self.assertIn('if [ "$CALIBRATE_SECONDS" -ge 300 ]; then write=(--write-calibrated); fi', text)
+        step = next(s for s in steps("netem") if s.get("name") == "Calibrate every profile (5 minutes each)")
+        self.assertEqual("${{ inputs.calibrate_seconds }}", step["env"]["CALIBRATE_SECONDS"])
+        self.assertEqual(300, TRIGGERS["workflow_dispatch"]["inputs"]["calibrate_seconds"]["default"])
+        self.assertGreaterEqual(WORKFLOW["jobs"]["netem"]["timeout-minutes"], 120)
 
 
 class Scripts(unittest.TestCase):
@@ -185,7 +193,8 @@ class Scripts(unittest.TestCase):
 
     def test_scripts_clean_up_what_they_start(self):
         calibrate = (INFRA / "calibrate.sh").read_text()
-        self.assertIn('dotnet "$HARNESS_BUILD_DIR/harness/harness.dll" probe serve', calibrate)
+        self.assertIn('"$HARNESS_BUILD_DIR/harness/harness.dll" probe serve', calibrate)
+        self.assertIn('sudo ip netns del "$NS"', calibrate)
         self.assertNotIn("dotnet run --project", calibrate)
         self.assertIn('docker rm -f "$CONTAINER"', calibrate)
         self.assertIn("trap cleanup EXIT", calibrate)
@@ -226,6 +235,110 @@ class Scripts(unittest.TestCase):
         self.assertNotIn("prometheus.yaml", base["resources"])
         self.assertIn("prometheus.yaml", observability["resources"])
         self.assertIn("grafana.yaml", observability["resources"])
+
+
+
+
+class CalibrationSearch(unittest.TestCase):
+    """calibrate.sh's search step (infra/harness/calibration_search.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("calibration_search", INFRA / "calibration_search.py")
+        cls.search = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.search)
+
+    def test_within_the_search_band_keeps_the_settings(self):
+        result = {"failures": [], "medianRoundTripMs": 81, "jitterMs": 9.7}
+        self.assertEqual(("done", 40, 7.071), self.search.step(result, 80, 10, 40, 7.071))
+
+    def test_inside_tolerance_but_outside_the_band_takes_another_step(self):
+        # Cross-region in run 42123464780: within ±10% on a 60 s run, then outside it over 5 minutes.
+        result = {"failures": [], "medianRoundTripMs": 163, "jitterMs": 22.6}
+        verdict, delay, jitter = self.search.step(result, 160, 25, 80, 17.678)
+        self.assertEqual(("next", 80), (verdict, delay))
+        self.assertAlmostEqual(17.678 * 25 / 22.6, jitter, places=6)
+
+    def test_lan_round_trip_uses_the_absolute_floor(self):
+        result = {"failures": [], "medianRoundTripMs": 1.09, "jitterMs": 0.08}
+        self.assertEqual(("done", 0.5, 0), self.search.step(result, 1, 0, 0.5, 0))
+
+    def test_low_jitter_scales_the_netem_jitter_up(self):
+        verdict, delay, jitter = self.search.step(
+            {"failures": ["jitter: measured 5.8 ms"], "medianRoundTripMs": 80, "jitterMs": 5.8}, 80, 10, 40, 7.071)
+        self.assertEqual(("next", 40), (verdict, delay))
+        self.assertAlmostEqual(7.071 * 10 / 5.8, jitter, places=6)
+
+    def test_a_step_never_more_than_doubles_or_halves_the_jitter(self):
+        _, _, up = self.search.step({"failures": ["jitter: x"], "medianRoundTripMs": 80, "jitterMs": 1}, 80, 10, 40, 7)
+        _, _, down = self.search.step({"failures": ["jitter: x"], "medianRoundTripMs": 80, "jitterMs": 100}, 80, 10, 40, 7)
+        self.assertEqual((14, 3.5), (up, down))
+
+    def test_round_trip_error_moves_the_delay_by_half_and_never_below_zero(self):
+        _, delay, _ = self.search.step({"failures": ["round trip: x"], "medianRoundTripMs": 90, "jitterMs": 10}, 80, 10, 40, 7)
+        self.assertEqual(35, delay)
+        _, floor, _ = self.search.step({"failures": ["round trip: x"], "medianRoundTripMs": 5, "jitterMs": 0}, 1, 0, 0.5, 0)
+        self.assertEqual(0, floor)
+
+    def test_loss_and_reordering_failures_are_not_searched(self):
+        result = {"failures": ["loss up: x", "reordering: x"], "medianRoundTripMs": 80, "jitterMs": 10}
+        # (They are reported by the full run instead.)
+        self.assertEqual(("done", 40, 7), self.search.step(result, 80, 10, 40, 7))
+
+    def test_cli_reads_the_last_json_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "probe.out"
+            out.write_text('log line\n{"failures": [], "medianRoundTripMs": 80, "jitterMs": 10}\n')
+            result = subprocess.run([sys.executable, str(INFRA / "calibration_search.py"), str(out), "80", "10", "40", "7.071"],
+                                    capture_output=True, text=True, check=True)
+        self.assertEqual("done 40.000 7.071 0.0000", result.stdout.strip())
+
+    def test_cli_reports_fail_for_a_run_with_no_measurement(self):
+        with tempfile.TemporaryDirectory() as folder:
+            empty = Path(folder) / "empty.out"
+            empty.write_text("no json here\n")
+            no_echoes = Path(folder) / "none.out"
+            no_echoes.write_text('{"failures": ["no echoed packets"], "medianRoundTripMs": null, "jitterMs": null}\n')
+            outputs = [subprocess.run([sys.executable, str(INFRA / "calibration_search.py"), str(f), "80", "10", "40", "7"],
+                                      capture_output=True, text=True, check=True).stdout.strip()
+                       for f in (empty, no_echoes, Path(folder) / "missing.out")]
+        self.assertEqual(["fail 40.000 7.000 inf"] * 3, outputs)
+
+    def test_error_scores_the_measured_settings(self):
+        self.assertAlmostEqual(0.1, self.search.error({"medianRoundTripMs": 88, "jitterMs": 9.5}, 80, 10))
+        self.assertAlmostEqual(0.2, self.search.error({"medianRoundTripMs": 80, "jitterMs": 8}, 80, 10))
+        self.assertAlmostEqual(0.09, self.search.error({"medianRoundTripMs": 1.09, "jitterMs": 0.1}, 1, 0))
+
+
+class CalibrateScript(unittest.TestCase):
+    """infra/harness/calibrate.sh's handling of what the review of #54 found."""
+
+    TEXT = (INFRA / "calibrate.sh").read_text()
+
+    def test_write_is_refused_for_runs_shorter_than_five_minutes(self):
+        result = subprocess.run([str(INFRA / "calibrate.sh"), "--seconds", "30", "--write-calibrated", "LAN"],
+                                capture_output=True, text=True)
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--write-calibrated needs --seconds 300 or more", result.stderr)
+
+    def test_search_starts_from_the_profiles_own_settings(self):
+        self.assertIn('d = p["perDirection"]', self.TEXT)
+        self.assertNotIn("2 ** 0.5", self.TEXT)
+
+    def test_variants_measure_their_base_settings_without_a_search(self):
+        self.assertIn('if [ "$variant" = yes ]; then', self.TEXT)
+        variant_branch = self.TEXT.split('if [ "$variant" = yes ]; then', 1)[1].split("continue", 1)[0]
+        self.assertIn('apply "$profile"\n', variant_branch)
+        self.assertNotIn("--delay-ms", variant_branch)
+
+    def test_a_run_without_a_measurement_fails_that_profile_and_goes_on(self):
+        self.assertIn('[ "$verdict" = fail ] && break', self.TEXT)
+        self.assertIn('fail_profile "$profile" 9', self.TEXT)
+        self.assertIn("verdict=fail; score=inf", self.TEXT)
+
+    def test_an_exhausted_search_checks_the_best_measured_settings(self):
+        self.assertIn('delay="$best_delay"; jitter="$best_jitter"', self.TEXT)
+        self.assertIn("checking the best measured settings", self.TEXT)
 
 
 if __name__ == "__main__":
