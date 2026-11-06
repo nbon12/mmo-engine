@@ -40,6 +40,20 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         Assert.Contains("Poor-reorder", names);
     }
 
+    /// <summary>calibrate.sh starts its search from these: the stored calibration, which a variant shares with its base.</summary>
+    [Fact]
+    public void ProfileListReportsTheSettingsEachProfileApplies()
+    {
+        var (_, stdout, _) = Run("profile", "list", "--profiles", Profiles);
+        var profiles = JsonNode.Parse(stdout)!.AsArray().ToDictionary(p => p!["name"]!.GetValue<string>(), p => p!["perDirection"]!);
+        var poor = NetworkProfile.Parse(File.ReadAllText(Path.Combine(Profiles, "poor.json")), "poor.json").PerDirection();
+
+        Assert.Equal(poor.DelayMs, profiles["Poor"]["delayMs"]!.GetValue<double>());
+        Assert.Equal(poor.JitterMs, profiles["Poor"]["jitterMs"]!.GetValue<double>());
+        Assert.Equal(poor.DelayMs, profiles["Poor-reorder"]["delayMs"]!.GetValue<double>());
+        Assert.Equal(poor.LossPercent, profiles["Poor-reorder"]["lossPercent"]!.GetValue<double>());
+    }
+
     [Fact]
     public void ProfileNetemAndChaosPrintTheGeneratedSettings()
     {

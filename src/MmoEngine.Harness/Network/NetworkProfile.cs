@@ -55,15 +55,20 @@ public sealed record NetworkProfile
     /// <summary>The suffix of a reordering variant's name.</summary>
     public const string ReorderSuffix = "-reorder";
 
-    /// <summary>The profile's reordering variant (FR-021): the same targets, with reordering allowed.</summary>
-    public NetworkProfile ReorderingVariant() =>
-        this with { Name = Name + ReorderSuffix, AllowReordering = true, Calibrated = null, SourceFile = null };
+    /// <summary>netem's reorder settings for reordering variants (research R7): 25% of packets, 50% correlation.</summary>
+    public const double ReorderPercent = 25;
+
+    /// <summary>The correlation of reordering variants' reorder setting.</summary>
+    public const double ReorderCorrelationPercent = 50;
 
     /// <summary>
-    /// The per-direction settings to apply: the calibrated ones when stored, else the arithmetic split
-    /// (research R7): half the round trip each way, jitter divided by √2 so the round-trip standard
-    /// deviation comes out at the target, and the full per-direction loss.
+    /// The profile's reordering variant (FR-021): the same targets and the same per-direction settings, its base
+    /// profile's calibrated ones included, with netem's reorder added. A variant has no file of its own, so it
+    /// is calibrated by measuring its base's settings with reordering, not by a search of its own.
     /// </summary>
+    public NetworkProfile ReorderingVariant() =>
+        this with { Name = Name + ReorderSuffix, AllowReordering = true, SourceFile = null };
+
     /// <summary>
     /// This profile with explicit per-direction settings, as calibration tries them (FR-026). They are stored
     /// only once a calibration with them passes.
@@ -80,6 +85,11 @@ public sealed record NetworkProfile
         },
     };
 
+    /// <summary>
+    /// The per-direction settings to apply: the calibrated ones when stored, else the arithmetic split
+    /// (research R7): half the round trip each way, jitter divided by √2 so the round-trip standard
+    /// deviation comes out at the target, and the full per-direction loss.
+    /// </summary>
     public DirectionSettings PerDirection() =>
         Calibrated?.PerDirection ?? new DirectionSettings(RoundTripMs / 2, JitterMs / Math.Sqrt(2), LossPercent);
 

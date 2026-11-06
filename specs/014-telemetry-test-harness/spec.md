@@ -364,6 +364,9 @@ that the sections, regions and entities match the regionizer's state at that tic
   three binomial standard deviations of the run's sample, when that is wider), and
   reordering is zero unless the profile allows it. It MUST also report RFC 3550 interarrival jitter for
   each direction.
+  A reordering variant is checked on its round trip and loss but not its jitter (netem's reorder sends a
+  share of packets undelayed), and MUST show reordering whenever its per-direction delay is longer than
+  the probe spacing.
 - **FR-026**: A profile's calibrated settings MUST be stored with the profile, along with the runner
   class and kernel they were measured on.
 
@@ -507,4 +510,7 @@ that the sections, regions and entities match the regionizer's state at that tic
 - The issue's "plain FIFO child queue" no longer keeps netem's packets in order on current kernels
   (the first full calibration measured reordering through it), so packets are kept in order with
   netem's `rate` instead. The intent, no reordering unless the profile allows it, is unchanged.
+- Jitter alone didn't reorder packets on the per-direction veth setup, so reordering variants use
+  netem's `reorder` (25%, 50% correlation) on top of their base profile's settings and in-order rate.
+  They apply their base's calibrated settings and aren't searched or stored separately.
 - Exit codes 5 to 8 are new and don't collide with sub-spec 1's 0 to 4.

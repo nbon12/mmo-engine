@@ -21,14 +21,14 @@ public sealed class ImpairmentTests
             commands);
     }
 
-    /// <summary>netem's seeded PRNG drives jitter and loss, so either gets the seed; a fixed delay doesn't.</summary>
+    /// <summary>netem's seeded PRNG drives jitter, reorder and loss, so any of them gets the seed; a fixed delay doesn't.</summary>
     [Theory]
     [InlineData(1d, 0d, 0d, false, false)]
     [InlineData(1d, 2d, 0d, false, true)]
     [InlineData(1d, 0d, 1d, false, true)]
-    [InlineData(1d, 0d, 0d, true, false)]
+    [InlineData(1d, 0d, 0d, true, true)]
     [InlineData(1d, 2d, 0d, true, true)]
-    public void SeedIsSetWheneverJitterOrLossIsRandom(double rtt, double jitter, double loss, bool reorder, bool seeded)
+    public void SeedIsSetWheneverJitterReorderOrLossIsRandom(double rtt, double jitter, double loss, bool reorder, bool seeded)
     {
         var profile = new NetworkProfile { Name = "P", Version = 1, RoundTripMs = rtt, JitterMs = jitter, LossPercent = loss, AllowReordering = reorder };
 
@@ -36,17 +36,20 @@ public sealed class ImpairmentTests
     }
 
     /// <summary>
-    /// US4 scenario 7: a reordering variant drops the in-order rate, so jitter reorders packets. It gets no netem
-    /// `reorder`, which would send a share of packets undelayed and miss the profile's round-trip and jitter.
+    /// US4 scenario 7: a reordering variant keeps its base's settings and in-order rate, so its delayed packets queue
+    /// as the base's do, and adds netem's reorder, which sends a share of packets at once, ahead of them.
     /// </summary>
     [Fact]
-    public void NetemReorderingVariantLetsJitterReorderWithoutUndelayedPackets()
+    public void NetemReorderingVariantKeepsTheBaseSettingsAndAddsReorder()
     {
-        var commands = NetemScript.Commands(Typical.ReorderingVariant(), "eth0", seed: 7);
+        var calibrated = Typical.WithPerDirection(new DirectionSettings(39, 8, 0.5));
 
         Assert.Equal(
-            ["tc qdisc replace dev eth0 root handle 1: netem delay 40ms 7.071ms distribution normal loss random 0.5% seed 7"],
-            commands);
+            ["tc qdisc replace dev eth0 root handle 1: netem delay 40ms 7.071ms distribution normal loss random 0.5% rate 10gbit reorder 25% 50% seed 7"],
+            NetemScript.Commands(Typical.ReorderingVariant(), "eth0", seed: 7));
+        Assert.Equal(
+            "netem delay 39ms 8ms distribution normal loss random 0.5% rate 10gbit reorder 25% 50% seed 7",
+            NetemScript.NetemArguments(calibrated.ReorderingVariant(), 7));
     }
 
     [Fact]

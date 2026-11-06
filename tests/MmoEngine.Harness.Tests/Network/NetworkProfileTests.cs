@@ -88,7 +88,8 @@ public sealed class NetworkProfileTests
         Assert.Equal(new DirectionSettings(38, 6.5, 0.45), parsed.PerDirection());
         Assert.Equal("6.8.0", parsed.Calibrated!.Kernel);
         Assert.Equal("ci-x64-0123456789abcdef", parsed.Calibrated.RunnerClass);
-        Assert.Null(parsed.ReorderingVariant().Calibrated);
+        // A variant applies its base's calibrated settings: it has no file, and no search, of its own.
+        Assert.Equal(parsed.Calibrated, parsed.ReorderingVariant().Calibrated);
         // Without stored settings, the arithmetic split (the committed file may carry calibrated ones).
         Assert.Equal(new DirectionSettings(40, 10 / Math.Sqrt(2), 0.5), (typical with { Calibrated = null }).PerDirection());
     }

@@ -47,6 +47,7 @@ internal static class NetworkCommands
                 ["lossPercent"] = p.LossPercent,
                 ["allowReordering"] = p.AllowReordering,
                 ["calibrated"] = p.Calibrated is not null,
+                ["perDirection"] = PerDirectionJson(p.PerDirection()),
             })]).ToJsonString());
             return HarnessExitCodes.Ok;
         }));
@@ -185,6 +186,13 @@ internal static class NetworkCommands
         applied = profile.WithPerDirection(new DirectionSettings(delay ?? d.DelayMs, jitter ?? d.JitterMs, loss ?? d.LossPercent));
         return true;
     }
+
+    private static JsonObject PerDirectionJson(DirectionSettings d) => new()
+    {
+        ["delayMs"] = d.DelayMs,
+        ["jitterMs"] = d.JitterMs,
+        ["lossPercent"] = d.LossPercent,
+    };
 
     private static Command CalibrateCommand(CliContext context)
     {

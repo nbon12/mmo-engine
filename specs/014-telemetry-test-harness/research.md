@@ -129,16 +129,21 @@ itself. What the first full calibration on GitHub's runner (2026-11-05) showed, 
   child only once they are due, already reordered, and Cross-region and Poor reordered through it.
   Profiles without reordering get `rate 10gbit` instead: with a rate, netem schedules each packet no
   earlier than the one before it, and the rate's serialization time is negligible.
-- netem's `reorder 25% 50%` sends a share of packets with no delay at all, which broke the reordering
-  variants' round trip and jitter. Variants drop the in-order rate instead, so jitter reorders packets
-  and the variant keeps its base profile's targets. (Chaos Mesh, which has neither the rate nor the
-  normal distribution, keeps its `reorder` block and isn't calibrated yet.)
+- netem's `reorder 25% 50%` sends a share of packets with no delay at all, so a variant's round-trip
+  spread isn't its base's jitter. Dropping it in favour of jitter-only reordering didn't work either:
+  on the veth setup no variant reordered at all (run 42130656210). Variants therefore keep their base's
+  settings and in-order rate, so their delayed packets queue as the base's do, and add netem's
+  `reorder`, which puts a share of packets at the head of the queue. A variant is checked on round trip,
+  loss and reordering (which it must show when its delay is longer than the probe spacing), not jitter.
+  (Chaos Mesh, which has neither the rate nor the normal distribution, isn't calibrated yet.)
 - On loopback both directions shared one queue, so keeping packets in order coupled them. Calibration
   runs the probe server in a network namespace joined by a veth pair, with a netem on each end.
 - Keeping packets in order clips the delay distribution, so per-direction jitter doesn't map one to one
   onto round-trip jitter. Calibration searches for the per-direction delay and jitter with short runs
-  (`infra/harness/calibration_search.py`), checks them with a full-length run, and stores the settings
-  that pass. `seed` fixes the jitter and loss sequences.
+  (`infra/harness/calibration_search.py`), starting from the profile's stored settings, so a calibration
+  run with committed settings checks them first. It falls back to the best measured settings if the
+  search runs out of steps, checks them with a full-length run, and stores the settings that pass, from
+  5-minute runs only. `seed` fixes the jitter, reorder and loss sequences.
 
 **NetworkChaos**: `action: netem`, with `delay.latency`, `delay.jitter`, `loss.loss` and, for a
 reordering variant, `delay.reorder`; `direction: both` and a label selector; `mode: all`. Chaos Mesh

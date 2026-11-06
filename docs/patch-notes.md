@@ -30,8 +30,14 @@ The first full calibration (`calibrate: true`, run 42113574741) passed only LAN.
 
 - **Jitter was 0.58 of every target.** netem's default jitter is uniform on ±j, whose standard deviation is j/√3. `harness profile netem` now writes `distribution normal`, whose parameter is the standard deviation.
 - **Profiles that forbid reordering still reordered.** On current kernels the manual's `pfifo` child gets packets only once they are due, already reordered. Those profiles now get `rate 10gbit` instead, and the pfifo child is gone.
-- **Reordering variants missed their targets.** netem's `reorder 25% 50%` sends a quarter of packets undelayed. Variants now just drop the in-order rate, so jitter reorders packets. Chaos Mesh manifests are unchanged.
-- **`calibrate.sh`** runs the probe server in a network namespace on a veth pair, so each direction has its own netem. On loopback they shared one queue. It searches for per-direction delay and jitter with short runs, then checks them with one full-length run (`--search-seconds`, default 60, up to 5 steps).
+- **Reordering variants missed their targets.** netem's `reorder 25% 50%` sends a quarter of packets undelayed, so a variant's spread isn't its base's jitter. Jitter alone didn't reorder anything on veth, though. Variants now keep their base's calibrated settings and in-order rate, and add `reorder`. They are checked on round trip, loss and reordering, which they must show when their delay is longer than the probe spacing, but not on jitter. Chaos Mesh manifests are unchanged.
+- **`calibrate.sh`** runs the probe server in a network namespace on a veth pair, so each direction has its own netem. On loopback they shared one queue.
+  - It searches for per-direction delay and jitter with short runs, starting from the profile's stored settings (`--search-seconds`, default 60, up to 5 steps).
+  - It checks them with one full-length run, falling back to the best measured settings if the search runs out.
+  - A run with no measurement fails that profile only.
+  - `--write-calibrated` needs `--seconds 300` or more.
+- **`harness profile list`** reports each profile's `perDirection` settings.
+- **Every PR's `netem` job** calibrates LAN, Poor and Poor-reorder for 60 s against the committed settings. Poor must stay in order and Poor-reorder must reorder.
 - **`harness profile netem` and `harness calibrate`** take `--delay-ms`, `--jitter-ms` and `--loss-percent` to override the per-direction settings. `calibrate --write-calibrated` stores the settings it was given.
 - **Loss tolerance** widens to three binomial standard deviations of the run's sample when that is wider than the profile's points (FR-025): Poor at 9,000 packets gets ±0.54 points.
 - **The `netem` job** has a `calibrate_seconds` dispatch input (default 300), prints the calibrated profile files to the log, and has a 120-minute timeout.

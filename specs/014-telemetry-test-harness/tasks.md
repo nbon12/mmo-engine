@@ -135,7 +135,9 @@ with a changed parameter.
   - Scenario 5: `ReorderingFailsUnlessTheProfileAllowsIt`.
   - Scenario 6: `InterarrivalJitterIsReportedForEachDirection` and `InterarrivalJitterFollowsTheRfcRecurrence`.
 - [x] T042 [P] [US4] `tests/MmoEngine.Harness.Tests/Network/ImpairmentTests.cs`:
-  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndKeepsPacketsInOrder`, `NetemReorderingVariantLetsJitterReorderWithoutUndelayedPackets`
+  - Scenario 7: `NetemSplitsPerDirectionSeedsLossAndKeepsPacketsInOrder`, `NetemReorderingVariantKeepsTheBaseSettingsAndAddsReorder`,
+    and on real netem the `netem` job's "Calibrate LAN, Poor and Poor-reorder" step on every PR: Poor fails on any
+    reordered packet, and Poor-reorder fails if none reorders (`CalibrationTests.VariantThatCanReorderMustReorder`).
     and `TcpIngressRedirectsThroughIfb`.
   - Scenario 8: `NetworkChaosSetsDelayJitterLossDirectionAndTargetPods`.
 - [x] T043 [P] [US4] Scenario 9: `ProbePairTests.LoopbackProbeRunRecordsEverySentPacketAndLosesNone`, plus

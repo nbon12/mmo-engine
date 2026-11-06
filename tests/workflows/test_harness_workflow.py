@@ -106,8 +106,10 @@ class GoldenAndNetemJobs(unittest.TestCase):
     def test_netem_job_loads_the_module_and_calibrates(self):
         text = runs("netem")
         self.assertIn("modprobe sch_netem", text)
-        self.assertIn("infra/harness/calibrate.sh --seconds 30 LAN", text)
-        self.assertIn('infra/harness/calibrate.sh --seconds "$CALIBRATE_SECONDS" --write-calibrated', text)
+        # Every PR checks ordering on real netem: Poor must stay in order, Poor-reorder must reorder.
+        self.assertIn("infra/harness/calibrate.sh --seconds 60 LAN Poor Poor-reorder", text)
+        self.assertIn('infra/harness/calibrate.sh --seconds "$CALIBRATE_SECONDS" "${write[@]}"', text)
+        self.assertIn('if [ "$CALIBRATE_SECONDS" -ge 300 ]; then write=(--write-calibrated); fi', text)
         step = next(s for s in steps("netem") if s.get("name") == "Calibrate every profile (5 minutes each)")
         self.assertEqual("${{ inputs.calibrate_seconds }}", step["env"]["CALIBRATE_SECONDS"])
         self.assertEqual(300, TRIGGERS["workflow_dispatch"]["inputs"]["calibrate_seconds"]["default"])
@@ -235,8 +237,6 @@ class Scripts(unittest.TestCase):
         self.assertIn("grafana.yaml", observability["resources"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CalibrationSearch(unittest.TestCase):
@@ -291,4 +291,55 @@ class CalibrationSearch(unittest.TestCase):
             out.write_text('log line\n{"failures": [], "medianRoundTripMs": 80, "jitterMs": 10}\n')
             result = subprocess.run([sys.executable, str(INFRA / "calibration_search.py"), str(out), "80", "10", "40", "7.071"],
                                     capture_output=True, text=True, check=True)
-        self.assertEqual("done 40.000 7.071", result.stdout.strip())
+        self.assertEqual("done 40.000 7.071 0.0000", result.stdout.strip())
+
+    def test_cli_reports_fail_for_a_run_with_no_measurement(self):
+        with tempfile.TemporaryDirectory() as folder:
+            empty = Path(folder) / "empty.out"
+            empty.write_text("no json here\n")
+            no_echoes = Path(folder) / "none.out"
+            no_echoes.write_text('{"failures": ["no echoed packets"], "medianRoundTripMs": null, "jitterMs": null}\n')
+            outputs = [subprocess.run([sys.executable, str(INFRA / "calibration_search.py"), str(f), "80", "10", "40", "7"],
+                                      capture_output=True, text=True, check=True).stdout.strip()
+                       for f in (empty, no_echoes, Path(folder) / "missing.out")]
+        self.assertEqual(["fail 40.000 7.000 inf"] * 3, outputs)
+
+    def test_error_scores_the_measured_settings(self):
+        self.assertAlmostEqual(0.1, self.search.error({"medianRoundTripMs": 88, "jitterMs": 9.5}, 80, 10))
+        self.assertAlmostEqual(0.2, self.search.error({"medianRoundTripMs": 80, "jitterMs": 8}, 80, 10))
+        self.assertAlmostEqual(0.09, self.search.error({"medianRoundTripMs": 1.09, "jitterMs": 0.1}, 1, 0))
+
+
+class CalibrateScript(unittest.TestCase):
+    """infra/harness/calibrate.sh's handling of what the review of #54 found."""
+
+    TEXT = (INFRA / "calibrate.sh").read_text()
+
+    def test_write_is_refused_for_runs_shorter_than_five_minutes(self):
+        result = subprocess.run([str(INFRA / "calibrate.sh"), "--seconds", "30", "--write-calibrated", "LAN"],
+                                capture_output=True, text=True)
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--write-calibrated needs --seconds 300 or more", result.stderr)
+
+    def test_search_starts_from_the_profiles_own_settings(self):
+        self.assertIn('d = p["perDirection"]', self.TEXT)
+        self.assertNotIn("2 ** 0.5", self.TEXT)
+
+    def test_variants_measure_their_base_settings_without_a_search(self):
+        self.assertIn('if [ "$variant" = yes ]; then', self.TEXT)
+        variant_branch = self.TEXT.split('if [ "$variant" = yes ]; then', 1)[1].split("continue", 1)[0]
+        self.assertIn('apply "$profile"\n', variant_branch)
+        self.assertNotIn("--delay-ms", variant_branch)
+
+    def test_a_run_without_a_measurement_fails_that_profile_and_goes_on(self):
+        self.assertIn('[ "$verdict" = fail ] && break', self.TEXT)
+        self.assertIn('fail_profile "$profile" 9', self.TEXT)
+        self.assertIn("verdict=fail; score=inf", self.TEXT)
+
+    def test_an_exhausted_search_checks_the_best_measured_settings(self):
+        self.assertIn('delay="$best_delay"; jitter="$best_jitter"', self.TEXT)
+        self.assertIn("checking the best measured settings", self.TEXT)
+
+
+if __name__ == "__main__":
+    unittest.main()

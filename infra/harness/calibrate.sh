@@ -5,10 +5,12 @@
 # veth pair, so mmo-up's egress impairs the way up and mmo-down's egress the way down. (On loopback both
 # directions shared one queue, and keeping packets in order coupled them.)
 #
-# Per profile: short search runs tune the per-direction delay and jitter until the round trip and jitter are
-# within tolerance (calibration_search.py), then one full-length run checks them. With --write-calibrated,
-# settings that pass are stored in the profile's file. Needs root for ip and tc (sudo), Docker for a scratch
-# ClickHouse unless MMO_CLICKHOUSE is set, and the .NET SDK.
+# Per profile: short search runs tune the per-direction delay and jitter, starting from the profile's own
+# settings (its stored calibration, else the arithmetic split), until the round trip and jitter are within
+# half the tolerance (calibration_search.py); then one full-length run checks them. A reordering variant is
+# measured with its base profile's settings and netem's reorder, with no search of its own. With
+# --write-calibrated (5-minute runs only, FR-024), settings that pass are stored in the profile's file.
+# Needs root for ip and tc (sudo), Docker for a scratch ClickHouse unless MMO_CLICKHOUSE is set, and the .NET SDK.
 #
 #   infra/harness/calibrate.sh [--seconds 300] [--search-seconds 60] [--write-calibrated] [profile ...]
 #   (default: every profile)
@@ -27,6 +29,11 @@ while [ $# -gt 0 ]; do
     *) PROFILES+=("$1"); shift ;;
   esac
 done
+# Stored calibrations come only from full-length runs (FR-024: 5 minutes per profile).
+if [ -n "$WRITE" ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < 300 else 1)' "$SECONDS_PER_PROFILE"; then
+  echo "--write-calibrated needs --seconds 300 or more (FR-024); got $SECONDS_PER_PROFILE" >&2
+  exit 2
+fi
 # A search run is never longer than the full run.
 SEARCH_SECONDS="$(python3 -c 'import sys; print(min(float(sys.argv[1]), float(sys.argv[2])))' "$SEARCH_SECONDS" "$SECONDS_PER_PROFILE")"
 PROFILES_DIR="$ROOT/harness/profiles"
@@ -106,12 +113,15 @@ if ! grep -q seed <<<"$netem_help"; then
   SEED_FILTER="sed -e s/[[:space:]]seed[[:space:]][0-9]*//"
 fi
 
-# apply <profile> <delay-ms> <jitter-ms>: the same per-direction settings on the way up and the way down.
+# apply <profile> [<delay-ms> <jitter-ms>]: the same per-direction settings on the way up and the way down;
+# without overrides, the profile's own settings (what impaired runs use).
 apply() {
+  local overrides=()
+  if [ $# -ge 3 ]; then overrides=(--delay-ms "$2" --jitter-ms "$3"); fi
   harness profile netem --profiles "$PROFILES_DIR" --profile "$1" --device "$UP_DEV" --seed 20261104 \
-    --delay-ms "$2" --jitter-ms "$3" | $SEED_FILTER | sudo bash
+    "${overrides[@]}" | $SEED_FILTER | sudo bash
   harness profile netem --profiles "$PROFILES_DIR" --profile "$1" --device "$DOWN_DEV" --seed 20261105 \
-    --delay-ms "$2" --jitter-ms "$3" | $SEED_FILTER | sudo ip netns exec "$NS" bash
+    "${overrides[@]}" | $SEED_FILTER | sudo ip netns exec "$NS" bash
 }
 
 # probe <profile> <seconds> <run-id> <output>: one probe run; prints its exit code.
@@ -121,36 +131,80 @@ probe() {
     --seconds "$2" --run-id "$3" >"$4"
   local code=$?
   set -e
-  cat "$4"
   echo "$code"
+}
+
+# fail_profile <profile> <exit>: report a profile that didn't calibrate and keep the most serious status.
+fail_profile() {
+  echo "::error::profile $1 outside tolerance (exit $2)"
+  if [ "$status" -eq 0 ]; then status="$2"; fi
 }
 
 status=0
 for profile in "${PROFILES[@]}"; do
   slug="$(tr '[:upper:]' '[:lower:]' <<<"$profile")"
-  # Start the search from the arithmetic split: half the round trip each way, jitter divided by √2.
-  read -r target_rtt target_jitter delay jitter < <(harness profile list --profiles "$PROFILES_DIR" | python3 -c '
+  # Targets and starting settings: the profile's stored calibration, else the arithmetic split.
+  if ! read -r target_rtt target_jitter delay jitter variant < <(harness profile list --profiles "$PROFILES_DIR" | python3 -c '
 import json, sys
-p = next(p for p in json.load(sys.stdin) if p["name"].lower() == sys.argv[1].lower())
-print(p["roundTripMs"], p["jitterMs"], p["roundTripMs"] / 2, p["jitterMs"] / 2 ** 0.5)' "$profile")
+p = next((p for p in json.load(sys.stdin) if p["name"].lower() == sys.argv[1].lower()), None)
+if p is None:
+    sys.exit(f"no profile named {sys.argv[1]}")
+d = p["perDirection"]
+print(p["roundTripMs"], p["jitterMs"], d["delayMs"], d["jitterMs"], "yes" if p["allowReordering"] else "no")' "$profile"); then
+    fail_profile "$profile" 2
+    continue
+  fi
+
+  run_id="calibration-$slug-$(date -u +%Y%m%dT%H%M%SZ)"
+  result="$WORK/$slug.json"
+  if [ "$variant" = yes ]; then
+    # A variant measures exactly what impaired runs apply: its base's settings, with netem's reorder.
+    apply "$profile"
+    code="$(probe "$profile" "$SECONDS_PER_PROFILE" "$run_id" "$result")"
+    cat "$result"
+    if [ "$code" -ne 0 ]; then fail_profile "$profile" "$code"; fi
+    continue
+  fi
 
   verdict=next
+  best_score=""
   for step in $(seq 1 "$MAX_SEARCH_STEPS"); do
     apply "$profile" "$delay" "$jitter"
     out="$WORK/$slug-search-$step.json"
-    probe "$profile" "$SEARCH_SECONDS" "calibration-$slug-search$step-$(date -u +%Y%m%dT%H%M%SZ)" "$out" >/dev/null
-    read -r verdict delay jitter < <(python3 "$ROOT/infra/harness/calibration_search.py" "$out" "$target_rtt" "$target_jitter" "$delay" "$jitter")
-    echo "calibration search $profile step $step: $verdict, next per-direction delay ${delay} ms, jitter ${jitter} ms"
+    search_id="calibration-$slug-search$step-$(date -u +%Y%m%dT%H%M%SZ)"
+    probe "$profile" "$SEARCH_SECONDS" "$search_id" "$out" >/dev/null
+    if ! read -r verdict next_delay next_jitter score < <(python3 "$ROOT/infra/harness/calibration_search.py" "$out" "$target_rtt" "$target_jitter" "$delay" "$jitter"); then
+      verdict=fail; score=inf
+    fi
+    echo "calibration search $profile step $step: $verdict at per-direction delay ${delay} ms, jitter ${jitter} ms (error ${score})"
+    [ "$verdict" = fail ] && break
+    # Keep the best measured settings, in case the search runs out of steps.
+    if [ -z "$best_score" ] || python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < float(sys.argv[2]) else 1)' "$score" "$best_score"; then
+      best_score="$score"; best_delay="$delay"; best_jitter="$jitter"; best_id="$search_id"; best_out="$out"
+    fi
     [ "$verdict" = done ] && break
+    delay="$next_delay"; jitter="$next_jitter"
   done
-  if [ "$verdict" != done ]; then
-    echo "::warning::$profile: the search didn't reach tolerance in $MAX_SEARCH_STEPS steps; checking its last settings"
+  if [ "$verdict" = fail ]; then
+    cat "$out" 2>/dev/null || true
+    echo "::error::$profile: a search run produced no usable measurement"
+    fail_profile "$profile" 9
+    continue
   fi
+  if [ "$verdict" != done ]; then
+    echo "::warning::$profile: the search didn't reach its band in $MAX_SEARCH_STEPS steps; checking the best measured settings"
+  fi
+  delay="$best_delay"; jitter="$best_jitter"
 
-  apply "$profile" "$delay" "$jitter"
-  run_id="calibration-$slug-$(date -u +%Y%m%dT%H%M%SZ)"
-  code="$(probe "$profile" "$SECONDS_PER_PROFILE" "$run_id" "$WORK/$slug.json" | tail -1)"
-  cat "$WORK/$slug.json"
+  if [ "$verdict" = done ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' "$SEARCH_SECONDS" "$SECONDS_PER_PROFILE"; then
+    # The search run was already full length: it is the check.
+    run_id="$best_id"; cp "$best_out" "$result"
+    code="$(python3 -c 'import json,sys; r=json.loads([l for l in open(sys.argv[1]) if l.startswith("{")][-1]); print(0 if r["passed"] else 9)' "$result")"
+  else
+    apply "$profile" "$delay" "$jitter"
+    code="$(probe "$profile" "$SECONDS_PER_PROFILE" "$run_id" "$result")"
+  fi
+  cat "$result"
   if [ "$code" -eq 0 ] && [ -n "$WRITE" ]; then
     set +e
     harness calibrate --run-id "$run_id" --profiles "$PROFILES_DIR" --profile "$profile" \
@@ -159,6 +213,6 @@ print(p["roundTripMs"], p["jitterMs"], p["roundTripMs"] / 2, p["jitterMs"] / 2 *
     set -e
     if [ "$stored" -ne 0 ]; then echo "::error::storing calibrated settings for $profile failed (exit $stored)"; status=1; fi
   fi
-  if [ "$code" -ne 0 ]; then echo "::error::profile $profile outside tolerance (exit $code)"; [ "$status" -eq 0 ] && status=9; fi
+  if [ "$code" -ne 0 ]; then fail_profile "$profile" "$code"; fi
 done
 exit "$status"

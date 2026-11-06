@@ -12,8 +12,8 @@ namespace MmoEngine.Harness.Network;
 public static class NetemScript
 {
     /// <summary>
-    /// The rate given to profiles that don't allow reordering. With a rate set, netem schedules each packet no
-    /// earlier than the one queued before it, so jitter can't reorder packets. A pfifo child, the manual's older
+    /// The rate every profile gets. With a rate set, netem schedules each delayed packet no earlier than the one
+    /// queued before it, so jitter can't reorder packets (a variant's netem reorder still sends a share ahead). A pfifo child, the manual's older
     /// recipe, no longer does this: current kernels hand packets to the child only once they are due, already
     /// reordered (measured on GitHub's ubuntu-latest, spec 014 research R7). The rate is high enough that
     /// serialization time is negligible.
@@ -21,10 +21,11 @@ public static class NetemScript
     public const string InOrderRate = "10gbit";
 
     /// <summary>
-    /// Commands impairing egress on <paramref name="device"/>. On loopback both directions leave through
-    /// <c>lo</c>, so one device carries both directions' impairment. With <paramref name="tcpIngress"/>,
-    /// the impairment sits on the receiver's ingress through an IFB device instead, as the manual requires
-    /// for realistic TCP results.
+    /// Commands impairing egress on <paramref name="device"/>, one direction's settings. Give each direction its
+    /// own device (calibrate.sh uses the two ends of a veth pair): on a device that carries both directions,
+    /// such as loopback, keeping packets in order couples them. With <paramref name="tcpIngress"/>, the
+    /// impairment sits on the receiver's ingress through an IFB device instead, as the manual requires for
+    /// realistic TCP results.
     /// </summary>
     public static IReadOnlyList<string> Commands(NetworkProfile profile, string device, ulong seed, bool tcpIngress = false)
     {
@@ -63,18 +64,21 @@ public static class NetemScript
             text.Append(CultureInfo.InvariantCulture, $" loss random {Number(d.LossPercent)}%");
         }
 
-        if (!profile.AllowReordering)
+        // The in-order rate keeps every delayed packet behind the one before it, for a variant too, so its delayed
+        // packets queue exactly as its base profile's do and the base's calibrated settings apply to it.
+        text.Append(" rate ").Append(InOrderRate);
+        if (profile.AllowReordering)
         {
-            text.Append(" rate ").Append(InOrderRate);
+            // Jitter alone didn't reorder packets in the calibration runs, so a variant uses netem's reorder: it
+            // puts a share of packets at the head of the queue, sent at once, ahead of the delayed ones. That
+            // changes the delay distribution, so a variant's jitter isn't checked against its base's (FR-025).
+            text.Append(CultureInfo.InvariantCulture,
+                $" reorder {Number(NetworkProfile.ReorderPercent)}% {Number(NetworkProfile.ReorderCorrelationPercent)}%");
         }
 
-        // A reordering variant gets no netem `reorder`: that sends a share of packets with no delay at all, which
-        // breaks the profile's round-trip and jitter targets. Without the in-order rate, jitter itself reorders
-        // packets, and the variant keeps its base profile's targets (FR-021).
-
-        // netem's seeded PRNG drives jitter and loss (Linux 6.3+), so the seed is set whenever either is random.
-        // A fixed delay has nothing to repeat.
-        if (d.JitterMs > 0 || d.LossPercent > 0)
+        // netem's seeded PRNG drives jitter, reorder and loss (Linux 6.3+), so the seed is set whenever any of
+        // them is random. A fixed delay has nothing to repeat.
+        if (d.JitterMs > 0 || d.LossPercent > 0 || profile.AllowReordering)
         {
             text.Append(CultureInfo.InvariantCulture, $" seed {seed}");
         }
@@ -101,15 +105,6 @@ public static class NetemScript
 /// </summary>
 public static class NetworkChaosManifest
 {
-    /// <summary>
-    /// Chaos Mesh's reorder settings for reordering variants: 25% of packets, 50% correlation. Chaos Mesh has no
-    /// in-order rate or normal distribution, so its runs aren't calibrated yet (spec 014 research R7).
-    /// </summary>
-    public const double ReorderPercent = 25;
-
-    /// <summary>The correlation of reordering variants' reorder setting.</summary>
-    public const double ReorderCorrelationPercent = 50;
-
     public static string Yaml(NetworkProfile profile, string @namespace, IReadOnlyDictionary<string, string> podLabels)
     {
         ArgumentNullException.ThrowIfNull(profile);
@@ -147,8 +142,8 @@ public static class NetworkChaosManifest
         if (profile.AllowReordering)
         {
             yaml.Append("    reorder:\n");
-            yaml.Append(CultureInfo.InvariantCulture, $"      reorder: \"{NetemScript.Number(NetworkChaosManifest.ReorderPercent)}\"\n");
-            yaml.Append(CultureInfo.InvariantCulture, $"      correlation: \"{NetemScript.Number(NetworkChaosManifest.ReorderCorrelationPercent)}\"\n");
+            yaml.Append(CultureInfo.InvariantCulture, $"      reorder: \"{NetemScript.Number(NetworkProfile.ReorderPercent)}\"\n");
+            yaml.Append(CultureInfo.InvariantCulture, $"      correlation: \"{NetemScript.Number(NetworkProfile.ReorderCorrelationPercent)}\"\n");
             yaml.Append("      gap: 0\n");
         }
 

@@ -68,7 +68,12 @@ public static class Calibration
         else
         {
             CheckTiming("round trip", median, profile.RoundTripMs, profile.Tolerances, failures);
-            CheckTiming("jitter", jitter, profile.JitterMs, profile.Tolerances, failures);
+            // A reordering variant's netem reorder sends a share of packets undelayed, so its round-trip spread
+            // isn't its base profile's jitter (FR-025): only the round trip, loss and reordering are checked.
+            if (!profile.AllowReordering)
+            {
+                CheckTiming("jitter", jitter, profile.JitterMs, profile.Tolerances, failures);
+            }
         }
 
         CheckLoss("loss up", upLoss, sent, profile, failures);
@@ -77,6 +82,16 @@ public static class Calibration
         {
             failures.Add(string.Create(CultureInfo.InvariantCulture,
                 $"reordering: {upReordered} up and {downReordered} down, but the profile allows none"));
+        }
+
+        // A reordering variant must reorder when it can: a packet sent at once overtakes a delayed one only when
+        // the per-direction delay is longer than the gap between probes (LAN's 0.5 ms can't at 30 Hz).
+        var spacingMs = MedianSpacingMs(records);
+        var delayMs = profile.PerDirection().DelayMs;
+        if (profile.AllowReordering && echoed.Count > 0 && delayMs > spacingMs && upReordered == 0 && downReordered == 0)
+        {
+            failures.Add(string.Create(CultureInfo.InvariantCulture,
+                $"reordering: none measured, but a reordering variant must reorder (per-direction delay {delayMs:0.###} ms > probe spacing {spacingMs:0.###} ms)"));
         }
 
         return new CalibrationResult
@@ -95,6 +110,15 @@ public static class Calibration
             UpInterarrivalJitterMs = upJitter,
             DownInterarrivalJitterMs = downJitter,
         };
+    }
+
+    /// <summary>The median gap between consecutive probes' send times, in milliseconds.</summary>
+    public static double MedianSpacingMs(IReadOnlyList<ProbeRecord> records)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        var sends = records.OrderBy(r => r.Seq).Select(r => r.ClientSendNs).ToList();
+        var gaps = sends.Zip(sends.Skip(1), (a, b) => (b - a) / 1e6).Order().ToList();
+        return gaps.Count == 0 ? double.PositiveInfinity : Median(gaps);
     }
 
     /// <summary>Packets that arrived after a higher sequence number had already arrived.</summary>

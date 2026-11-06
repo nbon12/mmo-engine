@@ -153,6 +153,67 @@ public sealed class CalibrationTests
         Assert.True(variant.Passed, string.Join("; ", variant.Failures));
     }
 
+    /// <summary>
+    /// A reordering variant must reorder when its per-direction delay is longer than the probe spacing: Poor-reorder's
+    /// 125 ms against probes 100 ms apart fails with none reordered, and passes once one is.
+    /// </summary>
+    [Fact]
+    public void VariantThatCanReorderMustReorder()
+    {
+        var poorVariant = Profile("Poor").ReorderingVariant();
+        var inOrder = Spaced(Samples(250, 50, 3, 3), 100);
+        var reordered = Spaced(Samples(250, 50, 3, 3, reorderedDown: 1), 100);
+
+        var none = Calibration.Evaluate(poorVariant, inOrder);
+        var some = Calibration.Evaluate(poorVariant, reordered);
+
+        Assert.Equal(100, Calibration.MedianSpacingMs(inOrder), 6);
+        Assert.False(none.Passed);
+        Assert.StartsWith("reordering: none measured, but a reordering variant must reorder", Assert.Single(none.Failures), StringComparison.Ordinal);
+        Assert.True(some.Passed, string.Join("; ", some.Failures));
+    }
+
+    /// <summary>LAN-reorder's 0.5 ms can't reorder packets 250 ms apart, so it passes without reordering.</summary>
+    [Fact]
+    public void VariantThatCannotReorderPassesWithoutReordering()
+    {
+        var result = Calibration.Evaluate(Profile("LAN").ReorderingVariant(), Samples(1, 0.2, 0, 0));
+
+        Assert.True(result.Passed, string.Join("; ", result.Failures));
+        Assert.Equal(250, Calibration.MedianSpacingMs(Samples(1, 0.2, 0, 0)), 6);
+    }
+
+    /// <summary>
+    /// FR-025: netem's reorder sends a share of packets undelayed, so a variant's round-trip spread isn't its base's
+    /// jitter: a variant with three times Typical's jitter passes on its round trip, loss and reordering.
+    /// </summary>
+    [Fact]
+    public void VariantJitterIsNotCheckedAgainstTheBase()
+    {
+        var samples = Samples(80, 30, 0.5, 0.5, reorderedDown: 1);
+
+        Assert.False(Calibration.Evaluate(Profile("Typical"), samples).Passed);
+        var variant = Calibration.Evaluate(Profile("Typical").ReorderingVariant(), samples);
+        Assert.True(variant.Passed, string.Join("; ", variant.Failures));
+    }
+
+    /// <summary>Shifts every timestamp so the probes are <paramref name="spacingMs"/> apart instead of 250 ms.</summary>
+    private static List<ProbeRecord> Spaced(List<ProbeRecord> records, double spacingMs)
+    {
+        var shift = (long)((250 - spacingMs) * Ms);
+        return [.. records.Select(r =>
+        {
+            var by = r.Seq * shift;
+            return r with
+            {
+                ClientSendNs = r.ClientSendNs - by,
+                ServerRecvNs = r.ServerRecvNs - by,
+                ServerSendNs = r.ServerSendNs - by,
+                ClientRecvNs = r.ClientRecvNs - by,
+            };
+        })];
+    }
+
     /// <summary>US4 scenario 6: RFC 3550 interarrival jitter is reported for each direction.</summary>
     [Fact]
     public void InterarrivalJitterIsReportedForEachDirection()
