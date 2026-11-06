@@ -1,0 +1,419 @@
+{
+  "formatVersion": 1,
+  "name": "split-damping",
+  "scenario": "Migration",
+  "mode": "OneAtATime",
+  "sweepSeed": 20261103,
+  "seeds": [
+    {
+      "index": 0,
+      "seed": 5843011988881251843
+    },
+    {
+      "index": 1,
+      "seed": 7620229681788273117
+    },
+    {
+      "index": 2,
+      "seed": 3728128964537905102
+    },
+    {
+      "index": 3,
+      "seed": 1906953110644082044
+    },
+    {
+      "index": 4,
+      "seed": 17502585706050438786
+    },
+    {
+      "index": 5,
+      "seed": 4965958803928893316
+    },
+    {
+      "index": 6,
+      "seed": 14666344033508591874
+    },
+    {
+      "index": 7,
+      "seed": 8128550842455080494
+    },
+    {
+      "index": 8,
+      "seed": 17568711540103687888
+    },
+    {
+      "index": 9,
+      "seed": 180498484486306318
+    }
+  ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": {
+        "regionizer.split.minSections": 8
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c000/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c000/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c001",
+      "parameters": {
+        "regionizer.split.minSections": 16
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c001/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c001/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c001/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c002",
+      "parameters": {
+        "regionizer.split.minSections": 32
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c002/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c002/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c003",
+      "parameters": {
+        "regionizer.split.minSections": 64
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c003/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c003/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c003/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c004",
+      "parameters": {
+        "regionizer.split.minSections": 128
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c004/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c004/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c005",
+      "parameters": {
+        "regionizer.split.minSections": 256
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c005/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c005/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c005/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c006",
+      "parameters": {
+        "regionizer.split.minDeadPercent": 10
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c006/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c006/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c007",
+      "parameters": {
+        "regionizer.split.minDeadPercent": 20
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c007/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c007/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c007/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c008",
+      "parameters": {
+        "regionizer.split.minDeadPercent": 30
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c008/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c008/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c009",
+      "parameters": {
+        "regionizer.split.minDeadPercent": 40
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c009/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c009/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c009/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c010",
+      "parameters": {
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c010/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c010/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c011",
+      "parameters": {
+        "regionizer.split.minAgeSeconds": 0
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c011/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c011/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c011/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c012",
+      "parameters": {
+        "regionizer.split.minAgeSeconds": 1
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c012/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c012/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c013",
+      "parameters": {
+        "regionizer.split.minAgeSeconds": 2
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c013/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c013/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c013/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c014",
+      "parameters": {
+        "regionizer.split.minAgeSeconds": 5
+      },
+      "runs": [
+        {
+          "seedIndex": 2,
+          "seed": 3728128964537905102,
+          "folder": "c014/seed-2",
+          "completed": true
+        },
+        {
+          "seedIndex": 6,
+          "seed": 14666344033508591874,
+          "folder": "c014/seed-6",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c015",
+      "parameters": {
+        "regionizer.split.minAgeSeconds": 10
+      },
+      "runs": [
+        {
+          "seedIndex": 0,
+          "seed": 5843011988881251843,
+          "folder": "c015/seed-0",
+          "completed": true
+        },
+        {
+          "seedIndex": 4,
+          "seed": 17502585706050438786,
+          "folder": "c015/seed-4",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 17568711540103687888,
+          "folder": "c015/seed-8",
+          "completed": true
+        }
+      ]
+    }
+  ]
+}
