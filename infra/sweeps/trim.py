@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Copies a sweep result folder keeping only what `regionizer-sim memo` and `harness load-sweeps` read:
-sweep.json and cells.csv at the top, and manifest.json and summary.json in each run folder.
+"""Copies a sweep result folder keeping only what `regionizer-sim memo` reads: sweep.json and cells.csv at
+the top, and manifest.json, summary.json and any _incomplete marker in each run folder.
 
-Usage: trim.py <sweep-results-dir> <out-dir>
+`harness load` loads a sweep's sweep_cells rows from sweep.json and cells.csv alone, but it also loads every
+run folder that exists, and a trimmed run folder has no ticks.csv. Load a copy without the run folders (as
+docs/simulator/results/ holds them).
+
+With --partial (a sweep cut short), a folder without sweep.json is accepted: the runs that finished are kept.
+
+Usage: trim.py [--partial] <sweep-results-dir> <out-dir>
 """
 import os
 import shutil
 import sys
 
 KEEP_TOP = {"sweep.json", "cells.csv"}
-KEEP_RUN = {"manifest.json", "summary.json"}
+# _incomplete marks a run that never finished; the memo refuses such a run, so the marker must survive.
+KEEP_RUN = {"manifest.json", "summary.json", "_incomplete"}
 
 
 def trim(source, target):
@@ -26,13 +33,16 @@ def trim(source, target):
 
 
 def main(argv):
-    if len(argv) != 3:
+    partial = "--partial" in argv
+    args = [a for a in argv[1:] if a != "--partial"]
+    if len(args) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    if not os.path.isfile(os.path.join(argv[1], "sweep.json")):
-        print(f"{argv[1]} is not a sweep results folder (no sweep.json)", file=sys.stderr)
+    source, target = args
+    if not os.path.isdir(source) or (not partial and not os.path.isfile(os.path.join(source, "sweep.json"))):
+        print(f"{source} is not a sweep results folder (no sweep.json)", file=sys.stderr)
         return 2
-    print(f"kept {trim(argv[1], argv[2])} files")
+    print(f"kept {trim(source, target)} files")
     return 0
 
 

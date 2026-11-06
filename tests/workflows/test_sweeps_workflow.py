@@ -53,9 +53,17 @@ class Workflow(unittest.TestCase):
 
     def test_results_go_to_a_per_run_branch_never_main(self):
         text = runs("sweep")
-        self.assertIn('branch="sweep-results/$GITHUB_RUN_ID/$SWEEP"', text)
+        # The attempt is in the name, so a re-run never collides with a branch an earlier attempt pushed.
+        self.assertIn('branch="sweep-results/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/$SWEEP$suffix"', text)
         self.assertIn('"HEAD:refs/heads/$branch"', text)
         self.assertNotRegex(text, r"refs/heads/main|push[^\n]*\bmain\b")
+
+    def test_results_are_pushed_even_when_the_sweep_fails_or_times_out(self):
+        steps = {s.get("name"): s for s in WORKFLOW["jobs"]["sweep"]["steps"]}
+        sweep, push = steps["Run the sweep"], steps["Push the results branch"]
+        self.assertEqual("${{ always() }}", push["if"])
+        self.assertLess(sweep["timeout-minutes"], WORKFLOW["jobs"]["sweep"]["timeout-minutes"])
+        self.assertIn('trim.py --partial "$results/full/$SWEEP"', push["run"])
 
     def test_inputs_reach_scripts_only_through_the_environment(self):
         for job in WORKFLOW["jobs"].values():
@@ -72,6 +80,9 @@ class Workflow(unittest.TestCase):
         sweeps = json.loads(out.stdout.strip().split("=", 1)[1])
         bad = subprocess.run(["python3", "-c", body], cwd=ROOT, capture_output=True, text=True,
                              env={"REQUESTED": "nowhere", "PATH": "/usr/bin:/bin"})
+        twice = subprocess.run(["python3", "-c", body], cwd=ROOT, capture_output=True, text=True, check=True,
+                               env={"REQUESTED": "spacing spacing air-layer", "PATH": "/usr/bin:/bin"})
+        self.assertEqual(["spacing", "air-layer"], json.loads(twice.stdout.strip().split("=", 1)[1]))
         expected = sorted(p.stem for p in (ROOT / "simulator" / "sweeps").glob("*.json") if p.stem != "memo-rules")
         self.assertEqual(expected, sweeps)
         self.assertIn("infantry-radius", sweeps)
@@ -106,10 +117,35 @@ class Scripts(unittest.TestCase):
         self.assertEqual(4, copied)
         self.assertEqual(["c000/seed-0/manifest.json", "c000/seed-0/summary.json", "cells.csv", "sweep.json"], kept)
 
-    def test_trim_refuses_a_folder_without_sweep_json(self):
+    def test_trim_keeps_the_incomplete_marker_so_the_memo_refuses_an_unfinished_run(self):
         with tempfile.TemporaryDirectory() as folder:
-            result = subprocess.run(["python3", str(INFRA / "trim.py"), folder, folder + "/out"], capture_output=True, text=True)
-        self.assertEqual(2, result.returncode)
+            run = Path(folder) / "sweep" / "c000" / "seed-0"
+            run.mkdir(parents=True)
+            (Path(folder) / "sweep" / "sweep.json").write_text("x")
+            for name in ("manifest.json", "_incomplete", "ticks.csv"):
+                (run / name).write_text("x")
+            self.trim.trim(str(Path(folder) / "sweep"), str(Path(folder) / "out"))
+            kept = sorted(p.name for p in (Path(folder) / "out" / "c000" / "seed-0").iterdir())
+        self.assertEqual(["_incomplete", "manifest.json"], kept)
+
+    def test_trim_refuses_a_folder_without_sweep_json_unless_partial(self):
+        with tempfile.TemporaryDirectory() as folder:
+            run = Path(folder) / "c000" / "seed-0"
+            run.mkdir(parents=True)
+            (run / "summary.json").write_text("x")
+            refused = subprocess.run(["python3", str(INFRA / "trim.py"), folder, folder + "/out"], capture_output=True, text=True)
+            partial = subprocess.run(["python3", str(INFRA / "trim.py"), "--partial", folder, folder + "/out"], capture_output=True, text=True)
+            kept = (Path(folder) / "out" / "c000" / "seed-0" / "summary.json").exists()
+        self.assertEqual(2, refused.returncode)
+        self.assertEqual(0, partial.returncode)
+        self.assertTrue(kept)
+
+    def test_run_sweep_keeps_results_when_a_run_stops_and_exits_with_the_sweeps_code(self):
+        text = (INFRA / "run-sweep.sh").read_text()
+        sweep_line = text.index('sim sweep "$SPEC"')
+        self.assertLess(text.rindex("set +e", 0, sweep_line), sweep_line)
+        self.assertLess(sweep_line, text.index('trim.py" "$FULL/$NAME"'))
+        self.assertTrue(text.rstrip().endswith('exit "$code"'))
 
 
 if __name__ == "__main__":

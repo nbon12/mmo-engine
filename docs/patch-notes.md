@@ -27,12 +27,14 @@ Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator
 ### Behavior and contract changes
 
 - **`.github/workflows/sweeps.yml`** (manual only, `workflow_dispatch`): runs the sweeps in `simulator/sweeps/` at full scale (18,000 ticks, 10 seeds per cell). The `sweeps` input names a subset; empty runs all of them. Each sweep is its own job.
-- Each job pushes what the decision memo reads to an orphan branch, `sweep-results/<run id>/<sweep>`: `sweep.json`, `cells.csv`, and each run's `manifest.json` and `summary.json`. Only the sweep jobs get `contents: write`, and only to push that branch. The workflow never pushes to `main`.
+- Each job pushes what the decision memo reads to an orphan branch, `sweep-results/<run id>-<attempt>/<sweep>`: `sweep.json`, `cells.csv`, and each run's `manifest.json` and `summary.json`. Only the sweep jobs get `contents: write`, and only to push that branch. The workflow never pushes to `main`.
+- **Results are kept** when the sweep fails: a run stopping on a violation or timer fault exits 3 after trimming. When it times out, the sweep step stops at 320 minutes and the runs that finished go to a `-partial` branch.
 - **`infra/sweeps/run-sweep.sh <sweep> <out>`** runs one sweep and trims it with `infra/sweeps/trim.py`. The same works locally.
 
 ### Shared pieces to reuse
 
 - `regionizer-sim memo` reads trimmed result folders (manifest and summary per run), so results fetched from the branches are enough to regenerate `docs/simulator/decision-memo.md`.
+- `harness load` of a sweep loads every run folder present, and a trimmed run folder has no `ticks.csv`. Load the `sweep_cells` rows from a copy with only `sweep.json` and `cells.csv`, as `docs/simulator/results/` holds them.
 
 ### Open follow-ups
 
