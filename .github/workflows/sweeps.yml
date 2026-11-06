@@ -1,0 +1,124 @@
+name: Sweeps
+
+# Full-scale regionizer sweeps (spec 013-regionizer-simulator, issue #13): every sweep in
+# simulator/sweeps/ at 18,000 ticks and 10 seeds per cell, one job per sweep in parallel.
+#
+# Each job keeps what the decision memo reads (infra/sweeps/run-sweep.sh: sweep.json, cells.csv, and each
+# run's manifest.json and summary.json) and pushes it as an orphan branch
+# sweep-results/<run id>-<attempt>/<sweep>, even when the sweep failed or timed out (then with a
+# -partial suffix if it was cut short). The memo and the committed results are made from those branches in a
+# normal PR; this workflow never pushes to main or to any other branch.
+#
+# Manual only: a full run is about 39 CPU-hours.
+on:
+  workflow_dispatch:
+    inputs:
+      sweeps:
+        description: "Sweep names to run, space-separated (empty: every sweep in simulator/sweeps/)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  MMO_RUNNER_CLASS: gha-ubuntu-latest-x64
+  DOTNET_EnableAVX512F: "0"
+  DOTNET_TieredPGO: "0"
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sweeps: ${{ steps.list.outputs.sweeps }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List the sweeps
+        id: list
+        env:
+          REQUESTED: ${{ inputs.sweeps }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, pathlib, sys
+          available = sorted(p.stem for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules")
+          # Each name once: two jobs for one sweep would race to push the same branch.
+          requested = list(dict.fromkeys(os.environ.get("REQUESTED", "").split()))
+          unknown = [s for s in requested if s not in available]
+          if unknown:
+              sys.exit(f"unknown sweeps: {unknown}; available: {available}")
+          print("sweeps=" + json.dumps(requested or available))
+          PY
+
+  sweep:
+    name: sweep (${{ matrix.sweep }})
+    needs: plan
+    runs-on: ubuntu-latest
+    # The largest sweep (spacing: 190 runs of about 2.5 minutes) takes about 2 hours on 4 cores. The sweep
+    # step stops at 320 minutes, leaving time to push what finished.
+    timeout-minutes: 350
+    permissions:
+      # Only to push this run's result branch.
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        sweep: ${{ fromJSON(needs.plan.outputs.sweeps) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Run the sweep
+        id: sweep
+        timeout-minutes: 320
+        env:
+          SWEEP: ${{ matrix.sweep }}
+        run: infra/sweeps/run-sweep.sh "$SWEEP" "$RUNNER_TEMP/results"
+
+      # Runs even when the sweep failed or timed out, so finished runs are never lost.
+      - name: Push the results branch
+        if: ${{ always() }}
+        env:
+          SWEEP: ${{ matrix.sweep }}
+          OUTCOME: ${{ steps.sweep.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          results="$RUNNER_TEMP/results"
+          suffix=""
+          if [ ! -d "$results/$SWEEP" ]; then
+            # Cut short before trimming: keep the runs that finished.
+            [ -d "$results/full/$SWEEP" ] || { echo "no results to push"; exit 0; }
+            python3 infra/sweeps/trim.py --partial "$results/full/$SWEEP" "$results/$SWEEP"
+            suffix="-partial"
+          fi
+          # The attempt is in the name, so "Re-run jobs" pushes a new branch instead of being rejected.
+          branch="sweep-results/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/$SWEEP$suffix"
+          work="$RUNNER_TEMP/branch"
+          git init -q "$work"
+          cp -r "$results/$SWEEP" "$work/"
+          cd "$work"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Sweep results: $SWEEP$suffix (run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT, sweep step $OUTCOME, source $SOURCE_SHA)"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          echo "pushed $branch ($(git ls-files | wc -l) files)"

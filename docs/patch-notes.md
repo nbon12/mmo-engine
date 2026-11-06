@@ -20,7 +20,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
-## 2026-11-05 — Network calibration: normal jitter, in-order rate, per-direction veth, search
+## 2026-11-06 — Network calibration: normal jitter, in-order rate, per-direction veth, search
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #54
 
@@ -60,6 +60,26 @@ The first full calibration (`calibrate: true`, run 42113574741) passed only LAN.
 ### Open follow-ups
 
 - Chaos Mesh's NetworkChaos has no in-order rate or normal distribution, so in-cluster impairment isn't calibrated yet.
+
+## 2026-11-06 — Sweeps workflow: full-scale regionizer sweeps in CI
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #55
+
+### Behavior and contract changes
+
+- **`.github/workflows/sweeps.yml`** (manual only, `workflow_dispatch`): runs the sweeps in `simulator/sweeps/` at full scale (18,000 ticks, 10 seeds per cell). The `sweeps` input names a subset; empty runs all of them. Each sweep is its own job.
+- Each job pushes what the decision memo reads to an orphan branch, `sweep-results/<run id>-<attempt>/<sweep>`: `sweep.json`, `cells.csv`, and each run's `manifest.json` and `summary.json`. Only the sweep jobs get `contents: write`, and only to push that branch. The workflow never pushes to `main`.
+- **Results are kept** when the sweep fails: a run stopping on a violation or timer fault exits 3 after trimming. When it times out, the sweep step stops at 320 minutes and the runs that finished go to a `-partial` branch.
+- **`infra/sweeps/run-sweep.sh <sweep> <out>`** runs one sweep and trims it with `infra/sweeps/trim.py`. The same works locally.
+
+### Shared pieces to reuse
+
+- `regionizer-sim memo` reads trimmed result folders (manifest and summary per run), so results fetched from the branches are enough to regenerate `docs/simulator/decision-memo.md`.
+- `harness load` of a sweep loads every run folder present, and a trimmed run folder has no `ticks.csv`. Load the `sweep_cells` rows from a copy with only `sweep.json` and `cells.csv`, as `docs/simulator/results/` holds them.
+
+### Open follow-ups
+
+- Hosted runners vary in CPU model, so bookkeeping-cost readings (section size) come from whichever 4-vCPU runner a job lands on, with runs in parallel. The fixed runner class is still an owner step (#13).
 
 ## 2026-11-05 — Done story sweep: lost-dispatcher detection; dispatchers refuse to be archivable
 
