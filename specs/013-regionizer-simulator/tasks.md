@@ -423,7 +423,9 @@ allocate nothing.
 - [x] T070 Run the sweeps (Release, all cores). Commit their summary tables to `docs/simulator/results/`
   and the generated `docs/simulator/decision-memo.md`. Raw run folders stay local. (SC-005)
   As run: the first-pass sweeps (9,000 ticks, 5 seeds), with tables in
-  `docs/simulator/results/first-pass/`. The memo's scope note covers the full-scale rerun.
+  `docs/simulator/results/first-pass/`. Then at full scale (18,000 ticks, 10 seeds, 840 runs, with the
+  Sweeps workflow on GitHub-hosted runners), with tables in `docs/simulator/results/full/` and the memo
+  regenerated from them.
 - [x] T071 Run the 24-hour simulated Soak in interleaved mode, and record its manifest and summary in
   `docs/simulator/results/soak-24h/` (SC-002). As run: 1,000 players, zero violations and zero timer
   faults.
