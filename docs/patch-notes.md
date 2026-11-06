@@ -20,6 +20,23 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-06 — Decision memo at full scale
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #58
+
+### Behavior and contract changes
+
+- **`docs/simulator/decision-memo.md` is now the full-scale memo:** every sweep at 18,000 ticks and 10 seeds per cell, 840 runs on GitHub-hosted 4-vCPU runners (Sweeps runs 42141270969 and 42178394391; split-damping in 4 shards, merged). Each sweep's `sweep.json` and `cells.csv` are in `docs/simulator/results/full/`. The per-run manifests and summaries are on the `sweep-results/*` branches.
+- All 10 values and both measured options were read. The values match the first pass except for one:
+  - **Claim anchoring now reads Position.** It measured 0 fusions against 2 for Section in 10 seeds, a tie in practice; the memo's scope note says so.
+  - **Section size is still flagged.** The best worst seed is 1.21 ms at 64 m against the 1 ms budget.
+- `harness load` loaded all 13 committed folders (CSV only) into ClickHouse: 840 `sweep_cells` rows. SQL on them reproduces the memo's section-size and target-fight-size numbers.
+
+### Open follow-ups
+
+- Revising the 1 ms bookkeeping budget, or optimising the bookkeeping, is the owner's decision; the section size stays at 16 m meanwhile.
+- The grid near the chosen claim radii (the issue's next step) is needed before they are adopted, since together they raise the largest region's p99 from about 483 to about 840 players.
+
 ## 2026-11-06 — Sweeps can be sharded across jobs
 
 Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #57

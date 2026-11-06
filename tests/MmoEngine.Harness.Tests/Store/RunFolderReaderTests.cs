@@ -122,11 +122,24 @@ public sealed class RunFolderReaderTests
         Assert.Contains("not valid JSON", Assert.Throws<RunFolderException>(() => SweepIndex.Open(folder)).Message, StringComparison.Ordinal);
     }
 
-    /// <summary>The committed first-pass results load their cells (the decision memo's evidence, FR-007).</summary>
-    [Fact]
-    public void CommittedFirstPassSweepsParse()
+    /// <summary>
+    /// The committed first-pass and full-scale results load their cells (the decision memo's evidence, FR-007):
+    /// one folder per sweep spec, every run with its cells.csv row.
+    /// </summary>
+    [Theory]
+    [InlineData("first-pass")]
+    [InlineData("full")]
+    public void CommittedSweepResultsParse(string scale)
     {
-        var root = Path.Combine(Rules.RuleFileParserTests.RepoRoot(), "docs", "simulator", "results", "first-pass");
+        var repo = Rules.RuleFileParserTests.RepoRoot();
+        var root = Path.Combine(repo, "docs", "simulator", "results", scale);
+        if (scale == "full")
+        {
+            var specs = Directory.EnumerateFiles(Path.Combine(repo, "simulator", "sweeps"), "*.json")
+                .Select(Path.GetFileNameWithoutExtension).Where(n => n != "memo-rules").Order(StringComparer.Ordinal);
+            Assert.Equal(specs, Directory.EnumerateDirectories(root).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        }
+
         foreach (var folder in Directory.EnumerateDirectories(root))
         {
             var index = SweepIndex.Open(folder);
