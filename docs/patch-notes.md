@@ -20,6 +20,20 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-06 — Sweeps can be sharded across jobs
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #56
+
+### Behavior and contract changes
+
+- **`regionizer-sim sweep --shard k/n`** runs only shard k of n: the runs whose index is k − 1 modulo n, in their usual folders. The shard's `sweep.json` lists every cell but only its own runs, and its `cells.csv` has only its own rows. Without `--shard`, nothing changes.
+- **`infra/sweeps/merge-shards.py <out> <shard>...`** joins the shards of one sweep into one folder: one `sweep.json`, one `cells.csv` in cell and seed order, and every run folder. It refuses shards of different sweeps and runs that appear twice. Merging three shards of a sweep gave the same `sweep.json` as the unsharded sweep, and the same `cells.csv` rows apart from timing.
+- **The Sweeps workflow** takes a `shards` input (1 to 20, default 1): one job per sweep and shard, each pushing `sweep-results/<run>-<attempt>/<sweep>-shard-<k>-of-<n>`.
+
+### Why
+
+- The first full-scale dispatch (run 42141270969) finished 12 of 13 sweeps. Split-damping's 160 Migration runs take 6.5 to 11.6 minutes each on a 4-vCPU runner, more than one job's 320 minutes, so only a partial result came back.
+
 ## 2026-11-06 — Network calibration: normal jitter, in-order rate, per-direction veth, search
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) · PR: #54

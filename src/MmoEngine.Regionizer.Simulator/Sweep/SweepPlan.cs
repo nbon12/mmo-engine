@@ -36,7 +36,23 @@ public sealed record SweepRun(int Index, SweepCell Cell, int SeedIndex, ulong Se
 /// <param name="Seeds">Seed <c>i</c> of every cell.</param>
 /// <param name="Cells">The cells, in cell ID order.</param>
 /// <param name="Runs">Every (cell, seed) run, cell-major.</param>
-public sealed record SweepPlan(SweepSpec Spec, string Scenario, IReadOnlyList<ulong> Seeds, IReadOnlyList<SweepCell> Cells, IReadOnlyList<SweepRun> Runs);
+public sealed record SweepPlan(SweepSpec Spec, string Scenario, IReadOnlyList<ulong> Seeds, IReadOnlyList<SweepCell> Cells, IReadOnlyList<SweepRun> Runs)
+{
+    /// <summary>
+    /// Shard <paramref name="shard"/> of <paramref name="count"/> (1-based): the runs whose index modulo
+    /// <paramref name="count"/> is <paramref name="shard"/> − 1, renumbered from 0, with every cell and seed kept.
+    /// Each run keeps its folder, so the shards of a sweep never collide, and together they hold every run once.
+    /// A sweep too long for one machine runs as shards that are merged afterwards (infra/sweeps/merge-shards.py).
+    /// </summary>
+    public SweepPlan Shard(int shard, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(shard, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(shard, count);
+        var runs = Runs.Where(r => r.Index % count == shard - 1).Select((r, i) => r with { Index = i }).ToList();
+        return this with { Runs = runs };
+    }
+}
 
 /// <summary>The outcome of loading a sweep specification: a plan, or the errors that stop it (exit code 2).</summary>
 public sealed record SweepLoadResult(SweepPlan? Plan, IReadOnlyList<ConfigError> Errors)
