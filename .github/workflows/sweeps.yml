@@ -9,14 +9,22 @@ name: Sweeps
 # -partial suffix if it was cut short). The memo and the committed results are made from those branches in a
 # normal PR; this workflow never pushes to main or to any other branch.
 #
+# A sweep too long for one job's 320 minutes (split-damping: 160 Migration runs) runs as several jobs (the `shards`
+# input, or <sweep>:<n> in `sweeps`), each taking every n-th run; their branches (…/<sweep>-shard-<k>-of-<n>) are merged with
+# infra/sweeps/merge-shards.py.
+#
 # Manual only: a full run is about 39 CPU-hours.
 on:
   workflow_dispatch:
     inputs:
       sweeps:
-        description: "Sweep names to run, space-separated (empty: every sweep in simulator/sweeps/)"
+        description: "Sweeps to run, space-separated, each <name> or <name>:<shards> (empty: every sweep in simulator/sweeps/)"
         type: string
         default: ""
+      shards:
+        description: "Jobs per sweep without its own :<shards>, at most its seeds (each runs every n-th run; merge with infra/sweeps/merge-shards.py)"
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -38,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      sweeps: ${{ steps.list.outputs.sweeps }}
+      jobs: ${{ steps.list.outputs.jobs }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,20 +57,51 @@ jobs:
         id: list
         env:
           REQUESTED: ${{ inputs.sweeps }}
+          SHARDS: ${{ inputs.shards }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, pathlib, sys
-          available = sorted(p.stem for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules")
-          # Each name once: two jobs for one sweep would race to push the same branch.
-          requested = list(dict.fromkeys(os.environ.get("REQUESTED", "").split()))
+          import json, os, pathlib, re, sys
+          specs = {p.stem: p for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules"}
+          available = sorted(specs)
+
+          def whole(text, what):
+              # A number input arrives as text ("3", maybe "3.0"); 2.5 shards is refused, not rounded down.
+              try:
+                  value = float(text)
+              except ValueError:
+                  sys.exit(f"{what} must be a whole number, was {text!r}")
+              if not value.is_integer():
+                  sys.exit(f"{what} must be a whole number, was {text!r}")
+              return int(value)
+
+          default = whole(os.environ.get("SHARDS") or "1", "shards")
+          # Entries are <sweep> or <sweep>:<shards>; each sweep once, since two jobs for one sweep would race
+          # to push the same branch.
+          requested = {}
+          for entry in os.environ.get("REQUESTED", "").split():
+              name, _, count = entry.partition(":")
+              if name in requested:
+                  continue
+              requested[name] = whole(count, f"shards for {name}") if count else default
           unknown = [s for s in requested if s not in available]
           if unknown:
               sys.exit(f"unknown sweeps: {unknown}; available: {available}")
-          print("sweeps=" + json.dumps(requested or available))
+          plan = requested or {s: default for s in available}
+          jobs = []
+          for sweep, shards in plan.items():
+              # No more shards than seeds, so every shard holds a run of every cell.
+              seeds = json.loads(specs[sweep].read_text())["seeds"]
+              if not 1 <= shards <= seeds:
+                  sys.exit(f"{sweep}: shards must be 1 to its {seeds} seeds, was {shards}")
+              jobs += [{"sweep": sweep, "shard": k, "of": shards} for k in range(1, shards + 1)]
+          # GitHub runs at most 256 jobs from one matrix.
+          if len(jobs) > 256:
+              sys.exit(f"{len(jobs)} jobs; a matrix holds at most 256, so ask for fewer shards or sweeps")
+          print("jobs=" + json.dumps(jobs))
           PY
 
   sweep:
-    name: sweep (${{ matrix.sweep }})
+    name: sweep (${{ matrix.job.sweep }} ${{ matrix.job.shard }}/${{ matrix.job.of }})
     needs: plan
     runs-on: ubuntu-latest
     # The largest sweep (spacing: 190 runs of about 2.5 minutes) takes about 2 hours on 4 cores. The sweep
@@ -74,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sweep: ${{ fromJSON(needs.plan.outputs.sweeps) }}
+        job: ${{ fromJSON(needs.plan.outputs.jobs) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,25 +129,29 @@ jobs:
         id: sweep
         timeout-minutes: 320
         env:
-          SWEEP: ${{ matrix.sweep }}
-        run: infra/sweeps/run-sweep.sh "$SWEEP" "$RUNNER_TEMP/results"
+          SWEEP: ${{ matrix.job.sweep }}
+          SHARD: ${{ matrix.job.shard }}/${{ matrix.job.of }}
+        run: infra/sweeps/run-sweep.sh "$SWEEP" "$RUNNER_TEMP/results" "$SHARD"
 
       # Runs even when the sweep failed or timed out, so finished runs are never lost.
       - name: Push the results branch
         if: ${{ always() }}
         env:
-          SWEEP: ${{ matrix.sweep }}
+          SWEEP: ${{ matrix.job.sweep }}
+          SHARD_INDEX: ${{ matrix.job.shard }}
+          SHARD_COUNT: ${{ matrix.job.of }}
           OUTCOME: ${{ steps.sweep.outcome }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           results="$RUNNER_TEMP/results"
           suffix=""
+          if [ "$SHARD_COUNT" -gt 1 ]; then suffix="-shard-$SHARD_INDEX-of-$SHARD_COUNT"; fi
           if [ ! -d "$results/$SWEEP" ]; then
             # Cut short before trimming: keep the runs that finished.
             [ -d "$results/full/$SWEEP" ] || { echo "no results to push"; exit 0; }
             python3 infra/sweeps/trim.py --partial "$results/full/$SWEEP" "$results/$SWEEP"
-            suffix="-partial"
+            suffix="$suffix-partial"
           fi
           # The attempt is in the name, so "Re-run jobs" pushes a new branch instead of being rejected.
           branch="sweep-results/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/$SWEEP$suffix"
