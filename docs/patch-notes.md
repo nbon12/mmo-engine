@@ -20,6 +20,24 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-06 — Sweeps workflow: full-scale regionizer sweeps in CI
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #55
+
+### Behavior and contract changes
+
+- **`.github/workflows/sweeps.yml`** (manual only, `workflow_dispatch`): runs the sweeps in `simulator/sweeps/` at full scale (18,000 ticks, 10 seeds per cell). The `sweeps` input names a subset; empty runs all of them. Each sweep is its own job.
+- Each job pushes what the decision memo reads to an orphan branch, `sweep-results/<run id>/<sweep>`: `sweep.json`, `cells.csv`, and each run's `manifest.json` and `summary.json`. Only the sweep jobs get `contents: write`, and only to push that branch. The workflow never pushes to `main`.
+- **`infra/sweeps/run-sweep.sh <sweep> <out>`** runs one sweep and trims it with `infra/sweeps/trim.py`. The same works locally.
+
+### Shared pieces to reuse
+
+- `regionizer-sim memo` reads trimmed result folders (manifest and summary per run), so results fetched from the branches are enough to regenerate `docs/simulator/decision-memo.md`.
+
+### Open follow-ups
+
+- Hosted runners vary in CPU model, so bookkeeping-cost readings (section size) come from whichever 4-vCPU runner a job lands on, with runs in parallel. The fixed runner class is still an owner step (#13).
+
 ## 2026-11-05 — Done story sweep: lost-dispatcher detection; dispatchers refuse to be archivable
 
 Spec: none (maintenance) · PR: [#53](https://github.com/nbon12/mmo-engine/pull/53), with [nbon12/hoa_management_system#320](https://github.com/nbon12/hoa_management_system/pull/320)

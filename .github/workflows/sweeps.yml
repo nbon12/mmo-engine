@@ -1,0 +1,107 @@
+name: Sweeps
+
+# Full-scale regionizer sweeps (spec 013-regionizer-simulator, issue #13): every sweep in
+# simulator/sweeps/ at 18,000 ticks and 10 seeds per cell, one job per sweep in parallel.
+#
+# Each job keeps what the decision memo reads (infra/sweeps/run-sweep.sh: sweep.json, cells.csv, and each
+# run's manifest.json and summary.json) and pushes it as an orphan branch
+# sweep-results/<run id>/<sweep>. The memo and the committed results are made from those branches in a
+# normal PR; this workflow never pushes to main or to any other branch.
+#
+# Manual only: a full run is about 39 CPU-hours.
+on:
+  workflow_dispatch:
+    inputs:
+      sweeps:
+        description: "Sweep names to run, space-separated (empty: every sweep in simulator/sweeps/)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  MMO_RUNNER_CLASS: gha-ubuntu-latest-x64
+  DOTNET_EnableAVX512F: "0"
+  DOTNET_TieredPGO: "0"
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sweeps: ${{ steps.list.outputs.sweeps }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List the sweeps
+        id: list
+        env:
+          REQUESTED: ${{ inputs.sweeps }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, pathlib, sys
+          available = sorted(p.stem for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules")
+          requested = os.environ.get("REQUESTED", "").split()
+          unknown = [s for s in requested if s not in available]
+          if unknown:
+              sys.exit(f"unknown sweeps: {unknown}; available: {available}")
+          print("sweeps=" + json.dumps(requested or available))
+          PY
+
+  sweep:
+    name: sweep (${{ matrix.sweep }})
+    needs: plan
+    runs-on: ubuntu-latest
+    # The largest sweep (spacing: 190 runs of about 2.5 minutes) takes about 2 hours on 4 cores.
+    timeout-minutes: 330
+    permissions:
+      # Only to push this run's result branch.
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        sweep: ${{ fromJSON(needs.plan.outputs.sweeps) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Run the sweep
+        env:
+          SWEEP: ${{ matrix.sweep }}
+        run: infra/sweeps/run-sweep.sh "$SWEEP" "$RUNNER_TEMP/results"
+
+      - name: Push the results branch
+        env:
+          SWEEP: ${{ matrix.sweep }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          branch="sweep-results/$GITHUB_RUN_ID/$SWEEP"
+          work="$RUNNER_TEMP/branch"
+          git init -q "$work"
+          cp -r "$RUNNER_TEMP/results/$SWEEP" "$work/"
+          cd "$work"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Sweep results: $SWEEP (run $GITHUB_RUN_ID, source $SOURCE_SHA)"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          echo "pushed $branch ($(git ls-files | wc -l) files)"
