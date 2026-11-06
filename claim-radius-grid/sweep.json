@@ -1,0 +1,419 @@
+{
+  "formatVersion": 1,
+  "name": "claim-radius-grid",
+  "scenario": "Baseline",
+  "mode": "Grid",
+  "sweepSeed": 20261106,
+  "seeds": [
+    {
+      "index": 0,
+      "seed": 9284519981441326723
+    },
+    {
+      "index": 1,
+      "seed": 7849899578215312773
+    },
+    {
+      "index": 2,
+      "seed": 14003357553152294256
+    },
+    {
+      "index": 3,
+      "seed": 13174867054674529638
+    },
+    {
+      "index": 4,
+      "seed": 16185971260222164242
+    },
+    {
+      "index": 5,
+      "seed": 16580906717899436568
+    },
+    {
+      "index": 6,
+      "seed": 10566934383346080050
+    },
+    {
+      "index": 7,
+      "seed": 5812534252437889985
+    },
+    {
+      "index": 8,
+      "seed": 12773419177632163944
+    },
+    {
+      "index": 9,
+      "seed": 4104290391804016288
+    }
+  ],
+  "cells": [
+    {
+      "cellId": "c000",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c000/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c000/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c001",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c001/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c001/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c002",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c002/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c002/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c003",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c003/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c003/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c004",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c004/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c004/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c005",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c005/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c005/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c006",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c006/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c006/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c007",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 16,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c007/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c007/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c008",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c008/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c008/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c009",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c009/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c009/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c010",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c010/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c010/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c011",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 24,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c011/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c011/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c012",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c012/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c012/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c013",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 16,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c013/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c013/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c014",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 25
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c014/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c014/seed-8",
+          "completed": true
+        }
+      ]
+    },
+    {
+      "cellId": "c015",
+      "parameters": {
+        "regionizer.claimRadius.infantry": 40,
+        "regionizer.claimRadius.groundVehicle": 48,
+        "regionizer.claimRadius.aircraft": 32,
+        "regionizer.split.minDeadPercent": 50
+      },
+      "runs": [
+        {
+          "seedIndex": 3,
+          "seed": 13174867054674529638,
+          "folder": "c015/seed-3",
+          "completed": true
+        },
+        {
+          "seedIndex": 8,
+          "seed": 12773419177632163944,
+          "folder": "c015/seed-8",
+          "completed": true
+        }
+      ]
+    }
+  ]
+}
