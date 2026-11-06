@@ -1,0 +1,152 @@
+{
+  "formatVersion": 1,
+  "runId": "spacing-s16-r16-seed14666344033508591874-e0daca36",
+  "kind": "simulator",
+  "gitSha": "8514674a117667989361b2030c96fb3cfd83344b",
+  "configHash": "e0daca36706e6cab",
+  "scenario": "Spacing",
+  "seed": 14666344033508591874,
+  "scheduling": "Lockstep",
+  "environment": "Development",
+  "parameters": {
+    "airLayer": {
+      "altitudeMetres": 150,
+      "enabled": false,
+      "hysteresisMetres": 20
+    },
+    "durationTicks": 18000,
+    "map": {
+      "basesPerLane": 2,
+      "file": null,
+      "heightMetres": 8000,
+      "lanes": 1,
+      "widthMetres": 8000
+    },
+    "metrics": {
+      "bookkeepingBudgetMicros": 1000,
+      "crossRegionPairsEveryTicks": 30,
+      "deferredRangeMetres": 300,
+      "islandCheckEveryTicks": 15,
+      "metricsEveryTicks": 1,
+      "readOnlyRangeMetres": 1000,
+      "targetFightSize": 1200
+    },
+    "movement": {
+      "models": {
+        "aircraftCruiseAltitudeMetres": 300,
+        "aircraftFightAltitudeMetres": 50,
+        "objectiveRadiusMetres": 40,
+        "objectiveWaypointShare": 0.5,
+        "speedFactorMax": 1,
+        "speedFactorMin": 0.5,
+        "strafeEntryMetres": 800,
+        "vehicleAnnulusMetres": 150,
+        "vehicleSpeedFactorMin": 0.3,
+        "waypointIntervalSecondsMax": 10,
+        "waypointIntervalSecondsMin": 2
+      },
+      "redeployProbabilityPerSecond": 0.002,
+      "speedCeiling": {
+        "aircraft": 120,
+        "groundVehicle": 30,
+        "infantry": 7
+      }
+    },
+    "population": {
+      "limit": 10000,
+      "total": 2000
+    },
+    "regionizer": {
+      "anchoring": "Section",
+      "claimRadius": {
+        "aircraft": 16,
+        "capturePointZone": 20,
+        "groundVehicle": 24,
+        "infantry": 16,
+        "traveller": 16
+      },
+      "mergeGap": 0,
+      "sectionSize": 16,
+      "split": {
+        "minAgeSeconds": 2,
+        "minDeadPercent": 25,
+        "minSections": 32
+      },
+      "timerMode": "TickCounter"
+    },
+    "scenario": "Spacing",
+    "scenarioParameters": {
+      "composition": {
+        "aircraft": 0,
+        "groundVehicle": 0.15,
+        "infantry": 0.85
+      },
+      "fightBases": [
+        0,
+        1
+      ],
+      "fightRadiusPerSqrtPlayer": 8,
+      "fights": [
+        800,
+        800
+      ],
+      "objectiveSpreadMetres": 100,
+      "objectivesPerBase": 3,
+      "pointToPointAircraft": 0,
+      "spacingMetres": 350,
+      "travellers": 0
+    },
+    "scheduling": {
+      "baseStepHz": 60,
+      "degradedTickHz": 20,
+      "dropTicksMax": 60,
+      "dropTicksMin": 5,
+      "dropTo20HzProbability": 0.01,
+      "mode": "Lockstep",
+      "tickHz": 30
+    },
+    "seed": 14666344033508591874,
+    "timers": {
+      "delayTicksMax": 900,
+      "delayTicksMin": 30,
+      "setProbabilityPerEntityPerSecond": 0.01
+    },
+    "trace": {
+      "record": null,
+      "replay": null
+    }
+  },
+  "runtime": {
+    "framework": ".NET 10.0.14",
+    "os": "Ubuntu 26.04.1 LTS",
+    "architecture": "X64",
+    "processorCount": 4,
+    "machineName": "runnervmwuk1x",
+    "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "runnerClass": "gha-ubuntu-latest-x64",
+    "hardwareIntrinsics": {
+      "DOTNET_EnableHWIntrinsic": "unset",
+      "DOTNET_EnableSSE42": "unset",
+      "DOTNET_EnableAVX": "unset",
+      "DOTNET_EnableAVX2": "unset",
+      "DOTNET_EnableAVX512F": "0",
+      "DOTNET_EnableArm64AdvSimd": "unset",
+      "DOTNET_PreferredVectorBitWidth": "unset",
+      "DOTNET_TieredCompilation": "unset",
+      "DOTNET_TieredPGO": "0",
+      "DOTNET_ReadyToRun": "unset",
+      "Sse42.IsSupported": true,
+      "Avx2.IsSupported": true,
+      "Avx512F.IsSupported": true,
+      "AdvSimd.IsSupported": false,
+      "Vector\u003Cbyte\u003E.Count": 32
+    },
+    "vectorIsHardwareAccelerated": true
+  },
+  "startedUtc": "2026-11-06T02:01:12.368Z",
+  "finishedUtc": "2026-11-06T02:05:17.979Z",
+  "ticks": 18000,
+  "metricsEveryTicks": 1,
+  "islandCheckEveryTicks": 15,
+  "crossRegionPairsEveryTicks": 30
+}
