@@ -148,8 +148,9 @@ with a changed parameter.
   - `contracts/network-profile.md`;
   - the commands `harness profile list|netem|chaos`, `harness probe serve|run` and `harness calibrate`, tested in
     `Cli/NetworkCliTests.cs`.
-- [ ] T045 [US4] Calibrate the four profiles and their variants with netem on the CI runner class, 5 minutes each,
-  and commit the calibrated settings. This is slice 3: it needs root or Chaos Mesh, which only the CI job has.
+- [x] T045 [US4] Calibrate the four profiles and their variants with netem on the CI runner class, 5 minutes each,
+  and commit the calibrated settings. Done by run 42130656210 (`calibrate: true` on PR #54): all eight passed with
+  no reordering, and the four base profiles' settings are committed in `harness/profiles/`.
 
 ## Phase 6: User Story 5 - Bots and a stub target prove the measurement path (P3), slice 2
 

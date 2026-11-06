@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
 using MmoEngine.Harness.Bots;
@@ -46,7 +47,11 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         var chaos = Run("profile", "chaos", "--profiles", Profiles, "--profile", "typical-reorder", "--namespace", "ns", "--label", "app=probe");
 
         Assert.Equal(0, netem.ExitCode);
-        Assert.Contains("netem delay 125ms 35.355ms distribution normal loss random 3% rate 10gbit seed 5", netem.Stdout, StringComparison.Ordinal);
+        // The committed Poor profile's per-direction settings: its calibrated ones when stored, else the arithmetic split.
+        var poor = NetworkProfile.Parse(File.ReadAllText(Path.Combine(Profiles, "poor.json")), "poor.json").PerDirection();
+        var expected = string.Create(CultureInfo.InvariantCulture,
+            $"netem delay {poor.DelayMs:0.###}ms {poor.JitterMs:0.###}ms distribution normal loss random 3% rate 10gbit seed 5");
+        Assert.Contains(expected, netem.Stdout, StringComparison.Ordinal);
         Assert.Equal(0, chaos.ExitCode);
         Assert.Contains("      app: \"probe\"", chaos.Stdout, StringComparison.Ordinal);
         Assert.Contains("reorder:", chaos.Stdout, StringComparison.Ordinal);
@@ -105,7 +110,8 @@ public sealed class NetworkCliTests(ClickHouseFixture clickHouse)
         Assert.Equal(probe.ExitCode, calibrate.ExitCode);
         Assert.Equal(report["medianRoundTripMs"]!.GetValue<double>(), JsonNode.Parse(calibrate.Stdout)!["medianRoundTripMs"]!.GetValue<double>(), 9);
         var written = NetworkProfile.Parse(File.ReadAllText(Path.Combine(profiles, "lan.json")), "lan.json");
-        Assert.Equal(calibrate.ExitCode == 0, written.Calibrated is not null);
+        // The committed lan.json may already be calibrated; this run's settings are stored only if it passed.
+        Assert.Equal(calibrate.ExitCode == 0, written.Calibrated?.SourceRunId == runId);
     }
 
     [Fact]

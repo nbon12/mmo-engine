@@ -7,6 +7,18 @@
   "allowReordering": false,
   "tolerances": {
     "relativeFraction": 0.1,
+    "absoluteMs": null,
     "lossPoints": 0.25
+  },
+  "calibrated": {
+    "perDirection": {
+      "delayMs": 40,
+      "jitterMs": 7.071,
+      "lossPercent": 0.5
+    },
+    "runnerClass": "gha-ubuntu-latest-x64-589baf10c06be05b",
+    "kernel": "Unix 7.0.0.1019",
+    "measuredAt": "2026-11-06T00:26:57.4091432Z",
+    "sourceRunId": "calibration-typical-20261106T002155Z"
   }
 }

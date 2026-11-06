@@ -35,6 +35,16 @@ The first full calibration (`calibrate: true`, run 42113574741) passed only LAN.
 - **`harness profile netem` and `harness calibrate`** take `--delay-ms`, `--jitter-ms` and `--loss-percent` to override the per-direction settings. `calibrate --write-calibrated` stores the settings it was given.
 - **Loss tolerance** widens to three binomial standard deviations of the run's sample when that is wider than the profile's points (FR-025): Poor at 9,000 packets gets ±0.54 points.
 - **The `netem` job** has a `calibrate_seconds` dispatch input (default 300), prints the calibrated profile files to the log, and has a 120-minute timeout.
+- **Calibrated profiles committed** (T045, run 42130656210): all eight profiles passed for 5 minutes each, with no reordering. Settings per direction:
+
+  | Profile | Delay | Jitter | Measured round trip, jitter |
+  | --- | --- | --- | --- |
+  | LAN | 0.5 ms | 0 | 1.24 ms, 0.08 ms |
+  | Typical | 40 ms | 7.071 ms | 80.27 ms, 9.95 ms |
+  | Cross-region | 80 ms | 19.593 ms | 164.39 ms, 24.08 ms |
+  | Poor | 106.616 ms | 46.066 ms | 248.51 ms, 48.19 ms |
+
+  Keeping packets in order clips the delay distribution, so Cross-region and Poor need more per-direction jitter than J/√2, and Poor less delay than R/2. The settings are for runner class `gha-ubuntu-latest-x64-589baf10c06be05b`. On another class, re-run `calibrate: true`.
 
 ### Assumptions that no longer hold
 

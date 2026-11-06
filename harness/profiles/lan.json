@@ -9,5 +9,16 @@
     "relativeFraction": 0.1,
     "absoluteMs": 0.5,
     "lossPoints": 0.25
+  },
+  "calibrated": {
+    "perDirection": {
+      "delayMs": 0.5,
+      "jitterMs": 0,
+      "lossPercent": 0
+    },
+    "runnerClass": "gha-ubuntu-latest-x64-589baf10c06be05b",
+    "kernel": "Unix 7.0.0.1019",
+    "measuredAt": "2026-11-05T23:57:27.8038196Z",
+    "sourceRunId": "calibration-lan-20261105T235225Z"
   }
 }
