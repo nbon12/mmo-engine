@@ -20,6 +20,23 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-06 — Claim-radius grid: split damping, not the radii, sets the largest region
+
+Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #59
+
+### Behavior and contract changes
+
+- **New sweep `simulator/sweeps/claim-radius-grid.json`** (Grid mode, Baseline, 2,000 players, 16 cells × 10 seeds). It crosses infantry 16/40 m, ground vehicle 24/48 m, aircraft 16/32 m and split p_dead 25/50%. Its tables are in `docs/simulator/results/full/claim-radius-grid/`, and the memo's scope note reports it. The memo's rules don't read it.
+- **Finding:** p_dead = 50% raises the largest region's p99 from about 487 to about 844 players and fusion events from about 1 to about 50 per run. The three radii together move it by at most 1.6%. The memo's target-fight-size reading (839.6) is therefore a reading at p_dead = 50%.
+
+### Assumptions that no longer hold
+
+- "The chosen claim radii raise the largest region to about 840": it's the split-damping value that does, not the radii.
+
+### Open follow-ups
+
+- Split damping trades Migration churn against how long touching fights stay fused in Baseline. The Phase 1 sweep measures tick cost against fight size; the configuration keeps p_dead 25% meanwhile.
+
 ## 2026-11-06 — Decision memo at full scale
 
 Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #58
