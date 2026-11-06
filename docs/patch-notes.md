@@ -26,9 +26,9 @@ Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator
 
 ### Behavior and contract changes
 
-- **`regionizer-sim sweep --shard k/n`** runs only shard k of n: the runs whose index is k − 1 modulo n, in their usual folders. The shard's `sweep.json` lists every cell but only its own runs, and its `cells.csv` has only its own rows. Without `--shard`, nothing changes.
-- **`infra/sweeps/merge-shards.py <out> <shard>...`** joins the shards of one sweep into one folder: one `sweep.json`, one `cells.csv` in cell and seed order, and every run folder. It refuses shards of different sweeps and runs that appear twice. Merging three shards of a sweep gave the same `sweep.json` as the unsharded sweep, and the same `cells.csv` rows apart from timing.
-- **The Sweeps workflow** takes a `shards` input (1 to 20, default 1): one job per sweep and shard, each pushing `sweep-results/<run>-<attempt>/<sweep>-shard-<k>-of-<n>`.
+- **`regionizer-sim sweep --shard k/n`** runs only shard k of n: the runs whose index is k − 1 modulo n, in their usual folders. The shard's `sweep.json` lists every cell but only its own runs, and its `cells.csv` has only its own rows. n may be at most the sweep's seeds (exit 2 otherwise), so every shard holds a run of every cell. Without `--shard`, nothing changes.
+- **`infra/sweeps/merge-shards.py <out> <shard>...`** joins the shards of one sweep into one folder: one `sweep.json`, one `cells.csv` in cell and seed order, and every run folder. It refuses shards of different sweeps and runs that appear twice. It also refuses a merge that leaves a cell without every seed's run (a forgotten shard) unless `--allow-missing` is given, and a shard cut short (no `cells.csv`) unless `--partial` is given. Numbers keep the text the simulator wrote. A test merges three real shards and checks that the memo reads them exactly like the unsharded sweep, apart from wall-clock timings.
+- **The Sweeps workflow** takes a `shards` input (a whole number, default 1, at most the sweep's seeds), and a `sweeps` entry can set its own count as `<sweep>:<n>`. It runs one job per sweep and shard, each pushing `sweep-results/<run>-<attempt>/<sweep>-shard-<k>-of-<n>`, and refuses a plan of more than 256 jobs, GitHub's matrix limit.
 
 ### Why
 

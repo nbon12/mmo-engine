@@ -43,6 +43,7 @@ public sealed record SweepPlan(SweepSpec Spec, string Scenario, IReadOnlyList<ul
     /// <paramref name="count"/> is <paramref name="shard"/> − 1, renumbered from 0, with every cell and seed kept.
     /// Each run keeps its folder, so the shards of a sweep never collide, and together they hold every run once.
     /// A sweep too long for one machine runs as shards that are merged afterwards (infra/sweeps/merge-shards.py).
+    /// With no more shards than seeds, every shard holds at least one run of every cell (runs are cell-major).
     /// </summary>
     public SweepPlan Shard(int shard, int count)
     {

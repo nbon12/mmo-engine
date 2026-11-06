@@ -204,6 +204,77 @@ public sealed class SweepCommandTests
         Assert.All(inFirst, f => Assert.True(File.Exists(Path.Combine(first, "sharded", f, "summary.json"))));
     }
 
+    /// <summary>
+    /// The shards of a sweep, merged by infra/sweeps/merge-shards.py, read in the memo exactly like the same sweep
+    /// run unsharded: the same cells, parameters, runs, summaries and cells.csv rows, in the same order. Only the
+    /// simulated outcome is compared (ticks, metrics, rates and totals): wall-clock timings and the budget verdict
+    /// drawn from them differ between any two runs.
+    /// </summary>
+    [Fact]
+    public void MergedShardsReadLikeTheUnshardedSweep()
+    {
+        var spec = SweepSpecs.Write(SweepSpecs.Spec("merged", 9, 3, SweepSpecs.Base(20), "OneAtATime", ("regionizer.anchoring", ["Section", "Position"]), ("regionizer.mergeGap", [1])));
+        var whole = TestRuns.TempDir();
+        Assert.Equal(ExitCodes.Clean, Invoke(["sweep", spec, "--out", whole, "--parallelism", "2"]).Code);
+        var shards = new List<string>();
+        foreach (var shard in new[] { "1/3", "2/3", "3/3" })
+        {
+            var folder = TestRuns.TempDir();
+            var run = Invoke(["sweep", spec, "--out", folder, "--parallelism", "2", "--shard", shard]);
+            Assert.True(run.Code == ExitCodes.Clean, run.Stderr);
+            shards.Add(Path.Combine(folder, "merged"));
+        }
+
+        var merged = TestRuns.TempDir();
+        var script = Path.Combine(TestRuns.RepositoryRoot(), "infra", "sweeps", "merge-shards.py");
+        var start = new System.Diagnostics.ProcessStartInfo("python3") { RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var arg in new[] { script, Path.Combine(merged, "merged") }.Concat(shards))
+        {
+            start.ArgumentList.Add(arg);
+        }
+
+        using (var process = System.Diagnostics.Process.Start(start)!)
+        {
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+        }
+
+        static bool Timing(string key) => key.Contains("Micros", StringComparison.Ordinal) || key.Contains("Nanos", StringComparison.Ordinal);
+        string[] simulated = ["runId", "completed", "ticks", "firstViolation", "metrics", "rates", "totals", "fusedFightPairs"];
+        JsonNode? WithoutTimings(JsonNode? node)
+        {
+            var obj = node!.AsObject();
+            foreach (var key in obj.Select(kv => kv.Key).Where(k => !simulated.Contains(k)).ToList())
+            {
+                obj.Remove(key);
+            }
+
+            foreach (var key in obj["metrics"]!.AsObject().Select(kv => kv.Key).Where(Timing).ToList())
+            {
+                obj["metrics"]!.AsObject().Remove(key);
+            }
+
+            return obj;
+        }
+
+        string Describe(SweepResult sweep) => string.Join("\n", sweep.Cells.SelectMany(c =>
+            c.Runs.Select(r => string.Join(" | ",
+                c.CellId,
+                string.Join(",", c.Parameters.Select(p => $"{p.Key}={p.Value.GetRawText()}")),
+                r.SeedIndex,
+                r.Seed,
+                r.RunId,
+                WithoutTimings(JsonNode.Parse(r.Summary.GetRawText()))!.ToJsonString(),
+                string.Join(",", (r.CellsRow ?? new Dictionary<string, string>()).Where(kv => !Timing(kv.Key)).OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value}"))))));
+        static IEnumerable<string> RowKeys(string root) =>
+            File.ReadLines(Path.Combine(root, "merged", "cells.csv")).Select(l => string.Join(",", l.Split(',').Take(2)));
+        var expected = SweepResults.Read(whole, "merged");
+        Assert.Equal(9, expected.Cells.Sum(c => c.Runs.Count));
+        Assert.Equal(Describe(expected), Describe(SweepResults.Read(merged, "merged")));
+        Assert.Equal(RowKeys(whole), RowKeys(merged));
+    }
+
     [Fact]
     public void ShardOfOneIsTheWholePlanAndShardsRenumberTheirRuns()
     {
@@ -228,6 +299,7 @@ public sealed class SweepCommandTests
     [InlineData("shard-past-count")]
     [InlineData("shard-text")]
     [InlineData("shard-no-count")]
+    [InlineData("shards-past-seeds")]
     public void InvalidArgumentsExitTwo(string variant)
     {
         var spec = SweepSpecs.Write(SweepSpecs.Spec("args", 1, 1, SweepSpecs.Base(10), "OneAtATime", ("regionizer.mergeGap", [0])));
@@ -243,6 +315,8 @@ public sealed class SweepCommandTests
             "shard-past-count" => ["sweep", spec, "--out", output, "--shard", "3/2"],
             "shard-text" => ["sweep", spec, "--out", output, "--shard", "a/b"],
             "shard-no-count" => ["sweep", spec, "--out", output, "--shard", "1"],
+            // The spec has one seed, so a second shard would hold no run of its cell.
+            "shards-past-seeds" => ["sweep", spec, "--out", output, "--shard", "1/2"],
             _ => ["sweep", Path.Combine(TestRuns.TempDir(), "none.json"), "--out", output],
         };
 

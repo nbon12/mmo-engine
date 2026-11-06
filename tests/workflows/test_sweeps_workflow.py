@@ -99,8 +99,29 @@ class Workflow(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual([{"sweep": "split-damping", "shard": k, "of": 3} for k in (1, 2, 3)], jobs)
         self.assertNotEqual(0, self.plan("split-damping", "0")[0])
-        self.assertNotEqual(0, self.plan("split-damping", "21")[0])
+        # More shards than the sweep's 10 seeds would leave cells with no run in some shard.
+        self.assertEqual(10, len(self.plan("split-damping", "10")[1]))
+        self.assertNotEqual(0, self.plan("split-damping", "11")[0])
+        # A fractional count is refused, not rounded down; a whole one written as a float is fine.
+        self.assertNotEqual(0, self.plan("split-damping", "2.5")[0])
+        self.assertEqual(2, len(self.plan("split-damping", "2.0")[1]))
         self.assertEqual(TRIGGERS["workflow_dispatch"]["inputs"]["shards"]["default"], 1)
+
+    def test_a_sweep_can_have_its_own_shard_count(self):
+        code, jobs = self.plan("spacing split-damping:4 split-damping:2", "1")
+        self.assertEqual(0, code)
+        self.assertEqual([("spacing", 1, 1)] + [("split-damping", k, 4) for k in (1, 2, 3, 4)],
+                         [(j["sweep"], j["shard"], j["of"]) for j in jobs])
+        self.assertNotEqual(0, self.plan("split-damping:x")[0])
+        self.assertNotEqual(0, self.plan("split-damping:11")[0])
+
+    def test_the_plan_never_asks_for_more_jobs_than_a_matrix_holds(self):
+        body = WORKFLOW["jobs"]["plan"]["steps"][1]["run"]
+        self.assertIn("if len(jobs) > 256:", body)
+        # With every sweep at its most shards, the plan still fits.
+        code, jobs = self.plan("", "10")
+        self.assertEqual(0, code)
+        self.assertLessEqual(len(jobs), 256)
 
     def test_shards_run_their_part_and_push_their_own_branch(self):
         steps = {s.get("name"): s for s in WORKFLOW["jobs"]["sweep"]["steps"]}
@@ -171,6 +192,53 @@ class MergeShards(unittest.TestCase):
             result = subprocess.run([sys.executable, str(INFRA / "merge-shards.py"), str(Path(root) / "out3"), str(a), str(b)],
                                     capture_output=True, text=True)
         self.assertEqual(2, result.returncode)
+
+
+    def test_a_missing_shard_is_refused_unless_allowed(self):
+        with tempfile.TemporaryDirectory() as root:
+            a = self.shard(root, "a", [("c000", 0), ("c001", 1)])
+            with self.assertRaisesRegex(self.merge.MergeError, "incomplete merge.*c000 has 1 of 2 runs"):
+                self.merge.merge([str(a)], str(Path(root) / "out1"))
+            self.assertEqual(2, self.merge.merge([str(a)], str(Path(root) / "out2"), allow_missing=True))
+            cli = subprocess.run([sys.executable, str(INFRA / "merge-shards.py"), str(Path(root) / "out3"), str(a)],
+                                 capture_output=True, text=True)
+        self.assertEqual(2, cli.returncode)
+        self.assertIn("--allow-missing", cli.stderr)
+
+    def test_a_shard_cut_short_is_refused_unless_partial(self):
+        with tempfile.TemporaryDirectory() as root:
+            a = self.shard(root, "a", [("c000", 0), ("c001", 1)])
+            b = self.shard(root, "b", [("c000", 1), ("c001", 0)])
+            (b / "cells.csv").unlink()
+            with self.assertRaisesRegex(self.merge.MergeError, "no cells.csv"):
+                self.merge.merge([str(a), str(b)], str(Path(root) / "out1"))
+            out = Path(root) / "out2"
+            self.assertEqual(4, self.merge.merge([str(a), str(b)], str(out), partial=True))
+            rows = (out / "cells.csv").read_text().splitlines()
+            folders = sorted(str(p.parent.relative_to(out)) for p in out.rglob("summary.json"))
+        self.assertEqual(["cellId,seedIndex,seed,runId", "c000,0,10,run-c000-0", "c001,1,11,run-c001-1"], rows)
+        self.assertEqual(["c000/seed-0", "c000/seed-1", "c001/seed-0", "c001/seed-1"], folders)
+
+    def test_rows_follow_the_index_cell_order_and_numbers_keep_their_text(self):
+        with tempfile.TemporaryDirectory() as root:
+            folders = []
+            for name, seed in (("a", 0), ("b", 1)):
+                folder = Path(root) / name
+                folder.mkdir()
+                cells = [{"cellId": c, "parameters": {"x": "PLACEHOLDER"},
+                          "runs": [{"seedIndex": seed, "seed": 10 + seed, "folder": f"{c}/seed-{seed}", "completed": True}]}
+                         for c in ("c999", "c1000")]
+                index = {"formatVersion": 1, "name": "s", "scenario": "Migration", "mode": "OneAtATime", "sweepSeed": 3,
+                         "seeds": [{"index": 0, "seed": 10}, {"index": 1, "seed": 11}], "cells": cells}
+                (folder / "sweep.json").write_text(json.dumps(index).replace('"PLACEHOLDER"', "1E-05"))
+                (folder / "cells.csv").write_text(f"cellId,seedIndex\nc1000,{seed}\nc999,{seed}\n")
+                folders.append(str(folder))
+            out = Path(root) / "out"
+            self.merge.merge(folders, str(out))
+            rows = (out / "cells.csv").read_text().splitlines()
+            text = (out / "sweep.json").read_text()
+        self.assertEqual(["cellId,seedIndex", "c999,0", "c999,1", "c1000,0", "c1000,1"], rows)
+        self.assertIn('"x": 1E-05', text)
 
 
 class Scripts(unittest.TestCase):

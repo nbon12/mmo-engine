@@ -9,8 +9,8 @@ name: Sweeps
 # -partial suffix if it was cut short). The memo and the committed results are made from those branches in a
 # normal PR; this workflow never pushes to main or to any other branch.
 #
-# A sweep too long for one job's 320 minutes (split-damping: 160 Migration runs) runs as `shards` jobs, each
-# taking every n-th run; their branches (…/<sweep>-shard-<k>-of-<n>) are merged with
+# A sweep too long for one job's 320 minutes (split-damping: 160 Migration runs) runs as several jobs (the `shards`
+# input, or <sweep>:<n> in `sweeps`), each taking every n-th run; their branches (…/<sweep>-shard-<k>-of-<n>) are merged with
 # infra/sweeps/merge-shards.py.
 #
 # Manual only: a full run is about 39 CPU-hours.
@@ -18,11 +18,11 @@ on:
   workflow_dispatch:
     inputs:
       sweeps:
-        description: "Sweep names to run, space-separated (empty: every sweep in simulator/sweeps/)"
+        description: "Sweeps to run, space-separated, each <name> or <name>:<shards> (empty: every sweep in simulator/sweeps/)"
         type: string
         default: ""
       shards:
-        description: "Jobs per sweep (each runs every n-th run; merge with infra/sweeps/merge-shards.py)"
+        description: "Jobs per sweep without its own :<shards>, at most its seeds (each runs every n-th run; merge with infra/sweeps/merge-shards.py)"
         type: number
         default: 1
 
@@ -60,17 +60,43 @@ jobs:
           SHARDS: ${{ inputs.shards }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, pathlib, sys
-          available = sorted(p.stem for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules")
-          # Each name once: two jobs for one sweep would race to push the same branch.
-          requested = list(dict.fromkeys(os.environ.get("REQUESTED", "").split()))
+          import json, os, pathlib, re, sys
+          specs = {p.stem: p for p in pathlib.Path("simulator/sweeps").glob("*.json") if p.stem != "memo-rules"}
+          available = sorted(specs)
+
+          def whole(text, what):
+              # A number input arrives as text ("3", maybe "3.0"); 2.5 shards is refused, not rounded down.
+              try:
+                  value = float(text)
+              except ValueError:
+                  sys.exit(f"{what} must be a whole number, was {text!r}")
+              if not value.is_integer():
+                  sys.exit(f"{what} must be a whole number, was {text!r}")
+              return int(value)
+
+          default = whole(os.environ.get("SHARDS") or "1", "shards")
+          # Entries are <sweep> or <sweep>:<shards>; each sweep once, since two jobs for one sweep would race
+          # to push the same branch.
+          requested = {}
+          for entry in os.environ.get("REQUESTED", "").split():
+              name, _, count = entry.partition(":")
+              if name in requested:
+                  continue
+              requested[name] = whole(count, f"shards for {name}") if count else default
           unknown = [s for s in requested if s not in available]
           if unknown:
               sys.exit(f"unknown sweeps: {unknown}; available: {available}")
-          shards = int(float(os.environ.get("SHARDS") or "1"))
-          if not 1 <= shards <= 20:
-              sys.exit(f"shards must be 1 to 20, was {shards}")
-          jobs = [{"sweep": s, "shard": k, "of": shards} for s in (requested or available) for k in range(1, shards + 1)]
+          plan = requested or {s: default for s in available}
+          jobs = []
+          for sweep, shards in plan.items():
+              # No more shards than seeds, so every shard holds a run of every cell.
+              seeds = json.loads(specs[sweep].read_text())["seeds"]
+              if not 1 <= shards <= seeds:
+                  sys.exit(f"{sweep}: shards must be 1 to its {seeds} seeds, was {shards}")
+              jobs += [{"sweep": sweep, "shard": k, "of": shards} for k in range(1, shards + 1)]
+          # GitHub runs at most 256 jobs from one matrix.
+          if len(jobs) > 256:
+              sys.exit(f"{len(jobs)} jobs; a matrix holds at most 256, so ask for fewer shards or sweeps")
           print("jobs=" + json.dumps(jobs))
           PY
 

@@ -92,7 +92,7 @@ Staging or Production, and is Development when unset.
 | Command | Purpose | Exit codes |
 | --- | --- | --- |
 | `run <config.json> --out <dir> [--seed N] [--ticks N] [--scenarios <dir>]` | One run | 0 clean, 3 invariant violation or timer fault, 2 invalid config, 1 other error |
-| `sweep <sweep.json> --out <dir> [--parallelism N] [--scenarios <dir>] [--shard k/n]` | A sweep, or with `--shard` only shard k of n (every n-th run, in its usual folder; `sweep.json` and `cells.csv` list only that shard's runs, and `infra/sweeps/merge-shards.py` joins the shards) | 0 all clean, 3 any violation, 2 invalid spec, 1 a run failed with an error |
+| `sweep <sweep.json> --out <dir> [--parallelism N] [--scenarios <dir>] [--shard k/n]` | A sweep, or with `--shard` only shard k of n (every n-th run, in its usual folder; `sweep.json` and `cells.csv` list only that shard's runs, and `infra/sweeps/merge-shards.py` joins the shards; n is at most the sweep's seeds) | 0 all clean, 3 any violation, 2 invalid spec, 1 a run failed with an error |
 | `replay <trace.csv> --config <config.json> --out <dir> [--scenarios <dir>]` | A run driven by a recorded trace | as `run` |
 | `check --out <dir> [--options <check-options.json>]` | The analytic checks (floor, merge distance, lane bridging); writes `checks.json` | 0 all within tolerance, 4 any outside |
 | `memo <results-dir> --rules <memo-rules.json> --out <memo.md>` | Writes the decision memo from sweep results | 0, or 4 when a value can't be read (the row is marked) |

@@ -82,20 +82,32 @@ internal sealed class SweepCommand : ICliCommand
                 RunOptions = context.RunOptions with { Logger = null, EnvironmentName = context.EnvironmentName },
                 Logger = context.Logger,
             };
-            var plan = shards == 1 ? load.Plan! : load.Plan!.Shard(shard, shards);
+            if (shards > load.Plan!.Seeds.Count)
+            {
+                // Runs are cell-major: with more shards than seeds, some shards would hold cells with no runs,
+                // which the memo can't read.
+                context.Logger.Error("Invalid arguments: {Error}", $"--shard {shardText}: at most {load.Plan.Seeds.Count} shards, one per seed");
+                return ExitCodes.InvalidConfig;
+            }
+
+            var plan = load.Plan.Shard(shard, shards);
             var outcome = SweepDriver.Run(plan, output.FullName, options);
             var line = new JsonObject
             {
                 ["sweep"] = load.Plan!.Spec.Name,
                 ["exitCode"] = outcome.ExitCode,
                 ["runs"] = outcome.Runs.Count,
-                ["shard"] = shards == 1 ? null : $"{shard}/{shards}",
                 ["completed"] = outcome.Completed,
                 ["violations"] = outcome.Violations,
                 ["errors"] = outcome.Errors,
                 ["index"] = outcome.IndexPath,
                 ["cells"] = outcome.CellsPath,
             };
+            if (shards > 1)
+            {
+                line["shard"] = $"{shard}/{shards}";
+            }
+
             context.Stdout.WriteLine(line.ToJsonString());
             return outcome.ExitCode;
         }
