@@ -9,7 +9,9 @@ Run: python3 -m unittest discover -s tests/workflows -v   (needs PyYAML)
 
 import importlib.util
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,13 +77,13 @@ class Workflow(unittest.TestCase):
         lines = script.splitlines()
         self.assertIn("<<'PY'", lines[0])
         body = "\n".join(lines[1:lines.index("PY")])
-        out = subprocess.run(["python3", "-c", body], cwd=ROOT, capture_output=True, text=True, check=True,
-                             env={"REQUESTED": "", "PATH": "/usr/bin:/bin"})
+        out = subprocess.run([sys.executable, "-c", body], cwd=ROOT, capture_output=True, text=True, check=True,
+                             env={**os.environ, "REQUESTED": ""})
         sweeps = json.loads(out.stdout.strip().split("=", 1)[1])
-        bad = subprocess.run(["python3", "-c", body], cwd=ROOT, capture_output=True, text=True,
-                             env={"REQUESTED": "nowhere", "PATH": "/usr/bin:/bin"})
-        twice = subprocess.run(["python3", "-c", body], cwd=ROOT, capture_output=True, text=True, check=True,
-                               env={"REQUESTED": "spacing spacing air-layer", "PATH": "/usr/bin:/bin"})
+        bad = subprocess.run([sys.executable, "-c", body], cwd=ROOT, capture_output=True, text=True,
+                             env={**os.environ, "REQUESTED": "nowhere"})
+        twice = subprocess.run([sys.executable, "-c", body], cwd=ROOT, capture_output=True, text=True, check=True,
+                               env={**os.environ, "REQUESTED": "spacing spacing air-layer"})
         self.assertEqual(["spacing", "air-layer"], json.loads(twice.stdout.strip().split("=", 1)[1]))
         expected = sorted(p.stem for p in (ROOT / "simulator" / "sweeps").glob("*.json") if p.stem != "memo-rules")
         self.assertEqual(expected, sweeps)
@@ -117,6 +119,18 @@ class Scripts(unittest.TestCase):
         self.assertEqual(4, copied)
         self.assertEqual(["c000/seed-0/manifest.json", "c000/seed-0/summary.json", "cells.csv", "sweep.json"], kept)
 
+    def test_trim_refuses_a_target_that_already_holds_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "sweep"
+            source.mkdir()
+            (source / "sweep.json").write_text("x")
+            target = Path(folder) / "out"
+            target.mkdir()
+            (target / "stale.json").write_text("old")
+            result = subprocess.run([sys.executable, str(INFRA / "trim.py"), str(source), str(target)], capture_output=True, text=True)
+        self.assertEqual(2, result.returncode)
+        self.assertIn("not empty", result.stderr)
+
     def test_trim_keeps_the_incomplete_marker_so_the_memo_refuses_an_unfinished_run(self):
         with tempfile.TemporaryDirectory() as folder:
             run = Path(folder) / "sweep" / "c000" / "seed-0"
@@ -133,8 +147,8 @@ class Scripts(unittest.TestCase):
             run = Path(folder) / "c000" / "seed-0"
             run.mkdir(parents=True)
             (run / "summary.json").write_text("x")
-            refused = subprocess.run(["python3", str(INFRA / "trim.py"), folder, folder + "/out"], capture_output=True, text=True)
-            partial = subprocess.run(["python3", str(INFRA / "trim.py"), "--partial", folder, folder + "/out"], capture_output=True, text=True)
+            refused = subprocess.run([sys.executable, str(INFRA / "trim.py"), folder, folder + "/out"], capture_output=True, text=True)
+            partial = subprocess.run([sys.executable, str(INFRA / "trim.py"), "--partial", folder, folder + "/out"], capture_output=True, text=True)
             kept = (Path(folder) / "out" / "c000" / "seed-0" / "summary.json").exists()
         self.assertEqual(2, refused.returncode)
         self.assertEqual(0, partial.returncode)

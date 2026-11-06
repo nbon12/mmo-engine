@@ -42,6 +42,10 @@ def main(argv):
     if not os.path.isdir(source) or (not partial and not os.path.isfile(os.path.join(source, "sweep.json"))):
         print(f"{source} is not a sweep results folder (no sweep.json)", file=sys.stderr)
         return 2
+    if os.path.isdir(target) and os.listdir(target):
+        # Merging into an earlier result would leave its stale run folders next to the new ones.
+        print(f"{target} is not empty; trim into a new folder", file=sys.stderr)
+        return 2
     print(f"kept {trim(source, target)} files")
     return 0
 
