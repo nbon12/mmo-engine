@@ -275,27 +275,30 @@ src/MmoEngine.SimCore/                    # the core; BCL + System.IO.Hashing on
 ├── Formats/                              # FormatError, CoreFormatException, CollisionFile, RecordedStream, StateSerializer
 ├── Config/                               # SimConfig, ConfigFields, ConfigRelations, ConfigGuard, CompiledConfig, ConfigBlock
 ├── World/                                # SimWorld, StepReport, StepFault, StepEvents
-├── Batch/                                # BatchStepper, StreamRunner, StepRecord, StepFaultException
+├── Batch/                                # BatchStepper, StreamRunner, StepRecord, StepFaultException, CrossBuildTables
 └── Hashing/                              # StateHash
 src/MmoEngine.SimCore.Analyzers/          # DeterminismAnalyzer (MMO1001–MMO1009), release-tracking files
 src/MmoEngine.SimCore.Wasm/               # Microsoft.NET.Sdk.WebAssembly host: SimCoreExports ([JSExport]), Program.cs
 src/MmoEngine.SimCore.Server/             # SimConfigJson, SimConfigValidator (FluentValidation), SimEnvironment,
-                                          #   TestWorldGenerator, ScenarioCatalog, StreamGenerator, DivergenceReport
+                                          #   TestWorldGenerator, ScenarioCatalog, StreamGenerator, DivergenceReport,
+                                          #   TablesComparison
 src/MmoEngine.SimCore.Cli/                # `simcore`: content, golden, streams, agreement, measure, config
 tests/MmoEngine.SimCore.Tests/            # core, server-helper and CLI tests
 ├── Architecture/                         # dependency and wiring tests (BCL + System.IO.Hashing only)
 ├── Math/  Collision/  Movement/  Weapons/  Projectiles/  Hitboxes/  Inputs/  Formats/  Config/
 ├── World/  Batch/
+├── Benchmarks/                           # the dry-run export test (references the benchmark project)
 ├── Scenarios/                            # US1, US4, US5 acceptance scenarios at 20/30/60 Hz
 ├── Properties/                           # CsCheck, fixed seeds
 ├── Allocation/                           # zero-allocation tests (serial collection)
-├── Agreement/                            # streams verify, compare, divergence report, one-ulp perturbation
+├── Agreement/                            # streams verify, compare, divergence report, one-ulp perturbation,
+│                                         #   tables comparison
 └── Cli/                                  # command tests; Fixtures/measurement-report.json
 tests/MmoEngine.SimCore.Analyzers.Tests/  # rule Theories, backstop compile of src/MmoEngine.SimCore, wiring Fact
 tests/MmoEngine.SimCore.Wasm.Tests/       # calls the exports directly (coverage of the host)
 benchmarks/MmoEngine.SimCore.Benchmarks/  # step, hitbox and hash benchmarks; SimCoreMeasurementExporter (p99)
 tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/, web/,
-                                          #   lib/ (runner, server, measure.mjs)
+                                          #   lib/ (runner, server, tables.mjs, measure.mjs)
 tools/simcore/                            # gen_coeffs.py, gen_twoopi.py, emit_cs.py, requirements.txt
 simcore/                                  # config/default.json, content/test-world.mmcd, streams/*.mmrs,
                                           #   streams/REGENERATIONS.md, golden/{input,collision,stream}/, README.md
@@ -330,7 +333,10 @@ The design documents settled these points, which the spec leaves open. They are 
   truncates.
 - **Math sweeps.** The exhaustive trig sweeps are xUnit tests that run only with
   `MMO_EXHAUSTIVE_MATH=1`, so slice 1 needs no workflow change. The fixed table gates every run.
-- **Golden fixtures.** Bit patterns and 64-bit values in golden JSON are uppercase `0x` hex strings.
+- **Golden fixtures.** In golden JSON, 64-bit integers (seeds, salts, checksums, hashes) are strings
+  of 16 lowercase hex digits without a prefix, the `x16` form the reports print. Other bit patterns
+  (float `bits`, a config entry's `fieldId` and `valueBits`) are uppercase `0x` hex strings
+  ([contracts/input-command-format.md](contracts/input-command-format.md#shared-fixture-rules)).
   `simcore golden write` produces the `.bin` files, and a test checks it reproduces the committed ones.
 - **Build names.** D9's builds plus `node-interp-nojit` (the jiterpreter off, in the agreement job)
   and `node-interp-relinked` (the measurement job). `node-interp` means the jiterpreter is on.
@@ -340,23 +346,55 @@ The design documents settled these points, which the spec leaves open. They are 
   interpreted and AOT builds gates when they are produced, because a divergence there is a real one.
 - **The golden worked state is not a valid start position.** Its capsule overlaps a `tiny-world`
   triangle by about 23 mm. The stream fixtures that use it are format fixtures and are never run.
+- **Cross-build tables.** The streams reach only part of `SimMath` (aim through `SinCosBinaryAngle`,
+  `Sin` and `Cos` at a few inputs while the configuration compiles) and never compare hitboxes, which
+  are not hashed. So the fixed trig table and a hitbox pose table are a second agreement artifact:
+  `CrossBuildTables` in the core builds and evaluates them, the `EvaluateTables` export runs them in
+  each WebAssembly build, and `agreement compare` diffs the result bits row by row (US3 scenario 8,
+  SC-004, US5 scenario 5). The math rows are the same fixed table the bound tests check. A row whose
+  server result is NaN matches any NaN, because NaN bits are not portable (research R4); every
+  in-domain row compares bit for bit ([contracts/wasm-api.md](contracts/wasm-api.md#cross-build-tables)).
+- **US1 scenario 1's distance.** The spec states the distance the controller covers from rest, the
+  discrete sum Σₖ min(k·a·dt, v)·dt within 1e-4 m, with the per-rate values. float32 accumulation
+  alone is about 5.4e-6 m off at 60 Hz, so 1e-4 m leaves room for the controller's other rounding. Its earlier tolerance,
+  "within one step's acceleration distance", held only at 20 Hz.
+- **The heat test weapon.** The rifle with `heatPerShot` 10000, so it overheats on the 10th shot of a
+  30-round magazine; every other value is the rifle's. The `heat-overheat` stream's exact steps are in
+  [contracts/simcore-cli.md](contracts/simcore-cli.md#named-scenario-streams).
+- **Generic-math conversions and enum casts.** MMO1009 also reports the integer types'
+  `CreateTruncating`, `CreateSaturating` and `CreateChecked` with a floating-point source, and a
+  float-to-enum cast, matched by the enum's underlying type ([contracts/analyzer-rules.md](contracts/analyzer-rules.md#rules)).
+- **Attribute applications are not analyzed as code.** Operations under an attribute application are
+  metadata, never run by a step, so the operation rules skip them. Otherwise the SDK-generated
+  `System.Reflection` assembly attributes would fail the core's build under MMO1008.
+- **Slide rules.** An airborne character that falls onto a steep face clips against the true contact
+  normal and slides down it, an airborne walkable hit clips against its normal, and the crease and
+  three-plane stop apply only when the clipped velocity would move back into an earlier plane
+  ([data-model.md](data-model.md#movement-step), research R8).
+- **US7 scenario 1 in slice 1.** A dry-run test runs the server benchmarks in process and checks the
+  exporter's `server` object with the report validator's rules, so the slice that claims US7.1 tests
+  it. The full benchmark run stays in slice 2's `measure` job.
 
 ## Delivery
 
 The work ships as two vertical slices. Each is a PR that leaves `main` green.
 
 1. **Core, analyzer, formats and server-side agreement** on `015-shared-simulation-core`. This covers
-   the spec artifacts, US1, US3, US4, US5 and US6, plus:
-   - the server benchmarks and zero-allocation tests (US7.1, US7.3);
-   - the `simcore` CLI;
+   the spec artifacts, US1, US3, US4, US5 and US6, except the cross-build halves of US3 scenario 8
+   and US5 scenario 5 (below), plus:
+   - the server benchmarks, their dry-run export test, and the zero-allocation tests (US7.1, US7.3);
+   - the `simcore` CLI, including the server side of the cross-build tables (`CrossBuildTables`,
+     `agreement prepare` writing them and `agreement compare` diffing them);
    - the committed content and streams;
    - `streams verify`, which reruns every committed stream in a fresh process.
 
-   The existing .NET workflow runs all of it. No guarded path is touched.
+   The existing .NET workflow builds and runs all of it; only the full benchmark run waits for
+   slice 2's `measure` job. No guarded path is touched.
 2. **WebAssembly build, agreement suite and measurement job**, on a new branch off `main` after
-   slice 1 merges. This covers US2 and US7.2:
-   - the Wasm host and its tests;
-   - `tools/agreement/`;
+   slice 1 merges. This covers US2 and US7.2, and the cross-build halves of US3 scenario 8, SC-004
+   and US5 scenario 5, which need a WebAssembly build:
+   - the Wasm host (including the `EvaluateTables` export) and its tests;
+   - `tools/agreement/`, including the tables check in both runners;
    - `.github/workflows/simcore.yml`, its workflow test, and the `auto-merge.yml` listener.
 
    It touches `.github/`, so it gets the independent automated review before the session merges it.

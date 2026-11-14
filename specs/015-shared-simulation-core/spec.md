@@ -70,8 +70,12 @@ ledge) must end in the positions their scenario states.
 **Acceptance Scenarios**:
 
 1. **Given** a character standing on flat terrain and a stream of forward inputs, **When** it is
-   stepped for one simulated second, **Then** it has moved the configured run speed times one second
-   along its aim heading, within one step's acceleration distance, and is still grounded.
+   stepped for one simulated second from rest, **Then** it has moved Σₖ₌₁ᴺ min(k·a·dt, v)·dt along
+   its aim heading, within 1e-4 m, and is still grounded, where N is the number of steps in one
+   second, dt the step length, a the configured ground acceleration and v the configured run speed.
+   That is the run speed times one second, less the distance lost while accelerating from rest:
+   6.825 m at 20 Hz, 6.766667 m at 30 Hz and 6.708333 m at 60 Hz with a run speed of 7 m/s and a
+   ground acceleration of 70 m/s².
 2. **Given** a character walking into a wall at 45 degrees, **When** it is stepped, **Then** it never
    enters the wall, and it keeps moving along the wall at the component of its velocity parallel to
    the wall.

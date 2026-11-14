@@ -212,7 +212,10 @@ It writes the [work directory](#agreement-work-directory):
 4. The server build's records for every stream, under `server/<stream>.records`.
 5. The batch inputs for every batchable stream, under `batch/<stream>/`.
 6. The refusal fixtures, under `refusals/`.
-7. `manifest.json`, last, so a work directory without a manifest is incomplete.
+7. The cross-build tables ([wasm-api.md](wasm-api.md#cross-build-tables)): `tables/inputs.bin` from
+   `CrossBuildTables.BuildInputs()`, `tables/config.bin`, the config block of `--config`, and the
+   server build's results, `server/tables.bin`.
+8. `manifest.json`, last, so a work directory without a manifest is incomplete.
 
 Output: one line, `prepared <work>: <n> streams (<named> named, <generated> generated), <steps> steps, rules revision <r>`.
 
@@ -237,13 +240,20 @@ first divergent step:
 - the hashes differ, or the build's hash differs from the stream's expected hash;
 - the state bytes differ (so equal hashes over different states still diverge).
 
+Each compared build's `<build>/tables.bin` is then compared with `server/tables.bin` under the
+[tables rule](wasm-api.md#cross-build-tables) (`TablesComparison`): the result is `Match`, `Diverged`
+with the first mismatching row, or `Missing` when the file is absent or the build wrote
+`tables.error.txt` instead (its message is reported). This is the cross-build check of US3 scenario 8,
+SC-004 and US5 scenario 5, which the streams cannot give.
+
 | Per-build status | When |
 | --- | --- |
-| `Match` | every stream matched at every step |
-| `Diverged` | at least one stream diverged, failed or is missing |
+| `Match` | every stream matched at every step, and the tables matched |
+| `Diverged` | at least one stream diverged, failed or is missing, or the tables diverged or are missing |
 | `NotRun` | no folder; an error only when the build is required |
 
-Exit 2 when the manifest is missing or unreadable, a server records file is missing, a required build
+Exit 2 when the manifest is missing or unreadable, a server records file or `server/tables.bin` is
+missing, a required build
 is `NotRun`, or the manifest's rules revision or format versions differ from the core's
 (NotComparable, naming both values). Otherwise exit 1 when any build is `Diverged`, else 0. A
 Firefox or WebKit build that Playwright could not install is reported `NotRun`, never as a pass.
@@ -251,10 +261,10 @@ Firefox or WebKit build that Playwright could not install is reported `NotRun`, 
 Output, one line per known build, the first divergence report of each diverged build, then the outcome:
 
 ```text
-node-interp: match, 68 streams, 24300 steps
-node-interp-nojit: match, 68 streams, 24300 steps
-chromium-worker: diverged in 1 of 68 streams; first: seed-017 at step 212
-firefox-worker: match, 68 streams, 24300 steps
+node-interp: match, 68 streams, 24300 steps, tables match
+node-interp-nojit: match, 68 streams, 24300 steps, tables match
+chromium-worker: diverged in 1 of 68 streams; first: seed-017 at step 212; tables match
+firefox-worker: match, 68 streams, 24300 steps, tables match
 webkit-worker: not run
 node-interp-relinked: not run
 node-aot: not run
@@ -273,7 +283,10 @@ Files, under `<work>/report/`:
     "streams": 68,
     "required": ["node-interp", "node-interp-nojit", "chromium-worker"],
     "builds": [
-      { "build": "node-interp", "required": true, "status": "Match", "streams": 68, "steps": 24300, "diverged": [] },
+      {
+        "build": "node-interp", "required": true, "status": "Match", "streams": 68, "steps": 24300, "diverged": [],
+        "tables": { "status": "Match", "firstMismatch": null }
+      },
       {
         "build": "chromium-worker", "required": true, "status": "Diverged", "streams": 68, "steps": 24300,
         "diverged": [
@@ -286,17 +299,22 @@ Files, under `<work>/report/`:
             "error": null,
             "report": "report/divergences/chromium-worker/seed-017.txt"
           }
-        ]
+        ],
+        "tables": { "status": "Match", "firstMismatch": null }
       },
       { "build": "webkit-worker", "required": false, "status": "NotRun" }
     ]
   }
   ```
 
-- `divergences/<build>/<stream>.txt`, the divergence report for each diverged stream.
+- `divergences/<build>/<stream>.txt`, the divergence report for each diverged stream, and
+  `divergences/<build>/tables.txt`, the first mismatching table row when the tables diverged.
+- In `agreement.json`, each compared build's `tables` is `{ "status": "Match" | "Diverged" | "Missing",
+  "firstMismatch": <the mismatch line or the error message, or null> }`.
 - With `--summary <file>`, a Markdown section is appended to that file: a `## SimCore agreement`
-  heading, a table with one row per build (build, required, status, streams, steps, first divergence),
-  and each diverged build's first divergence report in a code block. CI passes
+  heading, a table with one row per build (build, required, status, streams, steps, first divergence,
+  tables), and each diverged build's first divergence report, or first mismatching table row, in a
+  code block. CI passes
   `$GITHUB_STEP_SUMMARY`.
 
 ### Divergence report
@@ -346,9 +364,14 @@ rule-table order; nothing when valid. Exit 0 valid, 1 invalid, 2 when the file i
 ├── batch/<stream>/initial-state.bin   its initial state (canonical, zero events)
 ├── batch/<stream>/commands.bin        its commands, 17 bytes per step
 ├── refusals/<name>.mmrs               streams that every build must refuse
+├── tables/inputs.bin                  the cross-build table inputs (MMXT)
+├── tables/config.bin                  the config block the pose rows use
 ├── server/<stream>.records            the server build's step records
+├── server/tables.bin                  the server build's table results (MMXR)
 ├── <build>/<stream>.records           each WebAssembly build's step records
 ├── <build>/<stream>.error.txt         instead of records, when the build threw
+├── <build>/tables.bin                 each WebAssembly build's table results
+├── <build>/tables.error.txt           instead of table results, when the build threw
 ├── <build>/run.json                   the runner's description of the build
 └── report/                            agreement.json, divergences/<build>/<stream>.txt
 ```
@@ -409,6 +432,7 @@ browser's user agent, `inWorker` and `crossOriginIsolated` for Workers, and the 
     }
   ],
   "perturbation": { "stream": "flat-run-30hz", "step": 15, "field": "characters[0].position.x" },
+  "tables": { "inputs": "tables/inputs.bin", "config": "tables/config.bin", "serverResults": "server/tables.bin" },
   "refusals": [
     {
       "name": "unsupported-version",
@@ -436,13 +460,14 @@ browser's user agent, `inWorker` and `crossOriginIsolated` for Workers, and the 
 | --- | --- |
 | `formatVersion` | 1, the manifest's own version |
 | `rulesRevision`, `formats` | the core's `SimCoreVersion.RulesRevision` and format versions when the directory was prepared; `compare` refuses a mismatch as NotComparable |
-| `streams[]` | committed streams in name order, then generated streams in seed order; `name` matches `^[a-z0-9-]+$` and is unique |
+| `streams[]` | committed streams in name order, then generated streams in seed order; `name` matches `^[a-z0-9-]+$`, is unique and is not `tables` |
 | `origin`, `seed` | `committed` (seed 0, or the generator seed it was recorded from) or `generated` |
 | `file`, `collision`, `serverRecords` and the `batch` paths | relative to the work directory |
 | `collisionChecksum`, `finalHash`, `matchSalt` | 16 lowercase hex digits; JavaScript converts with `BigInt('0x' + s)` |
 | `steps`, `characters`, `stepRateHz` | from the stream's header |
 | `batch` | the batch inputs, or null when the stream is not batchable |
 | `perturbation` | the stream, the step number and the field the one-ulp check expects (SC-002); the stream is `flat-run-30hz`, the step its middle step |
+| `tables` | the cross-build table inputs, their config block and the server's results, relative to the work directory ([wasm-api.md](wasm-api.md#cross-build-tables)) |
 | `refusals[]` | each must be refused before step 0 by every build, with an error message containing `expected` (US2 scenario 5, US6 scenarios 2 and 5). `unsupported-version` is `flat-run-30hz` with its version set to 2; `rules-revision` is `flat-run-30hz` with its rules revision raised by one and its trailer rewritten, so it decodes and is refused when opened; `collision-missing` pairs it with a small collision file whose checksum it does not name |
 
 ### Build names
@@ -485,9 +510,9 @@ the agreement suite runs every one of them in every build (US1 scenario 7, US2 s
 
 | Stream | Configuration and characters | Exercises | Backs |
 | --- | --- | --- | --- |
-| `flat-run-20hz` | 20 Hz; one character | a forward run on flat terrain for one simulated second | US1.1, US1.8 |
-| `flat-run-30hz` | 30 Hz; one character | the same at 30 Hz; also the perturbation stream and the measurement's movement step | US1.1, US1.8, SC-002 |
-| `flat-run-60hz` | 60 Hz; one character | the same at 60 Hz | US1.1, US1.8 |
+| `flat-run-20hz` | 20 Hz; one character, standing at rest on flat terrain | a forward run for one simulated second (20 steps): it ends 6.825 m along its aim heading, within 1e-4 m, still grounded | US1.1, US1.8 |
+| `flat-run-30hz` | 30 Hz; one character, at rest | the same for 30 steps: 6.766667 m; also the perturbation stream and the measurement's movement step | US1.1, US1.8, SC-002 |
+| `flat-run-60hz` | 60 Hz; one character, at rest | the same for 60 steps: 6.708333 m | US1.1, US1.8 |
 | `wall-slide-45` | one character | walks into the wall at 45 degrees and slides along it | US1.2 |
 | `stairs-climb` | one character | walks into the stair whose rise is below the step height and climbs it | US1.3 |
 | `stairs-blocked` | one character | walks into the stair whose rise is above the step height and is blocked | US1.3 |
@@ -499,8 +524,8 @@ the agreement suite runs every one of them in every build (US1 scenario 7, US2 s
 | `rifle-burst` | one character, the rifle (600 rpm) | holds Fire for 3 s aimed above the horizon: 30 shots, recoil kick and recovery, shots expire at their range; also the measurement's weapon step | US4.5, US5.4 |
 | `launcher-arc` | one character, the launcher | fires the heavy projectile horizontally over flat terrain; the arc meets the terrain at the closed-form step; also the measurement's projectile step | US5.1 |
 | `reload-and-empty` | one character, the rifle with 2 rounds in the magazine | fires 2 shots, reports Empty, reloads from reserve after the reload time; switches slot and presses Fire while Switching and Reloading | US4.3, US4.6 |
-| `heat-overheat` | one character, the heat test weapon (`heatPerShot` 1000) | fires continuously until it overheats, then resumes only at the recovery level; Fire while Overheated is blocked | US4.4, US4.6 |
-| `projectile-hits-hitbox` | two characters: shooter and target | rifle shots at the standing and the crouched target striking head, torso and legs; a projectile that crosses a whole hitbox within one step; a point-blank shot that starts inside a hitbox | US5.2, US5.5, US5.6, Edge cases: point-blank |
+| `heat-overheat` | 30 Hz; one character; slot 0 is the heat test weapon: the rifle with `heatPerShot` 10000 and every other value the rifle's (600 rpm, magazine 30, `overheatThreshold` 100000, `heatRecoveryLevel` 40000, `heatCooldownPerSecond` 50000, `heatCooldownDelayMs` 250) | starts at step 0 and holds Fire for 72 steps (1–72): shots at steps 1, 4, …, 28; the 10th shot, at step 28, brings Heat to 3,000,000 stored units (100000 × 30) and sets Overheated; Fire is blocked with `FireBlock.Overheated` at steps 29–70; cooling starts at step 36, after the 8-step delay, at 50,000 units a step, and at step 71 brings Heat to 1,200,000 (40000 × 30), the recovery level, so the 11th shot fires at step 71; step 72 fires nothing and reports no block | US4.4, US4.6 |
+| `projectile-hits-hitbox` | two characters: shooter and target | rifle shots at the standing and the crouched target striking head, torso and legs; a projectile that crosses a whole hitbox within one step; a point-blank shot that starts inside a hitbox | US5.2, US5.6, the layout half of US5.5 (the struck parts match the stance's layout), Edge cases: point-blank; the bit-for-bit half of US5.5 is the [cross-build tables](wasm-api.md#cross-build-tables) |
 | `mesh-occludes-shot` | two characters, the target behind the wall | the shot hits the mesh, not the target | US5.3 |
 | `fuzz-all-buttons` | four characters; one seeded fuzz stream, committed | every button, the full aim range and the four rejection reasons, from a fixed seed | US1.9, US2.3 |
 

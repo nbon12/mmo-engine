@@ -309,12 +309,25 @@ the movement per step is passed through (edge cases). Each sub-move runs, in ord
    pushed out to r + `contactSkin`, ties to the lowest ID. At most 4 iterations; still overlapping
    reports Stuck.
 2. **Slide.** At most `maxSlideIterations` sweeps. Each sweeps d = v·(dt/n)·τ, moves to the time of
-   impact and keeps the rest of the motion (τ *= 1 − t). On a walkable hit while grounded the velocity
-   is re-projected onto the support plane; on a steep hit, or in walls-only mode, the normal is
-   flattened to horizontal and the velocity clipped against it. Two planes clip along their crease, a
-   third stops the velocity, and a velocity that would reverse against the intended motion becomes 0,
-   so corners never oscillate. Running out of iterations with motion left reports SlideCapReached; a
-   boundary plane hit reports ClampedToBounds.
+   impact and keeps the rest of the motion (τ *= 1 − t). "Clip v against p" means v −= (v·p)·p when
+   v·p < 0, and nothing otherwise. Each hit, with contact normal n, gives one clip plane p:
+   - **walkable** (n.y ≥ `CosSlopeLimit`, not walls-only): grounded, the velocity is re-projected onto
+     the support plane (as in sub-step 6) and p = n; airborne, p = n and v is clipped against it, and
+     the ground probe (sub-step 8) decides whether it landed;
+   - **steep** (n.y < `CosSlopeLimit`), or any hit in walls-only mode: grounded, in walls-only mode,
+     or airborne with v.y > 0, p is n flattened to horizontal and normalised, v is clipped against it,
+     and then v.y = 0 if v·n is still < 0, so a character never climbs a steep face; airborne with
+     v.y ≤ 0 (outside walls-only mode), p = n and v is clipped against it, so a falling character
+     slides down the face instead of hanging on it.
+
+   The planes of one slide are kept in hit order. After the clip against p, if v moves into an
+   earlier plane q of the same slide (v·q < 0, the first such q in hit order), v is replaced by its
+   projection onto the crease c = (q × p)/|q × p| (v = (v·c)·c, or 0 when |q × p|² < 1e-6); if that
+   still moves into a third plane of the slide, v = 0. So an obtuse concave join keeps the clipped
+   velocity, and only a corner that would push the character back into an earlier plane creases or
+   stops it. Finally, a v whose dot product with the velocity at the start of the slide is negative
+   becomes 0, so corners never oscillate. Running out of iterations with motion left reports
+   SlideCapReached; a boundary plane hit reports ClampedToBounds.
 3. **Step-up**, only when grounded and the slide hit a wall: find the starting ground contact with a
    2·`contactSkin` down-sweep, sweep up by `stepHeight` (rejected if it rises no more than the skin),
    slide horizontally in walls-only mode, sweep down. Accepted only if it lands on support, the landing
@@ -550,7 +563,9 @@ wz = fz + ((cy·lf) + (sy·lr))
 ```
 
 where (fx, fy, fz) is Position. The same pose gives the same hitboxes to the bit in every build
-(US5 scenario 5). Hitboxes are derived, not part of the hashed state.
+(US5 scenario 5). Hitboxes are derived, not part of the hashed state, so the streams do not compare
+them; the pose rows of the cross-build tables do, in every build
+([contracts/wasm-api.md](contracts/wasm-api.md#cross-build-tables)).
 
 ## World (SimWorld)
 

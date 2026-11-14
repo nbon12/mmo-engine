@@ -25,7 +25,9 @@ dotnet test MmoEngine.sln
 Expected: each command exits 0. The build compiles `src/MmoEngine.SimCore/` with the determinism
 analyzer attached, so a violation fails it with an `error MMO10xx` line on the offending source line.
 The tests include the analyzer's backstop compile of the core's sources, the scenario streams at 20,
-30 and 60 Hz, the golden fixtures, the configuration rule table and the zero-allocation tests.
+30 and 60 Hz, the golden fixtures, the configuration rule table, the fixed trig table and the
+cross-build tables on the server build, a dry run of the server benchmarks' export, and the
+zero-allocation tests.
 
 ## See the analyzer reject a violation
 
@@ -127,8 +129,8 @@ AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-int
   node --test tools/agreement/node/agreement.test.mjs
 ```
 
-Expected: each run passes every test (one per stream, plus the batch, perturbation and refusal
-checks) and exits 0. The second run has the jiterpreter off.
+Expected: each run passes every test (one per stream, plus the batch, perturbation, refusal and
+cross-build tables checks) and exits 0. The second run has the jiterpreter off.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test)
@@ -142,8 +144,8 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare -
 echo $?   # 0 all agree, 1 divergence, 2 cannot run
 ```
 
-Expected: `match` for `node-interp`, `node-interp-nojit` and `chromium-worker`, and for `firefox-worker`
-and `webkit-worker` when they ran; `not run` for the rest; then `agreement: match` and exit 0. The full
+Expected: `match` with `tables match` for `node-interp`, `node-interp-nojit` and `chromium-worker`,
+and for `firefox-worker` and `webkit-worker` when they ran; `not run` for the rest; then `agreement: match` and exit 0. The full
 results are in `$WORK/report/agreement.json`. The work directory's layout and the divergence report
 are in [contracts/simcore-cli.md](contracts/simcore-cli.md#agreement-work-directory); the runners and
 the exports they call are in [contracts/wasm-api.md](contracts/wasm-api.md).

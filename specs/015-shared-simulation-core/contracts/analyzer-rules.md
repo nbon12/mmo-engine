@@ -23,7 +23,7 @@ Every rule is severity Error, enabled by default, category `Determinism`, and ca
 | MMO1006 | Lock or blocking synchronization | Every `lock` statement, including on `System.Threading.Lock`. The [blocking list](#locks-and-blocking-mmo1006): `Monitor`, `Mutex`, the semaphores, reader-writer locks, spin primitives, wait handles, `Barrier`, `BlockingCollection`, `Parallel`, `Thread.Sleep`/`Join`/`SpinWait`/`Yield`, `Task.Wait`/`WaitAll`/`WaitAny`/`RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`, `GetResult` on every awaiter, and `[MethodImpl(MethodImplOptions.Synchronized)]`. | `await`, `Interlocked` and `Volatile`; none of them blocks. |
 | MMO1007 | Non-float floating point or platform-sized number | Declarations of `double`, `Half`, `NFloat`, `nint` or `nuint` (fields, properties, events, parameters, return types, locals, type arguments, array elements), and any non-constant expression of those types. An untyped literal in a float expression (`x * 0.5`) is one. | `const double` fields and constant-folded expressions such as `(float)(Math.PI / 180.0)`. `int` and `long` for fixed point and counters. `decimal` is not checked. |
 | MMO1008 | Platform query, conditional compilation or reflection | `#if` and `#elif` directives. `[Conditional]` declarations and calls to `System.Diagnostics.Debug` and `Trace`. `OperatingSystem`, `RuntimeInformation`, `RuntimeFeature`. Every member of `System.Environment` except the two clocks (MMO1005). `IntPtr.Size`, `UIntPtr.Size`, `BitConverter.IsLittleEndian`. Members of `System.Type`, every type in `System.Reflection`, `Activator`. Every `dynamic` operation. `[UnsafeAccessor]` declarations. | One code path for every build. `typeof(T)` and `nameof` without member access. |
-| MMO1009 | Float-to-integer or ulong-to-float conversion outside the SimMath helpers | A non-constant conversion, explicit or implicit, `checked` or not, from `float` or `double` to any integer type (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `char`), outside the bodies of the three `MmoEngine.SimCore.Math.SimMath` helpers. Every member of `System.Convert`. A non-constant conversion from `ulong` to `float`, anywhere in the core, `SimMath` included. | `SimMath.FloorToInt`, `SimMath.RoundToInt` and `SimMath.TruncateToInt`, which saturate before the cast (NaN → 0, ≥ 2^31 → `int.MaxValue`, < −2^31 → `int.MinValue`). Constant casts such as `(int)2.5f`. Integer-to-float conversions from `int`, `uint`, `long`, `short` and `byte`, which round correctly in every build. |
+| MMO1009 | Float-to-integer or ulong-to-float conversion outside the SimMath helpers | A non-constant conversion, explicit or implicit, `checked` or not, from `float` or `double` to any integer type (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `char`, `Int128`, `UInt128`) or to any enum type (matched by its underlying integer type, so `(Buttons)x` counts), outside the bodies of the three `MmoEngine.SimCore.Math.SimMath` helpers. Every member of `System.Convert`. An invocation of `CreateTruncating`, `CreateSaturating` or `CreateChecked` declared on one of those integer types (`int.CreateSaturating(x)`, `long.CreateTruncating(x)`) whose type argument `TOther` is `float`, `double`, `Half` or `NFloat`. A non-constant conversion from `ulong` to `float`, anywhere in the core, `SimMath` included. | `SimMath.FloorToInt`, `SimMath.RoundToInt` and `SimMath.TruncateToInt`, which saturate before the cast (NaN → 0, ≥ 2^31 → `int.MaxValue`, < −2^31 → `int.MinValue`). Constant casts such as `(int)2.5f`. Integer-to-float conversions from `int`, `uint`, `long`, `short` and `byte`, which round correctly in every build. |
 
 US3 scenario 1 lists `Vector128.Sum` and `Vector128.Dot` as its horizontal samples. A fused
 `Vector128.FusedMultiplyAdd` belongs to MMO1003 (US3 scenario 3), by the precedence below.
@@ -50,13 +50,21 @@ MMO1009's reason text:
 
 | Conversion | `{1}` |
 | --- | --- |
-| `float` or `double` to an integer, or `System.Convert` | `converts a floating-point value to an integer, which gives different results between builds for NaN and out-of-range values; use 'SimMath.FloorToInt', 'SimMath.RoundToInt' or 'SimMath.TruncateToInt', which saturate first` |
+| `float` or `double` to an integer or an enum, an integer type's `Create*` from a floating-point value, or `System.Convert` | `converts a floating-point value to an integer, which gives different results between builds for NaN and out-of-range values; use 'SimMath.FloorToInt', 'SimMath.RoundToInt' or 'SimMath.TruncateToInt', which saturate first` |
 | `ulong` to `float` | `converts a 'ulong' to 'float', which the WebAssembly build rounds through 'double' and so can differ by one ulp; narrow it to 'uint' or 'long' first` |
 
 The exemption is per method, not per type: the three helpers are the only places a float-to-integer
 cast is allowed ([research.md](../research.md) R3 and R4). The trigonometric range reduction
 converts its in-range quadrant count with `SimMath.RoundToInt`, not with a raw cast. The spread hash
 converts its 24-bit `ulong` value as `(float)(uint)(h >> 40)`.
+
+The `Create*` methods are matched on the integer type itself because they are class members of
+`System.Int32` and its siblings, not of a host type MMO1002 covers or of a generic-math interface.
+CoreLib implements them with the raw conversion, so `int.CreateSaturating(float.NaN)` is 0 on x64 and
+−2147483648 in the wasm interpreter [measured, design review]. The same call through a type
+parameter (`T.CreateSaturating(x)`) resolves to `INumberBase<T>` and reports MMO1002, which comes
+first in the precedence order. An enum's float conversion compiles to the same raw conversion as a
+cast to its underlying type.
 
 The diagnostic's location is the operation's syntax: the invocation, member access or conversion
 expression; the `lock` keyword for a `lock` statement; the collection expression for `foreach` and
@@ -197,6 +205,19 @@ and files with an `<auto-generated>` header as generated and skips them by defau
 flag, the committed `SimMathCoefficients.g.cs` and `TwoOverPi.g.cs` would escape the rules, and so
 would any source generator's output.
 
+### Attribute applications
+
+An operation whose ancestor is an `IAttributeOperation` (an attribute applied to an assembly, type,
+member or parameter) is not reported by any operation rule. Attribute arguments are constants and
+`typeof` expressions stored as metadata; no step runs them, and running them would need reflection,
+which MMO1008 bans. Roslyn models each attribute as an object creation of the attribute type, so
+without this exemption the SDK-generated `obj/…/MmoEngine.SimCore.AssemblyInfo.cs`, which carries
+`[assembly: System.Reflection.AssemblyVersion(…)]`, `AssemblyMetadata("IsTrimmable", "True")` and the
+other `System.Reflection` assembly attributes under an `<auto-generated>` header, would report
+MMO1008 on lines nobody can edit and fail the core's build. The symbol actions still check the
+attributes that change behaviour: `[MethodImpl(MethodImplOptions.Synchronized)]` (MMO1006),
+`[Conditional]` and `[UnsafeAccessor]` (MMO1008).
+
 ### Not covered
 
 The agreement suite remains the second line of defence for what the rules cannot see. Known gaps:
@@ -285,7 +306,8 @@ Registration:
 - `ConfigureGeneratedCodeAnalysis(Analyze | ReportDiagnostics)`.
 - One `RegisterOperationAction` over Invocation, PropertyReference, FieldReference, MethodReference,
   EventReference, ObjectCreation, Lock, Loop, Conversion, Spread, VariableDeclarator, Binary and Unary
-  (user-defined operators and float `%`), TypeOf, DefaultValue and the four Dynamic kinds.
+  (user-defined operators and float `%`), TypeOf, DefaultValue and the four Dynamic kinds. It returns
+  at once for an operation under an `IAttributeOperation` ([attribute applications](#attribute-applications)).
 - `RegisterSymbolAction` for Field, Property, Method and Event declarations (declared types,
   `MethodImplementationFlags`, `[Conditional]` and `[UnsafeAccessor]`).
 - `RegisterSyntaxTreeAction` for `#if` and `#elif`.
@@ -382,7 +404,7 @@ rows reached 94.4%).
 | MMO1006 | `lock (Gate) { }`; a `static readonly Lock` field; `lock (l)` on a `Lock` parameter (count 2: the parameter and the statement); `t.Wait()`; `t.Result`; `t.GetAwaiter().GetResult()`; `Thread.Sleep(1)`; `Monitor.Enter(typeof(C))`; `[MethodImpl(MethodImplOptions.Synchronized)]`; `Parallel.For(0, a.Length, i => a[i]++)` | `await t`; `Interlocked.Increment(ref x)` |
 | MMO1007 | `(float)(x * 0.5)`; `double M(float x) => x` (count 2); `(int)(nint)a`; `var h = (Half)1;` | `const double Scale = 1.0 / 3.0` used as `x * (float)Scale`; `x * (float)(Math.PI / 180.0)` |
 | MMO1008 | `OperatingSystem.IsBrowser()`; `IntPtr.Size`; `Environment.ProcessorCount`; `typeof(MathF).GetMethod("Sin")`; `d.Foo()` on a `dynamic`; an `#if DEBUG` block; `Debug.Assert(b)`; an `[UnsafeAccessor]` extern method | `object M() => typeof(int);` (no member access on the `Type`) |
-| MMO1009 | `(int)x`; `(byte)(x * 2f)`; `float M(ulong u) => u`; `Convert.ToInt32(x)` | `(int)2.5f`; `i * 0.5f`; `(float)(uint)(h >> 40)` |
+| MMO1009 | `(int)x`; `(byte)(x * 2f)`; `float M(ulong u) => u`; `Convert.ToInt32(x)`; `int.CreateSaturating(x)`; `long.CreateTruncating(x)`; `(DayOfWeek)x`; `(UInt128)x` | `(int)2.5f`; `i * 0.5f`; `(float)(uint)(h >> 40)`; `int.CreateSaturating(l)` with `l` a `long`; `(DayOfWeek)i` with `i` an `int` |
 
 **Other tests in the project:**
 
@@ -395,10 +417,11 @@ rows reached 94.4%).
 | `SuppressMessageIsReportedAsSuppressed` | `[SuppressMessage("Determinism", "MMO1002")]` yields MMO1002 with `IsSuppressed` true, which the backstop counts |
 | `DescriptorsMatchTheReleaseFile` | `SupportedDiagnostics` is exactly MMO1001–MMO1009; each is Error, enabled by default, category `Determinism`, tagged `NotConfigurable`; `AnalyzerReleases.Unshipped.md` lists the same nine as Error |
 | `CoreSourcesHaveNoDeterminismDiagnosticsEvenSuppressedOnes` | the backstop above |
+| `AttributeApplicationsAreNotReported` | a compilation of the sample class plus a file with an `<auto-generated>` header holding the SDK's assembly attributes (`AssemblyCompany`, `AssemblyConfiguration`, `AssemblyFileVersion`, `AssemblyInformationalVersion`, `AssemblyProduct`, `AssemblyTitle`, `AssemblyVersion`, and `AssemblyMetadata` for `IsTrimmable` and `IsAotCompatible`, all spelled `System.Reflection.…`) and a member with `[Obsolete]` reports nothing; the same file with `typeof(MathF).GetMethod("Sin")` in a method body still reports one MMO1008 |
 | `CoreProjectAttachesTheAnalyzerPrivately` | the core's project file has exactly one analyzer `ProjectReference` with `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` and `PrivateAssets="all"`; `ImplicitUsings` is `disable`; nothing sets `RunAnalyzers`, `RunAnalyzersDuringBuild`, `NoWarn` or `WarningsNotAsErrors` for MMO rules; there is no `<Compile Remove>` |
 | `OnlyTheCoreAttachesTheAnalyzer` | no other project file under `src/`, `tests/` or `benchmarks/` attaches it with `OutputItemType="Analyzer"` |
 | `RoslynPinMatchesTheSdkBand` | the pin above |
-| `ABuildWithAViolationFails` | `dotnet build` of a throwaway class library in a unique temporary directory, attaching the built analyzer with `<Analyzer Include="…" />` and containing one `foreach` over a `Dictionary`, exits non-zero with `error MMO1004` in its output (about 1.1 s warm [measured]); the output is written to the test log |
+| `ABuildWithAViolationFails` | `dotnet build` of a throwaway class library in a unique temporary directory, with `IsTrimmable` and `IsAotCompatible` set as in the core (so the SDK generates the `System.Reflection` assembly attributes), attaching the built analyzer with `<Analyzer Include="…" />` and containing one `foreach` over a `Dictionary`, exits non-zero with exactly one MMO diagnostic, `error MMO1004`, in its output, and none in the generated `AssemblyInfo.cs` (about 1.1 s warm [measured]); the output is written to the test log |
 
 **Mapping to the acceptance scenarios (US3):**
 
@@ -413,8 +436,12 @@ rows reached 94.4%).
 | US3.7 `double`, `Half`, `nint`, `NFloat`; float-to-integer; platform paths | MMO1007, MMO1009 and MMO1008 rows; `SimMathMayClampAndCastFloats` |
 | Independent Test: "build the core itself with the analyzer as an error" | `CoreSourcesHaveNoDeterminismDiagnosticsEvenSuppressedOnes`, `ABuildWithAViolationFails`, and CI's `dotnet build MmoEngine.sln -warnaserror` |
 
-US3 scenario 8 (the trigonometric bounds) is covered by the math tests in
-`tests/MmoEngine.SimCore.Tests/Math/` and by the agreement suite, not by the analyzer.
+US3 scenario 8 (the trigonometric bounds) is not the analyzer's. Its bound half is
+`tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` on the
+server build. Its cross-build half ("identical bits for every input") is the tables check of the
+agreement runners, `tools/agreement/node/agreement.test.mjs` and `tools/agreement/specs/worker.spec.mjs`,
+with `agreement compare` diffing every row ([wasm-api.md](wasm-api.md#cross-build-tables)). The
+recorded streams alone cannot cover it, because they never call most of `SimMath`.
 
 **Timings** [measured, sandbox]: loading the reference assemblies takes about 67 ms, the first
 compile-and-analyze about 970 ms (Roslyn's JIT), and each later one 5–7 ms. The prototype's 81 tests

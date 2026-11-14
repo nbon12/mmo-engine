@@ -19,7 +19,10 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
 1. **Server benchmarks.** `dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'`.
    BenchmarkDotNet 0.15.8 with `MemoryDiagnoser`. The project's `SimCoreMeasurementExporter` writes
    `BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json`, which is the report's `server`
-   object, and adds a P99 column to the console table.
+   object, and adds a P99 column to the console table. `SimCoreBenchmarkConfig.Create(runnerClass,
+   job)` builds the configuration (the exporter, the P99 column and `MemoryDiagnoser`); the project's
+   `Main` passes `MMO_RUNNER_CLASS` and the default job, and exits 2 when the variable is unset. The
+   dry-run test below calls the same method.
 2. **The prebuilt interpreted build**, published before the workload is installed:
    `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o <dir>`. Without the workload, publish
    uses the prebuilt runtime [measured].
@@ -56,7 +59,9 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
 The job also runs the exhaustive trigonometric sweeps, with `MMO_EXHAUSTIVE_MATH=1`
 ([research.md](../research.md) R3). They write each function's maximum error in ulp to the job
 summary and are not part of this report. The fixed trig table in the pull-request tests is the gate
-for the error bounds (SC-004).
+for the error bounds (SC-004), and the agreement runs' cross-build tables check is the gate for its
+bit agreement across builds ([wasm-api.md](wasm-api.md#cross-build-tables)), in the `agreement` job
+and, for the relinked and AOT builds, in this job's agreement step.
 
 ## Example
 
@@ -396,5 +401,6 @@ no tuning value is set (Principle VI). The zero-allocation tests in
 | `ValidateReportTests.EachProblemIsReported(mutation, expectedLine)` (Theory) | one row per check: a mutation of the fixture (a field removed, an unknown field, an empty runner class, a server runner class that differs, a missing `weapon` benchmark, a missing mode, an unproduced mode without a reason, a total that does not add up, 9 cold starts, `crossOriginIsolated` false, a missing step kind, a `p90` below the `median`) gives exactly its `path: problem` line and exit 1 |
 | `ValidateReportTests.AnUnproducedModeNeedsOnlyItsReason` | `{"produced": false, "reason": "…"}` for `aot` and `interp-relinked` is valid |
 | `ValidateReportTests.MalformedJsonIsInvalidAndAMissingFileCannotRun` | exit 1 with `$: is not valid JSON (…)`; exit 2 for a missing file |
+| `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. It runs in the serial collection |
 | `tools/agreement/node/measure.test.mjs` (`node --test`) | the boot-manifest parser on a fixture `dotnet.js`, the nearest-rank percentile, and the totals |
 | The `measure` job | runs `validate-report` on the real report on the runner class (US7 Independent Test, SC-007) |

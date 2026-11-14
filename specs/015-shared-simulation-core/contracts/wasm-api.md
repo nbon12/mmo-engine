@@ -9,9 +9,9 @@ Three layers:
 
 | Layer | Where | Analyzed | Covered by |
 | --- | --- | --- | --- |
-| `BatchStepper` and `StreamRunner` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
+| `BatchStepper`, `StreamRunner` and `CrossBuildTables` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
 | `SimCoreExports`, one-line `[JSExport]` delegations | `src/MmoEngine.SimCore.Wasm/` | no | `tests/MmoEngine.SimCore.Wasm.Tests/`, which calls the exports as plain methods |
-| JavaScript boot and runners | `tools/agreement/lib/runtime.mjs`, `node/agreement.test.mjs`, `web/worker.mjs`, `lib/measure.mjs` | no | the agreement and measurement runs |
+| JavaScript boot and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `node/agreement.test.mjs`, `web/worker.mjs`, `lib/measure.mjs` | no | the agreement and measurement runs |
 
 All logic lives in the core, so the server tests cover everything the browser runs. Only bytes cross
 the JavaScript boundary. Byte layouts of the step record, the canonical state, the collision file, the
@@ -51,6 +51,12 @@ public sealed class StepFaultException : Exception                      // throw
 {
     public uint Step { get; }
     public StepFault Fault { get; }
+}
+
+public static class CrossBuildTables                                    // the fixed math and hitbox tables (US3.8, SC-004, US5.5)
+{
+    public static byte[] BuildInputs();                                  // MMXT v1: the fixed math table, then the pose table
+    public static byte[] Evaluate(ReadOnlySpan<byte> inputs, ReadOnlySpan<byte> configBlock);   // MMXR v1
 }
 ```
 
@@ -173,6 +179,86 @@ The byte overload decodes the one collision file it is given, as the browser run
 file the manifest names. The list overload lets the server CLI decode each collision file once and
 run many streams over it; an empty list refuses every stream with `CollisionDataMissing`.
 
+## Cross-build tables
+
+The recorded streams reach only part of `SimMath`: aim goes through `SinCosBinaryAngle`, and `Sin` and
+`Cos` run at a few inputs while the configuration compiles (`CosSlopeLimit`, `VersMax`). `Tan`,
+`Asin`, `Acos`, `Atan` and `Atan2`, the reduction tails and the Payne–Hanek path never run in a step.
+Hitboxes are derived and not hashed ([data-model.md](../data-model.md#hitbox-layout-and-hitboxes)), so
+a stream compares them only through the hits they produce. `CrossBuildTables` covers both, so every
+build evaluates the same inputs and the comparison sees every result bit (US3 scenario 8: "the server
+and WebAssembly builds return identical bits for every input"; SC-004; US5 scenario 5: "every build
+produces the same hitboxes to the bit").
+
+**`BuildInputs()`** returns the same bytes on every call and in every build. The math rows are the
+fixed table that the bound tests in `tests/MmoEngine.SimCore.Tests/Math/` check on the server build,
+so there is one table, not two. For each function:
+
+- Sin, Cos, SinCos and Tan: ±0, the smallest and largest subnormal, the smallest normal, π/4 and
+  12867 and each one's two neighbours, ±`float.MaxValue`, 3,072 finite bit patterns with |x| ≤ 12867
+  and 1,024 above it (the Payne–Hanek path);
+- Asin and Acos: ±0, the subnormals above, ±½ and ±1 and their neighbours inside the domain, and
+  4,096 bit patterns in [−1, 1];
+- Atan: ±0, the subnormals above, the four fdlibm breakpoints (7/16, 11/16, 19/16, 39/16) and their
+  neighbours, ±`float.MaxValue`, ±∞ (finite results ±π/2) and 4,096 finite bit patterns;
+- Atan2: every combination of ±0 and ±∞ for both arguments, the four axis directions, and 4,096
+  finite pairs;
+- SinCosBinaryAngle: every one of the 65,536 angles;
+- Sqrt: +0, −0, the subnormals above, ±`float.MaxValue` and 1,024 positive finite bit patterns;
+- the non-finite and out-of-domain rows: NaN for every function, ±∞ for the radian functions, Asin
+  and Acos just outside ±1 and at ±2, and a negative Sqrt argument. Each returns NaN.
+
+The drawn bit patterns come from the core's SplitMix64 with seed `0x5EED0000 + function ID`, uniform
+over the bit patterns in the stated range, in draw order. The pose rows are both stances × every
+64th binary angle plus each quadrant boundary's two neighbours (1,032 yaws) × three positions:
+(0, 0, 0), (4096.25, 37.5, −7000.125) and (−8191.5, −200, 8191.5). That is 6,192 pose rows. Math
+rows are ordered by function ID, then as listed; pose rows by stance, then yaw ascending, then
+position as listed. The
+whole input is about 1.2 MB, and one evaluation in the interpreter takes tens of milliseconds
+[estimate].
+
+**`Evaluate(inputs, configBlock)`** compiles the config block (its hitbox layout), then evaluates
+every row in order with the same `SimMath` functions and `HitboxBuilder` the step uses. It allocates
+its result; it is not tick-path code. A malformed table throws `CoreFormatException`
+(`tables <field> at offset <n>: <detail>`, for a wrong magic or version, a length that does not match
+the counts, or an unknown function ID or stance), and an invalid block throws
+`ConfigValidationException`.
+
+Inputs, `MMXT` version 1, little-endian:
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | magic `MMXT` |
+| 4 | 2 | `u16` version, 1 |
+| 6 | 2 | `u16` 0 |
+| 8 | 4 | `u32` math row count *M* |
+| 12 | 4 | `u32` pose row count *P* |
+| 16 | 12·*M* | math rows: `u8` function ID, 3 zero bytes, `u32` a bits, `u32` b bits |
+| 16 + 12·*M* | 16·*P* | pose rows: `u8` stance (0 Standing, 1 Crouched), `u8` 0, `u16` AimYaw, `f32` x, y, z bits |
+
+Function IDs: 1 Sin, 2 Cos, 3 Tan, 4 SinCos, 5 Asin, 6 Acos, 7 Atan, 8 Atan2 (a is y, b is x),
+9 SinCosBinaryAngle (a's low 16 bits are the angle), 10 Sqrt. Every other function takes a, and its
+b is 0.
+
+Results, `MMXR` version 1, the same header with magic `MMXR`, then:
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 16 | 8·*M* | per math row: `u32` r0 bits and `u32` r1 bits; SinCos and SinCosBinaryAngle give sine then cosine, every other function gives its result and 0 |
+| 16 + 8·*M* | 100·*P* | per pose row, 25 `f32`: the head, torso and legs capsules, each A (x, y, z), B (x, y, z) and radius, then the bounding sphere's centre (x, y, z) and radius |
+
+**Comparing** (`TablesComparison` in `src/MmoEngine.SimCore.Server/`, and `compareTables` in
+`tools/agreement/lib/tables.mjs` for the runners): the headers must be equal. A math row matches when
+r0 and r1 are bit-identical, or, where the server's value is NaN, when the build's value is any NaN
+(research R4: NaN bits are not portable). Every in-domain row has a finite result, so the table's
+in-domain rows compare bit for bit. Pose rows compare bit for bit. The first row that does not match
+is reported as, for example,
+
+```text
+tables: build chromium-worker, first mismatch at math row 41207: Atan2(a 0x3F000000, b 0xBF800000) r0 server 0x402B6374 build 0x402B6375
+tables: build node-aot, first mismatch at pose row 3871: Crouched yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x45800266 build 0x45800267
+```
+
 ## Host exports
 
 ```csharp
@@ -215,6 +301,10 @@ public static partial class SimCoreExports
     [JSExport]
     public static byte[] RunStream(byte[] stream, byte[] collision, int perturbStep) =>
         StreamRunner.Run(stream, collision, perturbStep);
+
+    [JSExport]
+    public static byte[] EvaluateTables(byte[] inputs, byte[] configBlock) =>
+        CrossBuildTables.Evaluate(inputs, configBlock);
 }
 ```
 
@@ -243,7 +333,8 @@ From JavaScript the exports are
 | −3 | `CommandRefused` | stop entry | queued command *n* failed to decode | in the stop entry |
 | −4 | `StepFault` | stop entry | the step after the committed ones produced a non-finite value, or a query overflowed | in the stop entry |
 
-`RunStream` returns the records or throws; it has no return codes.
+`RunStream` returns the records, and `EvaluateTables` the `MMXR` results, or throws; neither has
+return codes.
 
 ## One frame from JavaScript
 
@@ -299,7 +390,7 @@ were rejected: they need unsafe pointer code for a gain of about 0.2 µs.
 | `IMemoryView` object | JavaScript | `dispose()` | the segment stays pinned until the view is disposed [documentation]; dispose an old view before dropping it; a disposed view throws on access |
 | `slice(start, end)` result | JavaScript | garbage collection | a copy; safe to keep and to transfer to the main thread |
 | `byte[]` arguments | copied into managed memory per call | the call | JavaScript keeps its own `Uint8Array` |
-| `RunStream` result | copied out to a new `Uint8Array` | garbage collection | JavaScript owns it |
+| `RunStream` and `EvaluateTables` results | copied out to a new `Uint8Array` | garbage collection | JavaScript owns it |
 
 Do not cache a `Uint8Array` over the WebAssembly heap (`localHeapViewU8()` subarrays); the heap can
 grow and detach it. Go through the view's `set` and `slice`.
@@ -384,8 +475,8 @@ Routes:
 | --- | --- |
 | `GET /web/page.html`, `GET /web/worker.mjs`, `GET /lib/runtime.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
 | `GET /_framework/*` | `AGREEMENT_APP/_framework/` |
-| `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs) |
-| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$`; body at most 64 MiB; written to a temporary file, then renamed; 204 on success, 403 otherwise |
+| `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs, the table inputs and the server's table results) |
+| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; 204 on success, 403 otherwise |
 | anything else | 404 |
 
 ## Agreement runners
@@ -416,7 +507,12 @@ and 3). A thrown error is written to `<stream>.error.txt` and fails that test. I
   perturbation entry must match the server's records before that step and differ at it (SC-002);
 - **the refusal checks**: each manifest refusal must throw an `Error` whose message contains the
   entry's expected text, for example `unsupported version 2; this reader supports version 1`
-  (US2 scenario 5, US6 scenario 5).
+  (US2 scenario 5, US6 scenario 5);
+- **the tables check**: `EvaluateTables(tables/inputs.bin, tables/config.bin)` from the manifest's
+  `tables` entry, written to `AGREEMENT_WORK/<build>/tables.bin`, must match `server/tables.bin` under
+  the [comparison rule](#cross-build-tables); a failure names the first mismatching row (US3
+  scenario 8, SC-004, US5 scenario 5). A thrown error is written to `tables.error.txt` and fails the
+  test.
 
 It writes `AGREEMENT_WORK/<build>/run.json` with the build name, runtime options, `runtimeBuildInfo`,
 Node's version and the start and end times.
@@ -436,7 +532,10 @@ Node's version and the start and end times.
    `/work/<build>/<stream>.records`, fetches `/work/server/<stream>.records`, compares the bytes and
    posts the result. A thrown error is `PUT` to `/work/<build>/<stream>.error.txt` and posted.
 4. It runs the batch check for every stream with a `batch` entry, as in Node.
-5. It posts `done`.
+5. It runs the tables check: it fetches the table inputs, the config block and the server's results,
+   calls `EvaluateTables`, `PUT`s the result to `/work/<build>/tables.bin` (or the error to
+   `tables.error.txt`), compares it with `compareTables` and posts the result.
+6. It posts `done`.
 
 Messages:
 
@@ -447,12 +546,14 @@ Messages:
 | Worker → page | `stream` | `name`, `steps`, `match`, `firstMismatchStep` (null when `match` is true) |
 | Worker → page | `error` | `name`, `message` |
 | Worker → page | `batch` | `name`, `match`, `firstMismatchStep` |
+| Worker → page | `tables` | `match`, `firstMismatch` (null when `match` is true; otherwise the mismatch line) |
 | Worker → page | `done` | `streams` (the number run), `mismatches`, `errors` |
 | Worker → page | `fatal` | `message` (boot or manifest failure) |
 
 The spec asserts: a `booted` message with `inWorker` true; one `stream` message per manifest stream,
-each with `match` true; no `error` and no `fatal`; every `batch` message with `match` true; `done`'s
-counts agree; and no console message about the content type (US2 scenarios 2 and 6). The records it
+each with `match` true; no `error` and no `fatal`; every `batch` message with `match` true; one
+`tables` message with `match` true; `done`'s counts agree; and no console message about the content
+type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scenario 5). The records it
 `PUT` let `simcore agreement compare` write the field-level report for any mismatch (US2 scenario 4).
 
 ## Tests
@@ -468,6 +569,12 @@ counts agree; and no console message about the content type (US2 scenarios 2 and
 | `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.RecordsCarryTheExpectedHashes` | the record format |
 | `StreamRunnerTests.PerturbationDivergesAtExactlyThatStep` | SC-002 |
 | `StreamRunnerTests.RefusesBeforeStepZero` (Theory: `UnsupportedVersion`, `CollisionDataMissing`, `RulesRevisionMismatch`, an invalid config block) | US2.5, US6.5 |
+| `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.InputsArePinned` | `BuildInputs()` returns the same bytes on every call, with the row counts and the XxHash64 the test pins, so a change to the table is a visible edit |
+| `CrossBuildTablesTests.EachRowEqualsTheDirectCall` | every math row's result equals the `SimMath` call it names, and every pose row's equals `HitboxBuilder` for that pose, bit for bit |
+| `CrossBuildTablesTests.NonFiniteAndOutOfDomainRowsReturnNaN`, `CrossBuildTablesTests.RefusesMalformedTables` (Theory: magic, version, length, function ID, stance) | the table's NaN rows and its refusals |
+| `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3) |
+| `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.ReportsTheFirstDifferingRow` (Theory: one bit flipped in a math row, in a pose row, a NaN against a finite value) and `TablesComparisonTests.AnyNaNMatchesANaNRow` | the comparison rule and its report |
 | `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests` (every export called as a plain method on x64) and `EntryPointReturnsZero` | the host, and its coverage gate |
-| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build |
-| `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker; FR-024 |
+| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5 |
+| `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker; FR-024; its `tables` assertion is the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
+| `tools/agreement/node/tables.test.mjs` (`node --test`) | `compareTables` on fixture results: an identical pair matches, a flipped bit in a math or pose row reports that row, a NaN row matches any NaN and not a finite value |

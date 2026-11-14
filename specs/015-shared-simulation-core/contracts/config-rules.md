@@ -150,8 +150,13 @@ semi-automatic launcher at 30. One value means both slots.
 | `0x2i14` | `weapons[i].muzzleSpeed` | Float | m/s | 1 | 2000 | 600 / 120 |
 | `0x2i15` | `weapons[i].projectileClass` | Int | class index | 0 | 7 | 0 / 1 |
 
-Heat is a dimensionless counter. Neither placeholder weapon heats; the `heat-overheat` stream uses a
-weapon with `heatPerShot` 1000, and streams carry their whole configuration.
+Heat is a dimensionless counter. Neither placeholder weapon heats. The `heat-overheat` stream's heat
+test weapon, in slot 0, is the rifle with `heatPerShot` 10000 and every other value unchanged, so its
+30-round magazine overheats it on the 10th shot (10 × 10000 = `overheatThreshold` 100000) and it
+fires again once it has cooled to `heatRecoveryLevel` 40000. With `heatPerShot` 1000 it could never
+overheat: a magazine adds only 30000 heat, and the 60-step reload cools more than that. The stream's
+exact steps are in [simcore-cli.md](simcore-cli.md#named-scenario-streams). Streams carry their whole
+configuration.
 
 ### Projectile classes (section 3, instance k = class index)
 

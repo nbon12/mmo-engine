@@ -161,7 +161,14 @@ The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in pare
 - **Server side:** the bounds are checked against `Math.*(double)`, and against `double.SinPi`/`CosPi`
   for binary angles. NaN mismatches are counted explicitly, and the domain endpoints are included.
   The first prototype harness missed asin(±1) = NaN, because a comparison with NaN is false.
-- **WebAssembly side:** bits are compared with the server's only.
+- **WebAssembly side:** bits are compared with the server's only, through the cross-build tables.
+  `CrossBuildTables.BuildInputs()` holds the fixed table (the same rows the server-side bound test
+  checks); `agreement prepare` writes the server's results, every WebAssembly runner evaluates the
+  same rows through the `EvaluateTables` export, and `agreement compare` diffs the result bits row by
+  row. A NaN result matches any NaN, because NaN bits are not portable (R4); every in-domain row is
+  finite and compares bit for bit ([contracts/wasm-api.md](contracts/wasm-api.md#cross-build-tables)).
+  The streams cannot do this: they reach only `SinCosBinaryAngle`, and `Sin` and `Cos` at a few
+  configuration inputs.
 - **Gating:** a fixed table gates every pull request (SC-004). The exhaustive sweeps (about 2 minutes
   on 4 cores) are xUnit tests in `tests/MmoEngine.SimCore.Tests/Math/` that run only when
   `MMO_EXHAUSTIVE_MATH=1` is set and skip otherwise, so the pull-request run in `dotnet.yml` stays
@@ -293,7 +300,7 @@ The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in pare
 | MMO1006 | Locks and blocking, including `[MethodImpl(Synchronized)]` and `Task.Result` |
 | MMO1007 | `double`, `Half`, `NFloat`, `nint`, `nuint` (constants excepted) |
 | MMO1008 | `#if`, platform and runtime queries, reflection, `dynamic`, `UnsafeAccessor` |
-| MMO1009 | Float-to-integer conversion outside the `SimMath` helpers, and `ulong → float` |
+| MMO1009 | Float-to-integer or float-to-enum conversion outside the `SimMath` helpers, including the integer types' generic-math creators (`int.CreateSaturating(x)`), and `ulong → float` |
 
 - **One diagnostic per operation**, by precedence FMA > vector > platform math. So
   `Vector128.FusedMultiplyAdd` reports MMO1003 only (US3.1, US3.3).
@@ -302,6 +309,10 @@ The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in pare
 - **Matching** uses `OriginalDefinition` metadata names.
 - **Generated code.** `ConfigureGeneratedCodeAnalysis(Analyze | ReportDiagnostics)` stops generators
   from smuggling calls in.
+- **Attribute applications are skipped** by the operation rules: they are metadata, never run by a
+  step. Without this, the SDK-generated `AssemblyInfo.cs` (`System.Reflection.AssemblyVersion`,
+  `AssemblyMetadata("IsTrimmable", …)` and the rest) would report MMO1008, because Roslyn models each
+  attribute as an object creation of a `System.Reflection` type.
 
 **Rationale**:
 
@@ -311,7 +322,10 @@ The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in pare
   - `nint` and `NFloat` change width;
   - a `HashSet<int>` enumerates as `1,7,3,9,5` after removals;
   - `string.GetHashCode` changes per process;
-  - float-to-integer conversions differ (R4).
+  - float-to-integer conversions differ (R4). `int.CreateSaturating(float.NaN)` and
+    `int.CreateTruncating(float.NaN)` give 0 on x64 and −2147483648 in the wasm interpreter, and so
+    does a cast of NaN to an `int`-backed enum, because CoreLib and the cast both reach the raw
+    conversion [measured, design review].
 - **Horizontal `Vector128` ops are banned as policy.** Lane-wise ops, `Sum` and `Dot` were identical
   over 200k vectors, but the reduction order is an implementation detail.
 - **`double` is banned for FR-012**, not for determinism. Untyped literals silently create doubles,
@@ -450,11 +464,17 @@ In order:
 7. **Sub-moves.** `n = clamp(⌈|v·dt|/r⌉, 1, MaxSubMoves)`. Each sub-move runs:
    - **(a) push-out**, at most 4 iterations, reporting `Stuck`;
    - **(b) slide**, at most `maxSlideIterations` sweeps (placeholder 5):
-     - walkable hits re-project;
-     - steep hits clip against the horizontalised normal, and zero v.y if the velocity still
-       points into the face;
-     - a crease rule and a no-reversal rule apply, and a cap with motion left reports
-       `SlideCapReached`;
+     - walkable hits re-project onto the support plane when grounded, and clip against the
+       contact normal when airborne (a landing is then found by the ground probe);
+     - steep hits clip against the horizontalised normal when grounded, in walls-only mode, or
+       airborne with v.y > 0, and then zero v.y if the velocity still points into the face, so a
+       character never climbs a steep face;
+     - a steep hit while airborne with v.y ≤ 0 clips against the true contact normal, so a falling
+       character slides down the face instead of hanging on it;
+     - the crease rule applies only when the velocity clipped against the new plane would move back
+       into an earlier plane of the same slide, the three-plane stop only when the crease velocity
+       still moves into a third plane, and the no-reversal rule as before; a cap with motion left
+       reports `SlideCapReached`;
    - **(c) step-up**: up, forward against walls only, then down. It is accepted only if the landing
      **contact point** rises at most StepHeight above the starting contact.
 8. **Ground probe** with snap. Support is a walkable normal, **or** an edge or vertex contact on a
@@ -482,6 +502,26 @@ example, StepHeight must be at least r·(1 − cos limit).
 | No ledge rule | A 0.3 m stair not climbed at walk speed (30 and 60 Hz) or crouch speed | The ledge rule: climbs at 20, 30 and 60 Hz |
 | A steep re-hit loop while grounded | 0.26% of slides used every iteration | Zero v.y against steep faces |
 
+- **Two slide rules were found in design review, after the prototype**:
+  - With every steep hit clipped against the horizontalised normal, a character falling onto a
+    50° face keeps v = (0, v.y, 0), because the horizontal clip cannot remove a vertical component;
+    zeroing v.y then stops it, and it hangs on the face, airborne, step after step. Clipping a
+    falling character against the true normal lets it slide down.
+  - An unconditional crease stops a character dead at every obtuse concave join. On a wall faceted
+    at 10°, n1 = (0, 0, 1) and n2 = (−sin 10°, 0, cos 10°) give a vertical crease, so a horizontal
+    velocity projects to 0. Clipping against n2 alone gives (6.79, 0, 1.20) from (7, 0, 0), which
+    does not re-enter facet 1, so no crease is needed.
+
+  Tests, in `tests/MmoEngine.SimCore.Tests/Movement/` at 20, 30 and 60 Hz, on small worlds built in
+  the test: `SlideTests.FallingOntoASteepFaceSlidesToItsFoot` (Theory over 50° and 70° faces: a
+  character released at rest 0.5 m above a face of height h and angle θ, with no input, is grounded on
+  the floor at its foot within twice the frictionless time, 2·(√(1/g) + √(2h/g)/sin θ) seconds rounded
+  up to whole steps; its Position.y never rises; and it is never grounded on the face) and
+  `SlideTests.FacetedConcaveWallKeepsItsParallelSpeed` (Theory: a concave wall faceted at 10°, walked
+  along with Forward held parallel to the first facet, and walked into at 45°: in the step whose
+  slide reaches each join, the horizontal speed after the step is at least cos 10° times the speed
+  at its start, less 1e-4 m/s, the character never stops, and no step reports SlideCapReached).
+  `corner-wedge` still stops at the 90° corner, where the crease applies.
 - **The ledge rule makes the resting point depend on the rate.** Dropped onto a lip, the axis settles
   at x = 11.645, 11.75 and 11.655 at 20, 30 and 60 Hz. Each rate is deterministic, so tests assert
   per-rate positions.
@@ -496,7 +536,7 @@ example, StepHeight must be at least r·(1 − cos limit).
 
   At 5, a capped slide stops short, safely. 8 would add 60% more worst-case sweeps [estimate].
 - **Scenario results [measured]**, at 20, 30 and 60 Hz, all with clearance ≥ 9.9 mm:
-  - the flat run is within 1e-5 m of Σₖ min(k·a·dt, v)·dt (US1.1);
+  - the flat run is within 1e-4 m of Σₖ min(k·a·dt, v)·dt (US1.1);
   - the 45° wall (US1.2);
   - rises of 0.10–0.34 m climb, and 0.36 and 0.50 m block (US1.3);
   - 30° and 44° slopes climb, and 46°, 50° and 70° are refused (US1.4);
@@ -632,7 +672,9 @@ example, StepHeight must be at least r·(1 − cos limit).
   | Unclipped | 83 | 3.2 mm | 24 mm |
   | Clipped to the bounding sphere | 0 | 0.004 mm | 0.11 mm |
 
-- **Hitbox bits matched** across 9,363 yaws × 3 capsules.
+- **Hitbox bits matched** across 9,363 yaws × 3 capsules. Hitboxes are not hashed, so in CI the
+  pose rows of the cross-build tables compare them in every build (US5.5,
+  [contracts/wasm-api.md](contracts/wasm-api.md#cross-build-tables)).
 - **Owner exclusion is necessary.** The eye sits inside the owner's head capsule, so without the
   exclusion every shot would hit at t = 0.
 
@@ -764,7 +806,8 @@ The adapter produced the same paths and messages as the guard.
 
 - `LoadCollision`, `LoadConfig` and `Reset`;
 - `CommandBuffer` and `ReportBuffer`;
-- `StepQueued` and `RunStream`.
+- `StepQueued` and `RunStream`;
+- `EvaluateTables`, which runs the cross-build math and hitbox tables (R3).
 
 Records are packed, and the report buffer's header gives their total length, so no record-size export
 is needed ([contracts/wasm-api.md](contracts/wasm-api.md)).
@@ -814,8 +857,9 @@ Data crosses the boundary as **bytes only**:
   - `no-store` caching;
   - COOP and COEP headers;
   - a unique work directory per run.
-- **Comparison.** `simcore agreement prepare` writes the manifest, the streams and the server
-  records. `simcore agreement compare` writes the field-level divergence report.
+- **Comparison.** `simcore agreement prepare` writes the manifest, the streams, the server records
+  and the server's cross-build table results. `simcore agreement compare` writes the field-level
+  divergence report, and the first mismatching row when a build's table results differ.
 - **Build names.**
   - `node-interp` and `node-interp-nojit`.
   - `chromium-worker`, `firefox-worker` and `webkit-worker`.
