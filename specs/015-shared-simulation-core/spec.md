@@ -155,14 +155,15 @@ allowed sample none. Then build the core itself with the analyzer as an error.
 
 1. **Given** core code that uses a `System.Numerics` vector, quaternion or matrix type (`Vector<T>`,
    whose width differs between builds, or `Vector2`, `Vector3`, `Vector4`, `Quaternion`,
-   `Matrix4x4`, whose operations a compiler may reorder), or a horizontal or fused `Vector128`
-   operation, **When** it is built, **Then** the build fails with the vector rule's diagnostic.
+   `Matrix4x4`, whose operations a compiler may reorder), or a horizontal `Vector128` operation
+   (`Vector128.Sum`, `Vector128.Dot`), **When** it is built, **Then** the build fails with the vector
+   rule's diagnostic.
 2. **Given** core code that calls `Math` or `MathF` functions outside the allowed list, **When** it is
    built, **Then** the build fails with the platform-math rule's diagnostic naming the core's
    replacement.
-3. **Given** core code that calls `MathF.FusedMultiplyAdd`, `Math.FusedMultiplyAdd` or an `Fma`
-   intrinsic, **When** it is built, **Then** the build fails with the fused-multiply-add rule's
-   diagnostic.
+3. **Given** core code that calls `MathF.FusedMultiplyAdd`, `Math.FusedMultiplyAdd`,
+   `Vector128.FusedMultiplyAdd` or an `Fma` intrinsic, **When** it is built, **Then** the build fails
+   with the fused-multiply-add rule's diagnostic, and with no other rule's diagnostic for the same call.
 4. **Given** core code that enumerates a `Dictionary`, `HashSet` or other hash-ordered collection,
    **When** it is built, **Then** the build fails with the unordered-iteration rule's diagnostic.
 5. **Given** core code that reads `DateTime.Now`, `DateTime.UtcNow`, `Stopwatch`,
@@ -171,7 +172,11 @@ allowed sample none. Then build the core itself with the analyzer as an error.
 6. **Given** core code that takes a lock, waits on a task or uses another blocking primitive, **When**
    it is built, **Then** the build fails with the blocking-synchronization rule's diagnostic
    (constitution Principle II).
-7. **Given** each of the core's trigonometric and inverse-trigonometric functions, **When** they are
+7. **Given** core code that computes in `double`, `Half`, `nint` or `NFloat`, converts a `float` to an
+   integer outside the core's saturating helpers, or takes a platform-dependent path (conditional
+   compilation, an operating-system or runtime query, reflection), **When** it is built, **Then** the
+   build fails with that rule's diagnostic.
+8. **Given** each of the core's trigonometric and inverse-trigonometric functions, **When** they are
    evaluated over a fixed table of inputs spanning their domains, **Then** every result is within the
    documented error bound of the true value, and the server and WebAssembly builds return identical
    bits for every input.
@@ -368,7 +373,9 @@ pass for every step function.
 - **FR-012**: The core MUST use only scalar `float` arithmetic or explicit lane-wise 128-bit vector
   operations. It MUST NOT use `System.Numerics` vector, quaternion or matrix types, horizontal
   vector operations, fused multiply-add, platform math functions outside an allowed list, iteration
-  over hash-ordered collections, the wall clock, or unseeded randomness.
+  over hash-ordered collections, the wall clock, or unseeded randomness. It MUST NOT compute in
+  `double` or platform-sized number types, convert a `float` to an integer except through the core's
+  saturating helpers, or take a different code path on different platforms.
 - **FR-013**: The core MUST ship its own sine, cosine, tangent, arcsine, arccosine, arctangent and
   two-argument arctangent, each with a documented maximum error. Square root MAY use the platform's
   IEEE 754 correctly rounded operation, which is identical in every build by definition.

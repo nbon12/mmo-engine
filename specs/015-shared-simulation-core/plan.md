@@ -1,202 +1,340 @@
-# Implementation Plan: [FEATURE]
+# Implementation Plan: Shared Simulation Core
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Branch**: `015-shared-simulation-core` | **Date**: 2026-11-14 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
-
-**Note**: This template is filled in by the `/speckit-plan` command; its definition describes the execution workflow.
+**Input**: Feature specification from `/specs/015-shared-simulation-core/spec.md`
 
 ## Summary
 
-[Extract from feature spec: primary requirement + technical approach from research]
+This builds Phase 1 sub-spec 3 (nbon12/mmo-engine#12), first slice: the shared simulation core. One
+C# library steps character movement, character collision, weapon timing, projectile flight and
+hitboxes. It gives the same bits on the server (.NET 10, Linux x64) and in the browser (.NET
+WebAssembly, in a dedicated Web Worker).
+
+- **Core library** `MmoEngine.SimCore`. It has pure step functions over float32 state, its own
+  trigonometry, three versioned binary formats, a canonical state hash and one configuration rule
+  table. Its only dependency is `System.IO.Hashing`.
+- **Analyzer** `MmoEngine.SimCore.Analyzers`. Nine Roslyn rules (MMO1001–MMO1009) fail the core's
+  build on any construct that can make the builds disagree, or that blocks.
+- **Browser build** `MmoEngine.SimCore.Wasm`. A thin `[JSExport]` host over the core's batched
+  stepper and stream runner. Only bytes cross the JavaScript boundary.
+- **Agreement suite**. The `simcore` CLI runs every committed recorded stream, and streams from 50
+  generated seeds, through the server build. The WebAssembly build then runs them in Node (with the
+  jiterpreter on and off) and in Chromium, Firefox and WebKit Workers. The CLI compares every step's
+  hash and reports the first divergent step field by field. CI gates on it.
+- **Measurements**. BenchmarkDotNet covers the server steps. A measurement job records the
+  WebAssembly download size, startup and step cost for the interpreted build, and for the
+  ahead-of-time build where the toolchain produces one.
+
+The research ([research.md](research.md)) prototyped every hard part and measured it in this
+sandbox. The prototypes covered:
+
+- the math, swept exhaustively against double references;
+- the character controller, run against fuzz worlds;
+- the analyzer, with 81 tests;
+- the WebAssembly host and its Node and Chromium Worker runners;
+- the formats, weapons, spread and ballistics.
+
+Every one gave identical bits across x64, the interpreted WebAssembly build and the AOT build.
 
 ## Technical Context
 
-<!--
-  ACTION REQUIRED: Replace the content in this section with the technical details
-  for the project. The structure here is presented in advisory capacity to guide
-  the iteration process.
--->
+**Language/Version**:
 
-**Language/Version**: [e.g., C# / .NET (version pinned in global.json), TypeScript 5.x or NEEDS CLARIFICATION]
+- C# on .NET 10 (`global.json` 10.0.100, `rollForward: latestPatch`).
+- JavaScript ES modules on Node 22, for the agreement and measurement runners.
+- Python 3 for the coefficient generators and the workflow tests.
 
-**Primary Dependencies**: [e.g., Orleans, Npgsql/EF Core, FastEndpoints, Angular — each with its license or NEEDS CLARIFICATION]
+**Primary Dependencies**:
 
-**Storage**: [if applicable, e.g., game database (PostgreSQL via the persistence tier), a web surface's own PostgreSQL database, R2/MinIO, or N/A]
+- Core: `System.IO.Hashing` 10.0.14 (MIT, already used). No other package; an architecture test
+  enforces it.
+- Analyzer: `Microsoft.CodeAnalysis.CSharp` 5.0.0 (MIT, new). It is pinned to the SDK's compiler
+  (research R5).
+- Analyzer tests: `Basic.Reference.Assemblies.Net100` 1.8.14 (MIT, new, tests only).
+- Browser build: the `Microsoft.NET.Sdk.WebAssembly` SDK and its runtime packs (MIT, from nuget.org).
+  The `wasm-tools` workload (MIT) is optional, and only the measurement job installs it.
+- Server helpers and CLI: FluentValidation 12.2.0 (Apache-2.0), System.CommandLine 2.0.14 (MIT),
+  Serilog 4.4.0 and `Serilog.Formatting.Compact` 3.0.0 (Apache-2.0). All are already used.
+- Tests and benchmarks: xunit.v3, CsCheck (Apache-2.0), coverlet (MIT) and BenchmarkDotNet 0.15.8
+  (MIT). All are already used.
+- Runners: `@playwright/test` 1.63.0 (Apache-2.0, a new dev dependency of `tools/agreement/` only,
+  pinned exactly, lockfile committed). Node's built-in `node:test`.
+- Offline tools that are never linked or shipped: mpmath 1.4.1 and numpy (BSD), for coefficient
+  generation.
 
-**Testing**: [e.g., xUnit + .NET Testcontainers, simulation harness, BenchmarkDotNet, Jasmine/Karma, Playwright, Cypress or NEEDS CLARIFICATION]
+**Storage**: N/A. The committed content files under `simcore/` are test fixtures and content: the
+configuration, the test collision world, the recorded streams and the golden fixtures.
 
-**Target Platform**: [e.g., Linux container on a dedicated 16+ core node, Cloud Run, browser or NEEDS CLARIFICATION]
+**Testing**:
 
-**Project Type**: [e.g., continent server, persistence tier, gateway, browser game client, web surface, regionizer simulator, tooling or NEEDS CLARIFICATION]
+- xUnit v3. Theories cover:
+  - step rates 20, 30 and 60 Hz;
+  - stances and buttons;
+  - every analyzer rule;
+  - every format refusal;
+  - each weapon and each projectile class.
+- CsCheck properties with fixed seeds (no penetration, no stuck state, step-up bound).
+- Exhaustive and table-driven math bound tests.
+- Zero-allocation tests (`GC.GetAllocatedBytesForCurrentThread`, server build).
+- Roslyn analyzer tests with a backstop compile of the real core sources.
+- Golden-fixture round trips.
+- The `node:test` and Playwright agreement runs.
+- Python `unittest` for the new workflow.
 
-**Components Touched**: [browser client / gateway / continent server / persistence tier / PostgreSQL / Agones and Kubernetes / web surface]
+**Target Platform**:
 
-**Roadmap Phase**: [simulator / Phase 1 (one region per server) / Phase 2 (regionizer parallelism) / web surface / other]
+- The library runs in process on Linux x64, for the continent server and the bots. x64 is the
+  reference.
+- .NET WebAssembly runs in a dedicated Web Worker (Chromium, Firefox, WebKit) and in Node 22.
+- CI runs on GitHub-hosted `ubuntu-latest`.
 
-**Performance Goals**: [domain-specific, e.g., region tick within 33 ms at 30 Hz for N players, bytes per client per tick, p95 API latency or NEEDS CLARIFICATION]
+**Project Type**: A shared gameplay library with its analyzer and browser host, plus tooling (CLI,
+runners, benchmarks).
 
-**Constraints**: [domain-specific, e.g., zero per-tick allocations, no locks in gameplay code, no blocking I/O on tick threads or NEEDS CLARIFICATION]
+**Components Touched**: The shared simulation core, which the continent server, the bots and the
+browser client will use. No running component changes in this slice. Sub-specs 5, 6 and 8 consume
+the core.
 
-**Scale/Scope**: [domain-specific, e.g., 2,000 players per continent, a 1,000-player fight, N web-surface users or NEEDS CLARIFICATION]
+**Roadmap Phase**: Phase 1 (one region per server), sub-spec 3, first slice. The vehicle-physics slice
+follows separately.
+
+**Performance Goals**:
+
+- The movement step stays well inside the region tick. The prototype measured 2.6–10.1 µs per
+  character step on x64 (sandbox, research R8), which is 2.6–10.1 ms for 1,000 characters against
+  33 ms at 30 Hz.
+- One predicted character per browser frame: about 14 µs AOT and about 95 µs interpreted (prototype
+  measurements), against a 16.7 ms frame.
+- The agreement suite completes in under 10 minutes in CI (SC-006). The job's own
+  `timeout-minutes: 10` enforces it.
+
+**Constraints**:
+
+- The determinism rules (FR-012 to FR-017), enforced by the analyzer and checked by the agreement
+  suite.
+- Zero managed allocation per step after warm-up (FR-032).
+- No locks or blocking in the core (Principle II).
+- Every loop has a fixed bound (FR-005).
+- No I/O, logging or clock reads in the core.
+- The WebAssembly download size is measured, not gated: the core adds tens of KiB to a runtime of
+  about 0.9–1.4 MiB brotli.
+
+**Scale/Scope**:
+
+- World capacity is configurable up to 1,024 characters and 16,384 projectiles. Tests and streams use
+  up to 64 characters and 1,024 projectiles.
+- 18 committed named streams plus 50 generated seeds.
+- Collision files up to 256 MiB, with at most 64 triangles in a grid cell.
+- Five `src/` projects, three test projects, one benchmark project and one Node tool folder.
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: passed before Phase 0 research; re-checked after Phase 1 design (below, all still pass).*
 
-Confirm the plan satisfies the active MMO Engine Constitution. Mark each gate as passing, not
-applicable (with a one-line reason), or a violation justified under Complexity Tracking.
-
-- **Component and stack fit** (I, XII, Web Surfaces): The plan names every component it touches
-  and uses the constitution's stack for each. A web-app-like feature is a web surface on the web
-  stack (Angular on Cloudflare Pages, FastEndpoints, PostgreSQL on Neon, the shared ASP.NET Core
-  Identity + JWT account identity, Cloud Run, Cloudflare, Docker Hub, Sentry, Swashbuckle in
-  development only, R2/MinIO); the real-time path adopts no web hosting choices.
-- **Region ownership and single writer** (II, III): Every new piece of state has a named owner
-  (region, area actor, global region, grain or day-one service, or web-surface database). Gameplay
-  code takes no locks. Cross-region effects go through the entity, location, global or area
-  queues, and cross-region reads come only from snapshots. Where outcomes could depend on the
-  order of work from different senders, a deterministic apply order is defined.
-- **Interaction classes and claims** (III, Architecture Constraints): Each new interaction is
-  classed instant, deferred or read-only. Any change to claims, claim radii or portals states its
-  effect on bridging and on the largest region's share of players.
-- **Regionizer invariants** (Architecture Constraints): Invariants 1–4 still hold, new region data
-  defines its merge and split callbacks, and timers survive merges and splits.
-- **Tick budget and performance** (VI): Tick-path cost is stated and labeled estimate or
-  measurement (see Tick Budget and Evidence). The tick path makes no per-tick allocations, keeps
-  structure-of-arrays data, and does no blocking I/O. Benchmarks and zero-allocation tests are
-  planned, the degradation order is respected, and new metrics are listed.
-- **Authority, netcode and trust** (IV): The server stays authoritative. Client input is validated
-  for size, rate, ranges, sequencing and permission. Interest management bounds what clients learn.
-  Lag compensation uses pose history at true timestamps.
-- **Persistence and ownership** (V): Every live record has exactly one owner, and only the
-  persistence tier writes the game database. Each data class has a write policy (immediate ledger,
-  on change, batched, never persisted) and a concurrency token. Orleans transactions are not used.
-  Migrations are strict, tested against PostgreSQL and applied idempotently once per rollout.
-- **Contracts and protocols** (Engineering Standards): Wire-protocol messages come from a single
-  source of truth, with version negotiation and golden fixtures. HTTP APIs document their envelope,
-  error shape, pagination (default and maximum `limit`), authentication, authorization and
-  cacheability. Types crossing deploy boundaries tolerate version skew.
-- **Licensing and clean room** (VII): Every new dependency is MIT or Apache-2.0 or an approved
-  exception, and no copyleft code is linked, copied or deployed. External design sources are
-  recorded in `research.md`; Folia and AzerothCore are used through their documentation only.
-- **Evidence and open decisions** (VI, Architecture Constraints): Tuning values come from the
-  simulator or load tests, are recorded with their run, and live in validated configuration. The
-  plan does not silently settle an open decision, and any decision it needs is called out.
-- **Operations** (Engineering Standards): Configuration is validated with FluentValidation and
-  fails fast, including the environment name. Secrets are externalized. Serilog JSON logs, Sentry
-  error capture, OpenTelemetry metrics and health reporting (Agones SDK or readiness endpoints) are
-  planned. Production errors leak no system details.
-- **Security** (Engineering Standards): Authentication is required, authorization is server-side
-  and least-privilege, per-connection rate and size limits apply, sensitive events are logged,
-  admin and moderation actions are auditable, and player-generated content is treated as untrusted.
-- **Testing discipline** (VIII, Testing Standards): Tests are written first. Simulation tests are
-  deterministic (time base, seeds, tick stepping). Parallel-equivalence tests cover any change to
-  parallel phases. Persistence tests use PostgreSQL through Testcontainers, with transaction
-  isolation or an approved equivalent named here. Tests are parallel- and rerun-safe, and data
-  variations use xUnit Theories. Web-surface and game-client test tools are used where applicable.
-- **CI/CD and documentation**: Sonar, Codecov (95% for relevant changed files), environment
-  isolation and a `docs/patch-notes.md` entry are accounted for, plus a Repowise refresh once
-  Repowise is configured.
-- **Executable and living specs** (IX): Acceptance criteria are backed by runnable,
-  currently-passing tests. `spec.md` stays truthful, with no drift, including older, already-merged
-  specs. This feature's `spec.md` and `tasks.md` are slated to be updated before the PR; older specs
-  only need their `spec.md` kept current, and `tasks.md`, `plan.md` and `research.md` are not
-  refreshed. Any contradiction with a former spec is reconciled so the corpus stays consistent.
-- **Spec independence and parallelism** (X): This spec is individually completable without
-  another spec landing first. Any hard dependency on a sibling spec (a schema, protocol message,
-  contract or shared component it must land after) is documented here and minimized. Where this
-  feature was split from a larger effort, the split lets sibling specs proceed in parallel.
-- **Incremental delivery** (XI): The plan fits the current roadmap phase (simulator first; Phase 1
-  runs one region per server with region-ready code) and delivers a focused vertical slice, or a
-  justified cross-cutting change.
-- **Autonomous delivery** (XIII): The plan contains no task, checkpoint or verification that assigns
-  work to a person or needs manual QA, playtesting-as-acceptance, review, approval or sign-off.
-  Ambiguities are recorded Assumptions, not open questions (an open decision is called out, not
-  assumed). CI/CD and ops controls are automated guards (dry run, rate limit, kill switch, audit
-  trail), not required reviewers. Any unavoidable human action (third-party accounts or root
-  credentials, billing, admin-only settings) is off the critical path: the work ships inert and safe
-  by default and the maintainer is notified once.
+- **Component and stack fit** (I, XII): Passes. The core is the "shared simulation" library named in
+  the architecture: C#/.NET on the server, and .NET WebAssembly in a Web Worker for the TypeScript
+  browser client. No web-surface stack is used, and no real-time path adopts web hosting.
+- **Region ownership and single writer** (II, III): Passes. The core owns no state. Every step
+  function takes state in and returns state out, so the owning region (sub-spec 5) or the client's
+  Worker stays the single writer. Effects inside one step apply in a fixed order: inputs, then
+  movement in ascending entity ID, weapons in ascending ID, hitboxes, and projectiles in ascending ID
+  ([data-model.md](data-model.md)). The core takes no locks. The analyzer (MMO1006) bans them, along
+  with every blocking primitive.
+- **Interaction classes and claims** (III): Passes. Movement and collision are instant interactions
+  of the owning region. Projectile flight is the trace behind instant hits and deferred hand-overs.
+  No claim, claim radius, portal or bridging change.
+- **Regionizer invariants**: N/A. The core has no region data, and merges and splits don't touch it.
+- **Tick budget and performance** (VI): Passes. Costs are stated and labelled (see Tick Budget and
+  Evidence). Steps don't allocate, and buffers are owned by the world and sized from the configured
+  maxima. Benchmarks (FR-030) and zero-allocation tests (FR-032) are planned for every step function.
+  The core does no I/O. A degraded region at 20 Hz calls it with the 20 Hz step length.
+- **Authority, netcode and trust** (IV): Passes. The server stays authoritative, and the client runs
+  the same code to predict. Every input command is decoded with strict length and version checks,
+  then validated before it affects state: ranges, known bits, sequencing and weapon slot (FR-019,
+  [contracts/input-command-format.md](contracts/input-command-format.md)). Wire size and rate limits
+  belong to sub-specs 4 and 7. Lag compensation is sub-spec 6, and the hitbox builder is its input.
+- **Persistence and ownership** (V): N/A. Nothing is persisted.
+- **Contracts and protocols**: Passes. Three versioned binary formats each begin with a format
+  identifier and version and have golden fixtures. The canonical state serialisation is documented
+  ([contracts/](contracts/)). The input command's single source of truth is the C# definition, which
+  the browser runs in WebAssembly. The `.bin` and `.json` golden pairs are the reference for any
+  future TypeScript decoder. Version negotiation and packet framing stay with the transport.
+- **Licensing and clean room** (VII): Passes. Every new dependency is MIT or Apache-2.0. The math,
+  collision and ballistics come from papers, textbooks and permissively licensed documentation, all
+  listed in [research.md](research.md#design-sources). No GPL, LGPL or AGPL code was read or copied;
+  Quake's slide move was deliberately not consulted. The coefficient generator is our own, run offline
+  with BSD tools that are never linked.
+- **Evidence and open decisions** (VI): Passes. No tuning value is set. Movement, weapon, projectile
+  and hitbox values are placeholders in validated configuration
+  ([contracts/config-rules.md](contracts/config-rules.md)). Open decision 3 (tick rate) stays open:
+  the step length is configuration, tested at 20, 30 and 60 Hz. Open decision 5 (hit detection)
+  stays open: the projectile trace and hitboxes serve both server-simulated and client-reported hits,
+  and neither claims nor their validation is built. Open decisions 4 and 9 are untouched.
+- **Operations**: Passes for a library and tools. The core validates its configuration with the
+  dependency-free rule table (`ConfigGuard`) before any step. On the server, `SimConfigValidator`
+  (FluentValidation) applies the same table and fails fast. The browser build's equivalent guard is
+  `LoadConfig`. The `simcore` CLI binds and validates its options and the environment name
+  (`DOTNET_ENVIRONMENT`, the known set, kept equal to the simulator's by a test), exits 2 on invalid
+  configuration and logs Serilog compact JSON to stderr. Sentry, OpenTelemetry, the Agones SDK and
+  health endpoints are N/A: no service runs. The core logs nothing; step reports carry reason codes
+  for the caller to log.
+- **Security**: Passes. Input commands, collision files and streams are untrusted. The decoders bound
+  every count before allocating, check lengths in checked 64-bit arithmetic, verify checksums, and
+  never return a partial result. Authentication and authorization are N/A: the core is a library.
+  The local test server binds 127.0.0.1 only and guards against path traversal.
+- **Testing discipline** (VIII): Passes. Tests are written first, in red-green order in `tasks.md`.
+  Simulation tests run on a fixed step length and seed and advance the steps each scenario implies.
+  Data variations are Theories. Tests are pure and in process. The WebAssembly runs use unique
+  temporary directories and dynamic ports, so they are safe in parallel and on rerun. Persistence and
+  Testcontainers are N/A. Parallel-equivalence tests are N/A, because the core has no parallel phase.
+- **CI/CD and documentation**: Passes. The existing .NET workflow builds, formats and tests every new
+  project, and its 95% changed-file coverage gate applies. The WebAssembly host is covered through a
+  direct project reference (research R18). A new `SimCore` workflow runs the agreement suite as a
+  gating check and runs the measurement job. A patch-notes entry ships with each PR. Sonar and
+  Codecov still wait on the owner's accounts, as before.
+- **Executable and living specs** (IX): Passes. Every acceptance scenario and Independent Test maps
+  to a named automated test in `tasks.md`. The spec was updated in this phase so that US3 and FR-012
+  match the analyzer design: a horizontal `Vector128` sample for scenario 1, fused operations under
+  the FMA rule, and the double, float-to-integer and platform-path rules.
+- **Spec independence and parallelism** (X): Passes. There is no hard dependency on another spec.
+  Sub-specs 4–9 depend on this one. The vehicle-physics slice depends on this slice's collision world
+  and agreement suite.
+- **Incremental delivery** (XI): Passes. It is a focused Phase 1 slice in two PRs (see Delivery).
+- **Autonomous delivery** (XIII): Passes. Every check is a test or a CI job. Expected hashes change
+  only through `simcore streams record --reason`, which an agent runs and commits. No step needs a
+  person.
 
 ## Tick Budget and Evidence
 
-> Fill when the feature adds or changes tick-path work, Delivery work or a tuning value. Otherwise
-> write "N/A: no tick-path, Delivery or tuning changes."
+All numbers are from this session's prototypes on the sandbox (4 vCPU Xeon at 2.3 GHz, .NET SDK
+10.0.115, Node 22). They are labelled as measurements on the sandbox, not on a CI runner class. The
+benchmark project replaces them with runner-class measurements (FR-030, SC-007).
 
-| Work item or tuning value | Estimate or measurement | Source (simulator run, load test, benchmark, or "estimate") | Share of the region tick budget |
-|---------------------------|-------------------------|---------------------------------------------------------------|---------------------------------|
-| [e.g., movement for N players] | [estimate: X ms] | [estimate] | [X% of 33 ms] |
+| Work item | Estimate or measurement | Source | Share of the region tick budget |
+|-----------|-------------------------|--------|---------------------------------|
+| Movement step, flat run | measurement (sandbox): 2.6 µs per character | research R8, prototype, 200,000 steps | 1,000 characters: 2.6 ms, 7.9% of 33 ms |
+| Movement step, wall slide | measurement (sandbox): 3.7 µs | research R8 | 1,000: 3.7 ms, 11% |
+| Movement step, wedged in a corner (worst case seen) | measurement (sandbox): 10.1 µs | research R8 | 1,000: 10.1 ms, 31% (a pathological case for all players at once) |
+| Movement step, fuzz world | measurement (sandbox): 2.9 µs | research R8 | 1,000: 2.9 ms, 8.8% |
+| Weapon step | estimate: < 0.2 µs per weapon (integer state, no floats except spread) | estimate | < 1% |
+| Spread direction per shot | estimate: about 40 ns (two sine-cosine pairs at about 19 ns each, measured in R3, plus a square root) | estimate from research R3 | < 0.1% |
+| Projectile step | estimate: 1–3 µs per projectile (segment query plus bounding-sphere-culled capsules) | estimate | 1,000 projectiles: 1–3 ms, 3–9% |
+| State hash | measurement (sandbox): 129 ns per 512 B on x64 | research R13 | Test and reconciliation tool only; whether production ticks hash is sub-spec 6's decision |
+| Browser: movement step per frame | measurement (sandbox): AOT about 14 µs, interpreted about 95 µs | research R8, R17 | 0.08% or 0.6% of a 16.7 ms frame |
 
-- **Allocations**: [how the tick path stays allocation-free, and which zero-allocation tests prove it]
-- **Degradation**: [how the feature behaves when its region tightens Delivery caps or drops to 20 Hz]
-- **Metrics**: [metrics added or affected, and their alerts]
+- **Allocations**: The world owns every buffer: the canonical-state buffer, the collision query
+  span, the hitbox span and the event lists, all sized from the configured maxima. Steps write into
+  caller-owned spans and fixed-capacity arrays. The core has no LINQ, lambdas, boxing or static
+  mutable state. Zero-allocation tests run 1,000 steps after warm-up, for each of the movement,
+  weapon, projectile and full-world steps, and assert 0 bytes (US7.3, FR-032, SC-005).
+- **Degradation**: The core has no Delivery work. A region that drops to 20 Hz passes the 20 Hz step
+  length; the 20 Hz streams and tests cover that.
+- **Metrics**: None added. Step reports expose counters (sweeps, slide-cap hits, fire blocks) for
+  sub-spec 5 to export.
 
 ## Project Structure
 
 ### Documentation (this feature)
 
 ```text
-specs/[###-feature]/
-├── plan.md              # This file (/speckit-plan command output)
-├── research.md          # Phase 0 output (/speckit-plan command)
-├── data-model.md        # Phase 1 output (/speckit-plan command)
-├── quickstart.md        # Phase 1 output (/speckit-plan command)
-├── contracts/           # Phase 1 output (/speckit-plan command)
-└── tasks.md             # Phase 2 output (/speckit-tasks command - NOT created by /speckit-plan)
+specs/015-shared-simulation-core/
+├── plan.md
+├── research.md
+├── data-model.md
+├── quickstart.md
+├── contracts/
+│   ├── input-command-format.md
+│   ├── collision-data-format.md
+│   ├── recorded-stream-format.md
+│   ├── state-serialization.md
+│   ├── config-rules.md
+│   ├── analyzer-rules.md
+│   ├── wasm-api.md
+│   ├── simcore-cli.md
+│   └── measurement-report.md
+├── checklists/requirements.md
+└── tasks.md
 ```
 
 ### Source Code (repository root)
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
 
 ```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
-
-tests/
-├── contract/
-├── integration/
-└── unit/
-
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
-
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
-
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
-
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
+src/MmoEngine.SimCore/                    # the core; BCL + System.IO.Hashing only; analyzer attached
+├── Math/                                 # SimMath; generated SimMathCoefficients.g.cs, TwoOverPi.g.cs
+├── Geometry/                             # Vec3, ClosestPoints, SegmentCapsule
+├── Collision/                            # CollisionWorld, Heightfield, MeshSet, UniformGrid, CapsuleSweep, SweepHit
+├── Movement/                             # CharacterState, MovementStep, MovementOutcome
+├── Weapons/                              # WeaponState, WeaponStep, Spread, FireBlock, WeaponPhase
+├── Projectiles/                          # Projectile, ProjectileStep, Ballistics, ProjectileHit, ExpiryReason
+├── Hitboxes/                             # HitboxLayout, HitboxBuilder, Hitbox
+├── Inputs/                               # InputCommand, InputCodec, InputValidator, InputRejection, Buttons
+├── Formats/                              # FormatError, CoreFormatException, CollisionFile, RecordedStream, StateSerializer
+├── Config/                               # SimConfig, ConfigFields, ConfigRelations, ConfigGuard, CompiledConfig, ConfigBlock
+├── World/                                # SimWorld, StepReport, StepFault, StepEvents
+├── Batch/                                # BatchStepper, StreamRunner
+└── Hashing/                              # StateHash
+src/MmoEngine.SimCore.Analyzers/          # DeterminismAnalyzer (MMO1001–MMO1009), release-tracking files
+src/MmoEngine.SimCore.Wasm/               # Microsoft.NET.Sdk.WebAssembly host: SimCoreExports ([JSExport]), Program.cs
+src/MmoEngine.SimCore.Server/             # SimConfigJson, SimConfigValidator (FluentValidation), SimEnvironment,
+                                          #   TestWorldGenerator, ScenarioCatalog, StreamGenerator, DivergenceReport
+src/MmoEngine.SimCore.Cli/                # `simcore`: content, streams, agreement, measure, config commands
+tests/MmoEngine.SimCore.Tests/            # core, server-helper and CLI tests
+├── Architecture/                         # dependency and wiring tests (BCL + System.IO.Hashing only)
+├── Math/  Collision/  Movement/  Weapons/  Projectiles/  Hitboxes/  Inputs/  Formats/  Config/  World/
+├── Scenarios/                            # US1, US4, US5 acceptance scenarios at 20/30/60 Hz
+├── Properties/                           # CsCheck, fixed seeds
+├── Allocation/                           # zero-allocation tests (serial collection)
+├── Agreement/                            # streams verify, compare, divergence report, one-ulp perturbation
+└── Cli/
+tests/MmoEngine.SimCore.Analyzers.Tests/  # rule Theories, backstop compile of src/MmoEngine.SimCore, wiring Fact
+tests/MmoEngine.SimCore.Wasm.Tests/       # calls the exports directly (coverage of the host)
+benchmarks/MmoEngine.SimCore.Benchmarks/  # movement, weapon, projectile, hitbox, hash benchmarks; p99 report
+tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/, web/, lib/
+tools/simcore/                            # gen_coeffs.py, gen_twoopi.py, emit_cs.py, requirements.txt
+simcore/                                  # config/default.json, content/test-world.mmcd, streams/*.mmrs,
+                                          #   streams/REGENERATIONS.md, golden/{input,collision,stream}/, README.md
+.github/workflows/simcore.yml             # SimCore: agreement (gating) and measure jobs
+tests/workflows/test_simcore_workflow.py  # pins, triggers, timeout, browsers
+.gitattributes                            # binary content types
 ```
 
-**Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+**Structure Decision**: The core is one library with no dependencies beyond `System.IO.Hashing`, so it
+trims into the WebAssembly download and has a single assembly for the analyzer to guard. Code that
+only the server side needs lives in `MmoEngine.SimCore.Server`, which the continent server will reuse:
+
+- JSON configuration binding and the FluentValidation adapter;
+- the environment-name check;
+- the content and stream generators;
+- the divergence report.
+
+The browser host holds only the `[JSExport]` delegations, which keeps unsafe interop code out of the
+analyzed assembly. The CLI is a thin System.CommandLine shell, matching the repository's other CLIs.
+The regionizer's regex banned-API scan stays as it is. Moving it onto the analyzer is a later
+follow-up, because the regionizer computes in doubles.
+
+## Delivery
+
+The work ships as two vertical slices. Each is a PR that leaves `main` green.
+
+1. **Core, analyzer, formats and server-side agreement** on `015-shared-simulation-core`. This covers
+   the spec artifacts, US1, US3, US4, US5 and US6, plus:
+   - the server benchmarks and zero-allocation tests (US7.1, US7.3);
+   - the `simcore` CLI;
+   - the committed content and streams;
+   - `streams verify`, which reruns every committed stream in a fresh process.
+
+   The existing .NET workflow runs all of it. No guarded path is touched.
+2. **WebAssembly build, agreement suite and measurement job**, on a new branch off `main` after
+   slice 1 merges. This covers US2 and US7.2:
+   - the Wasm host and its tests;
+   - `tools/agreement/`;
+   - `.github/workflows/simcore.yml`, its workflow test, and the `auto-merge.yml` listener.
+
+   It touches `.github/`, so it gets the independent automated review before the session merges it.
+
+`tasks.md` covers both slices. Slice 1's PR description lists slice 2 as the follow-up.
 
 ## Complexity Tracking
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
-
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+No violations.
