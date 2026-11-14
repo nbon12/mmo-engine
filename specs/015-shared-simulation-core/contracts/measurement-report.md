@@ -31,9 +31,10 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    produced is recorded as `{"produced": false, "reason": "…"}`.
 5. **Agreement on the new modes.** `simcore agreement prepare`, the Node agreement run with
    `AGREEMENT_BUILD=node-interp-relinked` and `node-aot` for the modes produced, then
-   `simcore agreement compare --require` with those builds. The AOT agreement gates the job whenever
-   AOT was produced ([research.md](../research.md) R17). The prebuilt build's agreement is the
-   `agreement` job's.
+   `simcore agreement compare --require` with those builds. The agreement of each build produced
+   here, relinked interpreted and AOT, gates the job: a divergence in either is a real divergence
+   between builds ([research.md](../research.md) R17). The prebuilt build's agreement is the
+   `agreement` job's. The measured numbers never gate.
 6. **The WebAssembly measurements**, by `tools/agreement/lib/measure.mjs`:
 
    ```bash

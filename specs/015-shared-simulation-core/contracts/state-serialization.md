@@ -273,7 +273,9 @@ A test vector, pinned by a test in `tests/MmoEngine.SimCore.Tests/Formats/`. Ste
 in the magazine, 210 in reserve) and launcher (1 and 5), no projectiles, `nextProjectileId` 1, no
 events. The position is inside the `tiny-world` collision fixture's playable area, so this state is
 also the initial state of the stream fixtures
-([recorded-stream-format.md](recorded-stream-format.md#golden-fixtures)).
+([recorded-stream-format.md](recorded-stream-format.md#golden-fixtures)). It is a format vector, not
+a valid start position: the 0.4 m capsule overlaps the tilted terrain triangle of cell (1, 0) by about
+23 mm. The stream fixtures that use it are never run, and no test may step from it.
 Length 136 = 24 + 1·(52 + 30·2):
 
 ```text

@@ -199,10 +199,10 @@ Run the same streams through the agreement suite.
 
 **Acceptance Scenarios**:
 
-1. **Given** a weapon of 600 rounds per minute at 30 Hz and the trigger held for 3 seconds with
-   enough ammunition, **When** it is stepped, **Then** exactly 30 shots fire, and the fire times
-   never drift from the configured interval by more than one step, even though the interval is not a
-   whole number of steps.
+1. **Given** a weapon of 700 rounds per minute at 30 Hz (an interval of about 2.57 steps) and the
+   trigger held for 3 seconds with enough ammunition, **When** it is stepped, **Then** exactly 35
+   shots fire, and the fire times never drift from the configured interval by more than one step,
+   even though the interval is not a whole number of steps.
 2. **Given** the same match salt, player ID and shot counter, **When** spread is computed in any
    build, **Then** the shot direction is identical to the bit; **Given** a different shot counter,
    **Then** the direction changes, and over many shots the directions fall within the configured

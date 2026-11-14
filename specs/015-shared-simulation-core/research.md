@@ -547,7 +547,8 @@ example, StepHeight must be at least r·(1 − cos limit).
 
 - **No drift.** Over a 1-hour hold, every rpm from 30 to 3600 in steps of 7 matches the exact schedule
   `ceil((k+1)·rpm/cost)` at every step, at 20, 30 and 60 Hz (FR-007).
-- **US4.1.** 600 rpm for 3 s gives 30 shots at each rate.
+- **US4.1.** 700 rpm for 3 s at 30 Hz gives exactly 35 shots; 600 rpm for 3 s gives 30 shots at
+  each rate.
 - **Uneven intervals.** 700 rpm at 30 Hz, an interval of 2.57 steps, fires at steps 0, 2, 5, 7 and 10.
 - **Fast weapons.** 2400 rpm at 30 Hz (valid with `maxShotsPerStep` 2) gives two shots in some
   steps.
@@ -865,7 +866,8 @@ Data crosses the boundary as **bytes only**:
    makes every later publish relink.
 3. Installs `wasm-tools`, continuing on error.
 4. Publishes the relinked interpreted and AOT builds.
-5. Runs the Node agreement on both. The AOT agreement gates whenever AOT was produced.
+5. Runs the Node agreement on both. Each one's agreement gates whenever that build was produced: a
+   relinked or AOT divergence is a real divergence between builds. The numbers never gate.
 6. Measures each wasm build in Node and the Chromium Worker: download size raw, brotli and gzip;
    10 cold starts; mean and p99 per step (US7.2).
 7. Validates the report and uploads it.

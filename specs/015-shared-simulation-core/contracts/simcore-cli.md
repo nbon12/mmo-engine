@@ -496,7 +496,7 @@ the agreement suite runs every one of them in every build (US1 scenario 7, US2 s
 | `crouch-under-ledge` | one character | crouches under the low ledge, releases Crouch, stays crouched until there is room to stand | US1.6 |
 | `corner-wedge` | one character | pushes into the concave corner: no tunnelling, no oscillation, the slide loop stops at its limit | Edge cases: concave corner |
 | `thin-wall-fast` | one character | moves further than its capsule radius per step at the thin wall: the step is subdivided and never passes through | Edge cases: subdivided step |
-| `rifle-burst` | one character, the rifle (600 rpm) | holds Fire for 3 s aimed above the horizon: 30 shots, recoil kick and recovery, shots expire at their range; also the measurement's weapon step | US4.1, US4.5, US5.4 |
+| `rifle-burst` | one character, the rifle (600 rpm) | holds Fire for 3 s aimed above the horizon: 30 shots, recoil kick and recovery, shots expire at their range; also the measurement's weapon step | US4.5, US5.4 |
 | `launcher-arc` | one character, the launcher | fires the heavy projectile horizontally over flat terrain; the arc meets the terrain at the closed-form step; also the measurement's projectile step | US5.1 |
 | `reload-and-empty` | one character, the rifle with 2 rounds in the magazine | fires 2 shots, reports Empty, reloads from reserve after the reload time; switches slot and presses Fire while Switching and Reloading | US4.3, US4.6 |
 | `heat-overheat` | one character, the heat test weapon (`heatPerShot` 1000) | fires continuously until it overheats, then resumes only at the recovery level; Fire while Overheated is blocked | US4.4, US4.6 |

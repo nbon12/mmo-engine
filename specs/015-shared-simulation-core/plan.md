@@ -24,7 +24,8 @@ WebAssembly, in a dedicated Web Worker).
   hash and reports the first divergent step field by field. CI gates on it.
 - **Measurements**. BenchmarkDotNet covers the server steps. A measurement job records the
   WebAssembly download size, startup and step cost for the interpreted build, and for the
-  ahead-of-time build where the toolchain produces one.
+  ahead-of-time build where the toolchain produces one. The numbers never gate. The job's agreement
+  run on the relinked interpreted and AOT builds does gate, whenever those builds are produced.
 
 The research ([research.md](research.md)) prototyped every hard part and measured it in this
 sandbox. The prototypes covered:
@@ -75,7 +76,8 @@ configuration, the test collision world, the recorded streams and the golden fix
   - every format refusal;
   - each weapon and each projectile class.
 - CsCheck properties with fixed seeds (no penetration, no stuck state, step-up bound).
-- Exhaustive and table-driven math bound tests.
+- Table-driven math bound tests on every run. The exhaustive sweeps are the same tests with
+  `MMO_EXHAUSTIVE_MATH=1`, which only the measurement job sets (research R3).
 - Zero-allocation tests (`GC.GetAllocatedBytesForCurrentThread`, server build).
 - Roslyn analyzer tests with a backstop compile of the real core sources.
 - Golden-fixture round trips.
@@ -261,6 +263,7 @@ specs/015-shared-simulation-core/
 
 ```text
 src/MmoEngine.SimCore/                    # the core; BCL + System.IO.Hashing only; analyzer attached
+├── SimCoreVersion.cs                     # RulesRevision, written into every recorded stream
 ├── Math/                                 # SimMath; generated SimMathCoefficients.g.cs, TwoOverPi.g.cs
 ├── Geometry/                             # Vec3, ClosestPoints, SegmentCapsule
 ├── Collision/                            # CollisionWorld, Heightfield, MeshSet, UniformGrid, CapsuleSweep, SweepHit
@@ -272,25 +275,27 @@ src/MmoEngine.SimCore/                    # the core; BCL + System.IO.Hashing on
 ├── Formats/                              # FormatError, CoreFormatException, CollisionFile, RecordedStream, StateSerializer
 ├── Config/                               # SimConfig, ConfigFields, ConfigRelations, ConfigGuard, CompiledConfig, ConfigBlock
 ├── World/                                # SimWorld, StepReport, StepFault, StepEvents
-├── Batch/                                # BatchStepper, StreamRunner
+├── Batch/                                # BatchStepper, StreamRunner, StepRecord, StepFaultException
 └── Hashing/                              # StateHash
 src/MmoEngine.SimCore.Analyzers/          # DeterminismAnalyzer (MMO1001–MMO1009), release-tracking files
 src/MmoEngine.SimCore.Wasm/               # Microsoft.NET.Sdk.WebAssembly host: SimCoreExports ([JSExport]), Program.cs
 src/MmoEngine.SimCore.Server/             # SimConfigJson, SimConfigValidator (FluentValidation), SimEnvironment,
                                           #   TestWorldGenerator, ScenarioCatalog, StreamGenerator, DivergenceReport
-src/MmoEngine.SimCore.Cli/                # `simcore`: content, streams, agreement, measure, config commands
+src/MmoEngine.SimCore.Cli/                # `simcore`: content, golden, streams, agreement, measure, config
 tests/MmoEngine.SimCore.Tests/            # core, server-helper and CLI tests
 ├── Architecture/                         # dependency and wiring tests (BCL + System.IO.Hashing only)
-├── Math/  Collision/  Movement/  Weapons/  Projectiles/  Hitboxes/  Inputs/  Formats/  Config/  World/
+├── Math/  Collision/  Movement/  Weapons/  Projectiles/  Hitboxes/  Inputs/  Formats/  Config/
+├── World/  Batch/
 ├── Scenarios/                            # US1, US4, US5 acceptance scenarios at 20/30/60 Hz
 ├── Properties/                           # CsCheck, fixed seeds
 ├── Allocation/                           # zero-allocation tests (serial collection)
 ├── Agreement/                            # streams verify, compare, divergence report, one-ulp perturbation
-└── Cli/
+└── Cli/                                  # command tests; Fixtures/measurement-report.json
 tests/MmoEngine.SimCore.Analyzers.Tests/  # rule Theories, backstop compile of src/MmoEngine.SimCore, wiring Fact
 tests/MmoEngine.SimCore.Wasm.Tests/       # calls the exports directly (coverage of the host)
-benchmarks/MmoEngine.SimCore.Benchmarks/  # movement, weapon, projectile, hitbox, hash benchmarks; p99 report
-tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/, web/, lib/
+benchmarks/MmoEngine.SimCore.Benchmarks/  # step, hitbox and hash benchmarks; SimCoreMeasurementExporter (p99)
+tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/, web/,
+                                          #   lib/ (runner, server, measure.mjs)
 tools/simcore/                            # gen_coeffs.py, gen_twoopi.py, emit_cs.py, requirements.txt
 simcore/                                  # config/default.json, content/test-world.mmcd, streams/*.mmrs,
                                           #   streams/REGENERATIONS.md, golden/{input,collision,stream}/, README.md
@@ -312,6 +317,29 @@ The browser host holds only the `[JSExport]` delegations, which keeps unsafe int
 analyzed assembly. The CLI is a thin System.CommandLine shell, matching the repository's other CLIs.
 The regionizer's regex banned-API scan stays as it is. Moving it onto the analyzer is a later
 follow-up, because the regionizer computes in doubles.
+
+### Decisions made during design
+
+The design documents settled these points, which the spec leaves open. They are recorded here so
+`tasks.md` and the implementation follow one answer:
+
+- **Angle rounding.** Degrees convert to binary-angle units with `SimMath.RoundToInt` (ties to even),
+  not `floor(x + 0.5)`, which rounds 0.49999997f up ([contracts/config-rules.md](contracts/config-rules.md)).
+- **Collision query buffer.** The world owns it, sized from the compiled configuration and the loaded
+  world. A query that would overflow it refuses the step with `QueryCapacityExceeded`; it never
+  truncates.
+- **Math sweeps.** The exhaustive trig sweeps are xUnit tests that run only with
+  `MMO_EXHAUSTIVE_MATH=1`, so slice 1 needs no workflow change. The fixed table gates every run.
+- **Golden fixtures.** Bit patterns and 64-bit values in golden JSON are uppercase `0x` hex strings.
+  `simcore golden write` produces the `.bin` files, and a test checks it reproduces the committed ones.
+- **Build names.** D9's builds plus `node-interp-nojit` (the jiterpreter off, in the agreement job)
+  and `node-interp-relinked` (the measurement job). `node-interp` means the jiterpreter is on.
+- **Stream outcomes.** Match, Diverged, NotComparable and Refused. Refused and NotComparable exit 2,
+  a divergence exits 1, and a divergence wins when both occur ([contracts/simcore-cli.md](contracts/simcore-cli.md)).
+- **Measurement gating.** The numbers never gate. The measurement job's agreement on the relinked
+  interpreted and AOT builds gates when they are produced, because a divergence there is a real one.
+- **The golden worked state is not a valid start position.** Its capsule overlaps a `tiny-world`
+  triangle by about 23 mm. The stream fixtures that use it are format fixtures and are never run.
 
 ## Delivery
 
