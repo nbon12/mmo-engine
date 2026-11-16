@@ -625,6 +625,23 @@ The design documents settled these points, which the spec leaves open. They are 
   character, the stuck property also requires some step to move a character, and the step-up and
   loop-bound properties require a grounded horizontal move and a sweep, so all four stay red until
   T098 and T099 land.
+- **The scenario tests read a touch as r + contactSkin + contactTolerance, and check their Given
+  (T078 to T082, Phase 3 red check).** T079 defined first contact as the axis within r + contactSkin
+  of the wall plane, but a sweep stops between r + contactSkin and r + 1.1 · contactSkin from what it
+  hits, and float rounding can leave a resting axis an ulp above r + contactSkin, so that bound could
+  find no contact in a correct slide. A touch now uses the rest band's upper edge, as rest height does.
+  Each test also checks the run is the scenario its acceptance scenario describes (no fault, one
+  character, the buttons held, the named geometry on the walk line) and that the run reached its
+  feature, so a stated refusal cannot pass vacuously: `stairs-blocked` must touch the stair face, and
+  `slope-limit` must reach the 50° slope (terrain 2 · capsuleRadius ahead more than stepHeight above the
+  plateau). "Every step on the walkable slope" is read as every step up to the first one at rest height
+  on the plateau, which needs no slope geometry beyond `PlateauHeight`.
+- **`TestWorldFeatures` names the stair front edges (T080, T101).** T101 said the features name "stair
+  top heights and front edges" without names. T080 reads `StairsClimbFrontEdge` and
+  `StairsBlockedFrontEdge`: where each walk line crosses the stair's front face, at the stair's top
+  height, with the face perpendicular to the heading, so one point gives the top height, the face
+  plane and how far past it the feet are. The wall slide reuses `WallMeshId`'s wall, whose plane the
+  test takes from the mesh. T101 and T104 now say so.
 
 ## Delivery
 
