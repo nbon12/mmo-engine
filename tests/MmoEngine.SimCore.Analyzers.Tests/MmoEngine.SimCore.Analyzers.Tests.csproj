@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- A normal reference, not an analyzer: tests instantiate DeterminismAnalyzer, and the analyzer does
+         not run on the test code (specs/015-shared-simulation-core/contracts/analyzer-rules.md#wiring). -->
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Analyzers\MmoEngine.SimCore.Analyzers.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Basic.Reference.Assemblies.Net100" />
+    <!-- The backstop compile's metadata reference for the core's System.IO.Hashing use. -->
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+</Project>

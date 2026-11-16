@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore\MmoEngine.SimCore.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Server\MmoEngine.SimCore.Server.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Cli\MmoEngine.SimCore.Cli.csproj" />
+    <!-- Test-only: Cli/EnvironmentTests.KnownEnvironmentsEqualTheSimulators compares SimEnvironment's
+         allowed names with MmoEngine.Regionizer.Simulator.Config.EnvironmentNames.Allowed. The core,
+         server helpers and CLI never reference the simulator. -->
+    <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="CsCheck" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+</Project>
