@@ -151,7 +151,10 @@ class Scripts(unittest.TestCase):
         for trigger in ("pull_request", "push"):
             for path in ("specs/014-telemetry-test-harness/contracts/store-ddl.md",
                          "tests/MmoEngine.Harness.Tests/Fixtures/runs/**", "global.json",
-                         "Directory.Build.props", "Directory.Packages.props"):
+                         "Directory.Build.props", "Directory.Packages.props",
+                         # The sweep-as-a-Job smoke check (spec 014, FR-032; issue #62).
+                         "infra/sweeps/**", ".dockerignore", "simulator/scenarios/**",
+                         "simulator/sweeps/infantry-radius.json"):
                 self.assertIn(path, TRIGGERS[trigger]["paths"])
 
     def test_scripts_build_once_through_lib_with_visible_output(self):

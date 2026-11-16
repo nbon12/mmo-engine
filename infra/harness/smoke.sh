@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Checks a running harness (spec 014, US6 scenarios 4 and 5): every schema table exists, the collector
 # writes OTLP logs and traces to ClickHouse and exposes metrics for Prometheus, and a simulator run loads
-# and passes the committed rules. Needs MMO_CLICKHOUSE (the last line of up.sh) and kubectl access.
+# and passes the committed rules. Then (FR-032) a tiny sweep runs as an indexed Kubernetes Job, and its
+# merged shards match the same sweep run as a plain process. Needs MMO_CLICKHOUSE (the last line of up.sh),
+# kubectl access, docker, and HARNESS_CLUSTER (kind or k3d, as for up.sh) to load the simulator image.
 #
 #   eval "$(infra/harness/up.sh | tail -1)" && infra/harness/smoke.sh [--observability]
 set -euo pipefail
@@ -63,11 +65,45 @@ RUN_ID="$(harness load "$OUT/run" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"
 [ -n "$RUN_ID" ] || fail "load printed no runId"
 harness rules run --run-id "$RUN_ID" --rules "$ROOT/harness/rules" --baselines "$ROOT/harness/baselines" --artifacts "$OUT/artifacts" >/dev/null || fail "rules did not pass the clean run"
 
+echo "4. a sweep runs as an indexed Kubernetes Job, and its merged shards match a plain-process run (FR-032)"
+# The committed infantry-radius sweep cut to 2 radii, 2 seeds, 20 entities and 3 ticks, in 2 shards.
+python3 - "$ROOT/simulator/sweeps/infantry-radius.json" "$OUT/sweep-spec.json" <<'PY'
+import json, sys
+spec = json.load(open(sys.argv[1]))
+spec["seeds"] = 2
+spec["parameters"][0]["values"] = [8, 12]
+spec["base"]["durationTicks"] = 3
+spec["base"]["population"]["total"] = 20
+spec["base"]["map"] = {"widthMetres": 2000, "heightMetres": 2000}
+json.dump(spec, open(sys.argv[2], "w"))
+PY
+"$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job" >/dev/null || fail "the sweep did not run as a Kubernetes Job"
+sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain" --scenarios "$ROOT/simulator/scenarios" >/dev/null || fail "the plain-process sweep failed"
+python3 "$ROOT/infra/sweeps/trim.py" "$OUT/plain/infantry-radius" "$OUT/plain-trimmed" >/dev/null
+python3 - "$OUT/job/infantry-radius" "$OUT/plain-trimmed" <<'PY' || fail "the Job's merged sweep differs from the plain-process sweep"
+import csv, os, sys
+job, plain = sys.argv[1], sys.argv[2]
+runs = lambda d: sorted(os.path.relpath(r, d) for r, _, files in os.walk(d) if "summary.json" in files)
+expected = ["c000/seed-0", "c000/seed-1", "c001/seed-0", "c001/seed-1"]
+assert runs(job) == expected, f"Job run folders {runs(job)}, expected {expected}"
+assert runs(plain) == expected, f"plain run folders {runs(plain)}, expected {expected}"
+# sweep.json lists every cell and run: byte for byte as an unsharded sweep writes it.
+assert open(f"{job}/sweep.json").read() == open(f"{plain}/sweep.json").read(), "sweep.json differs"
+# cells.csv: every column but the wall-clock one (bookkeepingP99Micros) is deterministic.
+def rows(d):
+    table = list(csv.reader(open(f"{d}/cells.csv")))
+    keep = [i for i, name in enumerate(table[0]) if name != "bookkeepingP99Micros"]
+    return [[row[i] for i in keep] for row in table]
+job_rows, plain_rows = rows(job), rows(plain)
+assert len(job_rows) == 5, f"cells.csv has {len(job_rows) - 1} rows, expected 4"
+assert job_rows == plain_rows, f"cells.csv differs:\n{job_rows}\n{plain_rows}"
+PY
+
 if [ "${1:-}" = "--observability" ]; then
-  echo "4. observability profile: Prometheus and Grafana are ready"
+  echo "5. observability profile: Prometheus and Grafana are ready"
   kubectl -n harness rollout status deployment/prometheus --timeout=5m >/dev/null || fail "prometheus is not ready"
   kubectl -n harness rollout status deployment/grafana --timeout=5m >/dev/null || fail "grafana is not ready"
-  echo "5. observability profile: Prometheus scraped the collector's OTLP metric"
+  echo "6. observability profile: Prometheus scraped the collector's OTLP metric"
   kubectl -n harness port-forward svc/prometheus 19090:9090 >/dev/null 2>&1 &
   PROM_PF=$!
   trap 'kill $PF $PROM_PF 2>/dev/null || true' EXIT
@@ -82,7 +118,7 @@ if [ "${1:-}" = "--observability" ]; then
   done
   [ -n "$scraped" ] || fail "Prometheus has no harness_smoke_total series"
 else
-  echo "4. core profile: Prometheus and Grafana are not installed"
+  echo "5. core profile: Prometheus and Grafana are not installed"
   if kubectl -n harness get deployment prometheus >/dev/null 2>&1 || kubectl -n harness get deployment grafana >/dev/null 2>&1; then
     fail "the core profile installed Prometheus or Grafana"
   fi

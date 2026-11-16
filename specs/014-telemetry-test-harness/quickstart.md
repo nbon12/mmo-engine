@@ -25,6 +25,12 @@ infra/harness/smoke.sh                          # the checks CI runs
 infra/harness/down.sh                           # deletes the cluster
 ```
 
+A sweep runs as an indexed Kubernetes Job on that cluster (FR-032): one pod per shard, merged afterwards.
+
+```bash
+infra/sweeps/k8s-sweep.sh spacing 4 /tmp/spacing-job   # merged sweep in /tmp/spacing-job/spacing/
+```
+
 ## A ClickHouse to point the tools at
 
 Without the cluster, use a throwaway container:

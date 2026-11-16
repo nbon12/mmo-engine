@@ -1,0 +1,79 @@
+# One sweep as an indexed Kubernetes Job (spec 014, FR-032; issue #62). infra/sweeps/k8s-sweep.sh fills in
+# the placeholders (Python string.Template) and applies it; the sweep spec is the ConfigMap
+# sweep-<name>-spec, which the script creates from the spec file.
+#
+# Completion index i runs shard i+1 of n (`regionizer-sim sweep --shard k/n`, every n-th run). Every
+# pod writes /results/shard-<k>/ on one volume; the script copies the shards out and merges them with
+# infra/sweeps/merge-shards.py. The volume is ReadWriteOnce by default, which holds on a one-node cluster
+# (kind, k3d); on a multi-node cluster set SWEEP_ACCESS_MODE=ReadWriteMany and a storage class that has it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sweep-${SWEEP_NAME}-results
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: regionizer-sweep
+    mmo-engine/sweep: ${SWEEP_NAME}
+spec:
+  accessModes: [${ACCESS_MODE}]
+  resources:
+    requests:
+      storage: ${STORAGE}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sweep-${SWEEP_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: regionizer-sweep
+    mmo-engine/sweep: ${SWEEP_NAME}
+spec:
+  completionMode: Indexed
+  completions: ${SHARDS}
+  parallelism: ${PARALLELISM}
+  # A pod lost to a crash or an eviction is retried once; its shard starts over (job-entrypoint.sh).
+  backoffLimitPerIndex: 1
+  maxFailedIndexes: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: regionizer-sweep
+        mmo-engine/sweep: ${SWEEP_NAME}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sweep
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SWEEP_SHARDS
+              value: "${SHARDS}"
+            # The runner class and the pinned hardware-intrinsic settings, as in the Sweeps workflow
+            # (spec 014, research R5): manifest.json records them.
+            - name: MMO_RUNNER_CLASS
+              value: "${RUNNER_CLASS}"
+            - name: DOTNET_EnableAVX512F
+              value: "0"
+            - name: DOTNET_TieredPGO
+              value: "0"
+          resources:
+            requests:
+              cpu: "${CPU}"
+              memory: ${MEMORY}
+          volumeMounts:
+            - name: spec
+              mountPath: /sweep
+              readOnly: true
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: spec
+          configMap:
+            name: sweep-${SWEEP_NAME}-spec
+            items:
+              - key: spec.json
+                path: spec.json
+        - name: results
+          persistentVolumeClaim:
+            claimName: sweep-${SWEEP_NAME}-results
