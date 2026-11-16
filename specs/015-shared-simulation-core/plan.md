@@ -589,6 +589,42 @@ The design documents settled these points, which the spec leaves open. They are 
   would leave the character back on the floor behind it. The step keeps its rise and its front face
   2 m ahead of the start, and its top runs 20 m along +Z, so the run ends on it with margin and the
   step-up itself is unchanged. T063 now says so.
+- **T066 allows one ulp on returned points and, for near-parallel segment pairs, min(|d1|, |d2|)·sinθ
+  on the distance (Phase 3 red check).** The task asked for points within 1e-6 m of their primitives,
+  but a returned float point up to 34 m from its local origin carries up to 3.8e-6 m of coordinate
+  rounding, so the test allows 1e-6 m plus one ulp of each coordinate; the distance itself stays within
+  1e-6 m, which T095 meets by computing it from the separation vector rather than from the rounded
+  points. For segment pairs just above the 1e-10 parallel threshold, a·e − b² is below the rounding of
+  a·e, so §5.1.9 in float returns some pair on the overlap, where the distance varies by up to
+  min(|d1|, |d2|)·sinθ (a prototype measured 4.7e-5 m against the 6e-5 m bound); only those cases get
+  that allowance. To keep 1e-6 m reachable elsewhere, cases lie within 2 m of their first input,
+  triangles are well shaped (no edge under 0.1 m, |AB × AC|² ≥ 0.01·maxEdge⁴), and near-parallel
+  pairs are built near the world origin. `LocalOrigin` returns the nearest lattice point, which keeps
+  local coordinates within 34 m. research.md R7's accuracy note now says so.
+- **T068 bounds a hit by contact distance, not by 1e-6 in t (Phase 3 red check).** Near a triangle
+  edge, Ericson's float region test can move the closest point about 0.5 mm along the face while the
+  distance changes by about 1e-7 m, which tilts a Newton step; a prototype stopped up to 1.3e-5 m inside
+  r + skin and up to 2e-5 past the reference time in t, so "T ≤ t_ref + 1e-6" would fail 0.1 to 1.3% of
+  hits for a correct sweep, and a slack in t means nothing for a grazing sweep. A hit's `T` must now be
+  no later than the first time the axis comes within r + skin − 1e-4 m (a hundredth of the skin), its
+  distance at `T` must still be at least r, and a miss must never come that close. The test also
+  requires every hit to name the triangle and draws at least 1,000 hits and 1,000 misses; its start
+  jitter is ±0.35 m, because the first draft's ±0.6 m drew only 766 hits against an exact
+  time-of-impact stand-in.
+- **T067 checks a refused step through the world's committed views (Phase 3 red check).** "Leaves the
+  state bytes and the hash as before" has nothing to compare with: a world with candidate capacity 1
+  can never complete a step, and a refused step reports no state. The test compares
+  `SimWorld.CommittedCharacters` with what `Reset` loaded (a character holding Forward, so a commit would
+  change it) and requires no committed projectiles, besides `CurrentStep`, `Hash` 0 and the previous
+  `Step`. "The quad's cell only" is read as heightfield cell (1, 1), which the wall quad crosses, since
+  tiny-world has a single 4 m grid cell.
+- **The movement properties assert that they were exercised (T075, Phase 3 red check).** Against the
+  Phase 2 world, which does not move characters yet, `NeverOverlapsByMoreThanTheContactTolerance` and
+  `NeverGetsStuckOnAFuzzWorld` passed: a start may already lie within r + 2·contactSkin of a triangle,
+  and a character that never moves is never stuck. A contact now counts only in a step that moved the
+  character, the stuck property also requires some step to move a character, and the step-up and
+  loop-bound properties require a grounded horizontal move and a sweep, so all four stay red until
+  T098 and T099 land.
 
 ## Delivery
 

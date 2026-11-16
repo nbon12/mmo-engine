@@ -445,6 +445,13 @@ including by parallel movement workers.
   - 83% of sweeps needed one closest-point evaluation, and the most was six;
   - the cap was never reached, there or in 72,000 fuzz steps.
 - **Closest points [measured]** were within 6.2e-7 m of double references over 25,000 cases.
+  - Near-parallel segment pairs just above the sin²θ = 1e-10 threshold are the exception (found while
+    writing T066): float cannot place the minimum along their overlap, so §5.1.9 can be off by up to
+    min(|d1|, |d2|)·sinθ, 4.7e-5 m in a prototype. Returned points also carry their coordinates' own
+    rounding, so the distance comes from the separation vector. T066 allows both.
+  - Near a triangle edge a sweep can stop slightly inside r + skin: a prototype written for T068 stopped
+    up to 1.3e-5 m inside it, never inside r. T068 bounds a hit by contact distance (r + skin − 1e-4 m)
+    rather than by time.
 
 **Alternatives considered**:
 
