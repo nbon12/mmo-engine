@@ -1,3 +1,4 @@
+using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Geometry;
@@ -5,8 +6,10 @@ using MmoEngine.SimCore.Inputs;
 using MmoEngine.SimCore.Movement;
 using MmoEngine.SimCore.Server;
 using MmoEngine.SimCore.Tests.Movement;
+using MmoEngine.SimCore.Tests.Properties;
 using MmoEngine.SimCore.Tests.Support;
 using MmoEngine.SimCore.World;
+using D3 = MmoEngine.SimCore.Tests.Properties.CapsuleClearanceReference.D3;
 
 namespace MmoEngine.SimCore.Tests.Scenarios;
 
@@ -27,9 +30,11 @@ namespace MmoEngine.SimCore.Tests.Scenarios;
 /// </para>
 /// <para>
 /// Distances are taken in double from the float state. A yaw is a binary angle, 65,536 per turn, with
-/// forward (sin ψ, 0, cos ψ). Every geometry these scenarios touch is a vertical face (or level ground),
-/// so the distance from the vertical capsule axis to a face's plane is the feet's horizontal distance to
-/// it. "Rest height" is <see cref="MovementStepTests.AtRestOn"/>: feet − surface in
+/// forward (sin ψ, 0, cos ψ). The wall, stair and thin-wall faces are vertical (and the ground level), so
+/// the distance from the vertical capsule axis to such a face's plane is the feet's horizontal distance to
+/// it; the ledge and the corner's walls are measured from the capsule axis to their triangles with
+/// <see cref="CapsuleClearanceReference.SegmentTriangle"/>. "Rest height" is
+/// <see cref="MovementStepTests.AtRestOn"/>: feet − surface in
 /// [−contactTolerance, contactSkin + contactTolerance]. The character "touches" a face when its axis is
 /// within capsuleRadius + contactSkin + contactTolerance of the face's plane: a sweep stops the capsule
 /// between r + contactSkin and r + 1.1·contactSkin from what it hits (its tolerance is 0.1·contactSkin),
@@ -55,6 +60,15 @@ public sealed class MovementScenarioTests
 
     /// <summary>The rise of the stair <c>stairs-blocked</c> walks into, above stepHeight, m.</summary>
     private const double BlockedRise = 0.50;
+
+    /// <summary>How deep the ledge <c>crouch-under-ledge</c> crosses is along the walk line, m.</summary>
+    private const double LedgeDepth = 4.0;
+
+    /// <summary>The height of the ledge's underside above the floor: between crouchHeight 1.2 and standHeight 1.8, m.</summary>
+    private const double LedgeClearance = 1.5;
+
+    /// <summary>How many of <c>corner-wedge</c>'s last steps must end at bit-identical positions.</summary>
+    private const int SettledSteps = 10;
 
     /// <summary>US1.1's rows: the step rate and the distance one second of Forward from rest covers.</summary>
     public static TheoryData<int, double> FlatRuns => new()
@@ -410,6 +424,274 @@ public sealed class MovementScenarioTests
     }
 
     /// <summary>
+    /// US1.6: Given <c>crouch-under-ledge</c> (from rest, Grounded and Standing, 2 m before the near edge of
+    /// the 4 m deep ledge whose underside is 1.5 m above the floor; Crouch and Forward held over [0, 1.5 s),
+    /// Forward only over [1.5 s, 4.5 s)), Then the release step (the first without Crouch, at 1.5 s) has
+    /// stance 1 (Crouched) and a movement outcome record with bit value 1 (HeadroomBlocked), so the release
+    /// happens under the ledge; every step from the release until the headroom clears is Crouched with
+    /// HeadroomBlocked; a step after the release and before the run ends has room to stand, and the first
+    /// such step has stance 0 (Standing); and the capsule never comes nearer the ledge than
+    /// capsuleRadius − contactTolerance.
+    /// </summary>
+    /// <remarks>
+    /// A step has room to stand when its standing segment, the axis part the standing capsule adds
+    /// (crouchHeight − r to standHeight − r above the feet), is more than r + contactSkin / 2
+    /// (<see cref="CompiledConfig.HeadroomClearance"/>) from the ledge at the position the step starts from:
+    /// the previous step's committed position, where sub-step 2 tests the headroom before the step moves
+    /// (data-model.md#movement-step). The ledge is every triangle of the mesh that holds the level underside
+    /// at <see cref="TestWorldFeatures.LedgeUnderside"/> midway between
+    /// <see cref="TestWorldFeatures.LedgeNearEdge"/> and <see cref="TestWorldFeatures.LedgeFarEdge"/>.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void CrouchedUnderALedgeStaysCrouchedUntilThereIsRoomToStand(int hz)
+    {
+        const string Scenario = "crouch-under-ledge";
+        var run = ScenarioRuns.Run(Scenario, hz);
+        var label = $"{Scenario} at {hz} Hz";
+        var start = RequireOneCharacterAndNoFault(run, label);
+        var config = run.Config;
+        var features = TestWorldGenerator.Features;
+
+        // Given: 4.5 simulated seconds, Crouch released after the first 1.5, from rest, Grounded and Standing.
+        var release = 3 * hz / 2;
+        var forward = Heading(HeldInSpans(run, label, (Buttons.Crouch | Buttons.Forward, release), (Buttons.Forward, (9 * hz / 2) - release)));
+        Assert.True(
+            MovementStepTests.IsGrounded(start) && (byte)start.Stance == 0,
+            $"{label}: the character must start Grounded and Standing; flags {start.Flags}, stance {start.Stance}");
+        Assert.True(
+            start.Velocity.X == 0f && start.Velocity.Y == 0f && start.Velocity.Z == 0f,
+            $"{label}: the character must start at rest, not with velocity {start.Velocity}");
+
+        // Given: the ledge's near edge 2 m ahead on the walk line, its far edge 4 m beyond, its underside 1.5 m up.
+        var (near, far) = (features.LedgeNearEdge, features.LedgeFarEdge);
+        var (toNear, nearAcross) = AlongAndAcross(near, start.Position, forward);
+        Assert.True(
+            System.Math.Abs(toNear - 2.0) <= GivenTolerance && System.Math.Abs(nearAcross) <= GivenTolerance,
+            $"{label}: LedgeNearEdge {near} is {toNear:R} m ahead of and {nearAcross:R} m across the walk line from {start.Position}, not 2 m ahead on it");
+        var (depth, farAcross) = AlongAndAcross(far, near, forward);
+        Assert.True(
+            System.Math.Abs(depth - LedgeDepth) <= GivenTolerance && System.Math.Abs(farAcross) <= GivenTolerance,
+            $"{label}: LedgeFarEdge {far} is {depth:R} m beyond and {farAcross:R} m across from LedgeNearEdge {near}, not {LedgeDepth} m beyond it on the walk line");
+        var (midX, midZ) = (((double)near.X + far.X) / 2.0, ((double)near.Z + far.Z) / 2.0);
+        var rise = (double)features.LedgeUnderside - run.Collision.HeightAt((float)midX, (float)midZ);
+        Assert.True(
+            System.Math.Abs(rise - LedgeClearance) <= GivenTolerance,
+            $"{label}: LedgeUnderside {features.LedgeUnderside:R} is {rise:R} m above the floor midway under the ledge, not {LedgeClearance} m");
+        var ledge = LedgeTriangles(run, features, midX, midZ, label);
+
+        var radius = (double)config.CapsuleRadius;
+        var (segmentFrom, segmentTo) = ((double)config.CrouchHeight - radius, (double)config.StandHeight - radius);
+        var headroom = (double)config.HeadroomClearance;
+
+        var released = run.Steps[release];
+        Assert.True(
+            (byte)released.Characters[0].Stance == 1 && ReportsHeadroomBlocked(released, start.Id),
+            $"{label}: the release step {released.Step} must stay Crouched (stance 1) with HeadroomBlocked (bit value 1) under the ledge, " +
+            $"not stance {released.Characters[0].Stance} with outcomes [{string.Join(", ", released.MovementOutcomes)}]; position {released.Characters[0].Position}");
+
+        // The first step after the release that starts with room to stand.
+        var clear = -1;
+        for (var k = release + 1; k < run.Steps.Count && clear < 0; k++)
+        {
+            var from = run.Steps[k - 1].Characters[0].Position;
+            if (SegmentDistance(ledge, from, segmentFrom, segmentTo) > headroom)
+            {
+                clear = k;
+            }
+        }
+
+        Assert.True(
+            clear >= 0,
+            $"{label}: no step after the release starts with the standing segment more than {headroom:R} m from the ledge, so the character never had room to stand; it ended at {run.Last.Characters[0].Position}");
+        for (var k = release; k < clear; k++)
+        {
+            var step = run.Steps[k];
+            Assert.True(
+                (byte)step.Characters[0].Stance == 1 && ReportsHeadroomBlocked(step, start.Id),
+                $"{label}: step {step.Step} starts under the ledge without room to stand but is stance {step.Characters[0].Stance} with outcomes [{string.Join(", ", step.MovementOutcomes)}], " +
+                $"not Crouched (stance 1) with HeadroomBlocked (bit value 1); position {step.Characters[0].Position}");
+        }
+
+        var stood = run.Steps[clear];
+        Assert.True(
+            (byte)stood.Characters[0].Stance == 0,
+            $"{label}: step {stood.Step}, the first to start with room to stand (from {run.Steps[clear - 1].Characters[0].Position}), is stance {stood.Characters[0].Stance}, not Standing (stance 0)");
+
+        var nearest = radius - config.ContactTolerance;
+        for (var k = 0; k < run.Steps.Count; k++)
+        {
+            var character = run.Steps[k].Characters[0];
+            var distance = AxisDistance(ledge, character, config);
+            Assert.True(
+                distance >= nearest,
+                $"{label}: step {run.Steps[k].Step} left the capsule axis {distance:R} m from the ledge, nearer than capsuleRadius − contactTolerance {nearest:R}; position {character.Position}, stance {character.Stance}");
+        }
+    }
+
+    /// <summary>
+    /// Edge case "a character wedged in a concave corner never tunnels and never oscillates between two
+    /// positions; the slide loop stops within its iteration limit": Given <c>corner-wedge</c> (Forward held
+    /// diagonally, at 45° to both walls, into the 90° corner at <see cref="TestWorldFeatures.Corner"/>), Then
+    /// no step ends with the capsule axis nearer either wall than capsuleRadius − contactTolerance, the
+    /// per-step positions (the start included) contain no A, B, A, B alternation with A ≠ B, the last 10
+    /// steps' positions are bit-identical, and every step's <c>Counters.Sweeps</c> ≤
+    /// <c>Counters.SubMoves</c> · (2 · maxSlideIterations + 4) + 1. The run must end wedged, its axis touching
+    /// both walls, and some step must sweep, so neither clause passes vacuously.
+    /// </summary>
+    /// <remarks>
+    /// The walls are the two vertical planes through the vertical line at <see cref="TestWorldFeatures.Corner"/>
+    /// that one mesh's vertical triangles touching that line lie in, at 90° to each other (as
+    /// <c>TestWorldGeneratorTests</c> finds the corner); each wall is every vertical triangle of that mesh in
+    /// its plane.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void CornerWedgeNeverTunnelsOrOscillates(int hz)
+    {
+        const string Scenario = "corner-wedge";
+        var run = ScenarioRuns.Run(Scenario, hz);
+        var label = $"{Scenario} at {hz} Hz";
+        var start = RequireOneCharacterAndNoFault(run, label);
+        var config = run.Config;
+        var forward = Heading(HeldThroughout(run, Buttons.Forward, label));
+        var corner = TestWorldGenerator.Features.Corner;
+        var walls = CornerWalls(run, corner, start.Position, label);
+
+        // Given: the heading runs diagonally into both walls, toward the corner ahead.
+        var diagonal = System.Math.Cos(System.Math.PI / 4.0);
+        foreach (var wall in walls)
+        {
+            var into = -((forward.X * wall.Plane.NormalX) + (forward.Z * wall.Plane.NormalZ));
+            Assert.True(
+                System.Math.Abs(into - diagonal) <= GivenTolerance,
+                $"{label}: the heading meets the wall with normal ({wall.Plane.NormalX:R}, 0, {wall.Plane.NormalZ:R}) at cos {into:R} into it, not 45° (cos {diagonal:R})");
+        }
+
+        var (ahead, _) = AlongAndAcross(corner, start.Position, forward);
+        Assert.True(ahead > 0.0, $"{label}: the corner {corner} is {ahead:R} m along the heading from {start.Position}, not ahead of it");
+        Assert.True(run.Steps.Count >= SettledSteps, $"{label}: the run has {run.Steps.Count} steps, fewer than the {SettledSteps} that must end bit-identical");
+
+        var nearest = (double)config.CapsuleRadius - config.ContactTolerance;
+        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
+        var positions = new List<Vec3>(run.Steps.Count + 1) { start.Position };
+        for (var k = 0; k < run.Steps.Count; k++)
+        {
+            var step = run.Steps[k];
+            var character = step.Characters[0];
+            for (var w = 0; w < walls.Count; w++)
+            {
+                var distance = AxisDistance(walls[w].Triangles, character, config);
+                Assert.True(
+                    distance >= nearest,
+                    $"{label}: step {step.Step} left the capsule axis {distance:R} m from wall {w}, nearer than capsuleRadius − contactTolerance {nearest:R}; position {character.Position}");
+            }
+
+            Assert.True(
+                step.Counters.Sweeps <= (step.Counters.SubMoves * sweepsPerSubMove) + 1,
+                $"{label}: step {step.Step} ran {step.Counters.Sweeps} sweeps over {step.Counters.SubMoves} sub-moves, more than SubMoves · (2 · maxSlideIterations + 4) + 1 = {(step.Counters.SubMoves * sweepsPerSubMove) + 1}");
+            positions.Add(character.Position);
+        }
+
+        Assert.True(run.Steps.Any(step => step.Counters.Sweeps > 0), $"{label}: no step ran a sweep, so the loop bound was never exercised");
+
+        for (var i = 0; i + 3 < positions.Count; i++)
+        {
+            var (a, b) = (positions[i], positions[i + 1]);
+            Assert.True(
+                a.Equals(b) || !positions[i + 2].Equals(a) || !positions[i + 3].Equals(b),
+                $"{label}: the positions after steps {i} to {i + 3} alternate A, B, A, B with A = {a} and B = {b}");
+        }
+
+        var settled = run.Last.Characters[0].Position;
+        for (var k = run.Steps.Count - SettledSteps; k < run.Steps.Count; k++)
+        {
+            var position = run.Steps[k].Characters[0].Position;
+            Assert.True(
+                position.Equals(settled),
+                $"{label}: step {run.Steps[k].Step} ended at {position}, not bit-identical to the last step's {settled}, so the last {SettledSteps} steps did not hold still");
+        }
+
+        var touching = Touching(config);
+        for (var w = 0; w < walls.Count; w++)
+        {
+            var distance = AxisDistance(walls[w].Triangles, run.Last.Characters[0], config);
+            Assert.True(
+                distance <= touching,
+                $"{label}: the run ended with the axis {distance:R} m from wall {w}, not touching it (within {touching:R} m), so it never wedged into the corner; position {settled}");
+        }
+    }
+
+    /// <summary>
+    /// Edge case "a step that would move a character further than its capsule radius is subdivided, so no
+    /// wall thinner than the movement per step is passed through": Given <c>thin-wall-fast</c> (overrides
+    /// runSpeed 20, groundAccel 1000, capsuleRadius 0.25 and maxSubMoves 16, so 20 / hz &gt; 0.25 m per step at
+    /// every rate; Forward held into the zero-thickness quad <see cref="TestWorldFeatures.ThinWallMeshId"/>
+    /// names), Then every step whose start horizontal speed · Dt exceeds capsuleRadius has
+    /// <c>Counters.SubMoves</c> ≥ 2, at least one such step occurs, and the signed distance of the feet to the
+    /// thin wall's plane never changes sign. The run must reach the wall (its axis touches the plane at some
+    /// step), so the never-passes-through clause cannot pass vacuously.
+    /// </summary>
+    /// <remarks>
+    /// A step's start horizontal speed is the horizontal speed of the previous step's committed velocity (the
+    /// initial state's for the first step). The thin wall's plane is taken from the quad in double, with its
+    /// normal turned toward the start, so the start's signed distance is positive and every step's must be.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void FastMoveIntoAThinWallIsSubdividedAndNeverPassesThrough(int hz)
+    {
+        const string Scenario = "thin-wall-fast";
+        var run = ScenarioRuns.Run(Scenario, hz);
+        var label = $"{Scenario} at {hz} Hz";
+        var start = RequireOneCharacterAndNoFault(run, label);
+        var config = run.Config;
+
+        var movement = run.Stream.Config.Movement!;
+        Assert.True(
+            movement.RunSpeed == 20f && movement.GroundAccel == 1000f && movement.CapsuleRadius == 0.25f && movement.MaxSubMoves == 16,
+            $"{label}: the scenario must override runSpeed 20, groundAccel 1000, capsuleRadius 0.25 and maxSubMoves 16, not " +
+            $"{movement.RunSpeed}, {movement.GroundAccel}, {movement.CapsuleRadius} and {movement.MaxSubMoves}");
+        var radius = (double)config.CapsuleRadius;
+        var dt = (double)config.Dt;
+        Assert.True(
+            (double)config.RunSpeed * dt > radius,
+            $"{label}: runSpeed · Dt = {(double)config.RunSpeed * dt:R} m is not more than capsuleRadius {radius:R}, so no step needs subdividing");
+        var forward = Heading(HeldThroughout(run, Buttons.Forward, label));
+        var wall = ThinWall(run, start.Position, forward, label);
+
+        var touching = Touching(config);
+        var fastSteps = 0;
+        var reached = false;
+        var before = start;
+        for (var k = 0; k < run.Steps.Count; k++)
+        {
+            var step = run.Steps[k];
+            var character = step.Characters[0];
+            var startSpeed = MovementStepTests.HorizontalSpeed(before.Velocity);
+            if (startSpeed * dt > radius)
+            {
+                fastSteps++;
+                Assert.True(
+                    step.Counters.SubMoves >= 2,
+                    $"{label}: step {step.Step} starts at {startSpeed:R} m/s, {startSpeed * dt:R} m per step, more than capsuleRadius {radius:R}, but ran {step.Counters.SubMoves} sub-moves, not at least 2");
+            }
+
+            var side = wall.Distance(character.Position);
+            Assert.True(
+                side > 0.0,
+                $"{label}: step {step.Step} put the feet {side:R} m from the thin wall's plane, on the far side from the start's {wall.Distance(start.Position):R} m; {before.Position} -> {character.Position}");
+            reached |= side <= touching;
+            before = character;
+        }
+
+        Assert.True(fastSteps >= 1, $"{label}: no step started faster than capsuleRadius / Dt = {radius / dt:R} m/s, so no step had to be subdivided");
+        Assert.True(
+            reached,
+            $"{label}: the axis never came within {touching:R} m of the thin wall's plane, so the run never reached the wall; it ended at {run.Last.Characters[0].Position}");
+    }
+
+    /// <summary>
     /// The run's only character, as loaded; fails if the stream holds another number of characters or any
     /// step faulted.
     /// </summary>
@@ -445,6 +727,229 @@ public sealed class MovementScenarioTests
         }
 
         return yaw;
+    }
+
+    /// <summary>
+    /// Checks that the stream's entries hold, in order, each span's buttons for its number of entries (and
+    /// no more entries than the spans cover), every entry carrying one command, for the character, at one aim
+    /// yaw, and returns that yaw.
+    /// </summary>
+    private static ushort HeldInSpans(ScenarioRun run, string label, params (Buttons Buttons, int Entries)[] spans)
+    {
+        var steps = run.Stream.Steps;
+        var total = spans.Sum(span => span.Entries);
+        Assert.True(
+            steps.Count == total,
+            $"{label}: the stream must have {total} entries ([{string.Join(", ", spans.Select(span => $"{span.Entries} × {span.Buttons}"))}]), not {steps.Count}");
+        Assert.True(steps[0].Commands.Length == 1, $"{label}: the first entry must carry one command");
+        var yaw = steps[0].Commands[0].Command.AimYaw;
+        var k = 0;
+        foreach (var (buttons, entries) in spans)
+        {
+            for (var e = 0; e < entries; e++, k++)
+            {
+                var entry = steps[k];
+                Assert.True(
+                    entry.Commands.Length == 1
+                        && entry.Commands[0].CharacterIndex == 0
+                        && entry.Commands[0].Command.Buttons == buttons
+                        && entry.Commands[0].Command.AimYaw == yaw,
+                    $"{label}: entry {k} (step {entry.Step}) must hold exactly {buttons} at aim yaw {yaw}, not [{string.Join(", ", entry.Commands)}]");
+            }
+        }
+
+        return yaw;
+    }
+
+    /// <summary>Whether the step holds a movement outcome record for the character with bit value 1 (HeadroomBlocked) set.</summary>
+    private static bool ReportsHeadroomBlocked(ScenarioStep step, uint characterId) =>
+        step.MovementOutcomes.Any(outcome => outcome.CharacterId == characterId && ((byte)outcome.Flags & 1) != 0);
+
+    /// <summary>
+    /// Every kept mesh triangle of the run's world with its mesh's ID, in triangle ID order: mesh triangle IDs
+    /// follow the heightfield's in file order, mesh by mesh, and dropped degenerate triangles are skipped.
+    /// </summary>
+    private static List<(uint MeshId, MeshTriangle Triangle)> MeshTriangles(ScenarioRun run)
+    {
+        var world = run.Collision;
+        var triangles = new List<(uint MeshId, MeshTriangle Triangle)>();
+        var id = world.Meshes.FirstId;
+        foreach (var mesh in world.Data.Meshes)
+        {
+            for (var t = 0; t < mesh.Indices.Length / 3; t++, id++)
+            {
+                if (world.Meshes.TryGetMeshTriangle(id, out var triangle))
+                {
+                    triangles.Add((mesh.MeshId, triangle));
+                }
+            }
+        }
+
+        return triangles;
+    }
+
+    /// <summary>A mesh triangle's vertices in double, exactly.</summary>
+    private static (D3 A, D3 B, D3 C) InDouble(MeshTriangle triangle) =>
+        (D3.From(triangle.A), D3.From(triangle.B), D3.From(triangle.C));
+
+    /// <summary>
+    /// The ledge: every kept triangle of the mesh that holds a level triangle (every vertex within 1e-3 m of
+    /// <see cref="TestWorldFeatures.LedgeUnderside"/>) over (<paramref name="x"/>, <paramref name="z"/>), the
+    /// point midway between the named edges.
+    /// </summary>
+    private static List<(D3 A, D3 B, D3 C)> LedgeTriangles(ScenarioRun run, TestWorldFeatures features, double x, double z, string label)
+    {
+        var underside = (double)features.LedgeUnderside;
+        var triangles = MeshTriangles(run);
+        bool AtUnderside(Vec3 vertex) => System.Math.Abs(vertex.Y - underside) <= GivenTolerance;
+        var holder = triangles.FindIndex(entry =>
+            AtUnderside(entry.Triangle.A) && AtUnderside(entry.Triangle.B) && AtUnderside(entry.Triangle.C) && ContainsInXz(InDouble(entry.Triangle), x, z));
+        Assert.True(holder >= 0, $"{label}: no mesh holds a level underside at {underside:R} m over ({x:R}, {z:R}), midway under the ledge");
+        var ledgeId = triangles[holder].MeshId;
+        return triangles.Where(entry => entry.MeshId == ledgeId).Select(entry => InDouble(entry.Triangle)).ToList();
+    }
+
+    /// <summary>Whether (x, z) lies inside or on the triangle's projection onto the X–Z plane.</summary>
+    private static bool ContainsInXz((D3 A, D3 B, D3 C) triangle, double x, double z)
+    {
+        var (a, b, c) = triangle;
+        var e0 = ((b.X - a.X) * (z - a.Z)) - ((b.Z - a.Z) * (x - a.X));
+        var e1 = ((c.X - b.X) * (z - b.Z)) - ((c.Z - b.Z) * (x - b.X));
+        var e2 = ((a.X - c.X) * (z - c.Z)) - ((a.Z - c.Z) * (x - c.X));
+        return (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
+    }
+
+    /// <summary>
+    /// The least distance, in double, from the vertical segment <paramref name="from"/> to
+    /// <paramref name="to"/> above <paramref name="feet"/> to <paramref name="triangles"/>.
+    /// </summary>
+    private static double SegmentDistance(IReadOnlyList<(D3 A, D3 B, D3 C)> triangles, Vec3 feet, double from, double to)
+    {
+        var p = new D3(feet.X, feet.Y + from, feet.Z);
+        var q = new D3(feet.X, feet.Y + to, feet.Z);
+        var best = double.PositiveInfinity;
+        foreach (var (a, b, c) in triangles)
+        {
+            best = System.Math.Min(best, CapsuleClearanceReference.SegmentTriangle(p, q, a, b, c));
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// The least distance from the character's capsule axis (capsuleRadius to its stance's height −
+    /// capsuleRadius above the feet) to <paramref name="triangles"/>.
+    /// </summary>
+    private static double AxisDistance(IReadOnlyList<(D3 A, D3 B, D3 C)> triangles, in CharacterState character, CompiledConfig config)
+    {
+        var radius = (double)config.CapsuleRadius;
+        var height = character.Stance == Stance.Crouched ? config.CrouchHeight : config.StandHeight;
+        return SegmentDistance(triangles, character.Position, radius, height - radius);
+    }
+
+    /// <summary>
+    /// The vertical plane of <paramref name="triangle"/> in double, with its unit normal turned toward
+    /// <paramref name="toward"/>; fails unless the triangle is vertical.
+    /// </summary>
+    private static WallPlaneInDouble VerticalPlane((D3 A, D3 B, D3 C) triangle, Vec3 toward, string what)
+    {
+        var (a, b, c) = triangle;
+        var normal = D3.Cross(b - a, c - a);
+        var length = System.Math.Sqrt(D3.Dot(normal, normal));
+        Assert.True(
+            length > 0.0 && System.Math.Abs(normal.Y) <= 1e-9 * length,
+            $"{what} is not vertical: normal ({normal.X:R}, {normal.Y:R}, {normal.Z:R})");
+        var horizontal = System.Math.Sqrt((normal.X * normal.X) + (normal.Z * normal.Z));
+        var plane = new WallPlaneInDouble(normal.X / horizontal, normal.Z / horizontal, ((normal.X * a.X) + (normal.Z * a.Z)) / horizontal);
+        return plane.Distance(toward) < 0.0 ? new WallPlaneInDouble(-plane.NormalX, -plane.NormalZ, -plane.Offset) : plane;
+    }
+
+    /// <summary>Whether every vertex of the triangle is within 1e-3 m of the plane.</summary>
+    private static bool LiesIn((D3 A, D3 B, D3 C) triangle, WallPlaneInDouble plane) =>
+        System.Math.Abs(plane.Distance(triangle.A)) <= GivenTolerance
+        && System.Math.Abs(plane.Distance(triangle.B)) <= GivenTolerance
+        && System.Math.Abs(plane.Distance(triangle.C)) <= GivenTolerance;
+
+    /// <summary>Whether the triangle's normal has no vertical component, in double.</summary>
+    private static bool IsVertical((D3 A, D3 B, D3 C) triangle)
+    {
+        var normal = D3.Cross(triangle.B - triangle.A, triangle.C - triangle.A);
+        var length = System.Math.Sqrt(D3.Dot(normal, normal));
+        return length > 0.0 && System.Math.Abs(normal.Y) <= 1e-9 * length;
+    }
+
+    /// <summary>
+    /// The corner's two walls: the first mesh (in triangle ID order) whose vertical triangles touching the
+    /// vertical line through <paramref name="corner"/> (a vertex within 1e-3 m of it horizontally) lie in two
+    /// planes through that line at 90° (|n₁·n₂| ≤ 1e-4); each wall is its plane, turned toward
+    /// <paramref name="start"/>, and every vertical triangle of that mesh lying in it.
+    /// </summary>
+    private static List<CornerWall> CornerWalls(ScenarioRun run, Vec3 corner, Vec3 start, string label)
+    {
+        bool OnCornerLine(D3 vertex) => System.Math.Sqrt(((vertex.X - corner.X) * (vertex.X - corner.X)) + ((vertex.Z - corner.Z) * (vertex.Z - corner.Z))) <= GivenTolerance;
+        var vertical = MeshTriangles(run)
+            .Select(entry => (entry.MeshId, Triangle: InDouble(entry.Triangle)))
+            .Where(entry => IsVertical(entry.Triangle))
+            .ToList();
+        foreach (var mesh in vertical.Select(entry => entry.MeshId).Distinct())
+        {
+            var planes = vertical
+                .Where(entry => entry.MeshId == mesh && (OnCornerLine(entry.Triangle.A) || OnCornerLine(entry.Triangle.B) || OnCornerLine(entry.Triangle.C)))
+                .Select(entry => VerticalPlane(entry.Triangle, start, $"{label}: a corner triangle of mesh {mesh}"))
+                .Where(plane => System.Math.Abs(plane.Distance(corner)) <= GivenTolerance)
+                .ToList();
+            foreach (var first in planes)
+            {
+                var second = planes.FirstOrDefault(other => System.Math.Abs((first.NormalX * other.NormalX) + (first.NormalZ * other.NormalZ)) <= 1e-4);
+                if (second == default)
+                {
+                    continue;
+                }
+
+                return new[] { first, second }
+                    .Select(plane => new CornerWall(
+                        plane,
+                        vertical.Where(entry => entry.MeshId == mesh && LiesIn(entry.Triangle, plane)).Select(entry => entry.Triangle).ToList()))
+                    .ToList();
+            }
+        }
+
+        Assert.Fail($"{label}: no mesh has two vertical walls meeting at 90 degrees along the vertical line through Corner {corner}");
+        return [];
+    }
+
+    /// <summary>
+    /// The plane of the thin wall <see cref="TestWorldFeatures.ThinWallMeshId"/> names, turned toward
+    /// <paramref name="start"/>. The Given: the mesh is a single zero-thickness quad (exactly two kept
+    /// triangles, vertical and coplanar within 1e-4 m, sharing an edge), the heading runs into it, and the
+    /// walk line crosses the plane, ahead of the start, between the quad's vertical edges.
+    /// </summary>
+    private static WallPlaneInDouble ThinWall(ScenarioRun run, Vec3 start, (double X, double Z) forward, string label)
+    {
+        var id = TestWorldGenerator.Features.ThinWallMeshId;
+        var quad = MeshTriangles(run).Where(entry => entry.MeshId == id).Select(entry => entry.Triangle).ToList();
+        var mesh = run.Collision.Data.Meshes.FirstOrDefault(candidate => candidate.MeshId == id);
+        Assert.True(
+            mesh is not null && mesh.Indices.Length == 6 && quad.Count == 2,
+            $"{label}: ThinWallMeshId {id} must name a mesh of exactly two kept triangles, not {mesh?.Indices.Length / 3} triangles with {quad.Count} kept");
+        var plane = VerticalPlane(InDouble(quad[0]), start, $"{label}: the thin wall's first triangle");
+        var vertices = new[] { quad[0].A, quad[0].B, quad[0].C, quad[1].A, quad[1].B, quad[1].C };
+        Assert.True(
+            vertices.All(vertex => System.Math.Abs(plane.Distance(vertex)) <= DistanceTolerance),
+            $"{label}: the thin wall's triangles are not coplanar: [{string.Join(", ", vertices)}]");
+        var shared = new[] { quad[0].A, quad[0].B, quad[0].C }.Count(vertex => vertex.Equals(quad[1].A) || vertex.Equals(quad[1].B) || vertex.Equals(quad[1].C));
+        Assert.True(shared == 2, $"{label}: the thin wall's triangles share {shared} vertices, not an edge");
+
+        var into = -((forward.X * plane.NormalX) + (forward.Z * plane.NormalZ));
+        Assert.True(into > 0.0, $"{label}: the heading ({forward.X:R}, {forward.Z:R}) does not run into the thin wall (cos {into:R})");
+        var reach = plane.Distance(start) / into;
+        var (tangentX, tangentZ) = (-plane.NormalZ, plane.NormalX);
+        var crossing = ((start.X + (forward.X * reach)) * tangentX) + ((start.Z + (forward.Z * reach)) * tangentZ);
+        var along = vertices.Select(vertex => (vertex.X * tangentX) + ((double)vertex.Z * tangentZ)).ToList();
+        Assert.True(
+            crossing >= along.Min() && crossing <= along.Max(),
+            $"{label}: the walk line from {start} crosses the thin wall's plane {reach:R} m ahead at {crossing:R} along it, outside the quad's [{along.Min():R}, {along.Max():R}]");
+        return plane;
     }
 
     /// <summary>A yaw's forward direction in X–Z, in double: (sin ψ, cos ψ) with ψ = yaw · 2π / 65,536.</summary>
@@ -519,5 +1024,11 @@ public sealed class MovementScenarioTests
     {
         /// <summary>The signed horizontal distance of <paramref name="point"/> from the plane, positive on the normal's side.</summary>
         public double Distance(Vec3 point) => ((NormalX * point.X) + (NormalZ * point.Z)) - Offset;
+
+        /// <summary>The signed horizontal distance of a point in double from the plane, positive on the normal's side.</summary>
+        public double Distance(D3 point) => ((NormalX * point.X) + (NormalZ * point.Z)) - Offset;
     }
+
+    /// <summary>One wall of the corner: its vertical plane, turned toward the start, and its triangles in double.</summary>
+    private sealed record CornerWall(WallPlaneInDouble Plane, List<(D3 A, D3 B, D3 C)> Triangles);
 }

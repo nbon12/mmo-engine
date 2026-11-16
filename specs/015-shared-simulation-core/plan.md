@@ -642,6 +642,23 @@ The design documents settled these points, which the spec leaves open. They are 
   height, with the face perpendicular to the heading, so one point gives the top height, the face
   plane and how far past it the feet are. The wall slide reuses `WallMeshId`'s wall, whose plane the
   test takes from the mesh. T101 and T104 now say so.
+- **The crouch-under-ledge test reads the headroom at the position a step starts from (T083, Phase 3
+  red check).** T083 asked that the first step whose standing segment clears the ledge be Standing,
+  without saying which position. Sub-step 2 tests the headroom before the step moves
+  (data-model.md#movement-step), so a correct step whose end position first clears the ledge is still
+  Crouched and stands one step later; read at the end position, the clause would fail a correct core.
+  The test takes each step's standing segment at the previous step's committed position, and the
+  ledge as every triangle of the mesh that holds the level underside at `LedgeUnderside` midway
+  between the named edges, so it needs no new feature name. T083 now says so.
+- **`TestWorldFeatures` names the thin wall, and the corner and thin-wall tests check they reached
+  their feature (T084, T085, T101, T105).** T101 said the features name the "thin-wall plane" without
+  a name. T085 reads `uint ThinWallMeshId`, like `WallMeshId`, and checks it names a single
+  zero-thickness quad that the walk line crosses ahead of the start; T101 and T105 now say so. The
+  corner test finds the two walls as `TestWorldGeneratorTests` does, from `Corner`, so it needs no new
+  name. As in T078 to T082, each test checks its Given and that the run reached its feature, so no
+  clause passes vacuously: `corner-wedge` must end with the axis touching both walls and must sweep at
+  some step, and `thin-wall-fast` must touch the thin wall's plane. A touch is again within
+  r + contactSkin + contactTolerance.
 
 ## Delivery
 
