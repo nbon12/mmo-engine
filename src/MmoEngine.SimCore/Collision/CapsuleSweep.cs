@@ -23,6 +23,12 @@ public static class CapsuleSweep
     /// <summary>The minimum approach as a fraction of |d|: slower approaches never close the gap.</summary>
     public const float MinimumApproachFactor = 1e-4f;
 
+    /// <summary>The four boundary planes, IDs −4 to −1.</summary>
+    private const int BoundaryPlaneCount = 4;
+
+    /// <summary>A stop time past every displacement: no hit.</summary>
+    private const float NoHit = 2f;
+
     /// <summary>
     /// Sweeps the capsule whose axis runs from <paramref name="axisBottom"/> to <paramref name="axisTop"/>,
     /// of radius <paramref name="radius"/>, by <paramref name="displacement"/>, and returns the first contact
@@ -32,8 +38,12 @@ public static class CapsuleSweep
     /// (r + skin): at most <see cref="MaxIterations"/> Newton steps, the axis recomputed from the start each
     /// time, stopping when f ≤ 0.1·skin, missing when the approach speed is at most 1e-4·|d| (the gap never
     /// closes, which also lets a capsule slide along what it touches) or a step passes t = 1, and stopping
-    /// short at the cap. Since f is convex, no step passes the true time of impact. The least t wins, ties to
-    /// the lower ID, so a boundary plane wins a tie. Triangles are double-sided.
+    /// short at the cap. Since f is convex, no step passes the true time of impact. The least stop time is the
+    /// sweep's <see cref="SweepHit.T"/>. A boundary plane that stops at exactly that time is the contact, so
+    /// boundary planes win ties; otherwise the contact is the nearest, at that time, of the planes and
+    /// triangles that hit, ties to the lower ID. Measuring the contact at the common time, rather than taking
+    /// whichever triangle's stop landed earliest inside its tolerance band, keeps the edge two coplanar
+    /// triangles share from tilting a flat wall's normal. Triangles are double-sided.
     /// </summary>
     /// <param name="queryCount">The box query's count, or −1 when it overflowed <paramref name="candidates"/>; the sweep is then a miss and the caller refuses the step.</param>
     public static SweepHit Sweep(
@@ -59,60 +69,91 @@ public static class CapsuleSweep
             return default;
         }
 
-        var best = default(SweepHit);
-        var bestT = 2f;
-
-        // The boundary planes first, IDs −4 to −1, so they win ties with any triangle.
+        // Pass 1: every plane's and triangle's stop time, and the least of them. A candidate that does not
+        // hit is marked −1 in the span, which is the caller's scratch, so pass 2 skips it.
         var heightfield = world.Heightfield;
-        for (var id = Heightfield.BoundaryMinX; id <= Heightfield.BoundaryMaxZ; id++)
+        var bestT = NoHit;
+        Span<float> planeStops = stackalloc float[BoundaryPlaneCount];
+        for (var i = 0; i < BoundaryPlaneCount; i++)
         {
-            heightfield.GetBoundaryPlane(id, out var normal, out var offset);
-            var approach = 0f - Vec3.Dot(normal, displacement);
-            if (approach <= minimumApproach)
-            {
-                continue;
-            }
-
-            var gap = Vec3.Dot(normal, axisBottom) - offset;
-            var f = gap - target;
-            var t = f <= tolerance ? 0f : f / approach;
-            if (t > 1f || !(t < bestT))
-            {
-                continue;
-            }
-
-            var at = axisBottom + (displacement * t);
-            best = new SweepHit(t, id, normal, normal, true, at - (normal * (gap - (approach * t))));
-            bestT = t;
+            heightfield.GetBoundaryPlane(Heightfield.BoundaryMinX + i, out var normal, out var offset);
+            planeStops[i] = PlaneStop(normal, offset, axisBottom, displacement, target, tolerance, minimumApproach);
+            bestT = SimMath.Min(bestT, planeStops[i]);
         }
 
-        // The candidate triangles, ascending, in the local frame of the axis bottom.
         var origin = ClosestPoints.LocalOrigin(axisBottom.X, axisBottom.Z);
         var bottom = axisBottom - origin;
         var top = axisTop - origin;
         var cullReach = target + skin;
         for (var k = 0; k < queryCount; k++)
         {
+            world.GetTriangle(candidates[k], out var a, out var b, out var c, out var faceNormal);
+            var hits = false;
+            if (SimMath.Max(SimMath.Max(a.Y, b.Y), c.Y) >= minY && SimMath.Min(SimMath.Min(a.Y, b.Y), c.Y) <= maxY)
+            {
+                a -= origin;
+                b -= origin;
+                c -= origin;
+                if (!OutsidePlaneReach(faceNormal, a, bottom, top, displacement, cullReach)
+                    && Advance(bottom, top, displacement, a, b, c, faceNormal, target, tolerance, minimumApproach, out var t))
+                {
+                    hits = true;
+                    bestT = SimMath.Min(bestT, t);
+                }
+            }
+
+            if (!hits)
+            {
+                candidates[k] = -1;
+            }
+        }
+
+        if (!(bestT <= 1f))
+        {
+            return default;
+        }
+
+        // A boundary plane that stops at exactly the sweep's time is the contact: boundary planes win ties.
+        for (var i = 0; i < BoundaryPlaneCount; i++)
+        {
+            if (planeStops[i] == bestT)
+            {
+                return PlaneHit(heightfield, Heightfield.BoundaryMinX + i, axisBottom, displacement, bestT, out _);
+            }
+        }
+
+        // Pass 2: the nearest, at the sweep's time, of the planes and triangles that hit; ties to the lower ID.
+        var best = default(SweepHit);
+        var bestDistance = float.PositiveInfinity;
+        for (var i = 0; i < BoundaryPlaneCount; i++)
+        {
+            if (planeStops[i] <= 1f)
+            {
+                var hit = PlaneHit(heightfield, Heightfield.BoundaryMinX + i, axisBottom, displacement, bestT, out var distance);
+                if (distance < bestDistance)
+                {
+                    (best, bestDistance) = (hit, distance);
+                }
+            }
+        }
+
+        var step = displacement * bestT;
+        var atBottom = bottom + step;
+        var atTop = top + step;
+        for (var k = 0; k < queryCount; k++)
+        {
             var id = candidates[k];
+            if (id < 0)
+            {
+                continue;
+            }
+
             world.GetTriangle(id, out var a, out var b, out var c, out var faceNormal);
-            if (SimMath.Max(SimMath.Max(a.Y, b.Y), c.Y) < minY || SimMath.Min(SimMath.Min(a.Y, b.Y), c.Y) > maxY)
+            var contact = ContactAt(atBottom, atTop, displacement, a - origin, b - origin, c - origin, faceNormal, out var distance);
+            if (distance < bestDistance)
             {
-                continue;
-            }
-
-            a -= origin;
-            b -= origin;
-            c -= origin;
-            if (OutsidePlaneReach(faceNormal, a, bottom, top, displacement, cullReach))
-            {
-                continue;
-            }
-
-            if (Advance(bottom, top, displacement, a, b, c, faceNormal, target, tolerance, minimumApproach, out var t, out var contact)
-                && t < bestT)
-            {
-                best = new SweepHit(t, id, contact.Normal, contact.FaceNormal, contact.IsFace, contact.Point + origin);
-                bestT = t;
+                best = new SweepHit(bestT, id, contact.Normal, contact.FaceNormal, contact.IsFace, contact.Point + origin);
+                bestDistance = distance;
             }
         }
 
@@ -186,62 +227,87 @@ public static class CapsuleSweep
     internal static Vec3 Negate(Vec3 v) => new(0f - v.X, 0f - v.Y, 0f - v.Z);
 
     /// <summary>
-    /// Conservative advancement against one triangle, in the local frame. True with the contact time and
-    /// what is known at it when the capsule touches the triangle within the displacement.
+    /// Conservative advancement against one triangle, in the local frame: true with the stop time when the
+    /// capsule touches the triangle within the displacement.
     /// </summary>
     private static bool Advance(
-        Vec3 bottom, Vec3 top, Vec3 displacement, Vec3 a, Vec3 b, Vec3 c, Vec3 faceNormal, float target, float tolerance, float minimumApproach, out float t, out Contact contact)
+        Vec3 bottom, Vec3 top, Vec3 displacement, Vec3 a, Vec3 b, Vec3 c, Vec3 faceNormal, float target, float tolerance, float minimumApproach, out float t)
     {
         t = 0f;
         for (var iteration = 0; iteration < MaxIterations; iteration++)
         {
             // The axis at t, recomputed from the start, so no error accumulates.
             var step = displacement * t;
-            var atBottom = bottom + step;
-            var atTop = top + step;
-            var distance = ClosestPoints.SegmentTriangle(atBottom, atTop, a, b, c, out _, out var onTriangle, out var separation, out var feature);
-
-            Vec3 direction;
-            Vec3 facing;
-            if (distance > 0f)
-            {
-                direction = Divide(separation, distance);
-                facing = Facing(faceNormal, separation);
-            }
-            else
-            {
-                // The axis crosses the face: the face normal against the motion.
-                facing = Facing(faceNormal, Negate(displacement));
-                direction = facing;
-            }
-
-            var approach = 0f - Vec3.Dot(displacement, direction);
+            var contact = ContactAt(bottom + step, top + step, displacement, a, b, c, faceNormal, out var distance);
+            var approach = 0f - Vec3.Dot(displacement, contact.Direction);
             if (approach <= minimumApproach)
             {
                 // The gap is not closing (f is convex, so it never will): a miss, or a capsule sliding along
                 // or leaving what it touches.
-                contact = default;
                 return false;
             }
 
             var f = distance - target;
             if (f <= tolerance || iteration == MaxIterations - 1)
             {
-                var isFace = feature == TriangleFeature.Face || distance <= 0f;
-                contact = new Contact(isFace ? facing : direction, facing, isFace, onTriangle);
                 return true;
             }
 
             t += f / approach;
             if (t > 1f)
             {
-                contact = default;
                 return false;
             }
         }
 
-        contact = default;
         return false;
+    }
+
+    /// <summary>
+    /// The contact between the axis from <paramref name="bottom"/> to <paramref name="top"/> and one triangle,
+    /// in the local frame, with its distance: the unit direction from the triangle toward the axis (the face
+    /// normal against the motion when the axis crosses the face), the face normal turned toward the capsule,
+    /// whether the closest point is inside the face, the contact normal (the face normal for a face contact
+    /// or a crossing, else the direction), and the closest point on the triangle.
+    /// </summary>
+    private static Contact ContactAt(Vec3 bottom, Vec3 top, Vec3 displacement, Vec3 a, Vec3 b, Vec3 c, Vec3 faceNormal, out float distance)
+    {
+        distance = ClosestPoints.SegmentTriangle(bottom, top, a, b, c, out _, out var onTriangle, out var separation, out var feature);
+        if (distance > 0f)
+        {
+            var facing = Facing(faceNormal, separation);
+            var isFace = feature == TriangleFeature.Face;
+            var direction = Divide(separation, distance);
+            return new Contact(direction, isFace ? facing : direction, facing, isFace, onTriangle);
+        }
+
+        // The axis crosses the face: the face normal against the motion.
+        var against = Facing(faceNormal, Negate(displacement));
+        return new Contact(against, against, against, true, onTriangle);
+    }
+
+    /// <summary>A boundary plane's stop time, or <see cref="NoHit"/> when the capsule does not reach it within the displacement.</summary>
+    private static float PlaneStop(Vec3 normal, float offset, Vec3 axisBottom, Vec3 displacement, float target, float tolerance, float minimumApproach)
+    {
+        var approach = 0f - Vec3.Dot(normal, displacement);
+        if (approach <= minimumApproach)
+        {
+            return NoHit;
+        }
+
+        var f = (Vec3.Dot(normal, axisBottom) - offset) - target;
+        var t = f <= tolerance ? 0f : f / approach;
+        return t > 1f ? NoHit : t;
+    }
+
+    /// <summary>The contact with boundary plane <paramref name="id"/> at <paramref name="t"/>, with the axis's distance from it then.</summary>
+    private static SweepHit PlaneHit(Heightfield heightfield, int id, Vec3 axisBottom, Vec3 displacement, float t, out float distance)
+    {
+        heightfield.GetBoundaryPlane(id, out var normal, out var offset);
+        var gap = Vec3.Dot(normal, axisBottom) - offset;
+        distance = gap - ((0f - Vec3.Dot(normal, displacement)) * t);
+        var at = axisBottom + (displacement * t);
+        return new SweepHit(t, id, normal, normal, true, at - (normal * distance));
     }
 
     /// <summary>
@@ -265,8 +331,10 @@ public static class CapsuleSweep
     private static Vec3 Divide(Vec3 v, float s) => new(v.X / s, v.Y / s, v.Z / s);
 
     /// <summary>What a sweep knows at its contact, in the local frame.</summary>
-    private readonly struct Contact(Vec3 normal, Vec3 faceNormal, bool isFace, Vec3 point)
+    private readonly struct Contact(Vec3 direction, Vec3 normal, Vec3 faceNormal, bool isFace, Vec3 point)
     {
+        public Vec3 Direction { get; } = direction;
+
         public Vec3 Normal { get; } = normal;
 
         public Vec3 FaceNormal { get; } = faceNormal;

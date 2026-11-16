@@ -694,6 +694,19 @@ The design documents settled these points, which the spec leaves open. They are 
   then Q, against the triangle before the segment against the edges AB, BC and CA, so a capsule resting
   on a face reports the exact face contact on a tie. With these, T066 passes on its seed and on 15
   others (25,000 cases per query each). T095 now says so.
+- **A sweep's contact is the nearest hit at its time of impact, not the triangle whose stop landed first
+  (T097, T098).** Research R7 kept the least t, ties to the lower ID, and took the contact from that
+  triangle. A flat wall made of two triangles then reports a tilted normal near their shared edge: the
+  triangle whose closest point lies on the shared edge is about 8e-5 m farther, but its Newton stop can
+  land up to 0.1·skin early inside its tolerance band, so its edge direction (1.2° off the wall's normal
+  in the case found) became the contact normal, and a 45° wall slide at 20 Hz kept 4.962 m/s along the
+  wall instead of 7·cos 45° = 4.9497 (US1.2 allows 1e-4 m/s). The sweep's T is still the least stop
+  time. Its contact is a boundary plane that stops at exactly that time, so boundary planes still win
+  ties; otherwise the nearest, measured at that time, of the planes and triangles that hit, ties to the
+  lower ID. Pass 1 marks every candidate that does not hit with −1 in the caller's scratch span, so pass
+  2 re-measures only the hits. The step-up's last sweep, which data-model.md left unsized, goes down by
+  the rise plus 2·contactSkin, so it finds ground at the starting height. data-model.md#movement-step,
+  research R7 and T097 now say so.
 
 ## Delivery
 

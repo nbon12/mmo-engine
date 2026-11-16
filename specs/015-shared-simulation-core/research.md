@@ -428,6 +428,8 @@ including by parallel movement workers.
   - Candidates are culled by AABB and by plane.
   - The minimum t wins, with ties going to the lower ID.
   - The four boundary planes use IDs −4 to −1, so they win ties.
+  - The contact reported at that t is the nearest there of the planes and triangles that hit, unless a
+    boundary plane stops at exactly that t (T097; plan.md, Decisions made during implementation).
   - Triangles are double-sided.
 - **Closest points** follow Ericson §5.1.5, §5.1.9 and §5.1.10, in a fixed candidate order with a
   strict `<`, with the float refinements plan.md records under Decisions made during implementation
