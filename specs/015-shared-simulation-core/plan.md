@@ -680,6 +680,20 @@ The design documents settled these points, which the spec leaves open. They are 
   absent is `flat-run-30hz` with another `collisionChecksum`, so it fails only that check. The record
   tests also check that nothing else in the temp copy changes and that a re-added stream is
   byte-identical to the committed one. T091, T092 and contracts/simcore-cli.md now say so.
+- **`ClosestPoints` refines Ericson's results where float loses the last digits (T095, T066).** Run as
+  written, §5.1.9 missed T066's 1e-6 m on its own seed, and §5.1.5 on other seeds. CsCheck draws edge
+  values, so two segments can share an end exactly, and §5.1.9 then rounds s an ulp short of 1 and
+  reports 1.1e-6 m for segments that meet; a pair that nearly meets loses the digits that place s and t
+  in b·f − c·e (2.1e-6 m off). So §5.1.9's pair is followed, when the directions are not parallel, by
+  one step of iterative refinement (the same solve applied to the residual separation, whose dot
+  products are small) and then by each end measured against the other segment, in the order P1, Q1, P2,
+  Q2; each replaces the pair only when strictly closer, so it can only bring the result nearer the true
+  minimum. In §5.1.5's face region, the barycentric point's in-plane rounding (about 1e-6 m in the 34 m
+  local frame) was the whole distance of a point lying on the face, so the face region's separation is
+  projected onto the face normal, which removes that rounding to first order. Segment–triangle tries P,
+  then Q, against the triangle before the segment against the edges AB, BC and CA, so a capsule resting
+  on a face reports the exact face contact on a tie. With these, T066 passes on its seed and on 15
+  others (25,000 cases per query each). T095 now says so.
 
 ## Delivery
 

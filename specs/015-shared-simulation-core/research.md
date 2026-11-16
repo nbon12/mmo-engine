@@ -430,7 +430,8 @@ including by parallel movement workers.
   - The four boundary planes use IDs −4 to −1, so they win ties.
   - Triangles are double-sided.
 - **Closest points** follow Ericson §5.1.5, §5.1.9 and §5.1.10, in a fixed candidate order with a
-  strict `<`.
+  strict `<`, with the float refinements plan.md records under Decisions made during implementation
+  (T095).
 - **Face contacts** use the exact face normal, so walls stay flat. Edge and vertex contacts use the
   direction between the closest points.
 

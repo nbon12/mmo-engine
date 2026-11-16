@@ -1,5 +1,6 @@
 using System;
 using MmoEngine.SimCore.Formats;
+using MmoEngine.SimCore.Geometry;
 using MmoEngine.SimCore.Math;
 
 namespace MmoEngine.SimCore.Collision;
@@ -100,6 +101,30 @@ public sealed partial class CollisionWorld
         var heightfieldCells = checked(SimMath.FloorToInt(reach / Heightfield.CellSize) + 2);
         var gridCells = checked(SimMath.FloorToInt(reach / Grid.CellSize) + 2);
         return checked((TrianglesPerHeightfieldCell * heightfieldCells * heightfieldCells) + (MaxTrianglesPerCell * gridCells * gridCells));
+    }
+
+    /// <summary>
+    /// Triangle <paramref name="id"/>'s vertices and unit normal: a heightfield triangle's are generated on
+    /// demand, its normal <c>(AB × AC) / SimMath.Sqrt(|AB × AC|²)</c> (it always faces +Y), and a mesh
+    /// triangle's are the ones derived at load. The ID must be one a query returned: a heightfield ID or a
+    /// kept mesh ID.
+    /// </summary>
+    internal void GetTriangle(int id, out Vec3 a, out Vec3 b, out Vec3 c, out Vec3 normal)
+    {
+        if (id < Heightfield.TriangleCount)
+        {
+            Heightfield.GetTriangle(id, out a, out b, out c);
+            var cross = Vec3.Cross(b - a, c - a);
+            var length = Vec3.Length(cross);
+            normal = new Vec3(cross.X / length, cross.Y / length, cross.Z / length);
+            return;
+        }
+
+        ref readonly var triangle = ref Meshes.TriangleAt(id - Meshes.FirstId);
+        a = triangle.A;
+        b = triangle.B;
+        c = triangle.C;
+        normal = triangle.Normal;
     }
 
     /// <summary>

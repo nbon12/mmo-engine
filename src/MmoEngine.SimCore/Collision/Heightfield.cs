@@ -183,5 +183,6 @@ public sealed class Heightfield
     private Vec3 SampleUnchecked(int i, int j) =>
         new(OriginX + ((float)i * CellSize), _heights[(j * Columns) + i], OriginZ + ((float)j * CellSize));
 
-    private float HeightUnchecked(int i, int j) => _heights[(j * Columns) + i];
+    /// <summary>Sample (i, j)'s height, without the range check: the caller keeps i and j inside the grid.</summary>
+    internal float HeightUnchecked(int i, int j) => _heights[(j * Columns) + i];
 }
