@@ -48,7 +48,7 @@ echo $?   # 0 passed, 5 failed, 6 inconclusive
 ## Load the decision memo's sweep results
 
 ```bash
-for sweep in docs/simulator/results/first-pass/*/; do
+for sweep in docs/simulator/results/full/*/; do
   dotnet run --project src/MmoEngine.Harness.Cli -- load "$sweep"
 done
 ```

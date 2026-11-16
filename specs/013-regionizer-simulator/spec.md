@@ -576,7 +576,9 @@ steady-state allocation test.
 - **Soak duration**: The 24-hour simulated soak is a recorded run, cited in the memo with its manifest.
   The automated test suite runs the same Soak scenario for a shortened duration.
 - **Sweep scale**: Sweeps run locally across the machine's cores. Spreading them across machines and
-  Kubernetes Jobs belongs to sub-spec 2.
+  Kubernetes Jobs belongs to sub-spec 2. Amended 2026-11-16 by PRs #55 and #57: full-scale sweeps also
+  run in the manual Sweeps workflow (`.github/workflows/sweeps.yml`), and `regionizer-sim sweep
+  --shard k/n` splits one sweep across jobs (see [contracts/config-and-cli.md](contracts/config-and-cli.md)).
 - **Output formats**: Results are local files (manifest, per-tick metrics, events and summary) in a
   documented, versioned format. Loading them into the analytics store belongs to sub-spec 2.
 - **Bookkeeping cost**: It is wall-clock time of regionizer work per tick on the machine the run used,
