@@ -79,12 +79,15 @@ committed with their `.json` ([contracts/simcore-cli.md](contracts/simcore-cli.m
 ## Run the exhaustive trigonometric sweeps
 
 ```bash
-MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math"
+MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math" --logger "console;verbosity=detailed"
 ```
 
-Expected: every math test passes, and each sweep prints its function's maximum error in ulp. The
-sweeps take about 2 minutes on 4 cores, so without the variable they skip; the fixed table in the
-normal test run is the gate ([research.md](research.md) R3).
+Expected: every math test passes, and the console output holds one
+`SIMMATH <function> max <ulp> ulp at a 0x... b 0x... (bound <bound>)` line per swept function. The
+detailed console logger is needed because the sweeps write those lines to the test output, which
+`dotnet test` shows for a passing test only at that verbosity. The sweeps take about 2 minutes on 4
+cores, so without the variable they skip; the fixed table in the normal test run is the gate
+([research.md](research.md) R3).
 
 ## Verify the committed streams
 
@@ -94,7 +97,7 @@ echo $?   # 0 all match, 1 divergence, 2 cannot run
 ```
 
 Expected: one `<name>: match, <steps> steps, final <hash>` line per stream in `simcore/streams/`, then
-`streams verify: 18 streams, 18 match, 0 diverged, 0 not comparable, 0 refused`, and exit 0
+`streams verify: 19 streams, 19 match, 0 diverged, 0 not comparable, 0 refused`, and exit 0
 ([contracts/simcore-cli.md](contracts/simcore-cli.md#streams-verify)).
 
 ## Run the agreement suite
@@ -110,7 +113,7 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare -
 ```
 
 Expected: both exit 0, and `prepare` prints
-`prepared <work>: 68 streams (18 named, 50 generated), <steps> steps, rules revision <r>`. With the
+`prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision <r>`. With the
 `wasm-tools` workload installed, the publish relinks the runtime; the run below still works, but it
 then tests the relinked build rather than the prebuilt one CI's `agreement` job tests.
 
@@ -136,8 +139,14 @@ cross-build tables checks) and exits 0. The second run has the jiterpreter off.
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test)
 ```
 
-Expected: exit 0, with one passing Worker test per browser project. `npx playwright test --project chromium`
-runs Chromium only.
+Expected: exit 0, with one passing Worker test per browser project. To run Chromium only, the browser
+CI requires:
+
+```bash
+(cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium)
+```
+
+Expected: exit 0, with one passing Worker test.
 
 ```bash
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK"
@@ -206,15 +215,23 @@ Expected: `measure.mjs` exits 0, and `validate-report` prints nothing and exits 
 `MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
 
 With the workload installed (`dotnet workload install wasm-tools`), the relinked and AOT builds come
-from these publishes. Run the Node agreement on each (`AGREEMENT_BUILD=node-interp-relinked` and
-`node-aot`, with `AGREEMENT_APP` set to the build's `wwwroot`), then
-`agreement compare --work "$MWORK" --require node-interp-relinked,node-aot`, and pass them to
-`measure.mjs` with `--mode` instead of `--unproduced`:
+from the publishes below. The block then runs the Node agreement on each build against `$MWORK` and
+compares them with the two builds required. After that, pass the builds to `measure.mjs` with
+`--mode` instead of `--unproduced`:
 
 ```bash
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$PUBLISH/relinked"
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$PUBLISH/aot"
+AGREEMENT_APP="$PUBLISH/relinked/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-interp-relinked \
+  node --test tools/agreement/node/agreement.test.mjs
+AGREEMENT_APP="$PUBLISH/aot/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-aot \
+  node --test tools/agreement/node/agreement.test.mjs
+dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$MWORK" --require node-interp-relinked,node-aot
 ```
+
+Expected: every command exits 0, and `compare` prints `match` with `tables match` for
+`node-interp-relinked` and `node-aot`, `not run` for the builds that did not run, then
+`agreement: match`.
 
 The report's schema and what `validate-report` checks are in
 [contracts/measurement-report.md](contracts/measurement-report.md).

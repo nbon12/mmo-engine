@@ -1,9 +1,9 @@
 # Contract: Simulation configuration and its rule table
 
 Movement, weapon, projectile and hitbox parameters are configuration, validated before any step runs
-(FR-029). The core holds **one rule table**: `ConfigFields` (one row per field) and `ConfigRelations`
-(one row per cross-field rule), in `src/MmoEngine.SimCore/Config/`. That table is the single source
-for:
+(FR-029). The core holds **one rule table**: `ConfigFields` (one row per field definition, expanded
+per present instance) and `ConfigRelations` (one row per cross-field rule), in
+`src/MmoEngine.SimCore/Config/`. That table is the single source for:
 
 - `ConfigGuard.Check`, the check every build runs;
 - `SimConfigValidator`, the server's FluentValidation adapter, which reports the guard's errors
@@ -529,8 +529,8 @@ All automated, in `tests/MmoEngine.SimCore.Tests/Config/`; `tasks.md` names each
   `SimConfigValidator`.
 - A Theory over every relation: a violating value gives exactly that relation's error, and the
   boundary value gives none.
-- A reflection test: every property of `SimConfig` and its sections has exactly one row, and every
-  row's fieldId is unique.
+- A reflection test: every property path of `SimConfig` and its sections has exactly one template
+  row, and every fieldId of the expanded rows is unique.
 - `simcore/config/default.json` binds and passes, and its compiled values match committed bits at 20,
   30 and 60 Hz.
 - The config block encodes from `SimConfig` and decodes back to the same bits; the guard's result is

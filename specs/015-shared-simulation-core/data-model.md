@@ -50,14 +50,14 @@ state out, and every instance below belongs to the caller that created it.
 | Raw configuration | `SimConfig` | The caller: `SimConfigJson` on the server, the config block decoder in the browser and in `StreamRunner` | No |
 | Compiled configuration | `CompiledConfig` | `CompiledConfig.Create` | Yes, immutable |
 | Collision world | `CollisionWorld` | `CollisionFile` decoder, once per file | Yes, immutable, read by any thread without locks |
-| World | `SimWorld` | Its caller: the owning region on the server (sub-spec 5), the Worker on the client (`BatchStepper`), `StreamRunner` in the agreement suite | No: one writer |
+| World | `SimWorld` | Its caller: the client Worker (`BatchStepper`), `StreamRunner` in the agreement suite, tests and bots. It is not a server region's entity store. The continent server (sub-spec 5) chooses region storage under the constitution's structure-of-arrays and merge/split rules, and calls the per-entity steps (`MovementStep`, `WeaponStep`, `HitboxBuilder`, `ProjectileStep`) inside its tick. | No: one writer |
 | Character state, weapon state, projectiles | inside `SimWorld` | `SimWorld.Step` only | No |
 | Input command | `InputCommand` | Decoded by the caller (`InputCodec.TryDecode`), validated by the world | No |
 | Hitboxes | `Hitbox` | `HitboxBuilder`, into the world's scratch, each step | No |
 | Step report | `StepReport` | `SimWorld.Step`, over world-owned buffers, valid until the next step | No |
 | Recorded stream | `.mmrs` file | `simcore streams record` only; read-only everywhere else | Committed file |
 
-On the server the region that owns an entity is its single writer and calls the core inside its tick.
+On the server the region that owns an entity is its single writer and calls the core's per-entity steps inside its tick.
 On the client the Worker owns the predicted copy. The core takes no locks (constitution Principle II).
 
 ## Configuration
@@ -615,8 +615,9 @@ configured maxima and the collision world, so a step allocates nothing (FR-032, 
 A fault at any stage commits nothing: the previous state, its step number and its hash stay as they
 were (FR-017).
 
-Characters join and leave only between steps. In this feature that happens through `Reset`; the calls
-that add and remove characters belong to the continent server (sub-spec 5).
+Characters join and leave only between steps. `SimWorld` changes its set of characters only through
+`Reset`. Adding and removing characters in a region's own storage belongs to the continent server
+(sub-spec 5).
 
 ## Step report and step fault
 
@@ -732,7 +733,7 @@ movement outcome) also bumps the rules revision.
 
 **WeaponPhase** (`Weapons/`): 0 Ready, 1 Firing, 2 Reloading, 3 Switching, 4 Overheated.
 
-**FireMode** (configuration): 0 Auto, 1 Semi.
+**FireMode** (configuration, `u32`, because the config block carries it as a 32-bit `valueBits`): 0 Auto, 1 Semi.
 
 **FireBlock** (`Weapons/`), reported only while Fire is held and no shot fired
 

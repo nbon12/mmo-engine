@@ -41,6 +41,21 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- <command> [options]
 | `measure validate-report <file>` | Checks the measurement report ([measurement-report.md](measurement-report.md)) | 0 valid; 1 invalid; 2 unreadable |
 | `config check <file>` | Validates a configuration file ([config-rules.md](config-rules.md)) | 0 valid; 1 invalid; 2 usage |
 
+## Content files
+
+`streams record`, `streams verify` and `agreement prepare` load every `*.mmcd` in `--content`, in
+ordinal name order, before they run any stream. They load them only through
+`ContentFiles.LoadAll(string contentDir)` in `src/MmoEngine.SimCore.Cli/Commands/ContentFiles.cs`:
+
+- A file longer than `CollisionFile.MaxFileLength` (256 MiB) is refused from its size, before it is
+  opened, with the error `Oversized` at offset 8, field `fileLength`, for example
+  `collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456`.
+- Any other file is read through a read-only `FileStream` and decoded with `CollisionFile.Decode`.
+
+When a content file is refused, the command prints `<command>: content <file name>: <message>` on
+stderr (for example `streams verify: content big.mmcd: collision fileLength at offset 8: …`), runs
+no stream, writes nothing and exits 2.
+
 ## `content generate`
 
 ```bash
@@ -108,8 +123,13 @@ writes under `simcore/streams/`; the tests open stream files read-only.
    configuration (from `--config` plus the scenario's overrides), the initial state, the match salt
    and the commands, against the collision file in `--content` that the scenario names.
 3. Run it through the server build (`StreamRunner`) to compute every step's expected hash. A step
-   fault stops the command with exit 1 and a refusal (an invalid configuration, a missing collision
-   file) with exit 2; either way nothing is written.
+   fault stops the command with exit 1 and prints `streams record: <name>: <message>` on stderr,
+   where the message is the `StepFaultException`'s (`step <n> faulted: <code> at <path>`). A refusal
+   (an invalid configuration, a missing collision file, a refused content file per
+   [content files](#content-files)) exits 2. Either way nothing is written. A valid configuration
+   does not fault, so the test `RecordExitsOneWhenAServerRunFaultsAndWritesNothing` injects the fault
+   through the CLI's internal stream-runner parameter (`Program.Run`'s `runStream`); the CLI never
+   calls core internals.
 4. Write `<out>/<name>.mmrs` with `rulesRevision` = `SimCoreVersion.RulesRevision`
    ([recorded-stream-format.md](recorded-stream-format.md)). An unchanged stream is not rewritten.
 5. With `--all`, a `.mmrs` file in `<out>` whose scenario is no longer in the catalog is deleted and
@@ -123,7 +143,7 @@ Output, one line per selected stream, then a total:
 flat-run-30hz: changed; file 3f9d0c1a72b4e865 -> 8a17e2c40d5b9f31; final state 0c6e1f93a2d7b548 -> 5b2a90e7c13d4f86; first changed step 12
 wall-slide-45: unchanged; file 77d0a3c9e15b2f48; final state 1e94b07c5a3d28f6
 stairs-climb: added; file c50e8b2f193a7d64; final state 9f31a6d0e2b47c85
-streams record: 18 streams, 1 changed, 1 added, 0 removed, 16 unchanged
+streams record: 19 streams, 1 changed, 1 added, 0 removed, 17 unchanged
 ```
 
 The file hash is the stream file's XxHash64 trailer and the final state hash is the expected hash of
@@ -165,8 +185,9 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- streams verify
 ```
 
 Runs every `*.mmrs` in `--dir`, in ordinal name order, through the server build, with the collision
-files in `--content` keyed by checksum. Each step's hash is compared with the stream's expected hash.
-Nothing is written.
+files in `--content` keyed by checksum ([content files](#content-files): a refused content file exits 2
+before any stream runs). Each step's hash is compared with the stream's expected hash. Nothing is
+written.
 
 Each stream gets one outcome ([recorded-stream-format.md](recorded-stream-format.md#outcomes)) and
 prints it:
@@ -201,11 +222,14 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare -
   temporary directory, so runs are safe in parallel and against leftovers.
 - `--seeds` is `<first>-<last>` or one number, with 1 ≤ first ≤ last ≤ 999. CI passes `1-50`
   (FR-026, SC-001).
+- A refused `--content` file exits 2 before anything is written ([content files](#content-files)).
 
 It writes the [work directory](#agreement-work-directory):
 
 1. Every committed stream from `--streams`, run through the server build. Its expected hashes are
-   checked as `streams verify` does; a divergence exits 1 and a refusal exits 2.
+   checked as `streams verify` does, and an outcome other than Match prints its `streams verify`
+   line: a divergence exits 1, and a refused or NotComparable stream exits 2. Either way no
+   `manifest.json` is written.
 2. One generated stream per seed ([generated streams](#generated-streams)), with its expected hashes
    from the server build.
 3. Every collision file the streams name, under `collision/<checksum>.mmcd`.
@@ -261,10 +285,10 @@ Firefox or WebKit build that Playwright could not install is reported `NotRun`, 
 Output, one line per known build, the first divergence report of each diverged build, then the outcome:
 
 ```text
-node-interp: match, 68 streams, 24300 steps, tables match
-node-interp-nojit: match, 68 streams, 24300 steps, tables match
-chromium-worker: diverged in 1 of 68 streams; first: seed-017 at step 212; tables match
-firefox-worker: match, 68 streams, 24300 steps, tables match
+node-interp: match, 69 streams, 24300 steps, tables match
+node-interp-nojit: match, 69 streams, 24300 steps, tables match
+chromium-worker: diverged in 1 of 69 streams; first: seed-017 at step 212; tables match
+firefox-worker: match, 69 streams, 24300 steps, tables match
 webkit-worker: not run
 node-interp-relinked: not run
 node-aot: not run
@@ -280,15 +304,15 @@ Files, under `<work>/report/`:
     "formatVersion": 1,
     "outcome": "Diverged",
     "rulesRevision": 1,
-    "streams": 68,
+    "streams": 69,
     "required": ["node-interp", "node-interp-nojit", "chromium-worker"],
     "builds": [
       {
-        "build": "node-interp", "required": true, "status": "Match", "streams": 68, "steps": 24300, "diverged": [],
+        "build": "node-interp", "required": true, "status": "Match", "streams": 69, "steps": 24300, "diverged": [],
         "tables": { "status": "Match", "firstMismatch": null }
       },
       {
-        "build": "chromium-worker", "required": true, "status": "Diverged", "streams": 68, "steps": 24300,
+        "build": "chromium-worker", "required": true, "status": "Diverged", "streams": 69, "steps": 24300,
         "diverged": [
           {
             "stream": "seed-017",
@@ -372,7 +396,7 @@ rule-table order; nothing when valid. Exit 0 valid, 1 invalid, 2 when the file i
 ├── <build>/<stream>.error.txt         instead of records, when the build threw
 ├── <build>/tables.bin                 each WebAssembly build's table results
 ├── <build>/tables.error.txt           instead of table results, when the build threw
-├── <build>/run.json                   the runner's description of the build
+├── <build>/run.json                   the Node runner's description of the build (Node builds only; informational)
 └── report/                            agreement.json, divergences/<build>/<stream>.txt
 ```
 
@@ -384,9 +408,12 @@ A stream is batchable when every step carries exactly one command, for character
 `batch/` inputs let the runners drive `BatchStepper` through `StepQueued` and compare with
 `RunStream` (US2 scenario 6). The measurement uses the same inputs.
 
-`run.json` holds the build name, the runtime options, `runtimeBuildInfo`, the Node version or the
-browser's user agent, `inWorker` and `crossOriginIsolated` for Workers, and the start and end times.
-`compare` copies it into `agreement.json` when it is present.
+`run.json` is written only by the Node runner ([wasm-api.md](wasm-api.md#node)). It holds the build
+name, the runtime options, `runtimeBuildInfo`, Node's version and the start and end times. It is
+informational: `compare` does not read it, and a Worker build has none. A Worker's `inWorker`,
+`crossOriginIsolated`, `buildInfo` and `userAgent` are carried by its `booted` message, and the
+Playwright spec asserts `inWorker` and `crossOriginIsolated`
+([wasm-api.md](wasm-api.md#worker-playwright)).
 
 ### `manifest.json`
 
@@ -505,8 +532,9 @@ every run (US2 scenario 3). They are generated at test time and never committed.
 `ScenarioCatalog` (`src/MmoEngine.SimCore.Server/`) defines the committed streams under
 `simcore/streams/`. Each runs on `simcore/content/test-world.mmcd` with `simcore/config/default.json`,
 unless the row says otherwise. The scenario tests in `tests/MmoEngine.SimCore.Tests/Scenarios/` build
-the same definitions and assert each scenario's stated outcome (end positions, shot counts, hit parts);
-the agreement suite runs every one of them in every build (US1 scenario 7, US2 scenarios 1 and 2).
+the same definitions and assert each scenario's stated outcome (end positions, speeds, stances, shot
+counts, hit parts); the agreement suite runs every one of them in every build (US1 scenario 7, US2
+scenarios 1 and 2).
 
 | Stream | Configuration and characters | Exercises | Backs |
 | --- | --- | --- | --- |
@@ -522,13 +550,15 @@ the agreement suite runs every one of them in every build (US1 scenario 7, US2 s
 | `corner-wedge` | one character | pushes into the concave corner: no tunnelling, no oscillation, the slide loop stops at its limit | Edge cases: concave corner |
 | `thin-wall-fast` | one character | moves further than its capsule radius per step at the thin wall: the step is subdivided and never passes through | Edge cases: subdivided step |
 | `rifle-burst` | one character, the rifle (600 rpm) | holds Fire for 3 s aimed above the horizon: 30 shots, recoil kick and recovery, shots expire at their range; also the measurement's weapon step | US4.5, US5.4 |
-| `launcher-arc` | one character, the launcher | fires the heavy projectile horizontally over flat terrain; the arc meets the terrain at the closed-form step; also the measurement's projectile step | US5.1 |
+| `launcher-arc` | one character, the launcher | fires the heavy projectile horizontally from the flat-run start over the open terrain in front of it, which holds no mesh; the arc meets the terrain at the closed-form step; also the measurement's projectile step | US5.1 |
 | `reload-and-empty` | one character, the rifle with 2 rounds in the magazine | fires 2 shots, reports Empty, reloads from reserve after the reload time; switches slot and presses Fire while Switching and Reloading | US4.3, US4.6 |
 | `heat-overheat` | 30 Hz; one character; slot 0 is the heat test weapon: the rifle with `heatPerShot` 10000 and every other value the rifle's (600 rpm, magazine 30, `overheatThreshold` 100000, `heatRecoveryLevel` 40000, `heatCooldownPerSecond` 50000, `heatCooldownDelayMs` 250) | starts at step 0 and holds Fire for 72 steps (1–72): shots at steps 1, 4, …, 28; the 10th shot, at step 28, brings Heat to 3,000,000 stored units (100000 × 30) and sets Overheated; Fire is blocked with `FireBlock.Overheated` at steps 29–70; cooling starts at step 36, after the 8-step delay, at 50,000 units a step, and at step 71 brings Heat to 1,200,000 (40000 × 30), the recovery level, so the 11th shot fires at step 71; step 72 fires nothing and reports no block | US4.4, US4.6 |
 | `projectile-hits-hitbox` | two characters: shooter and target | rifle shots at the standing and the crouched target striking head, torso and legs; a projectile that crosses a whole hitbox within one step; a point-blank shot that starts inside a hitbox | US5.2, US5.6, the layout half of US5.5 (the struck parts match the stance's layout), Edge cases: point-blank; the bit-for-bit half of US5.5 is the [cross-build tables](wasm-api.md#cross-build-tables) |
 | `mesh-occludes-shot` | two characters, the target behind the wall | the shot hits the mesh, not the target | US5.3 |
+| `shots-at-known-distances` | five characters: a shooter with a target 25 m away on flat terrain, a shooter with a target behind the wall, and a shooter facing the ridge; zero spread and recoil for both slots | each projectile class fired at the target on flat terrain, at the target behind the wall, into the ridge face and over the ridge; every shot hits, or expires at its range, where the closed-form path says | US5-IT (the shots the agreement suite runs) |
 | `fuzz-all-buttons` | four characters; one seeded fuzz stream, committed | every button, the full aim range and the four rejection reasons, from a fixed seed | US1.9, US2.3 |
 
-That is 18 streams, against SC-001's "at least 10 named movement, weapon and projectile scenarios".
-`flat-run-30hz`, `rifle-burst` and `launcher-arc` are batchable, so the batch check and the measurement
-can drive them through `StepQueued`.
+That is 19 streams, against SC-001's "at least 10 named movement, weapon and projectile scenarios".
+Every stream that meets the [batchable rule](#agreement-work-directory) gets batch inputs, and the
+batch check drives all of them through `StepQueued`. The measurement drives `flat-run-30hz`,
+`rifle-burst` and `launcher-arc`, which are all batchable.

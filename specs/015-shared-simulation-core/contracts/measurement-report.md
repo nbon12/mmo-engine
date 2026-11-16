@@ -33,7 +33,8 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    `-p:RunAOTCompilation=true`), each only when the workload installed. A mode that cannot be
    produced is recorded as `{"produced": false, "reason": "…"}`.
 5. **Agreement on the new modes.** `simcore agreement prepare`, the Node agreement run with
-   `AGREEMENT_BUILD=node-interp-relinked` and `node-aot` for the modes produced, then
+   `AGREEMENT_BUILD=node-interp-relinked` and `node-aot` for the modes produced (each with
+   `AGREEMENT_APP` set to that build's `wwwroot` and `AGREEMENT_WORK` to the prepared work directory), then
    `simcore agreement compare --require` with those builds. The agreement of each build produced
    here, relinked interpreted and AOT, gates the job: a divergence in either is a real divergence
    between builds ([research.md](../research.md) R17). The prebuilt build's agreement is the

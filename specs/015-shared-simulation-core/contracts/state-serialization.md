@@ -463,6 +463,10 @@ Tests that pin this contract, in `tests/MmoEngine.SimCore.Tests/`:
   equals that of the same state with +0 (edge case);
 - a Theory over every float field: NaN, +∞ or −∞ there refuses the step with that field's path, and
   the previous state and hash are kept (FR-017);
+- the character and projectile floats are covered through a stepped world, and the event floats
+  (`events.shots[k].direction`, `events.hits[k].point` and `.t`) at the serializer, where
+  `StateSerializer.Write` takes the event spans directly; the keep-the-previous-state rule is
+  shared by every field;
 - `MaxLength` against a state filled to every maximum;
 - a property (CsCheck, fixed seed): reading a written state and writing it again gives the same
   bytes;

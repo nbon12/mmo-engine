@@ -64,8 +64,8 @@ other sub-spec in Phase 1 calls it. Without a deterministic movement step there 
 
 **Independent Test**: Step every committed recorded stream through the server build in two separate
 processes and compare each step's state hash with the stream's committed expected hashes. Every hash
-must match, and named movement scenarios (wall slide, step-up, slope limit, landing, crouch under a
-ledge) must end in the positions their scenario states.
+must match, and the named movement scenarios (wall slide, step-up, slope limit, landing, crouch
+under a ledge) must meet the outcomes acceptance scenarios 2 to 6 state.
 
 **Acceptance Scenarios**:
 
@@ -96,8 +96,9 @@ ledge) must end in the positions their scenario states.
 8. **Given** a step length of 20, 30 or 60 Hz, **When** a recorded stream made for that step length is
    stepped twice, **Then** both runs give identical per-step hashes.
 9. **Given** an input command whose values are out of range (an aim outside the valid range, unknown
-   button bits, a non-increasing sequence number), **When** it is offered to the step, **Then** it is
-   rejected with a reason code and the character's state is unchanged by it.
+   button bits, a weapon slot outside the configured slots, a non-increasing sequence number),
+   **When** it is offered to the step, **Then** it is rejected with a reason code and the
+   character's state is unchanged by it.
 
 ---
 
@@ -177,9 +178,9 @@ allowed sample none. Then build the core itself with the analyzer as an error.
    it is built, **Then** the build fails with the blocking-synchronization rule's diagnostic
    (constitution Principle II).
 7. **Given** core code that computes in `double`, `Half`, `nint` or `NFloat`, converts a `float` to an
-   integer outside the core's saturating helpers, or takes a platform-dependent path (conditional
-   compilation, an operating-system or runtime query, reflection), **When** it is built, **Then** the
-   build fails with that rule's diagnostic.
+   integer outside the core's saturating helpers, converts a `ulong` to `float`, or takes a
+   platform-dependent path (conditional compilation, an operating-system or runtime query,
+   reflection), **When** it is built, **Then** the build fails with that rule's diagnostic.
 8. **Given** each of the core's trigonometric and inverse-trigonometric functions, **When** they are
    evaluated over a fixed table of inputs spanning their domains, **Then** every result is within the
    documented error bound of the true value, and the server and WebAssembly builds return identical
@@ -209,8 +210,11 @@ Run the same streams through the agreement suite.
    even though the interval is not a whole number of steps.
 2. **Given** the same match salt, player ID and shot counter, **When** spread is computed in any
    build, **Then** the shot direction is identical to the bit; **Given** a different shot counter,
-   **Then** the direction changes, and over many shots the directions fall within the configured
-   spread cone with the configured distribution.
+   **Then** the direction changes, and over 20,000 consecutive shot counters every direction lies
+   within the weapon's configured spread half-angle of the aim, and the directions are spread
+   uniformly over that cone (uniform in solid angle: equally likely at every bearing around the aim
+   and uniform in one minus the cosine of the angle from it), which a χ² test at the 5% level does
+   not reject.
 3. **Given** a magazine with 2 rounds and the trigger held, **When** it is stepped, **Then** 2 shots
    fire, the weapon reports empty, no further shot fires, and a reload restores the magazine from
    reserve after the configured reload time.
@@ -331,8 +335,14 @@ pass for every step function.
   step, and the rest of its timing accumulates without drift.
 - A projectile that starts inside a hitbox (point-blank) reports that hit at its first step.
 - Region merges, splits, portals and tick overruns: N/A. The core is a pure step function with no
-  region data; the continent server (sub-spec 5) owns where its state lives. A degraded region at
-  20 Hz calls the core with the 20 Hz step length from configuration.
+  region data; the continent server (sub-spec 5) owns where its state lives. `SimWorld` is not region
+  data: it is the composition the client Worker, the agreement suite, tests and bots use. The step
+  rate is fixed for a `SimWorld`'s life. Weapon heat, fire wait, phase and delay counters, the step
+  number and projectile launch steps are all stored in units of that rate, and each 20, 30 and 60 Hz
+  stream runs at one rate throughout. A region that drops from 30 to 20 Hz needs its live state
+  converted between rates before a 20 Hz configuration steps it. This feature provides no such
+  conversion (Assumptions). It is a follow-up owned by the continent server (sub-spec 5), which may ask the core
+  for a conversion API.
 
 ## Requirements *(mandatory)*
 
@@ -379,7 +389,8 @@ pass for every step function.
   vector operations, fused multiply-add, platform math functions outside an allowed list, iteration
   over hash-ordered collections, the wall clock, or unseeded randomness. It MUST NOT compute in
   `double` or platform-sized number types, convert a `float` to an integer except through the core's
-  saturating helpers, or take a different code path on different platforms.
+  saturating helpers, convert a `ulong` to `float`, or take a different code path on different
+  platforms.
 - **FR-013**: The core MUST ship its own sine, cosine, tangent, arcsine, arccosine, arctangent and
   two-argument arctangent, each with a documented maximum error. Square root MAY use the platform's
   IEEE 754 correctly rounded operation, which is identical in every build by definition.
@@ -396,9 +407,11 @@ pass for every step function.
 **Inputs and validation**
 
 - **FR-018**: An input command MUST carry its sequence number, the client step it was made for, the
-  buttons held and the aim for that step, with the aim as fixed-point angles.
+  buttons held and the aim for that step, with the aim as fixed-point angles, and the weapon slot it
+  selects.
 - **FR-019**: The core MUST validate each input command before it affects state: the aim within range,
-  only known button bits set, and the sequence number greater than the last one applied. An invalid
+  only known button bits set, the weapon slot below the configured slot count (`input.weaponSlots`),
+  and the sequence number greater than the last one applied. An invalid
   command MUST be rejected with a reason code and leave the state unchanged.
 
 **Formats**
@@ -450,7 +463,8 @@ pass for every step function.
 
 - **Character state**: one character's position, velocity, aim, stance, grounded flag and contact
   state, plus the last input sequence applied. The movement step's input and output.
-- **Input command**: one step's input from a player: sequence number, client step, buttons and aim.
+- **Input command**: one step's input from a player: sequence number, client step, buttons, aim and
+  weapon slot.
 - **Movement configuration**: step length, speeds, accelerations, gravity, jump speed, step height,
   slope limit, capsule dimensions per stance and the contact tolerance.
 - **Collision world**: the heightfield terrain and static triangle meshes loaded from one collision
@@ -473,16 +487,18 @@ pass for every step function.
 - **Component and surface**: A shared library used by the continent server, the bots and the browser
   client. It adds no running service, no web surface and no network endpoint.
 - **State ownership**: The core owns no state. Each step function takes state in and returns state
-  out. In the continent server (sub-spec 5), the region that owns an entity is its single writer and
-  calls the core inside its tick. On the client, the Worker owns the predicted copy.
+  out. In the continent server (sub-spec 5), the region that owns an entity is its single writer,
+  keeps the entity in its own storage and calls the core's per-entity steps inside its tick. On the
+  client, the Worker owns the predicted copy.
 - **Interaction class**: Movement and collision are instant interactions resolved by the owning region.
   Projectile flight provides the trace that both close-range instant hits and deferred projectile
   hand-overs use; this spec adds no claim, portal or bridging behavior, and a projectile claims no
   sections (constitution, Projectiles).
 - **Authority and disclosure**: The server stays authoritative (Principle IV): the core is the same
   code on both sides, so the client predicts its own movement and weapons with the server's rules.
-  Every input command is validated for value ranges, known bits and sequencing before it affects state
-  (FR-019). Size and rate limits on the wire belong to the transport and edge (sub-specs 4 and 7).
+  Every input command is validated for value ranges, known bits, weapon slot and sequencing before it
+  affects state (FR-019). Size and rate limits on the wire belong to the transport and edge (sub-specs
+  4 and 7).
   The core discloses nothing; what each client sees is Delivery's job.
 - **Persistence and write policy**: N/A. The core persists nothing; recorded streams and collision data
   are committed test fixtures and content files.
@@ -514,7 +530,11 @@ pass for every step function.
   temporary directories and dynamic ports, so they are safe in parallel and against leftovers.
   Zero-allocation tests cover every step function.
 - **Executable and living spec**: Every acceptance scenario maps to an automated test named in
-  `tasks.md`. This spec and `tasks.md` are updated before the PR.
+  `tasks.md`. At each merge, every scenario, requirement and success criterion this spec states as
+  current behavior has a test that passes on `main`. Slice 1 lists the items only slice 2 builds (the
+  WebAssembly build, its runners, the SimCore workflow and the measurement job) under a section
+  headed "Planned for slice 2: not yet built, no test on main", and slice 2 moves them back with
+  their tests (`tasks.md` T264 and T316). This spec and `tasks.md` are updated before each PR.
 - **Spec independence and parallelism**: No hard dependency. The core needs nothing from sub-specs 4
   to 9; they depend on it. The vehicle-physics slice depends on this spec's collision world and
   agreement suite and is specified separately.
@@ -568,6 +588,13 @@ pass for every step function.
 - **Spread rule.** v2's seed rule (match salt, player ID, shot counter) is implemented as a stateless
   64-bit hash of those three values, mixed with SplitMix64's finaliser, giving two uniform numbers for
   the spread cone. It needs no shared random stream, so shots can be replayed in any order.
+  Directions are uniform in solid angle over the cone. The distribution is fixed by the design, and
+  only the half-angle is configuration.
+- **Step rate of a live world.** Changing the step rate of a live world is not supported in this
+  feature. A world's step rate is fixed when it is created, its state is stored in units of that rate,
+  and the core provides no conversion of a live state between rates (Edge Cases). A region that
+  degrades from 30 to 20 Hz (constitution, degradation order) needs that conversion, which is a
+  follow-up for the continent server (sub-spec 5).
 - **Ballistics.** Projectiles follow gravity only (no drag) in Phase 1; drag can be added as
   configuration later without changing the format's version rules. The position at step *k* is
   computed in closed form from the launch state, so client and server can evaluate any step directly.

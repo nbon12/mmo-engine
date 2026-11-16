@@ -20,8 +20,10 @@ WebAssembly, in a dedicated Web Worker).
   stepper and stream runner. Only bytes cross the JavaScript boundary.
 - **Agreement suite**. The `simcore` CLI runs every committed recorded stream, and streams from 50
   generated seeds, through the server build. The WebAssembly build then runs them in Node (with the
-  jiterpreter on and off) and in Chromium, Firefox and WebKit Workers. The CLI compares every step's
-  hash and reports the first divergent step field by field. CI gates on it.
+  jiterpreter on and off) and in a Chromium Worker, plus Firefox and WebKit Workers when Playwright
+  can install them (otherwise reported NotRun, never as a pass; research R16). The CLI compares every
+  step's hash and reports the first divergent step field by field. CI gates on the required builds
+  (Node and Chromium).
 - **Measurements**. BenchmarkDotNet covers the server steps. A measurement job records the
   WebAssembly download size, startup and step cost for the interpreted build, and for the
   ahead-of-time build where the toolchain produces one. The numbers never gate. The job's agreement
@@ -119,14 +121,15 @@ follows separately.
 - No locks or blocking in the core (Principle II).
 - Every loop has a fixed bound (FR-005).
 - No I/O, logging or clock reads in the core.
-- The WebAssembly download size is measured, not gated: the core adds tens of KiB to a runtime of
-  about 0.9–1.4 MiB brotli.
+- The WebAssembly download size is recorded, not gated. Measured on the sandbox with toy kernels
+  (research R17): 888 KiB brotli for the relinked interpreter, 1,377 KiB for the prebuilt
+  interpreter and 1,588–1,663 KiB for AOT. The core's own share (tens of KiB) is an estimate.
 
 **Scale/Scope**:
 
 - World capacity is configurable up to 1,024 characters and 16,384 projectiles. Tests and streams use
   up to 64 characters and 1,024 projectiles.
-- 18 committed named streams plus 50 generated seeds.
+- 19 committed named streams plus 50 generated seeds.
 - Collision files up to 256 MiB, with at most 64 triangles in a grid cell.
 - Five `src/` projects, three test projects, one benchmark project and one Node tool folder.
 
@@ -146,11 +149,19 @@ follows separately.
 - **Interaction classes and claims** (III): Passes. Movement and collision are instant interactions
   of the owning region. Projectile flight is the trace behind instant hits and deferred hand-overs.
   No claim, claim radius, portal or bridging change.
-- **Regionizer invariants**: N/A. The core has no region data, and merges and splits don't touch it.
+- **Regionizer invariants**: N/A. The core defines no region data. `SimWorld` is the composition for
+  the client Worker, the agreement suite, tests and bots. A server region keeps its entities in its own
+  storage (sub-spec 5), and that sub-spec defines the merge and split callbacks, continent-unique IDs
+  (including the next projectile ID handed to the weapon step) and the `LaunchStep` offset on a merge.
 - **Tick budget and performance** (VI): Passes. Costs are stated and labelled (see Tick Budget and
   Evidence). Steps don't allocate, and buffers are owned by the world and sized from the configured
   maxima. Benchmarks (FR-030) and zero-allocation tests (FR-032) are planned for every step function.
-  The core does no I/O. A degraded region at 20 Hz calls it with the 20 Hz step length.
+  The core does no I/O. The per-entity steps take one entity's state in and write it out, and impose
+  no storage layout, so a region's structure-of-arrays storage can call them; `StepCaseTests` (T245)
+  checks drivers that call them directly against `SimWorld` runs. `SimWorld`'s struct arrays are not
+  region storage. The core runs at 20 Hz when configured for it (the 20 Hz streams and
+  tests). A live 30 to 20 Hz drop needs a state conversion between rates, which this feature does not
+  provide; it is a follow-up for sub-spec 5 (spec Assumptions).
 - **Authority, netcode and trust** (IV): Passes. The server stays authoritative, and the client runs
   the same code to predict. Every input command is decoded with strict length and version checks,
   then validated before it affects state: ranges, known bits, sequencing and weapon slot (FR-019,
@@ -186,6 +197,9 @@ follows separately.
   never return a partial result. Authentication and authorization are N/A: the core is a library.
   The local test server binds 127.0.0.1 only and guards against path traversal.
 - **Testing discipline** (VIII): Passes. Tests are written first, in red-green order in `tasks.md`.
+  That includes the zero-allocation tests: each entry point's allocation test is a red task in the
+  phase that builds the entry point, before its green task, and Phase 9's `StepCase`-driven test is
+  the regression across all of them.
   Simulation tests run on a fixed step length and seed and advance the steps each scenario implies.
   Data variations are Theories. Tests are pure and in process. The WebAssembly runs use unique
   temporary directories and dynamic ports, so they are safe in parallel and on rerun. Persistence and
@@ -195,10 +209,13 @@ follows separately.
   direct project reference (research R18). A new `SimCore` workflow runs the agreement suite as a
   gating check and runs the measurement job. A patch-notes entry ships with each PR. Sonar and
   Codecov still wait on the owner's accounts, as before.
-- **Executable and living specs** (IX): Passes. Every acceptance scenario and Independent Test maps
-  to a named automated test in `tasks.md`. The spec was updated in this phase so that US3 and FR-012
-  match the analyzer design: a horizontal `Vector128` sample for scenario 1, fused operations under
-  the FMA rule, and the double, float-to-integer and platform-path rules.
+- **Executable and living specs** (IX): Passes at each merge. Every acceptance scenario and
+  Independent Test maps to a named automated test in `tasks.md`. Slice 1's spec.md states only slice-1
+  behavior as built and lists the WebAssembly items under "Planned for slice 2: not yet built, no test
+  on main", with no claim of current behavior (T264). Slice 2 moves them back with their tests
+  (T316). The spec was updated in this phase so that US3 and FR-012 match the analyzer design: a
+  horizontal `Vector128` sample for scenario 1, fused operations under the FMA rule, and the double,
+  float-to-integer, `ulong`-to-`float` and platform-path rules.
 - **Spec independence and parallelism** (X): Passes. There is no hard dependency on another spec.
   Sub-specs 4–9 depend on this one. The vehicle-physics slice depends on this slice's collision world
   and agreement suite.
@@ -230,10 +247,12 @@ benchmark project replaces them with runner-class measurements (FR-030, SC-007).
   caller-owned spans and fixed-capacity arrays. The core has no LINQ, lambdas, boxing or static
   mutable state. Zero-allocation tests run 1,000 steps after warm-up, for each of the movement,
   weapon, projectile and full-world steps, and assert 0 bytes (US7.3, FR-032, SC-005).
-- **Degradation**: The core has no Delivery work. A region that drops to 20 Hz passes the 20 Hz step
-  length; the 20 Hz streams and tests cover that.
-- **Metrics**: None added. Step reports expose counters (sweeps, slide-cap hits, fire blocks) for
-  sub-spec 5 to export.
+- **Degradation**: The core has no Delivery work. The core runs at 20 Hz when configured for it (the
+  20 Hz streams and tests). A live 30 to 20 Hz drop needs a state conversion between rates, which this
+  feature does not provide; it is a follow-up for sub-spec 5 (spec Edge Cases and Assumptions).
+- **Metrics**: None added. The per-entity steps return their outcomes and counters (sub-moves, sweeps,
+  slide-cap hits, fire blocks) for sub-spec 5 to aggregate and export. `StepReport` sums them for
+  `SimWorld`'s callers.
 
 ## Project Structure
 
@@ -276,17 +295,19 @@ src/MmoEngine.SimCore/                    # the core; BCL + System.IO.Hashing on
 ├── Config/                               # SimConfig, ConfigFields, ConfigRelations, ConfigGuard, CompiledConfig, ConfigBlock
 ├── World/                                # SimWorld, StepReport, StepFault, StepEvents
 ├── Batch/                                # BatchStepper, StreamRunner, StepRecord, StepFaultException, CrossBuildTables
-└── Hashing/                              # StateHash
+└── Hashing/                              # StateHash, SplitMix64
 src/MmoEngine.SimCore.Analyzers/          # DeterminismAnalyzer (MMO1001–MMO1009), release-tracking files
 src/MmoEngine.SimCore.Wasm/               # Microsoft.NET.Sdk.WebAssembly host: SimCoreExports ([JSExport]), Program.cs
 src/MmoEngine.SimCore.Server/             # SimConfigJson, SimConfigValidator (FluentValidation), SimEnvironment,
                                           #   TestWorldGenerator, ScenarioCatalog, StreamGenerator, DivergenceReport,
-                                          #   TablesComparison
-src/MmoEngine.SimCore.Cli/                # `simcore`: content, golden, streams, agreement, measure, config
+                                          #   TablesComparison, StreamComparison, StateFieldReader, Golden/
+src/MmoEngine.SimCore.Cli/                # `simcore`: content, golden, streams, agreement, measure, config;
+                                          #   Commands/, Agreement/, Measure/
 tests/MmoEngine.SimCore.Tests/            # core, server-helper and CLI tests
 ├── Architecture/                         # dependency and wiring tests (BCL + System.IO.Hashing only)
 ├── Math/  Collision/  Movement/  Weapons/  Projectiles/  Hitboxes/  Inputs/  Formats/  Config/
-├── World/  Batch/
+├── World/  Batch/  Hashing/
+├── Support/                              # shared fixtures: TestConfigs, TestWorlds, TestStates, references
 ├── Benchmarks/                           # the dry-run export test (references the benchmark project)
 ├── Scenarios/                            # US1, US4, US5 acceptance scenarios at 20/30/60 Hz
 ├── Properties/                           # CsCheck, fixed seeds
@@ -297,8 +318,10 @@ tests/MmoEngine.SimCore.Tests/            # core, server-helper and CLI tests
 tests/MmoEngine.SimCore.Analyzers.Tests/  # rule Theories, backstop compile of src/MmoEngine.SimCore, wiring Fact
 tests/MmoEngine.SimCore.Wasm.Tests/       # calls the exports directly (coverage of the host)
 benchmarks/MmoEngine.SimCore.Benchmarks/  # step, hitbox and hash benchmarks; SimCoreMeasurementExporter (p99)
-tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/, web/,
-                                          #   lib/ (runner, server, tables.mjs, measure.mjs)
+tools/agreement/                          # package.json + lock, playwright.config.mjs, node/, specs/,
+                                          #   lib/ (runtime.mjs, server.mjs, tables.mjs, passes.mjs, measure.mjs,
+                                          #   measure-node.mjs), web/ (page.html, worker.mjs, measure.html,
+                                          #   measure-worker.mjs)
 tools/simcore/                            # gen_coeffs.py, gen_twoopi.py, emit_cs.py, requirements.txt
 simcore/                                  # config/default.json, content/test-world.mmcd, streams/*.mmrs,
                                           #   streams/REGENERATIONS.md, golden/{input,collision,stream}/, README.md
@@ -338,8 +361,10 @@ The design documents settled these points, which the spec leaves open. They are 
   (float `bits`, a config entry's `fieldId` and `valueBits`) are uppercase `0x` hex strings
   ([contracts/input-command-format.md](contracts/input-command-format.md#shared-fixture-rules)).
   `simcore golden write` produces the `.bin` files, and a test checks it reproduces the committed ones.
-- **Build names.** D9's builds plus `node-interp-nojit` (the jiterpreter off, in the agreement job)
-  and `node-interp-relinked` (the measurement job). `node-interp` means the jiterpreter is on.
+- **Build names.** Research R16 and [contracts/simcore-cli.md](contracts/simcore-cli.md#build-names)
+  define the builds. Besides the `server` reference, the agreement job runs `node-interp` (jiterpreter
+  on), `node-interp-nojit` (jiterpreter off) and `chromium-worker`, `firefox-worker` and
+  `webkit-worker`. The measurement job runs `node-interp-relinked` and `node-aot`.
 - **Stream outcomes.** Match, Diverged, NotComparable and Refused. Refused and NotComparable exit 2,
   a divergence exits 1, and a divergence wins when both occur ([contracts/simcore-cli.md](contracts/simcore-cli.md)).
 - **Measurement gating.** The numbers never gate. The measurement job's agreement on the relinked
@@ -371,9 +396,89 @@ The design documents settled these points, which the spec leaves open. They are 
   normal and slides down it, an airborne walkable hit clips against its normal, and the crease and
   three-plane stop apply only when the clipped velocity would move back into an earlier plane
   ([data-model.md](data-model.md#movement-step), research R8).
+- **Slice-2 items in spec.md at slice 1's merge.** Slice 1's polish task (T264) moves every item only
+  slice 2 builds into a spec.md section headed "Planned for slice 2: not yet built, no test on main",
+  keeping each item's ID, and slice 2 (T316) moves them back once their tests exist. This keeps spec.md
+  truthful on `main` (Principle IX). Splitting them into a separate sub-spec was rejected: `tasks.md`
+  covers both slices, the spec's Input and scope name them, and sub-specs 4–9 depend on this spec.
+- **A live step-rate change is out of scope.** A world's step rate is fixed for its life, and its
+  heat, fire wait, phase and delay counters and launch steps are stored in that rate's units. The core
+  ships no conversion of a live state between rates; the 30 to 20 Hz degradation that needs it is a
+  follow-up for sub-spec 5. Building the conversion here would add scope that no scenario of this
+  spec asks for, and it does not touch open decision 3.
 - **US7 scenario 1 in slice 1.** A dry-run test runs the server benchmarks in process and checks the
   exporter's `server` object with the report validator's rules, so the slice that claims US7.1 tests
   it. The full benchmark run stays in slice 2's `measure` job.
+- **The over-the-ridge shots of US5's Independent Test.** The heavy class clears the ridge and lands
+  beyond it. The small-arms class has no clear-and-land row: a 600 m/s shot from eye height that
+  clears a 3 m crest cannot come down within its 600 m range, so its ridge-clearing row asserts the
+  Range expiry at the closed-form step instead, and both classes keep a row that hits the ridge face
+  (T205). Putting a small-arms shooter on the ridge's slope was rejected: it no longer fires "from a
+  shooter" on the ground as the other placements do. The projectile test worlds span ±512 m, so a
+  level small-arms shot lands on terrain (US5 scenario 1, T200).
+- **US5's "run the same shots through the agreement suite" gets its own committed stream.**
+  `shots-at-known-distances` fires both classes on the test world at a target 25 m away on flat
+  terrain, at a target behind the wall, into the ridge face and over the ridge; it makes 19 named
+  streams (69 with the generated ones). T205's own placements stay in process on the projectile test
+  worlds, which no committed stream uses. Adding the shots to `launcher-arc` was rejected because
+  that stream backs US5 scenario 1's single-shot assertion and is the measurement's projectile step;
+  adding them to `mesh-occludes-shot` was rejected because it would stretch that stream past what
+  its name and US5 scenario 3 say, and still leave the heavy class's target shot uncovered. Over the
+  ridge, the test asserts against the double reference shot by shot (hit, or Range expiry) rather
+  than a fixed outcome, because the test world beyond the ridge is not shaped for these shots.
+- **Embedded input errors are reported from Phase 2.** `RecordedStream.Decode` already decodes each
+  step's commands with `InputCodec.TryDecode` in Phase 2, so it re-reports a refused command there
+  (format `stream`, file offset, `steps[i].commands[c].input.<field>`); Phase 8 adds the step-number,
+  command-count and index checks around it. Deferring the re-report to Phase 8 would leave Phase 2 to
+  Phase 7 with a decode whose refusal is undefined, and US2 scenario 5's "an embedded command version
+  is refused, not not comparable" test could not pass in Phase 4.
+- **The analyzer tables are pinned by behaviour.** `TableTests` has one sample per entry the analyzer
+  contract names, allowed or banned, and asserts its exact rule. Comparing the internal `Tables` sets
+  with transcribed copies was rejected: several rules are patterns in code (the intrinsics namespace,
+  `float.Is*`, `*Estimate`, `FusedMultiply*`), so a set comparison would pin the implementation's
+  layout rather than the rules, and it would need `InternalsVisibleTo` on the analyzer.
+- **Phase 6 follows Phase 5.** The weapon phase's checkpoint runs Phase 5's backstop over the new
+  weapon code, and every phase shares one test assembly where red means a compile failure, so Phase 6
+  starts once Phase 5's checkpoint is green; Phase 8 can still run beside Phase 5.
+- **The test world's layout constraints are the cross-phase ones only.** `TestWorldGenerator` keeps
+  a clear firing lane in front of the flat-run start: no mesh and no ramp, plateau, ridge or cliff at
+  z ≥ start.z − 1, the ground within 0.5 m of the start's height, and at least 100 m of heightfield
+  in +Z, past the launcher's longest pitch-0 ground range (about 83 m). `rifle-burst` (Phase 6) and
+  `launcher-arc` (Phase 7) fire along it, and the Phase 3 generator test checks it on the decoded
+  data alone, so a later phase cannot find its lane blocked. The start's x is at least 1 m, so the
+  flat runs' `position.x` stays positive and the one-ulp perturbation (Phases 4 and 11) adds exactly
+  1 to its raw bits, in C# and in JavaScript alike. The ledge is 4 m deep so the
+  `crouch-under-ledge` schedule (Crouch released at 1.5 s, 4.5 s in all) releases under it and stands
+  up before the run ends. The wall pair (two starts 25 m apart across the wall) and the ridge shot
+  start and crest, which Phase 7's `mesh-occludes-shot` and `shots-at-known-distances` use, are named
+  in `TestWorldGenerator.Features` and checked by the same Phase 3 test. Wall and corner sizes are
+  left to the Phase 3 tests that already force them.
+- **Fuzz worlds start clear, not small.** The movement properties constrain only the start state:
+  each character starts at rest with its standing capsule at least capsuleRadius + contactSkin from
+  every triangle and boundary plane, Grounded only on a walkable down-probe hit, and samples that
+  cannot place a character are filtered out. A character that starts clear cannot become `Stuck`, so
+  `NeverGetsStuckOnAFuzzWorld` then depends only on the controller. Pinning mesh counts and sizes was
+  rejected because it narrows the worlds the properties cover; CsCheck's default 100 iterations per
+  rate keeps the run time known.
+- **Only the CLI checks a collision file's size before reading it.** `streams record`, `streams
+  verify` and `agreement prepare` load `--content` through one helper, `ContentFiles.LoadAll`, which
+  refuses a file over 256 MiB from its length (`Oversized`, offset 8, `fileLength`) before opening
+  it (simcore-cli.md#content-files). The test helpers (`RepoPaths`) get no such guard: tests read
+  only committed or generated files of known size, so the guard would protect nothing there, and
+  `CollisionFile.Decode`'s own limit checks still run on every buffer.
+- **`streams record`'s fault path is tested through a CLI-side runner parameter.** A valid
+  configuration cannot make a step fault, so `Program.Run` has an internal overload taking
+  `runStream` (production: `StreamRunner.Run`), and `streams record` runs every stream through it.
+  The test passes a runner that throws a `StepFaultException` built from
+  `SimWorld.StepWithInjectedBits`. A fault parameter on the public `StreamRunner`, a mutable static
+  or delegate field, and `InternalsVisibleTo` from the core to the CLI were rejected: each would put
+  a test hook into production code paths or widen the core's internals beyond the test project.
+- **Analyzer messages use Roslyn's error-message display formats.** `{0}` for a symbol is
+  `SymbolDisplayFormat.CSharpShortErrorMessageFormat` (`MathF.Sin(float)`, the form the compiler's
+  own diagnostics use), and a type in `{1}` is the default `ToDisplayString()`, namespace-qualified
+  (`System.Collections.Generic.Dictionary<int, int>`), so a hash-ordered type is unambiguous; the
+  other operations use a fixed keyword or their source text (analyzer-rules.md#messages). The
+  quickstart's MMO1004 line is asserted verbatim by `BuildTests.ABuildWithAViolationFails`.
 
 ## Delivery
 
@@ -381,7 +486,8 @@ The work ships as two vertical slices. Each is a PR that leaves `main` green.
 
 1. **Core, analyzer, formats and server-side agreement** on `015-shared-simulation-core`. This covers
    the spec artifacts, US1, US3, US4, US5 and US6, except the cross-build halves of US3 scenario 8
-   and US5 scenario 5 (below), plus:
+   and US5 scenario 5 and the agreement half of US5's Independent Test (below), and the server half
+   of US2 (scenarios 4 and 5, and scenario 6 through `BatchStepper` called directly), plus:
    - the server benchmarks, their dry-run export test, and the zero-allocation tests (US7.1, US7.3);
    - the `simcore` CLI, including the server side of the cross-build tables (`CrossBuildTables`,
      `agreement prepare` writing them and `agreement compare` diffing them);
@@ -391,16 +497,21 @@ The work ships as two vertical slices. Each is a PR that leaves `main` green.
    The existing .NET workflow builds and runs all of it; only the full benchmark run waits for
    slice 2's `measure` job. No guarded path is touched.
 2. **WebAssembly build, agreement suite and measurement job**, on a new branch off `main` after
-   slice 1 merges. This covers US2 and US7.2, and the cross-build halves of US3 scenario 8, SC-004
-   and US5 scenario 5, which need a WebAssembly build:
+   slice 1 merges. This covers the rest of US2 (scenarios 1 to 3 and 7, the browser half of
+   scenario 6, and its Independent Test) and US7.2, the cross-build halves of US3 scenario 8, SC-004
+   and US5 scenario 5, and the agreement half of US5's Independent Test, which need a WebAssembly
+   build:
    - the Wasm host (including the `EvaluateTables` export) and its tests;
    - `tools/agreement/`, including the tables check in both runners;
    - `.github/workflows/simcore.yml`, its workflow test, and the `auto-merge.yml` listener.
 
    It touches `.github/`, so it gets the independent automated review before the session merges it.
 
-`tasks.md` covers both slices. Slice 1's PR description lists slice 2 as the follow-up.
+`tasks.md` covers both slices. Slice 1's PR description lists slice 2 as the follow-up. At slice 1's
+merge, spec.md lists the slice-2-only items under "Planned for slice 2: not yet built, no test on
+main" (T264), so it states as built only what slice 1 tests; slice 2 moves them back (T316).
 
 ## Complexity Tracking
 
-No violations.
+No violations. The slice-1 interim state of spec.md, with the slice-2 items in a marked planned
+section, is not one: spec.md claims no behavior that `main` does not test (Constitution Check, IX).

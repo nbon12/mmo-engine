@@ -11,7 +11,7 @@ Three layers:
 | --- | --- | --- | --- |
 | `BatchStepper`, `StreamRunner` and `CrossBuildTables` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
 | `SimCoreExports`, one-line `[JSExport]` delegations | `src/MmoEngine.SimCore.Wasm/` | no | `tests/MmoEngine.SimCore.Wasm.Tests/`, which calls the exports as plain methods |
-| JavaScript boot and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `node/agreement.test.mjs`, `web/worker.mjs`, `lib/measure.mjs` | no | the agreement and measurement runs |
+| JavaScript boot and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `node/agreement.test.mjs`, `web/worker.mjs`, `lib/measure.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs |
 
 All logic lives in the core, so the server tests cover everything the browser runs. Only bytes cross
 the JavaScript boundary. Byte layouts of the step record, the canonical state, the collision file, the
@@ -170,8 +170,11 @@ with its `FormatError`), `ConfigValidationException`, or `StepFaultException` wi
 After that step commits, the runner applies `MathF.BitIncrement` to the first character's
 `position.x`, canonicalises, serialises and hashes the state again, and writes that step's record from
 the perturbed state. Later steps continue from it. The first divergent step is therefore exactly
-`perturbStep`, and the differing field is `characters[0].position.x`. A `perturbStep` that is not one
-of the stream's step numbers throws `ArgumentOutOfRangeException`. The perturbation is a runtime
+`perturbStep`, and the differing field is `characters[0].position.x`. The perturbation checks
+run the flat-run streams (`flat-run-30hz` in the agreement suite), whose character starts at the test
+world's `FlatRunStart` with x ≥ 1 m and runs along +Z. Its x stays positive, so the perturbed
+`position.x` bits are the original bits + 1. A `perturbStep` that is not one of the stream's step
+numbers throws `ArgumentOutOfRangeException`. The perturbation is a runtime
 parameter, never a patched build, because the publish output is checked by SHA-256 integrity
 [measured].
 
@@ -201,12 +204,14 @@ so there is one table, not two. For each function:
   4,096 bit patterns in [−1, 1];
 - Atan: ±0, the subnormals above, the four fdlibm breakpoints (7/16, 11/16, 19/16, 39/16) and their
   neighbours, ±`float.MaxValue`, ±∞ (finite results ±π/2) and 4,096 finite bit patterns;
-- Atan2: every combination of ±0 and ±∞ for both arguments, the four axis directions, and 4,096
-  finite pairs;
+- Atan2: every combination of ±0 and ±∞ for both arguments, the four axis directions (a, b) =
+  (+0, 1), (1, +0), (+0, −1) and (−1, +0), and 4,096 finite pairs;
 - SinCosBinaryAngle: every one of the 65,536 angles;
 - Sqrt: +0, −0, the subnormals above, ±`float.MaxValue` and 1,024 positive finite bit patterns;
-- the non-finite and out-of-domain rows: NaN for every function, ±∞ for the radian functions, Asin
-  and Acos just outside ±1 and at ±2, and a negative Sqrt argument. Each returns NaN.
+- the non-finite and out-of-domain rows: NaN for every function except SinCosBinaryAngle (its input
+  is a 16-bit angle, so it has no such row), ±∞ for Sin, Cos, SinCos and Tan, Asin and Acos just
+  outside ±1 and at ±2, and a negative Sqrt argument. Each returns NaN. Atan's ±∞ rows and Atan2's
+  ±0/±∞ rows above are in domain and have finite results.
 
 The drawn bit patterns come from the core's SplitMix64 with seed `0x5EED0000 + function ID`, uniform
 over the bit patterns in the stated range, in draw order. The pose rows are both stances × every
@@ -255,7 +260,7 @@ in-domain rows compare bit for bit. Pose rows compare bit for bit. The first row
 is reported as, for example,
 
 ```text
-tables: build chromium-worker, first mismatch at math row 41207: Atan2(a 0x3F000000, b 0xBF800000) r0 server 0x402B6374 build 0x402B6375
+tables: build chromium-worker, first mismatch at math row <i>: Atan2(a 0x00000000, b 0xBF800000) r0 server 0x40490FDB build 0x40490FDC
 tables: build node-aot, first mismatch at pose row 3871: Crouched yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x45800266 build 0x45800267
 ```
 
@@ -473,7 +478,7 @@ Routes:
 
 | Method and path | Served from |
 | --- | --- |
-| `GET /web/page.html`, `GET /web/worker.mjs`, `GET /lib/runtime.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
+| `GET /web/page.html`, `GET /web/worker.mjs`, `GET /web/measure.html`, `GET /web/measure-worker.mjs`, `GET /lib/runtime.mjs`, `GET /lib/tables.mjs`, `GET /lib/passes.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
 | `GET /_framework/*` | `AGREEMENT_APP/_framework/` |
 | `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs, the table inputs and the server's table results) |
 | `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; 204 on success, 403 otherwise |
@@ -550,7 +555,7 @@ Messages:
 | Worker → page | `done` | `streams` (the number run), `mismatches`, `errors` |
 | Worker → page | `fatal` | `message` (boot or manifest failure) |
 
-The spec asserts: a `booted` message with `inWorker` true; one `stream` message per manifest stream,
+The spec asserts: a `booted` message with `inWorker` and `crossOriginIsolated` true; one `stream` message per manifest stream,
 each with `match` true; no `error` and no `fatal`; every `batch` message with `match` true; one
 `tables` message with `match` true; `done`'s counts agree; and no console message about the content
 type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scenario 5). The records it
@@ -571,8 +576,8 @@ type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scen
 | `StreamRunnerTests.RefusesBeforeStepZero` (Theory: `UnsupportedVersion`, `CollisionDataMissing`, `RulesRevisionMismatch`, an invalid config block) | US2.5, US6.5 |
 | `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.InputsArePinned` | `BuildInputs()` returns the same bytes on every call, with the row counts and the XxHash64 the test pins, so a change to the table is a visible edit |
 | `CrossBuildTablesTests.EachRowEqualsTheDirectCall` | every math row's result equals the `SimMath` call it names, and every pose row's equals `HitboxBuilder` for that pose, bit for bit |
-| `CrossBuildTablesTests.NonFiniteAndOutOfDomainRowsReturnNaN`, `CrossBuildTablesTests.RefusesMalformedTables` (Theory: magic, version, length, function ID, stance) | the table's NaN rows and its refusals |
-| `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3) |
+| `CrossBuildTablesTests.RefusesMalformedTables` (Theory: magic, version, length, function ID, stance) | its refusals |
+| `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3), and every out-of-domain row gives NaN, counted explicitly. It is the only definition of an out-of-domain row: a or b NaN; a = ±∞ for functions 1–4; \|a\| > 1 for 5 and 6; a < 0 and not −0 for 10 |
 | `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.ReportsTheFirstDifferingRow` (Theory: one bit flipped in a math row, in a pose row, a NaN against a finite value) and `TablesComparisonTests.AnyNaNMatchesANaNRow` | the comparison rule and its report |
 | `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests` (every export called as a plain method on x64) and `EntryPointReturnsZero` | the host, and its coverage gate |
 | `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5 |

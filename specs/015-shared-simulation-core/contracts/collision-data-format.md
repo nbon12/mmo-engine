@@ -139,8 +139,9 @@ The count limits already cap a file at 167,854,140 bytes, so the 256 MiB limit i
 grid-cell and registration limits keep each of the grid's two index arrays at most 64 MiB, and bound
 the work of the counting pass; at the placeholder 4 m cell the grid covers the full 16,384 m extent.
 Without the registration limit, a few huge triangles could make a small file demand gigabytes of
-grid. Callers that read a file from disk (the CLI and the test helpers) check its size against the
-256 MiB limit before reading it into memory.
+grid. The CLI checks a collision file's size against the 256 MiB limit before reading it into memory
+([simcore-cli.md](simcore-cli.md#content-files)). Tests read only committed or generated files of
+known size, so the test helpers need no such check.
 
 ## Check order
 
@@ -156,7 +157,7 @@ only fixed-size fields and the directory, and allocate nothing.
 | 5 | count limits: `fileLength`, `columns`, `rows`, `meshCount` | as in Limits | 8, 32, 36, 40 | that field |
 | 6 | the heights and the directory fit: D + 12M + 8 ≤ `fileLength`; then each directory entry's counts and the running sums; then the length recomputed from the counts equals `fileLength`, all in checked `u64` arithmetic | `Inconsistent`; as in Limits; `Inconsistent` | 8; the entry's field; 8 | `fileLength`; `meshes[m].vertexCount` or `.triangleCount`; `fileLength` |
 | 7 | the trailer equals the XxHash64 (seed 0) of [0, `fileLength` − 8) | `ChecksumMismatch` | `fileLength` − 8 | `checksum` |
-| 8 | values, in file order: `reserved`; origin; `cellSize`; `gridCellSize`; extent; grid cells per axis; heights; `meshId` ascending; vertices; indices | `OutOfRange`, `NonFinite` or `Inconsistent` (`meshId`) | the value's offset (32 or 36 for the extent, 28 for the grid cells) | the value's field (`columns` or `rows` for the extent) |
+| 8 | values, in this order (the list, not file order): `reserved`; origin; `cellSize`; `gridCellSize`; extent; grid cells per axis; heights; `meshId` ascending; then each mesh in directory order, its vertices and then its indices | `OutOfRange`, `NonFinite` or `Inconsistent` (`meshId`) | the value's offset (32 or 36 for the extent, 28 for the grid cells) | the value's field (`columns` or `rows` for the extent) |
 | 9 | the world build: no grid cell holds more than 64 triangles, and the grid holds at most 2²⁴ registrations | `OutOfRange` | the first index of the triangle that brings a cell to 65, or the total past 2²⁴ | `grid.cells[cx,cz]`; `grid.registrations` |
 
 - The version is checked before any other field (the repo's `CheckFormatVersion` convention), so a
@@ -329,7 +330,7 @@ triangle.
 | `height-out-of-range` | `tiny-world` | `write 64 "00a00c46"` (9000), `fixChecksum` | `OutOfRange` | 64 | `heights[4]` |
 | `vertex-out-of-range` | `tiny-world` | `write 96 "00a00c46"` (x = 9000), `fixChecksum` | `OutOfRange` | 96 | `meshes[0].vertices[0].x` |
 | `mesh-index-out-of-range` | `tiny-world` | `write 148 "04000000"`, `fixChecksum` | `OutOfRange` | 148 | `meshes[0].indices[1]` |
-| `crowded-cell` | `full-cell` | `insert 2400` one more vertex triple (36 bytes), `insert 3204` its index triple (192, 193, 194), `write 88 "c3000000"` (`vertexCount` 195), `write 92 "41000000"` (`triangleCount` 65), `write 8 "980c000000000000"` (`fileLength` 3224), `fixChecksum` | `OutOfRange` | 3204 | `grid.cells[0,0]` |
+| `crowded-cell` | `full-cell` | `insert 2400 "1e85eb3e0000000000000000d6a3f03e00000000000000001e85eb3e0000003f00000000"` (one more vertex triple, 36 bytes: triangle t = 64 of `full-cell`'s rule, (0.46, 0, 0), (0.47, 0, 0) and (0.46, 0.5, 0) in `float`, not degenerate), `insert 3204 "c0000000c1000000c2000000"` (its index triple 192, 193, 194), `write 88 "c3000000"` (`vertexCount` 195), `write 92 "41000000"` (`triangleCount` 65), `write 8 "980c000000000000"` (`fileLength` 3224), `fixChecksum` | `OutOfRange` | 3204 | `grid.cells[0,0]` |
 
 Tests that use these fixtures, all in `tests/MmoEngine.SimCore.Tests/Formats/`: the round trips (US6
 scenario 1), one Theory row per refusal case asserting the code, offset and field (US6 scenarios 2

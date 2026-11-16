@@ -30,9 +30,35 @@ US3 scenario 1 lists `Vector128.Sum` and `Vector128.Dot` as its horizontal sampl
 
 ## Messages
 
-`{0}` is the member as `ToDisplayString` shows it (for example `MathF.Sin(float)`), or the source
-text for a conversion, `foreach`, spread, directive or declaration. Every message names the allowed
-alternative (US3).
+`{0}` names the reported operation, by kind:
+
+- an invocation, object creation, member reference, method group or function pointer: the symbol as
+  `ToDisplayString(SymbolDisplayFormat.CSharpShortErrorMessageFormat)` shows it, for example
+  `MathF.Sin(float)`;
+- a `foreach`: the keyword `foreach`;
+- a `..` spread: `..`;
+- a `lock` statement: `lock`;
+- a float `%` or `%=`: the operator, `%` or `%=`;
+- a conversion, including the implicit conversion of a LINQ receiver or an argument: the source text
+  of the conversion's syntax, which is the cast expression for an explicit conversion (`(int)x`) and
+  the converted expression for an implicit one (`s` in `s.First()`, `u` in `float M(ulong u) => u`);
+- an `#if` or `#elif` directive: the directive keyword, `#if` or `#elif`;
+- a declaration: the declared identifier;
+- anything else (a non-constant `double` expression, a `dynamic` operation, an attribute): the
+  operation's source text.
+
+Where `{1}` is a type (MMO1001, MMO1004 and MMO1007), it is the constructed type as
+`ITypeSymbol.ToDisplayString()` shows it, which is the default
+`SymbolDisplayFormat.CSharpErrorMessageFormat`, namespace-qualified, never the type's
+`OriginalDefinition`. For MMO1004 it is the type of the hash-ordered expression that is enumerated or
+converted, for example `System.Collections.Generic.Dictionary<int, int>`. So a `foreach` over a
+`Dictionary<int, int>` reports this message, ending with MMO1004's alternative:
+
+```text
+'foreach' enumerates 'System.Collections.Generic.Dictionary<int, int>', whose order is not defined; iterate a sorted array or List<T> kept alongside it, or a SortedDictionary or SortedSet
+```
+
+Every message names the allowed alternative (US3).
 
 | ID | Message format | `{1}` |
 | --- | --- | --- |
@@ -94,7 +120,9 @@ The tables live in the analyzer's source as `ImmutableHashSet<string>` keyed by 
 definition's metadata name (``Namespace.Type`1+Nested`` plus the member name). Where an entry needs one
 overload, the key is the documentation comment ID (`ISymbol.GetDocumentationCommentId()`, for example
 `M:System.MathF.Round(System.Single)`). The core cannot widen its own rules: there is no
-`AdditionalFiles` list, and the analyzer tests pin every table.
+`AdditionalFiles` list, and the analyzer tests pin every table: `TableTests.EveryContractTableEntryIsEnforced`
+has a row for every entry the tables below name, allowed or banned, so dropping, misspelling or
+wrongly allowing any entry they name fails a test.
 
 ### Vector128 allowlist (MMO1001)
 
@@ -306,7 +334,8 @@ Registration:
 - `ConfigureGeneratedCodeAnalysis(Analyze | ReportDiagnostics)`.
 - One `RegisterOperationAction` over Invocation, PropertyReference, FieldReference, MethodReference,
   EventReference, ObjectCreation, Lock, Loop, Conversion, Spread, VariableDeclarator, Binary and Unary
-  (user-defined operators and float `%`), TypeOf, DefaultValue and the four Dynamic kinds. It returns
+  (user-defined operators and float `%`), CompoundAssignment (float `%=`), TypeOf, DefaultValue and the
+  four Dynamic kinds. It returns
   at once for an operation under an `IAttributeOperation` ([attribute applications](#attribute-applications)).
 - `RegisterSymbolAction` for Field, Property, Method and Event declarations (declared types,
   `MethodImplementationFlags`, `[Conditional]` and `[UnsafeAccessor]`).
@@ -410,7 +439,9 @@ rows reached 94.4%).
 
 | Test | Asserts |
 | --- | --- |
-| `PlatformMathMessageNamesTheReplacement(member, replacement)` (Theory) | `MathF.Sin` names `'SimMath.Sin'`, `float.Atan2` names `'SimMath.Atan2'`, `MathF.Max` names `'SimMath.Max'`, `Math.Clamp` outside `SimMath` names `'SimMath.Clamp'`, and `MathF.Pow` gets the fallback text |
+| `PlatformMathMessageNamesTheReplacement(member, replacement)` (Theory) | every row of the replacement map: for example `MathF.Sin` names `'SimMath.Sin'`, `float.Atan2` names `'SimMath.Atan2'`, `MathF.Max` names `'SimMath.Max'`, `Math.Clamp` outside `SimMath` names `'SimMath.Clamp'`, and `MathF.Pow` gets the fallback text |
+| `HashOrderMessagesNameTheOperationAndTheCollection(member, message)` (Theory) | the full MMO1004 message, `'{0}' enumerates '{1}', …`, for the `foreach` over a `Dictionary<int, int>` (`'foreach'`, `'System.Collections.Generic.Dictionary<int, int>'`), `[.. s]` (`'..'`, `'System.Collections.Generic.HashSet<int>'`) and `s.First()` (`'s'`, `'System.Collections.Generic.HashSet<int>'`) |
+| `EveryContractTableEntryIsEnforced(table, rule, count, member)` (Theory, `TableTests`) | one row per entry of every table under [Allowlists and tables](#allowlists-and-tables) and of the MMO1008 and MMO1009 rules: each allowlist member reports nothing, and each named banned member, type or list entry reports exactly its rule, with the same four assertions as `EachSampleProducesExactlyItsRule` |
 | `FusedCallsReportOnlyTheFmaRule(member)` (Theory) | for `MathF.FusedMultiplyAdd`, `Math.FusedMultiplyAdd`, `Vector128.FusedMultiplyAdd` and `Fma.MultiplyAdd`, the diagnostics whose span is the call are exactly one MMO1003; the `double` declarations of the `Math` row report MMO1007 at their own locations |
 | `SimMathMayClampAndCastFloats` | `Clamp` anywhere in `MmoEngine.SimCore.Math.SimMath`, and a float-to-`int` cast inside `FloorToInt`, `RoundToInt` or `TruncateToInt`, report nothing; the same cast in another `SimMath` method reports MMO1009, and the same code in another type reports MMO1002 and MMO1009 |
 | `SeverityCannotBeLowered(mechanism)` (Theory) | with `#pragma warning disable MMO1002`, with `SpecificDiagnosticOptions` set to Suppress (what `NoWarn` and `severity = none` map to), and with warnings not treated as errors, `MathF.Sin` still reports MMO1002 at Error and not suppressed |
@@ -421,7 +452,7 @@ rows reached 94.4%).
 | `CoreProjectAttachesTheAnalyzerPrivately` | the core's project file has exactly one analyzer `ProjectReference` with `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` and `PrivateAssets="all"`; `ImplicitUsings` is `disable`; nothing sets `RunAnalyzers`, `RunAnalyzersDuringBuild`, `NoWarn` or `WarningsNotAsErrors` for MMO rules; there is no `<Compile Remove>` |
 | `OnlyTheCoreAttachesTheAnalyzer` | no other project file under `src/`, `tests/` or `benchmarks/` attaches it with `OutputItemType="Analyzer"` |
 | `RoslynPinMatchesTheSdkBand` | the pin above |
-| `ABuildWithAViolationFails` | `dotnet build` of a throwaway class library in a unique temporary directory, with `IsTrimmable` and `IsAotCompatible` set as in the core (so the SDK generates the `System.Reflection` assembly attributes), attaching the built analyzer with `<Analyzer Include="…" />` and containing one `foreach` over a `Dictionary`, exits non-zero with exactly one MMO diagnostic, `error MMO1004`, in its output, and none in the generated `AssemblyInfo.cs` (about 1.1 s warm [measured]); the output is written to the test log |
+| `ABuildWithAViolationFails` | `dotnet build` of a throwaway class library in a unique temporary directory, with `IsTrimmable` and `IsAotCompatible` set as in the core (so the SDK generates the `System.Reflection` assembly attributes), attaching the built analyzer with `<Analyzer Include="…" />` and containing one `foreach` over a `Dictionary`, exits non-zero with exactly one MMO diagnostic in its output, which contains `error MMO1004: 'foreach' enumerates 'System.Collections.Generic.Dictionary<int, int>', whose order is not defined`, and none in the generated `AssemblyInfo.cs` (about 1.1 s warm [measured]); the output is written to the test log |
 
 **Mapping to the acceptance scenarios (US3):**
 
@@ -430,10 +461,10 @@ rows reached 94.4%).
 | US3.1 vector, quaternion, matrix and horizontal `Vector128` | `EachSampleProducesExactlyItsRule`, MMO1001 rows |
 | US3.2 platform math, naming the replacement | MMO1002 rows; `PlatformMathMessageNamesTheReplacement` |
 | US3.3 fused multiply-add, and no other rule for the same call | MMO1003 rows; `FusedCallsReportOnlyTheFmaRule` |
-| US3.4 hash-ordered iteration | MMO1004 rows |
+| US3.4 hash-ordered iteration | MMO1004 rows; `HashOrderMessagesNameTheOperationAndTheCollection` |
 | US3.5 ambient time and randomness | MMO1005 rows |
 | US3.6 locks, task waits and blocking primitives | MMO1006 rows |
-| US3.7 `double`, `Half`, `nint`, `NFloat`; float-to-integer; platform paths | MMO1007, MMO1009 and MMO1008 rows; `SimMathMayClampAndCastFloats` |
+| US3.7 `double`, `Half`, `nint`, `NFloat`; float-to-integer; `ulong`-to-`float`; platform paths | MMO1007, MMO1009 and MMO1008 rows; `SimMathMayClampAndCastFloats` |
 | Independent Test: "build the core itself with the analyzer as an error" | `CoreSourcesHaveNoDeterminismDiagnosticsEvenSuppressedOnes`, `ABuildWithAViolationFails`, and CI's `dotnet build MmoEngine.sln -warnaserror` |
 
 US3 scenario 8 (the trigonometric bounds) is not the analyzer's. Its bound half is
