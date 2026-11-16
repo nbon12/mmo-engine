@@ -172,9 +172,11 @@ class JobManifest(unittest.TestCase):
         docker = next(u for u in config["updates"] if u["package-ecosystem"] == "docker")
         self.assertEqual("/infra/sweeps", docker["directory"])
         ignored = {i["dependency-name"]: i.get("update-types") for i in docker["ignore"]}
-        self.assertIsNone(ignored["mcr.microsoft.com/dotnet/sdk"], "the SDK follows global.json")
-        self.assertEqual(["version-update:semver-major", "version-update:semver-minor"],
-                         ignored["mcr.microsoft.com/dotnet/runtime"])
+        # Dependabot may name the image with or without its registry; both spellings carry the same rule.
+        for prefix in ("", "mcr.microsoft.com/"):
+            self.assertIsNone(ignored[f"{prefix}dotnet/sdk"], "the SDK follows global.json")
+            self.assertEqual(["version-update:semver-major", "version-update:semver-minor"],
+                             ignored[f"{prefix}dotnet/runtime"])
         self.assertTrue(os.access(SCRIPT, os.X_OK), "k8s-sweep.sh must be executable")
 
 
@@ -189,7 +191,7 @@ class Script(unittest.TestCase):
         bin_dir = Path(work) / "bin"
         bin_dir.mkdir()
         stub(bin_dir, "kubectl", 'printf "%s\\n" "$*" >> "$STUB_LOG"\n'
-                                 'case "$*" in *"get jobs,pods"*) cat "$STUB_STATE" ;; *"get pvc/"*) printf "%s" "${STUB_KEPT:-}" ;;'
+                                 'case "$*" in *"get jobs,pods"*) cat "$STUB_STATE" ;; *"get job/"*) if [ -n "${STUB_GET_FAILS:-}" ]; then exit 1; fi; printf "%s" "${STUB_EXISTING:-}" ;;'
                                  ' *"-f -"*) cat >/dev/null ;; esac\n')
         for tool in ("docker", "kind", "k3d"):
             stub(bin_dir, tool, f"echo unexpected {tool} call >&2\nexit 99\n")
@@ -298,17 +300,26 @@ class Script(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("Stuck p-0 ErrImageNeverPull", result.stderr)
 
-    def test_a_volume_an_earlier_run_kept_is_never_deleted_without_being_told(self):
+    def test_an_existing_job_or_volume_of_the_sweep_is_never_deleted_without_being_told(self):
+        # A run in progress, or a volume an earlier failed run kept: the new run refuses and deletes nothing.
         result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), HARNESS_CLUSTER="none",
-                                 STUB_KEPT="2026-11-16T11:00:00Z")
+                                 STUB_EXISTING="job.batch/sweep-infantry-radius\npersistentvolumeclaim/sweep-infantry-radius-results")
         self.assertEqual(2, result.returncode, result.stderr)
-        self.assertIn("was kept by an earlier run (2026-11-16T11:00:00Z)", result.stderr)
+        self.assertIn("already holds job.batch/sweep-infantry-radius persistentvolumeclaim/sweep-infantry-radius-results",
+                      result.stderr)
         self.assertNotIn("delete", self.log.read_text())
 
-    def test_sweep_discard_kept_lets_the_run_replace_a_kept_volume(self):
+    def test_a_failed_check_for_an_earlier_run_refuses_to_start(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), HARNESS_CLUSTER="none", STUB_GET_FAILS="1")
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertIn("could not check namespace sweeps", result.stderr)
+        self.assertNotIn("delete", self.log.read_text())
+
+    def test_sweep_replace_lets_the_run_replace_an_earlier_one(self):
         result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
             "conditions": [{"type": "Failed", "status": "True"}]}}],
-            HARNESS_CLUSTER="none", STUB_KEPT="2026-11-16T11:00:00Z", SWEEP_DISCARD_KEPT="1", SWEEP_KEEP="1")
+            HARNESS_CLUSTER="none", STUB_EXISTING="persistentvolumeclaim/sweep-infantry-radius-results",
+            SWEEP_REPLACE="1", SWEEP_KEEP="1")
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("delete job/sweep-infantry-radius pod/sweep-infantry-radius-reader "
                       "configmap/sweep-infantry-radius-spec pvc/sweep-infantry-radius-results", self.log.read_text())
@@ -411,7 +422,7 @@ class Script(unittest.TestCase):
         state = Path(work) / "state.json"
         state.write_text(json.dumps({"items": [{"kind": "Job", "status": {
             "conditions": [{"type": "Complete", "status": "True"}]}}]}))
-        stub(bin_dir, "kubectl", f'case "$*" in\n'
+        stub(bin_dir, "kubectl", f'printf "%s\\n" "$*" >> "{work}/kubectl.log"\ncase "$*" in\n'
                                  f'  *"get jobs,pods"*) cat "{state}" ;;\n'
                                  f'  *" cp "*) eval "dest=\\${{$#}}"; cp -r "{volume}" "$dest" ;;\n'
                                  f'  *"-f -"*) cat >/dev/null ;;\nesac\n')
@@ -433,6 +444,8 @@ class Script(unittest.TestCase):
         # Trimmed: what the memo reads, without per-tick files; the full shards stay under shards/.
         self.assertEqual(["manifest.json", "summary.json"], sorted(p.name for p in (merged / "c001" / "seed-1").iterdir()))
         self.assertTrue((out / "_shards" / "shard-2" / "infantry-radius" / "c001" / "seed-1" / "ticks.csv").exists())
+        # The reader goes once the copy is done.
+        self.assertIn("-n sweeps delete pod/sweep-infantry-radius-reader", (out.parent / "kubectl.log").read_text())
 
     def test_a_shard_that_exited_3_still_merges_and_the_script_exits_3(self):
         result, out = self.run_complete_job({1: 0, 2: 3})
@@ -446,6 +459,8 @@ class Script(unittest.TestCase):
         self.assertIn('"$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job"', smoke)
         self.assertIn('sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain"', smoke)
         self.assertIn('open(f"{job}/sweep.json").read() == open(f"{plain}/sweep.json").read()', smoke)
+        # Its own sweep name, so it never replaces a real infantry-radius Job on the same cluster.
+        self.assertIn('spec["name"] = "smoke-infantry-radius"', smoke)
         self.assertTrue(re.search(r"assert job_rows == plain_rows", smoke))
         self.assertIn('manifest["gitSha"] == sys.argv[2]', smoke)
 

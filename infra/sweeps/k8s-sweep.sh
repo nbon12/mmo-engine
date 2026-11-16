@@ -30,8 +30,9 @@
 #   SWEEP_RUNNER_CLASS    the runner class recorded in each manifest.json (default k8s-<cluster>)
 #   SWEEP_KEEP            1 to keep the Job, its volume and its ConfigMap afterwards, untouched (default: deleted;
 #                         a volume whose shards could not be copied out is always kept)
-#   SWEEP_DISCARD_KEPT    1 to let this run delete a results volume an earlier failed run kept (by default the
-#                         run refuses to start over it, since it may hold the only copy of finished shards)
+#   SWEEP_REPLACE         1 to let this run delete an existing Job or results volume of the same sweep (by default
+#                         the run refuses to start over one: it may be running, or hold the only copy of finished
+#                         shards, for example one an earlier failed run kept)
 # Needs: docker (unless SWEEP_SKIP_BUILD=1), kubectl, kind or k3d, python3.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -111,9 +112,10 @@ remove() {
   if [ "${1:-}" = keep-volume ]; then shift; else objects+=("pvc/$JOB-results"); fi
   k -n "$NS" delete "${objects[@]}" --ignore-not-found "$@" >/dev/null
 }
-# Marks the results volume as kept, so a later run of the same sweep won't delete it without being told to.
+# Marks the results volume as kept, for whoever finds it (a later run refuses to start over any volume of the sweep).
 keep_mark() {
-  k -n "$NS" annotate --overwrite "pvc/$JOB-results" "mmo-engine/kept=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true
+  k -n "$NS" annotate --overwrite "pvc/$JOB-results" "mmo-engine/kept=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 \
+    || echo "could not mark pvc/$JOB-results as kept (a later run still refuses to start over it)" >&2
 }
 # On the way out: everything, except a volume whose shards could not be copied out.
 KEEP_VOLUME=""
@@ -129,10 +131,15 @@ clean_up() {
 k create namespace "$NS" --dry-run=client -o yaml | k apply -f - >/dev/null
 # A Job's pod template can't change, and the results volume must start empty: remove an earlier run's, and wait
 # for its pods to go, so none of them is taken for this run's.
-# A volume an earlier failed run kept may hold the only copy of finished shards: never delete it silently.
-kept="$(k -n "$NS" get "pvc/$JOB-results" --ignore-not-found -o jsonpath='{.metadata.annotations.mmo-engine/kept}' 2>/dev/null || true)"
-if [ -n "$kept" ] && [ "${SWEEP_DISCARD_KEPT:-}" != 1 ]; then
-  echo "pvc/$JOB-results in namespace $NS was kept by an earlier run ($kept); copy its shards out, or rerun with SWEEP_DISCARD_KEPT=1 to delete it" >&2
+# Never delete another run's work silently: a Job of the same sweep may still be running, and a results volume may
+# hold the only copy of finished shards. If the check itself fails, refuse too.
+if ! existing="$(k -n "$NS" get "job/$JOB" "pvc/$JOB-results" --ignore-not-found -o name)"; then
+  echo "could not check namespace $NS for an earlier job/$JOB or pvc/$JOB-results; not starting" >&2
+  exit 2
+fi
+if [ -n "$existing" ] && [ "${SWEEP_REPLACE:-}" != 1 ]; then
+  echo "namespace $NS already holds $(echo $existing) for this sweep (a run in progress, or one that kept its" \
+    "results); wait for it or copy its shards out, or rerun with SWEEP_REPLACE=1 to delete them" >&2
   exit 2
 fi
 remove --wait --cascade=foreground
@@ -205,11 +212,13 @@ while [ $((SECONDS - begun)) -lt "$TIMEOUT" ]; do
   state=""
   sleep 5
 done
-# Copies every shard folder on the results volume to <out-dir>/_shards/ through a reader pod; fails if any step does.
+# Copies every shard folder on the results volume to <out-dir>/_shards/ through a reader pod, then deletes the
+# reader (SWEEP_KEEP keeps the Job and volume, not it); fails if any step does.
 copy_out() {
   render sweep-reader.yaml | k apply -f - >/dev/null \
     && k -n "$NS" wait --for=condition=Ready "pod/$READER" --timeout=5m >/dev/null \
-    && k -n "$NS" cp "$READER:/results" "$OUT/_shards" >/dev/null
+    && k -n "$NS" cp "$READER:/results" "$OUT/_shards" >/dev/null \
+    && k -n "$NS" delete "pod/$READER" --wait=false >/dev/null
 }
 if [ "$state" != Complete ]; then
   echo "job/$JOB: ${state:-did not finish in ${TIMEOUT}s}; its pods:" >&2

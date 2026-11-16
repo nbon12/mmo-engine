@@ -3,8 +3,8 @@
 # completion index i (0-based, JOB_COMPLETION_INDEX) runs shard i+1 of SWEEP_SHARDS, every n-th run, exactly
 # as `infra/sweeps/run-sweep.sh <sweep> <out> k/n` does in the Sweeps workflow.
 #
-# Runs SWEEP_RUN_PARALLELISM runs at once (the pod's whole CPUs; without it the simulator would take every
-# core on the node, and pods sharing a node would inflate each other's wall-clock columns).
+# Runs SWEEP_RUN_PARALLELISM runs at once: the pod's whole CPUs. The runtime's processor count already follows
+# the pod's CPU limit; the explicit value keeps runs at once equal to the CPUs even where a cluster sets no limit.
 #
 # Reads the sweep spec at SWEEP_SPEC (default /sweep/spec.json) and writes /results/shard-<k>/<sweep-name>/.
 # A retried pod starts its shard over. Exit 3 (a run stopped on a violation or timer fault) still leaves
@@ -18,14 +18,15 @@ SPEC="${SWEEP_SPEC:-/sweep/spec.json}"
 RESULTS="${SWEEP_RESULTS:-/results}"
 k=$((JOB_COMPLETION_INDEX + 1))
 out="$RESULTS/shard-$k"
-rm -rf "$out"
-mkdir -p "$out"
 # The shell is PID 1, which ignores SIGTERM unless it traps it: pass it on to the simulator and wait for it to
-# stop, so a deleted pod stops writing its shard within the grace period.
-# The trap is set first, so a SIGTERM that arrives before the simulator starts is not lost.
+# stop, so a deleted pod stops writing its shard within the grace period. The trap comes first, so a SIGTERM
+# that arrives while an earlier attempt's files are removed, or before the simulator starts, is not lost.
 child=""
 terminated=""
 trap 'terminated=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM
+rm -rf "$out"
+mkdir -p "$out"
+if [ -n "$terminated" ]; then exit 143; fi
 dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS" --parallelism "$SWEEP_RUN_PARALLELISM" &
 child=$!
 if [ -n "$terminated" ]; then kill -TERM "$child" 2>/dev/null; fi

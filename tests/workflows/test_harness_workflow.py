@@ -153,7 +153,8 @@ class Scripts(unittest.TestCase):
                          "tests/MmoEngine.Harness.Tests/Fixtures/runs/**", "global.json",
                          "Directory.Build.props", "Directory.Packages.props",
                          # The sweep-as-a-Job smoke check (spec 014, FR-032; issue #62).
-                         "infra/sweeps/**", ".dockerignore", "simulator/scenarios/**",
+                         "infra/sweeps/**", ".dockerignore", "simulator/scenarios/**", "simulator/maps/**",
+                         ".editorconfig",
                          "simulator/sweeps/infantry-radius.json"):
                 self.assertIn(path, TRIGGERS[trigger]["paths"])
 

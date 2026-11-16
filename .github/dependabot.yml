@@ -16,8 +16,13 @@ updates:
     commit-message:
       prefix: build
     ignore:
+      # Dependabot names an image from another registry by its path, without the registry (dotnet/sdk); both
+      # spellings are listed so the rules hold either way.
       # The SDK follows global.json, which is bumped by hand with it.
+      - dependency-name: dotnet/sdk
       - dependency-name: mcr.microsoft.com/dotnet/sdk
       # The runtime takes 10.0 patches only: a new major or minor is a target-framework change.
+      - dependency-name: dotnet/runtime
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: mcr.microsoft.com/dotnet/runtime
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
