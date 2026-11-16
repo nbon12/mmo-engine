@@ -125,9 +125,18 @@ print("Started" if any(p.get("status", {}).get("phase") in ("Running", "Succeede
 }
 state=""
 started=""
+errors=0
 begun=$SECONDS
 while [ $((SECONDS - begun)) -lt "$TIMEOUT" ]; do
-  state="$(job_state)"
+  # One failed poll (an API server restart, a reset connection) is retried; a minute of them gives up.
+  if ! state="$(job_state)"; then
+    errors=$((errors + 1))
+    if [ "$errors" -ge 12 ]; then state="Unreachable: 12 polls in a row failed"; break; fi
+    state=""
+    sleep 5
+    continue
+  fi
+  errors=0
   case "$state" in
     Complete|Failed|Stuck*) break ;;
     Started) started=1 ;;
@@ -139,18 +148,32 @@ while [ $((SECONDS - begun)) -lt "$TIMEOUT" ]; do
   state=""
   sleep 5
 done
+# Copies every shard folder on the results volume to <out-dir>/shards/ through a reader pod.
+copy_out() {
+  render sweep-reader.yaml | k apply -f - >/dev/null
+  k -n "$NS" wait --for=condition=Ready "pod/$READER" --timeout=5m >/dev/null
+  k -n "$NS" cp "$READER:/results" "$OUT/shards" >/dev/null
+}
 if [ "$state" != Complete ]; then
   echo "job/$JOB: ${state:-did not finish in ${TIMEOUT}s}; its pods:" >&2
   k -n "$NS" get pods -l "job-name=$JOB" -o wide >&2 || true
   k -n "$NS" describe pods -l "job-name=$JOB" 2>&1 | tail -40 >&2 || true
   k -n "$NS" logs -l "job-name=$JOB" --tail=50 --prefix >&2 || true
+  # Shards that finished are kept, as run-sweep.sh keeps a sweep cut short: stop the Job, then copy what the
+  # volume holds (nothing to copy when no pod ever started).
+  if [ "$state" = Failed ] || [ -z "$state" ]; then
+    k -n "$NS" delete "job/$JOB" --wait >/dev/null || true
+    if copy_out; then
+      echo "kept the shards that ran in $OUT/shards/; merge the finished ones with merge-shards.py --allow-missing (--partial for one cut short)" >&2
+    else
+      echo "could not copy the shards out" >&2
+    fi
+  fi
   exit 1
 fi
 
 log "copying the shards out"
-render sweep-reader.yaml | k apply -f - >/dev/null
-k -n "$NS" wait --for=condition=Ready "pod/$READER" --timeout=5m >/dev/null
-k -n "$NS" cp "$READER:/results" "$OUT/shards" >/dev/null
+copy_out
 
 code=0
 trimmed=()

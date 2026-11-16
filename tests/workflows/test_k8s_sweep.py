@@ -178,13 +178,44 @@ class Script(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("Stuck: no pod started in 0s", result.stderr)
 
+    def test_a_failed_job_copies_out_the_shards_that_ran_before_removing_the_volume(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
+            "conditions": [{"type": "Failed", "status": "True"}]}}],
+            HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1")
+        self.assertEqual(1, result.returncode, result.stderr)
+        calls = self.log.read_text().splitlines()
+        copy = next(i for i, c in enumerate(calls) if c.startswith("-n sweeps cp sweep-infantry-radius-reader:/results "))
+        last_delete = max(i for i, c in enumerate(calls) if "pvc/sweep-infantry-radius-results" in c)
+        self.assertLess(copy, last_delete, "the shards must be copied out before the volume is deleted")
+        self.assertIn("kept the shards that ran", result.stderr)
+
+    def test_a_failed_poll_is_retried_rather_than_ending_the_run(self):
+        work = tempfile.mkdtemp()
+        # The first `get jobs,pods` fails; the next one reports a stuck pod, which ends the run as usual.
+        counter = Path(work) / "polls"
+        pod = {"kind": "Pod", "metadata": {"name": "p-0"}, "status": {"phase": "Pending", "containerStatuses": [
+            {"state": {"waiting": {"reason": "ErrImageNeverPull"}}}]}}
+        bin_dir = Path(work) / "bin"
+        bin_dir.mkdir()
+        (Path(work) / "state.json").write_text(json.dumps({"items": [pod]}))
+        stub(bin_dir, "kubectl", f'case "$*" in *"get jobs,pods"*)\n'
+                                 f'  if [ ! -f "{counter}" ]; then touch "{counter}"; echo "connection refused" >&2; exit 1; fi\n'
+                                 f'  cat "{work}/state.json" ;;\n'
+                                 f'  *"-f -"*) cat >/dev/null ;;\nesac\n')
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1")
+        result = subprocess.run(["bash", str(SCRIPT), "infantry-radius", "2", tempfile.mkdtemp()], env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Stuck p-0 ErrImageNeverPull", result.stderr)
+
     def test_sweep_keep_leaves_the_job_and_its_volume(self):
         result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
             "conditions": [{"type": "Failed", "status": "True"}]}}],
             HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1", SWEEP_KEEP="1")
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("job/sweep-infantry-radius: Failed", result.stderr)
-        self.assertEqual(1, self.log.read_text().count("delete job/sweep-infantry-radius"))
+        # Only the clean-up before the run deletes the volume (the failed Job itself is stopped, its volume kept).
+        self.assertEqual(1, self.log.read_text().count("delete job/sweep-infantry-radius pod/"))
 
     def test_every_kubectl_call_uses_the_clusters_context_and_its_own_runner_class(self):
         text = SCRIPT.read_text()
