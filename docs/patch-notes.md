@@ -20,6 +20,25 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-16 — Sweeps run as Kubernetes Jobs
+
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) (FR-032) · PR: #64 (closes #62)
+
+### Behavior and contract changes
+
+- **A sweep now runs as an indexed Kubernetes Job:** `infra/sweeps/k8s-sweep.sh <sweep | spec.json> <shards> <out-dir>` builds the simulator image (`infra/sweeps/Dockerfile`), loads it into the kind or k3d cluster (`HARNESS_CLUSTER`, as `up.sh`), runs one pod per shard (`infra/sweeps/manifests/sweep-job.yaml`), copies the shards out (`<out-dir>/_shards/`), trims them (`_trimmed/`) and merges them with `merge-shards.py` into `<out-dir>/<sweep>/`. It exits 3 when a run stopped on a violation, as `run-sweep.sh` does. It uses the `kind-<name>`/`k3d-<name>` kubectl context, fails when a pod's image can never be pulled (at once) or keeps failing to pull for `SWEEP_PULL_GRACE` (120 s), or no pod starts in `SWEEP_START_TIMEOUT`, and deletes the Job, volume and ConfigMap afterwards unless `SWEEP_KEEP=1`. A volume whose shards couldn't be copied out is kept and marked. A run refuses to start while a Job or results volume of the same sweep exists (a run in progress, or kept results), or when it can't tell, unless `SWEEP_REPLACE=1`. Pods record `k8s-<cluster>` as their runner class (`SWEEP_RUNNER_CLASS`).
+- **`MMO_GIT_SHA` is the simulator's `gitSha` fallback** (`RunManifest.GitSha`): `git rev-parse HEAD` still wins; with no repository (the image), the revision the image was built from is recorded. A failed or timed-out Job keeps the shards that ran (`<out-dir>/_shards/`), and a failed status poll is retried.
+- **Completion index i runs `--shard i+1/n --parallelism <SWEEP_CPU>`** (`infra/sweeps/job-entrypoint.sh`); each pod's CPU and memory limits equal its requests (Guaranteed QoS; `SWEEP_CPU` 1, `SWEEP_MEMORY` 2Gi), so pods sharing a node don't inflate each other's wall-clock columns. Pods forward SIGTERM to the simulator. A pod that exits non-zero fails its shard at once (the simulator is deterministic); only a disrupted pod (eviction, drain) is retried, and only once the old one has stopped. The image carries `simulator/maps/`, so StackedAreas and Soak run too. Exit 3 still counts as a finished shard (recorded in `shard-<k>/exit-code`); any other exit fails the pod, its shard and so the Job (no retry: the simulator is deterministic).
+- **`smoke.sh` step 4** (core profile only, once per cluster) runs a tiny infantry-radius sweep, renamed `smoke-infantry-radius` so it never touches a real one (2 cells, 2 seeds, 3 ticks) as a 2-shard Job and requires its merged `sweep.json` to equal a plain-process run byte for byte, and `cells.csv` to equal it on every column but the wall-clock `bookkeepingP99Micros`. The observability steps are now 5 and 6. Its runs also require `gitSha` to equal HEAD. The Harness workflow also triggers on `infra/sweeps/**`, `simulator/scenarios/**`, `simulator/sweeps/infantry-radius.json` and `.dockerignore`.
+
+### Shared pieces to reuse
+
+- The image builds with the SDK `global.json` names (10.0.100) and runs on runtime 10.0.15, both pinned by digest (Dependabot's new `docker` entry proposes runtime patches; the SDK follows `global.json`), and the Job sets the Sweeps workflow's `DOTNET_EnableAVX512F=0` and `DOTNET_TieredPGO=0`.
+
+### Open follow-ups
+
+- The results volume is ReadWriteOnce, which holds on one-node clusters. A multi-node cluster needs `SWEEP_ACCESS_MODE=ReadWriteMany` and a storage class that has it. The Sweeps workflow on GitHub runners stays the way full-scale sweeps run today.
+
 ## 2026-11-06 — Claim-radius grid: split damping, not the radii, sets the largest region
 
 Spec: [specs/013-regionizer-simulator/spec.md](../specs/013-regionizer-simulator/spec.md) · PR: #59

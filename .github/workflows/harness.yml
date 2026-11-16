@@ -2,8 +2,8 @@ name: Harness
 
 # The telemetry and test harness in CI (spec 014-telemetry-test-harness, US6 and US3; issue #13).
 #   stack:     the one command (infra/harness/up.sh) on kind and on k3d, run twice (idempotent), then the smoke
-#              check: tables, the collector's OTLP paths, a run loaded and gated by the rules, and the
-#              optional observability profile.
+#              check: tables, the collector's OTLP paths, a run loaded and gated by the rules, a tiny sweep run
+#              as an indexed Kubernetes Job (infra/sweeps/k8s-sweep.sh), and the optional observability profile.
 #   golden:    runs each harness/golden/* config twice on this runner and requires identical per-tick
 #              hashes, and compares with committed recordings of the same runner class
 #              (infra/harness/golden.sh). Any divergence fails.
@@ -19,6 +19,13 @@ on:
       # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
       - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
       - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      # The sweep-as-a-Kubernetes-Job check (FR-032): the image, its Job, and the sweep it cuts down.
+      - "infra/sweeps/**"
+      - ".dockerignore"
+      - "simulator/scenarios/**"
+      - "simulator/maps/**"
+      - ".editorconfig"
+      - "simulator/sweeps/infantry-radius.json"
       - "global.json"
       - "Directory.Build.props"
       - "Directory.Packages.props"
@@ -32,6 +39,13 @@ on:
       # Read by the jobs at run time: smoke.sh's table list and run config, and the build settings.
       - "specs/014-telemetry-test-harness/contracts/store-ddl.md"
       - "tests/MmoEngine.Harness.Tests/Fixtures/runs/**"
+      # The sweep-as-a-Kubernetes-Job check (FR-032): the image, its Job, and the sweep it cuts down.
+      - "infra/sweeps/**"
+      - ".dockerignore"
+      - "simulator/scenarios/**"
+      - "simulator/maps/**"
+      - ".editorconfig"
+      - "simulator/sweeps/infantry-radius.json"
       - "global.json"
       - "Directory.Build.props"
       - "Directory.Packages.props"

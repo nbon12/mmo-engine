@@ -1,0 +1,25 @@
+# Mounts a finished sweep Job's results volume read-only, so infra/sweeps/k8s-sweep.sh can copy the shards
+# out with `kubectl cp` (spec 014, FR-032). Filled in like sweep-job.yaml and deleted with it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sweep-${SWEEP_NAME}-reader
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: regionizer-sweep-reader
+spec:
+  restartPolicy: Never
+  containers:
+    - name: reader
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      # Waits until deleted, and exits on SIGTERM at once (a plain sleep as PID 1 ignores it).
+      command: ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]
+      volumeMounts:
+        - name: results
+          mountPath: /results
+          readOnly: true
+  volumes:
+    - name: results
+      persistentVolumeClaim:
+        claimName: sweep-${SWEEP_NAME}-results

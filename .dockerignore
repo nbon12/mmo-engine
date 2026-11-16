@@ -1,0 +1,5 @@
+# Keeps the docker build context small (infra/sweeps/Dockerfile copies only what it needs).
+.git
+**/bin
+**/obj
+**/node_modules
