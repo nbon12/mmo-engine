@@ -45,13 +45,16 @@ dotnet run --project src/MmoEngine.Harness.Cli -- rules run --run-id <runId from
 echo $?   # 0 passed, 5 failed, 6 inconclusive
 ```
 
-## Load the decision memo's sweep results
+## Load the committed full-scale sweep results
 
 ```bash
 for sweep in docs/simulator/results/full/*/; do
   dotnet run --project src/MmoEngine.Harness.Cli -- load "$sweep"
 done
 ```
+
+This loads the decision memo's 13 sweeps plus `claim-radius-grid` (PR #59), which the memo's rules
+don't read.
 
 ## Golden runs
 

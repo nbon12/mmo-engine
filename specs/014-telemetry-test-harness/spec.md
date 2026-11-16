@@ -498,7 +498,8 @@ that the sections, regions and entities match the regionizer's state at that tic
   also run in the manual Sweeps workflow (`.github/workflows/sweeps.yml`); the soak still runs outside CI.
 - The decision memo's first-pass sweep results are loaded from the folders sub-spec 1 committed, where
   they exist in the repo, or from a re-run of the committed sweep specs. Amended 2026-11-16 by PR #58:
-  the memo is now full scale, and its sweep results are committed in `docs/simulator/results/full/`.
+  the memo is now full scale, and its sweep results are committed in `docs/simulator/results/full/` (that folder also holds
+  `claim-radius-grid`, PR #59, which the memo doesn't read).
 - Full 5-minute calibrations of the impaired profiles need netem, which needs root on the host or
   Chaos Mesh in the cluster. CI's cluster job runs them. In-process tests cover calibration maths with
   synthetic samples and the probe pair over unimpaired loopback.
