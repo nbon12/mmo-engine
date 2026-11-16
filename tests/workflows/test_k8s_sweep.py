@@ -45,7 +45,7 @@ class Entrypoint(unittest.TestCase):
         (results / f"shard-{index + 1}").mkdir(parents=True)
         (results / f"shard-{index + 1}" / "stale").write_text("x")
         env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", JOB_COMPLETION_INDEX=str(index),
-                   SWEEP_SHARDS=str(shards), SWEEP_RESULTS=str(results), STUB_CODE=str(code),
+                   SWEEP_SHARDS=str(shards), SWEEP_RUN_PARALLELISM="2", SWEEP_RESULTS=str(results), STUB_CODE=str(code),
                    STUB_ARGS=str(Path(work) / "args"))
         result = subprocess.run(["sh", str(ENTRYPOINT)], env=env, capture_output=True, text=True)
         args = (Path(work) / "args").read_text().split()
@@ -55,7 +55,7 @@ class Entrypoint(unittest.TestCase):
         result, args, shard = self.run_entrypoint(index=1, shards=3, code=0)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["/app/regionizer-sim.dll", "sweep", "/sweep/spec.json", "--out", str(shard),
-                          "--scenarios", "/app/scenarios", "--shard", "2/3"], args)
+                          "--scenarios", "/app/scenarios", "--shard", "2/3", "--parallelism", "2"], args)
         self.assertEqual("0", (shard / "exit-code").read_text().strip())
         self.assertFalse((shard / "stale").exists(), "a retried shard must start over")
 
@@ -71,7 +71,7 @@ class Entrypoint(unittest.TestCase):
 
     def test_refuses_to_run_outside_an_indexed_job(self):
         env = {k: v for k, v in os.environ.items() if k != "JOB_COMPLETION_INDEX"}
-        env["SWEEP_SHARDS"] = "2"
+        env.update(SWEEP_SHARDS="2", SWEEP_RUN_PARALLELISM="1")
         result = subprocess.run(["sh", str(ENTRYPOINT)], env=env, capture_output=True, text=True)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("indexed Job", result.stderr)
@@ -79,7 +79,7 @@ class Entrypoint(unittest.TestCase):
 
 class JobManifest(unittest.TestCase):
     VALUES = {"SWEEP_NAME": "spacing", "NAMESPACE": "sweeps", "SHARDS": "4", "PARALLELISM": "2",
-              "IMAGE": "mmo-engine/regionizer-sim:local", "RUNNER_CLASS": "k8s-kind", "CPU": "1",
+              "IMAGE": "mmo-engine/regionizer-sim:local", "RUNNER_CLASS": "k8s-kind", "CPU": "2",
               "MEMORY": "512Mi", "STORAGE": "5Gi", "ACCESS_MODE": "ReadWriteOnce"}
 
     def render(self):
@@ -96,8 +96,12 @@ class JobManifest(unittest.TestCase):
         container = job["template"]["spec"]["containers"][0]
         self.assertEqual("mmo-engine/regionizer-sim:local", container["image"])
         env = {e["name"]: e["value"] for e in container["env"]}
-        self.assertEqual({"SWEEP_SHARDS": "4", "MMO_RUNNER_CLASS": "k8s-kind", "DOTNET_EnableAVX512F": "0",
-                          "DOTNET_TieredPGO": "0"}, env)
+        self.assertEqual({"SWEEP_SHARDS": "4", "SWEEP_RUN_PARALLELISM": "2", "MMO_RUNNER_CLASS": "k8s-kind",
+                          "DOTNET_EnableAVX512F": "0", "DOTNET_TieredPGO": "0"}, env)
+        # Runs at once match the pod's CPUs, and the limit equals the request, so pods sharing a node don't
+        # oversubscribe it (the wall-clock columns stay comparable).
+        self.assertEqual({"cpu": "2"}, container["resources"]["limits"])
+        self.assertEqual("2", container["resources"]["requests"]["cpu"])
 
     def test_pods_read_the_spec_configmap_and_write_the_shared_volume(self):
         docs = self.render()
@@ -136,6 +140,11 @@ class Script(unittest.TestCase):
         result = self.run_script("no-such-sweep", "1", tempfile.mkdtemp())
         self.assertEqual(2, result.returncode)
         self.assertIn("no sweep spec no-such-sweep", result.stderr)
+
+    def test_refuses_a_fractional_cpu(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), SWEEP_CPU="500m")
+        self.assertEqual(2, result.returncode)
+        self.assertIn("SWEEP_CPU must be a whole number of CPUs", result.stderr)
 
     def test_refuses_an_output_folder_that_holds_files(self):
         out = tempfile.mkdtemp()

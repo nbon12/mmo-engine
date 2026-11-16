@@ -49,6 +49,9 @@ spec:
           env:
             - name: SWEEP_SHARDS
               value: "${SHARDS}"
+            # Runs at once in this pod: its whole CPUs, so pods sharing a node don't oversubscribe it.
+            - name: SWEEP_RUN_PARALLELISM
+              value: "${CPU}"
             # The runner class and the pinned hardware-intrinsic settings, as in the Sweeps workflow
             # (spec 014, research R5): manifest.json records them.
             - name: MMO_RUNNER_CLASS
@@ -57,10 +60,13 @@ spec:
               value: "0"
             - name: DOTNET_TieredPGO
               value: "0"
+          # The limit equals the request, so the runtime's processor count follows the pod's CPUs too.
           resources:
             requests:
               cpu: "${CPU}"
               memory: ${MEMORY}
+            limits:
+              cpu: "${CPU}"
           volumeMounts:
             - name: spec
               mountPath: /sweep

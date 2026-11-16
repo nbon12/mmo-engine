@@ -19,7 +19,8 @@
 #   SWEEP_SKIP_BUILD      1 to use SWEEP_IMAGE as it is, without building it
 #   SWEEP_NAMESPACE       namespace (default sweeps)
 #   SWEEP_PARALLELISM     pods at once (default: every shard)
-#   SWEEP_CPU, SWEEP_MEMORY  each pod's requests (default 1 and 512Mi)
+#   SWEEP_CPU             each pod's whole CPUs: its request and limit, and its runs at once (default 1)
+#   SWEEP_MEMORY          each pod's memory request (default 512Mi)
 #   SWEEP_STORAGE, SWEEP_ACCESS_MODE  the results volume (default 5Gi, ReadWriteOnce)
 #   SWEEP_TIMEOUT         seconds to wait for the Job (default 21600)
 #   MMO_RUNNER_CLASS      the runner class recorded in each manifest.json (default k8s-<cluster>)
@@ -50,6 +51,8 @@ print(spec["name"], spec["seeds"])' "$SPEC")
 [[ "$NAME" =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || { echo "sweep name $NAME can't name a Job (lowercase letters, digits and dashes, at most 42)" >&2; exit 2; }
 [[ "$SHARDS" =~ ^[0-9]+$ ]] && [ "$SHARDS" -ge 1 ] && [ "$SHARDS" -le "$SEEDS" ] \
   || { echo "shards must be 1 to the sweep's $SEEDS seeds, was $SHARDS" >&2; exit 2; }
+CPU="${SWEEP_CPU:-1}"
+[[ "$CPU" =~ ^[1-9][0-9]*$ ]] || { echo "SWEEP_CPU must be a whole number of CPUs (it is also the runs at once), was $CPU" >&2; exit 2; }
 if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then echo "$OUT is not empty; use a new folder" >&2; exit 2; fi
 mkdir -p "$OUT"
 
@@ -74,7 +77,7 @@ kubectl -n "$NS" delete "job/$JOB" "pod/$READER" "pvc/$JOB-results" "configmap/$
 kubectl -n "$NS" create configmap "$JOB-spec" --from-file=spec.json="$SPEC" >/dev/null
 log "running $NAME as $SHARDS shards (job/$JOB in namespace $NS)"
 SWEEP_NAME="$NAME" NAMESPACE="$NS" SHARDS="$SHARDS" PARALLELISM="${SWEEP_PARALLELISM:-$SHARDS}" IMAGE="$IMAGE" \
-  RUNNER_CLASS="${MMO_RUNNER_CLASS:-k8s-$TOOL}" CPU="${SWEEP_CPU:-1}" MEMORY="${SWEEP_MEMORY:-512Mi}" \
+  RUNNER_CLASS="${MMO_RUNNER_CLASS:-k8s-$TOOL}" CPU="$CPU" MEMORY="${SWEEP_MEMORY:-512Mi}" \
   STORAGE="${SWEEP_STORAGE:-5Gi}" ACCESS_MODE="${SWEEP_ACCESS_MODE:-ReadWriteOnce}" \
   python3 -c '
 import os, string, sys

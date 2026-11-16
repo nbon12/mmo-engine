@@ -3,6 +3,9 @@
 # completion index i (0-based, JOB_COMPLETION_INDEX) runs shard i+1 of SWEEP_SHARDS, every n-th run, exactly
 # as `infra/sweeps/run-sweep.sh <sweep> <out> k/n` does in the Sweeps workflow.
 #
+# Runs SWEEP_RUN_PARALLELISM runs at once (the pod's whole CPUs; without it the simulator would take every
+# core on the node, and pods sharing a node would inflate each other's wall-clock columns).
+#
 # Reads the sweep spec at SWEEP_SPEC (default /sweep/spec.json) and writes /results/shard-<k>/<sweep-name>/.
 # A retried pod starts its shard over. Exit 3 (a run stopped on a violation or timer fault) still leaves
 # complete results, so it is recorded in /results/shard-<k>/exit-code and the pod succeeds; any other
@@ -10,6 +13,7 @@
 set -eu
 : "${JOB_COMPLETION_INDEX:?run this as an indexed Job (completionMode: Indexed)}"
 : "${SWEEP_SHARDS:?set SWEEP_SHARDS to the Job's completions}"
+: "${SWEEP_RUN_PARALLELISM:?set SWEEP_RUN_PARALLELISM to the pod's CPUs}"
 SPEC="${SWEEP_SPEC:-/sweep/spec.json}"
 RESULTS="${SWEEP_RESULTS:-/results}"
 k=$((JOB_COMPLETION_INDEX + 1))
@@ -17,7 +21,7 @@ out="$RESULTS/shard-$k"
 rm -rf "$out"
 mkdir -p "$out"
 set +e
-dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS"
+dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS" --parallelism "$SWEEP_RUN_PARALLELISM"
 code=$?
 set -e
 echo "$code" > "$out/exit-code"
