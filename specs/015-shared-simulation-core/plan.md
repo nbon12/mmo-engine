@@ -659,6 +659,16 @@ The design documents settled these points, which the spec leaves open. They are 
   clause passes vacuously: `corner-wedge` must end with the axis touching both walls and must sweep at
   some step, and `thin-wall-fast` must touch the thin wall's plane. A touch is again within
   r + contactSkin + contactTolerance.
+- **A scenario definition's length is `DurationSeconds`, and `jump-land` is 2 s in all (T086, T103,
+  T105, Phase 3 red check).** T086 asserts that a movement definition built at 20, 30 or 60 Hz has
+  its duration in seconds × hz steps, and T103 gave definitions "durations in seconds" without naming
+  the member. The test reads `double DurationSeconds`, the whole run's simulated seconds; T103 now
+  names it. T105 defined `jump-land` as "Jump held for one step, then 2 s with no buttons", which is
+  1 + 2·hz steps: no fixed number of seconds gives that at every rate, so it contradicted T086.
+  `jump-land` is now 2 s in all, Jump in the first step and no buttons after it: 40, 60 and 120
+  steps, still more than twice the about 0.92 s of airtime T082 needs to see the landing. T105 now
+  says so. `StreamRunner`'s refusal of a `perturbStep` it cannot apply names the parameter
+  (`ParamName` `perturbStep`), which T088 asserts; T088 and T100 now say so.
 
 ## Delivery
 
