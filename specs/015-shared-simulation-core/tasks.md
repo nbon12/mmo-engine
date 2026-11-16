@@ -686,11 +686,11 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `internal ReadOnlySpan<InputCommand> LastStepInputs` (one entry per character), and the internal buffer-size accessors `CandidateCapacity`, `StateBufferLength`, `ShotCapacity`, `HitCapacity`, `ExpiryCapacity`, `InputRejectionCapacity`, `FireBlockCapacity` and `MovementOutcomeCapacity` (`int`) for the tests.
   - `internal StepReport StepWithInjectedBits(ReadOnlySpan<CharacterCommand> commands, int fieldOrdinal, int elementIndex, uint bits)` runs stages 1–5, writes `bits` into that field of the next state, then runs stages 6 and 7. It is visible to `MmoEngine.SimCore.Tests` only, and is never a delegate field.
   - There is no LINQ, lambda, boxing or exception on the step path, and every loop is bounded by a count from the configuration.
-- [ ] T061 [P] Implement the CLI infrastructure in `src/MmoEngine.SimCore.Cli/`. Makes T040 pass.
+- [X] T061 [P] Implement the CLI infrastructure in `src/MmoEngine.SimCore.Cli/`. Makes T040 pass.
   - `CliExitCodes.cs`: `Success 0`, `Failed 1` (divergence or invalid) and `Usage 2` (usage, refused, not comparable, cannot run).
   - `CliLogging.cs`: `Create(TextWriter stderr)` returns a Serilog logger enriched with `Tool` = `simcore`, written through a `TextWriterSink` with `CompactJsonFormatter`, as `src/MmoEngine.Harness.Cli/Program.cs` does.
   - `AtomicFile.cs`: `WriteAllBytes`, `WriteAllText` and `Write(string path, Action<Stream> write)`. Each writes `<name>.<guid>.tmp` in the target's directory, flushes it, then calls `File.Move(temp, path, overwrite: true)`. On any exception it deletes the temp file and rethrows.
-- [ ] T062 Implement the CLI shell's environment check and `config check`. Makes T037, T038 and T039 pass.
+- [X] T062 Implement the CLI shell's environment check and `config check`. Makes T037, T038 and T039 pass.
   - `src/MmoEngine.SimCore.Cli/Program.cs`: `public static int Run(string[] args, TextWriter stdout, TextWriter stderr)` reads `DOTNET_ENVIRONMENT` and delegates to `internal static int Run(string[] args, TextWriter stdout, TextWriter stderr, string? environmentName)`. That overload:
     - resolves the name with `SimEnvironment.Resolve`. An unknown name writes `DOTNET_ENVIRONMENT: <message>` to stderr and exits 2;
     - creates the logger with `CliLogging`;
