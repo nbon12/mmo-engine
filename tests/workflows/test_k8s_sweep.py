@@ -134,7 +134,8 @@ class JobManifest(unittest.TestCase):
                           "DOTNET_EnableAVX512F": "0", "DOTNET_TieredPGO": "0"}, env)
         # Runs at once match the pod's CPUs, and the limit equals the request, so pods sharing a node don't
         # oversubscribe it (the wall-clock columns stay comparable).
-        self.assertEqual({"cpu": "2"}, container["resources"]["limits"])
+        # Memory too, so the pod is Guaranteed QoS.
+        self.assertEqual({"cpu": "2", "memory": "512Mi"}, container["resources"]["limits"])
         self.assertEqual("2", container["resources"]["requests"]["cpu"])
 
     def test_pods_read_the_spec_configmap_and_write_the_shared_volume(self):
@@ -156,7 +157,19 @@ class JobManifest(unittest.TestCase):
         # The image has no repository: the revision it was built from reaches manifest.json's gitSha.
         self.assertIn("ENV DOTNET_NOLOGO=true DOTNET_CLI_TELEMETRY_OPTOUT=true MMO_GIT_SHA=${GIT_SHA}", dockerfile)
         self.assertIn('--build-arg "GIT_SHA=$GIT_SHA"', SCRIPT.read_text())
+        # StackedAreas and Soak name simulator/maps/stacked-base.json, resolved upward from /app.
+        self.assertIn("COPY simulator/maps/ /app/simulator/maps/", dockerfile)
+        self.assertIn("WORKDIR /app", dockerfile)
         self.assertTrue(os.access(ENTRYPOINT, os.X_OK), "job-entrypoint.sh must be executable")
+
+    def test_dependabot_proposes_runtime_patches_only(self):
+        config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text())
+        docker = next(u for u in config["updates"] if u["package-ecosystem"] == "docker")
+        self.assertEqual("/infra/sweeps", docker["directory"])
+        ignored = {i["dependency-name"]: i.get("update-types") for i in docker["ignore"]}
+        self.assertIsNone(ignored["mcr.microsoft.com/dotnet/sdk"], "the SDK follows global.json")
+        self.assertEqual(["version-update:semver-major", "version-update:semver-minor"],
+                         ignored["mcr.microsoft.com/dotnet/runtime"])
         self.assertTrue(os.access(SCRIPT, os.X_OK), "k8s-sweep.sh must be executable")
 
 
@@ -183,20 +196,33 @@ class Script(unittest.TestCase):
         return subprocess.run(["bash", str(SCRIPT), *args], env=full_env, capture_output=True, text=True,
                               timeout=60)
 
-    def test_a_pod_that_cannot_get_its_image_fails_the_run_at_once_and_everything_is_removed(self):
-        pod = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"},
-               "status": {"phase": "Pending", "containerStatuses": [
-                   {"state": {"waiting": {"reason": "ImagePullBackOff"}}}]}}
+    @staticmethod
+    def waiting_pod(reason):
+        return {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"},
+                "status": {"phase": "Pending", "containerStatuses": [{"state": {"waiting": {"reason": reason}}}]}}
+
+    def test_a_pod_whose_image_can_never_be_pulled_fails_the_run_at_once_and_everything_is_removed(self):
         job = {"kind": "Job", "status": {}}
-        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[job, pod],
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(),
+                                 state=[job, self.waiting_pod("ErrImageNeverPull")],
                                  HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1")
         self.assertEqual(1, result.returncode, result.stderr)
-        self.assertIn("Stuck sweep-infantry-radius-0-abc ImagePullBackOff", result.stderr)
+        self.assertIn("Stuck sweep-infantry-radius-0-abc ErrImageNeverPull", result.stderr)
         deletes = [line for line in self.log.read_text().splitlines()
                    if line.startswith("-n sweeps delete job/sweep-infantry-radius pod/sweep-infantry-radius-reader "
                                       "pvc/sweep-infantry-radius-results configmap/sweep-infantry-radius-spec")]
         # Once before the run (an earlier run's leftovers) and once on the way out.
         self.assertEqual(2, len(deletes), self.log.read_text())
+
+    def test_a_failing_pull_gets_a_grace_period_before_it_fails_the_run(self):
+        started = time.monotonic()
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(),
+                                 state=[{"kind": "Job", "status": {}}, self.waiting_pod("ImagePullBackOff")],
+                                 HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1", SWEEP_PULL_GRACE="3")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Stuck sweep-infantry-radius-0-abc ImagePullBackOff for 3s", result.stderr)
+        # Not on the first poll: it kept polling through the grace period.
+        self.assertGreaterEqual(time.monotonic() - started, 3)
 
     def test_a_job_whose_pods_never_start_fails_after_the_start_timeout(self):
         pod = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"}, "status": {"phase": "Pending"}}
@@ -215,6 +241,25 @@ class Script(unittest.TestCase):
         last_delete = max(i for i, c in enumerate(calls) if "pvc/sweep-infantry-radius-results" in c)
         self.assertLess(copy, last_delete, "the shards must be copied out before the volume is deleted")
         self.assertIn("kept the shards that ran", result.stderr)
+
+    def test_a_volume_whose_shards_could_not_be_copied_out_is_kept(self):
+        work = tempfile.mkdtemp()
+        bin_dir = Path(work) / "bin"
+        bin_dir.mkdir()
+        log = Path(work) / "kubectl.log"
+        state = Path(work) / "state.json"
+        state.write_text(json.dumps({"items": [{"kind": "Job", "status": {
+            "conditions": [{"type": "Failed", "status": "True"}]}}]}))
+        stub(bin_dir, "kubectl", f'printf "%s\\n" "$*" >> "{log}"\n'
+                                 f'case "$*" in *"get jobs,pods"*) cat "{state}" ;; *" cp "*) exit 1 ;; *"-f -"*) cat >/dev/null ;; esac\n')
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", HARNESS_CLUSTER="none")
+        result = subprocess.run(["bash", str(SCRIPT), "infantry-radius", "2", tempfile.mkdtemp()], env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("kept pvc/sweep-infantry-radius-results", result.stderr)
+        calls = log.read_text().splitlines()
+        copy = next(i for i, c in enumerate(calls) if " cp " in f" {c} ")
+        self.assertFalse(any("pvc/" in c for c in calls[copy:]), "the volume must survive a failed copy")
 
     def test_a_failed_poll_is_retried_rather_than_ending_the_run(self):
         work = tempfile.mkdtemp()
@@ -241,8 +286,10 @@ class Script(unittest.TestCase):
             HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1", SWEEP_KEEP="1")
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("job/sweep-infantry-radius: Failed", result.stderr)
-        # Only the clean-up before the run deletes the volume (the failed Job itself is stopped, its volume kept).
-        self.assertEqual(1, self.log.read_text().count("delete job/sweep-infantry-radius pod/"))
+        self.assertIn("SWEEP_KEEP=1: left job/sweep-infantry-radius", result.stderr)
+        # Only the clean-up before the run deletes anything: the failed Job and its volume are left as they are.
+        self.assertEqual(1, self.log.read_text().count("delete job/sweep-infantry-radius"))
+        self.assertNotIn(" cp ", self.log.read_text())
 
     def test_every_kubectl_call_uses_the_clusters_context_and_its_own_runner_class(self):
         text = SCRIPT.read_text()
@@ -258,6 +305,12 @@ class Script(unittest.TestCase):
         result = self.run_script("infantry-radius", "11", tempfile.mkdtemp())
         self.assertEqual(2, result.returncode)
         self.assertIn("shards must be 1 to the sweep's 10 seeds, was 11", result.stderr)
+
+    def test_refuses_a_shard_count_with_a_leading_zero(self):
+        # YAML would read 010 as octal 8 completions.
+        result = self.run_script("infantry-radius", "010", tempfile.mkdtemp())
+        self.assertEqual(2, result.returncode)
+        self.assertIn("shards must be 1 to the sweep's 10 seeds, was 010", result.stderr)
 
     def test_refuses_an_unknown_sweep(self):
         result = self.run_script("no-such-sweep", "1", tempfile.mkdtemp())
@@ -337,7 +390,7 @@ class Script(unittest.TestCase):
                          (merged / "cells.csv").read_text().splitlines())
         # Trimmed: what the memo reads, without per-tick files; the full shards stay under shards/.
         self.assertEqual(["manifest.json", "summary.json"], sorted(p.name for p in (merged / "c001" / "seed-1").iterdir()))
-        self.assertTrue((out / "shards" / "shard-2" / "infantry-radius" / "c001" / "seed-1" / "ticks.csv").exists())
+        self.assertTrue((out / "_shards" / "shard-2" / "infantry-radius" / "c001" / "seed-1" / "ticks.csv").exists())
 
     def test_a_shard_that_exited_3_still_merges_and_the_script_exits_3(self):
         result, out = self.run_complete_job({1: 0, 2: 3})

@@ -62,13 +62,15 @@ spec:
               value: "0"
             - name: DOTNET_TieredPGO
               value: "0"
-          # The limit equals the request, so the runtime's processor count follows the pod's CPUs too.
+          # Limits equal requests (Guaranteed QoS): the runtime's processor count follows the pod's CPUs, and the
+          # pod isn't throttled or squeezed by its neighbours, which would inflate the wall-clock columns.
           resources:
             requests:
               cpu: "${CPU}"
               memory: ${MEMORY}
             limits:
               cpu: "${CPU}"
+              memory: ${MEMORY}
           volumeMounts:
             - name: spec
               mountPath: /sweep

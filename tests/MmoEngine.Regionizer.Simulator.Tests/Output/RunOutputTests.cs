@@ -332,6 +332,28 @@ public sealed class RunOutputTests
         Assert.NotEqual(sha, RunManifest.GitSha(repo, sha));
     }
 
+    [Fact]
+    public void ThePublicLookupReadsTheFallbackFromMmoGitSha()
+    {
+        // Other tests read the revision inside the repository, where git wins over this variable, so setting it
+        // here can't change what they see.
+        var notARepo = TestRuns.TempDir();
+        Directory.CreateDirectory(notARepo);
+        const string sha = "fedcba9876543210fedcba9876543210fedcba98";
+        var before = Environment.GetEnvironmentVariable("MMO_GIT_SHA");
+        try
+        {
+            Environment.SetEnvironmentVariable("MMO_GIT_SHA", sha);
+            Assert.Equal(sha, RunManifest.GitSha(notARepo));
+            Environment.SetEnvironmentVariable("MMO_GIT_SHA", null);
+            Assert.Equal("unknown", RunManifest.GitSha(notARepo));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MMO_GIT_SHA", before);
+        }
+    }
+
     [Theory]
     [InlineData("plain", "plain")]
     [InlineData("a,b", "\"a,b\"")]

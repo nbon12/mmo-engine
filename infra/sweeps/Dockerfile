@@ -19,6 +19,9 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0.15@sha256:80a51954ac70925e5783cb1ed35
 WORKDIR /app
 COPY --from=build /app/ /app/
 COPY infra/sweeps/job-entrypoint.sh /app/job-entrypoint.sh
+# Map files named by scenarios (simulator/maps/stacked-base.json for StackedAreas and Soak) resolve upward from
+# the working directory, /app.
+COPY simulator/maps/ /app/simulator/maps/
 # The image has no repository, so the revision it was built from is recorded in manifest.json's gitSha
 # (k8s-sweep.sh passes `git rev-parse HEAD`).
 ARG GIT_SHA=unknown

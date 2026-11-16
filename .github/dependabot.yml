@@ -15,3 +15,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: build
+    ignore:
+      # The SDK follows global.json, which is bumped by hand with it.
+      - dependency-name: mcr.microsoft.com/dotnet/sdk
+      # The runtime takes 10.0 patches only: a new major or minor is a target-framework change.
+      - dependency-name: mcr.microsoft.com/dotnet/runtime
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
