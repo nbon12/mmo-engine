@@ -52,6 +52,18 @@ public static class ConfigGuard
         return errors.AsReadOnly();
     }
 
+    /// <summary>
+    /// The shape errors alone, step 1 of <see cref="Check"/>: empty when every section, list element and
+    /// capsule point is present and every list has an allowed number of entries, so every field can be read.
+    /// </summary>
+    internal static IReadOnlyList<ConfigError> ShapeErrors(SimConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var errors = new List<ConfigError>();
+        CheckShape(config, errors);
+        return errors.AsReadOnly();
+    }
+
     /// <summary>The shape rules of contracts/config-rules.md#shape, in section order.</summary>
     private static void CheckShape(SimConfig config, List<ConfigError> errors)
     {

@@ -43,6 +43,9 @@ internal enum FormatDetail : byte
 
     /// <summary><c>field 0x{a:X4} is missing</c>.</summary>
     Missing,
+
+    /// <summary><c>field 0x{a:X4} is not in the rule table</c>.</summary>
+    UnknownField,
 }
 
 /// <summary>
@@ -116,6 +119,7 @@ public readonly struct FormatError : IEquatable<FormatError>
         FormatDetail.OutOfRangeFloat => string.Create(CultureInfo.InvariantCulture, $"{FloatFromBits(_a)} is outside [{FloatFromBits(_b)}, {FloatFromBits(_c)}]"),
         FormatDetail.NotAbove => string.Create(CultureInfo.InvariantCulture, $"field 0x{_a:X4} is not above 0x{_b:X4}"),
         FormatDetail.Missing => string.Create(CultureInfo.InvariantCulture, $"field 0x{_a:X4} is missing"),
+        FormatDetail.UnknownField => string.Create(CultureInfo.InvariantCulture, $"field 0x{_a:X4} is not in the rule table"),
         _ => _text ?? string.Empty,
     };
 

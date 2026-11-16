@@ -583,7 +583,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `readonly struct HitboxBounds(Vec3 Centre, float Radius)`.
 
   Supports the compiled-config and hitbox-builder tasks.
-- [ ] T051 Implement the state and event types:
+- [X] T051 Implement the state and event types:
   - `src/MmoEngine.SimCore/Movement/CharacterState.cs`: the struct of data-model.md#character-state, without the weapons, which the world holds flat by index × slots;
   - `src/MmoEngine.SimCore/Weapons/WeaponState.cs`: the struct of #weaponstate, with `WeaponState.New(int magazineSize, int reserveRounds)` giving the new-weapon values (Ready, full magazine, reserve, `StepsSinceShot` 65535, everything else 0);
   - `src/MmoEngine.SimCore/Projectiles/Projectile.cs`;
@@ -595,7 +595,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - The state and event structs have settable members named as the state layout (`CharacterState.Id`, `Position`, `Velocity`, `GroundNormal`, `AimYaw`, `AimPitch`, `Stance`, `Flags`, `LastSequence`, `ActiveSlot`, `WeaponCount`; `WeaponState.Phase`, `Flags`, `PhaseSteps`, `FireWait`, `ShotCounter`, `Magazine`, `Reserve`, `Heat`, `StepsSinceShot`, `RecoilPitch`, `RecoilYaw`; `Projectile.Id`, `OwnerId`, `Class`, `LaunchStep`, `Origin`, `LaunchVelocity`, `Position`; `ProjectileHit.ProjectileId`, `Kind`, `TargetId`, `Hitbox`, `Point`, `T`; `ShotEvent.CharacterId`, `Slot`, `ShotCounter`, `ProjectileId`, `Direction`; `ExpiryEvent.ProjectileId`, `Reason`; `InputRejectionEvent` and `FireBlockEvent` `.CharacterId`, `.Reason`; `MovementOutcomeEvent.CharacterId`, `Flags`), with value equality. Tests build them with object initializers and `with`.
 
   Supports the serializer and world tasks.
-- [ ] T052 Implement `src/MmoEngine.SimCore/Formats/StateSerializer.cs`, `src/MmoEngine.SimCore/Hashing/StateHash.cs` and `src/MmoEngine.SimCore/Batch/StepRecord.cs` (contracts/state-serialization.md). Makes T027, T028, T029 and T036's `HashAllocationTests` pass.
+- [X] T052 Implement `src/MmoEngine.SimCore/Formats/StateSerializer.cs`, `src/MmoEngine.SimCore/Hashing/StateHash.cs` and `src/MmoEngine.SimCore/Batch/StepRecord.cs` (contracts/state-serialization.md). Makes T027, T028, T029 and T036's `HashAllocationTests` pass.
   - `StateSerializer` holds the layout as data: `ImmutableArray<StateField>` (ordinal, record kind, offset in record, size, type, name). It provides:
     - the constants of #api and `MaxLength(c, p, w, s)`, which is `24 + c·(67 + 30·w + 25·s) + 80·p`;
     - `TryFindField(string path, out int fieldOrdinal, out int elementIndex)` and `FieldPath(int fieldOrdinal, int elementIndex)`;
@@ -605,13 +605,13 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - Both readers return a `StateSnapshot`: `Step`, `NextProjectileId`, `Characters`, `Weapons` (flat, in record order), `Projectiles` and the six event lists `Shots`, `Hits`, `Expiries`, `InputRejections`, `FireBlocks` and `MovementOutcomes` (always empty from `ReadLoaded`), each enumerable.
   - `StateHash.Compute` is `XxHash64.HashToUInt64(bytes, 0)`.
   - `StepRecord` writes and reads `u32 step | u32 stateLength | state | u64 hash`, little-endian: `static bool Write(uint step, ReadOnlySpan<byte> state, ulong hash, Span<byte> destination, out int written)` returns false and writes nothing when the destination is shorter than 16 + the state length, and `static bool TryRead(ReadOnlySpan<byte> source, out uint step, out ReadOnlySpan<byte> state, out ulong hash, out int length)` returns false for a record that is not whole. Both allocate nothing.
-- [ ] T053 Implement `src/MmoEngine.SimCore/Config/CompiledConfig.cs`: `CompiledConfig.Create(SimConfig)` runs `ConfigGuard.Check` and throws `ConfigValidationException` on any error. It then computes every value of contracts/config-rules.md#compile-time-conversions in `float` with the shown parenthesisation, or in `int`. Makes T022 pass.
+- [X] T053 Implement `src/MmoEngine.SimCore/Config/CompiledConfig.cs`: `CompiledConfig.Create(SimConfig)` runs `ConfigGuard.Check` and throws `ConfigValidationException` on any error. It then computes every value of contracts/config-rules.md#compile-time-conversions in `float` with the shown parenthesisation, or in `int`. Makes T022 pass.
   - `ceilSteps(ms)` is `(ms * Hz + 999) / 1000`, and `angleUnits` is `SimMath.RoundToInt((deg * 65536f) / 360f)`.
   - `RecoilRecoveryPerStep` is raised to 1 when the rate is above 0.
   - It builds a `HitboxLayout` per stance, with BoundCenterUp, BoundRadius plus 0.01f, and EyeHeight.
   - The tests read `ShotCost`, `Dt`, `GroundAccelPerStep`, `GroundDecelPerStep`, `AirAccelPerStep`, `GravityPerStep`, `CosSlopeLimit`, `SweepTarget`, `SweepTolerance`, `PushOutThreshold` and `HeadroomClearance`; `AxisTop[s]` and `HitboxLayouts[s]` by stance (0 standing, 1 crouched); `HalfG[k]`, `MaxRangeSq[k]` and `LifetimeSteps[k]` by class; and `Weapons[i]` by slot, with the `int`s `Rpm`, `ReloadSteps`, `EquipSteps`, `HeatCooldownDelaySteps`, `RecoilRecoveryDelaySteps`, `RecoilKickPitchUnits`, `RecoilKickYawUnits`, `RecoilMaxPitchUnits`, `RecoilMaxYawUnits` and `RecoilRecoveryPerStep`, the `uint`s `HeatPerShotScaled`, `OverheatThresholdScaled`, `HeatRecoveryScaled` and `HeatCooldownPerStep`, and the `float` `VersMax`.
   - It stores per-slot compiled weapons and per-class projectile values in `ImmutableArray`s, `MaxShotsPerStepMax` (S), `MaxStateLength = StateSerializer.MaxLength(maxCharacters, maxProjectiles, weaponSlots, S)`, `MaxStepRecordLength = MaxStateLength + 16`, and `Config` as a deep copy.
-- [ ] T054 Implement `src/MmoEngine.SimCore/Config/ConfigBlock.cs` (contracts/recorded-stream-format.md#config-block). Makes T023 pass.
+- [X] T054 Implement `src/MmoEngine.SimCore/Config/ConfigBlock.cs` (contracts/recorded-stream-format.md#config-block). Makes T023 pass.
   - `Encode(SimConfig)` takes a shape-valid config and writes `u16 count`, then `{u16 fieldId, u32 valueBits}` per row of `ConfigFields.Expand` for the config's weapon and projectile-class counts, in ascending fieldId.
   - `Decode(ReadOnlySpan<byte>)` is the standalone form, with format `config` and offsets from the block. It checks the structure completely, in contract order:
     - the length is `2 + 6·count`: fewer bytes is `Truncated` at `count`, more is `Oversized`;
@@ -619,7 +619,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - every field of every present instance is present, with weapon and class instances 0 to N − 1 with no gap. A missing one is `Inconsistent` at the offset where it would sort, as `<path>` with `field 0x5001 is missing`.
   - It checks no value: NaN and out-of-range values decode, and the guard refuses them.
   - An internal overload takes the format, base offset and prefix, for the stream-embedded form (`stream`, +64, `config.`).
-- [ ] T055 Implement the server adapter in `src/MmoEngine.SimCore.Server/` (contracts/config-rules.md#server). Makes T024, T025 and T021 pass, and the `SimConfigValidator` half of T020.
+- [X] T055 Implement the server adapter in `src/MmoEngine.SimCore.Server/` (contracts/config-rules.md#server). Makes T024, T025 and T021 pass, and the `SimConfigValidator` half of T020.
   - `SimConfigJson.cs`: `Load(string path)` and `Parse(string json)` return `SimConfigLoad(SimConfig? Config, IReadOnlyList<ConfigError> Errors)`.
     - It uses System.Text.Json with camelCase names, `UnmappedMemberHandling.Disallow`, a `JsonStringEnumConverter<FireMode>` and floats read as binary32.
     - Its wording matches `RunConfigLoader`: `is not valid JSON (…)`, `config: must be a JSON object`, and `has an invalid value or is not a known field (…)` keyed by the camelCase path.

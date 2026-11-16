@@ -452,6 +452,14 @@ public static class StateHash
 }
 ```
 
+`StateSerializer.Layout` is the layout table above as data, one `StateField` row per field in layout
+order (74 rows), and a field's ordinal is its row's index. `FieldPath(ordinal, elementIndex)` and
+`TryFindField(path, out ordinal, out elementIndex)` convert between a path and that pair. The element
+index is the element's position in its list for a character, projectile or event field, and 0 for a
+header or count field. A weapon field has two indices, so its element index is the character index × 8
++ the slot (a character has at most 8 weapons): `characters[1].weapons[1].fireWait` is ordinal 24
+with element index 9.
+
 `SimWorld.Step` returns a `StepReport` whose `State` is the canonical state in the world's buffer
 and whose `Hash` is its hash, valid until the next step ([data-model.md](../data-model.md)).
 `SimWorld.Reset` loads a state as above.
