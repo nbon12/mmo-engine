@@ -271,11 +271,11 @@ Grains are the only writers of live data, and admin tools change it through grai
 
 [Orleans transactions](https://learn.microsoft.com/en-us/dotnet/orleans/grains/transactions) span grains, but they need a transactional state store. The documented store is Azure Table, and falling back to regular grain storage is meant for development only. So trades run as one PostgreSQL transaction, driven by a short-lived trade grain.
 
-The trade grain locks the items in both player grains, commits the SQL transaction, then tells both grains to apply it.
+The trade grain reserves the items in both player grains, commits the SQL transaction, then tells both grains to apply it. This reservation is a persistence-tier protocol, not a lock in gameplay code. Superseded by constitution v1.0.0, Persistence and social tier ("reserves" replaces "locks").
 
 ### Day-one alternative
 
-A single ASP.NET Core service over the same schema can serve early development. Keeping one owner per player and per outfit in its code makes a later move to grains mechanical. Orleans comes in once write volume or cross-continent traffic outgrows one service.
+A single ASP.NET Core service over the same schema can serve early development. Keeping one owner per player and per outfit in its code makes a later move to grains mechanical. Whether to start this way is open decision 7 (constitution, Open decisions and Principle XI); if that decision picks this path, Orleans comes in once write volume or cross-continent traffic outgrows one service. Amended 2026-11-16 to keep decision 7 open (constitution v1.0.0, Open decisions).
 
 ### [Nakama](https://www.gamedeveloper.com/game-platforms/embracing-the-future-of-open-source-game-servers-with-nakama) option
 
@@ -392,9 +392,9 @@ The largest risk is density: one big fight is one region, and only parallel phas
 | **Snapshots are one tick old**                       | An entity that appeared this tick can be missed by cross-region reads | Keep cross-region interactions deferred; resolve hits at true timestamps                           |
 | **GPL code leaking into the server**                 | License obligations on our code                                       | Implement from Folia's docs only; record design sources; never copy source                         |
 | **.NET GC pauses**                                   | Tick overruns                                                         | Allocation-free gameplay code; GC pause time as a tracked metric                                   |
-| **Browser transport over TCP**                       | Head-of-line blocking under packet loss                               | Evaluate WebTransport datagrams; WebSocket as fallback                                             |
+| **Browser transport over TCP**                       | Head-of-line blocking under packet loss                               | Open decision 4 (WebTransport datagrams, or WebSocket); measure both under loss                    |
 | **Continent server crash**                           | Players dropped; up to one batch of stats lost                        | Checkpointed base ownership, fast replacement through Agones, currency written immediately         |
-| **Orleans overhead too early**                       | Slower iteration                                                      | Start with ASP.NET Core over PostgreSQL; move to grains when load requires                         |
+| **Orleans overhead too early**                       | Slower iteration                                                      | Open decision 7; one option: ASP.NET Core over PostgreSQL first, grains when load requires         |
 | **Browser client can't render a 1,000-player fight** | Frame rate collapses in the biggest fights                            | GPU instancing, animation LOD, simplified distant models                                           |
 | **Client-reported hits, if chosen**                  | More room for cheating                                                | Server checks on range, fire rate and line of fire; review of statistical outliers                 |
 | **A map's portal graph misses an opening**           | Areas meant to stay separate merge                                    | Validate each map's portal graph in the simulator                                                  |
@@ -474,6 +474,8 @@ Ten decisions remain open; the simulator and load tests settle the first two, an
 | **Area actor**         | Single owner of a designed area's state, scoped like the global region                                |
 | **Parallel phase**     | One step of a busy region's tick, run across threads with one writer per entity                       |
 | **Delivery**           | Workers that build each player's view from snapshots, off the simulation threads; never authoritative |
+
+Amended 2026-11-16: the transport and Orleans rows name open decisions 4 and 7 instead of presenting one option as settled (constitution v1.0.0, Open decisions).
 
 ### Sources
 

@@ -27,9 +27,10 @@ before finishing keeps `_incomplete`.
   "scenario": "Baseline",
   "seed": 3,
   "scheduling": "Lockstep",
+  "environment": "Development",
   "parameters": { "...": "the full effective configuration, canonical JSON" },
   "runtime": {
-    "framework": ".NET 9.0.x", "os": "...", "architecture": "Arm64",
+    "framework": ".NET 10.0.x", "os": "...", "architecture": "Arm64",
     "processorCount": 10, "machineName": "<host>",
     "cpuModel": "<CPU model or 'unknown'>", "runnerClass": "<MMO_RUNNER_CLASS or ''>",
     "hardwareIntrinsics": { "DOTNET_EnableAVX2": "<env or unset>", "...": "..." },
@@ -44,11 +45,17 @@ before finishing keeps `_incomplete`.
 its research R5). They are additive, so the format version stays 1, and a loader treats them as
 optional.
 
+Amended 2026-11-16 (documentation catch-up, no format change): the `environment` manifest field, the
+`absorptions` column in `ticks.csv` and `totals.absorptions` in `summary.json` have been written since
+the first merged simulator (PR #47, research D16), so every version-1 folder has them, but this
+contract omitted them. They are not optional: the harness loader (`RunFolderReader`) requires the
+`absorptions` column.
+
 ## ticks.csv
 
 Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in this order:
 
-`tick,timeSteps,regionCount,largestRegionPlayers,largestRegionShare,merges,splits,fusions,`
+`tick,timeSteps,regionCount,largestRegionPlayers,largestRegionShare,merges,absorptions,splits,fusions,`
 `fusedFightPairs,sectionChurn,crossPairsDeferred,crossPairsReadOnly,bookkeepingMicros,`
 `serializedMicros,oversizedFusion,violations,stateHash`
 
@@ -99,7 +106,7 @@ Header, then one row every `metricsEveryTicks` ticks (default 1). Columns, in th
   },
   "rates": { "mergesPerSecondByClass": { "Infantry": 0.0, "...": 0.0 }, "splitsPerSecond": 0.0,
              "fusionsPerSecondByClass": { "...": 0.0 } },
-  "totals": { "merges": 0, "splits": 0, "fusions": 0, "oversizedFusionTicks": 0,
+  "totals": { "merges": 0, "absorptions": 0, "splits": 0, "fusions": 0, "oversizedFusionTicks": 0,
               "timersSet": 0, "timersFired": 0 },
   "fusedFightPairs": { "p50": 0, "p95": 0, "p99": 0, "max": 0, "mean": 0 },
   "scheduling": { "baseStepHz": 60, "tickHz": 30, "degradedTickHz": 20, "timerOverheadNanos": 0 },
