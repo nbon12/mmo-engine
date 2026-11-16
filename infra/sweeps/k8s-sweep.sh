@@ -166,7 +166,9 @@ if [ "$state" != Complete ]; then
   # Shards that finished are kept, as run-sweep.sh keeps a sweep cut short: stop the Job, then copy what the
   # volume holds (nothing to copy when no pod ever started).
   if [ "$state" = Failed ] || [ -z "$state" ]; then
-    k -n "$NS" delete "job/$JOB" --wait >/dev/null || true
+    # Foreground, then wait for the pods: none may still be writing the volume while it is copied.
+    k -n "$NS" delete "job/$JOB" --cascade=foreground --wait >/dev/null || true
+    k -n "$NS" wait --for=delete pod -l "job-name=$JOB" --timeout=2m >/dev/null 2>&1 || true
     if copy_out; then
       echo "kept the shards that ran in $OUT/shards/; merge the finished ones with merge-shards.py --allow-missing (--partial for one cut short)" >&2
     else

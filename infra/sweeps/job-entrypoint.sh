@@ -20,9 +20,16 @@ k=$((JOB_COMPLETION_INDEX + 1))
 out="$RESULTS/shard-$k"
 rm -rf "$out"
 mkdir -p "$out"
+# The shell is PID 1, which ignores SIGTERM unless it traps it: pass it on to the simulator and wait for it to
+# stop, so a deleted pod stops writing its shard within the grace period.
+dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS" --parallelism "$SWEEP_RUN_PARALLELISM" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM
 set +e
-dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS" --parallelism "$SWEEP_RUN_PARALLELISM"
+wait "$child"
 code=$?
+# A trapped signal interrupts the first wait; wait again for the simulator to exit.
+while kill -0 "$child" 2>/dev/null; do wait "$child"; code=$?; done
 set -e
 echo "$code" > "$out/exit-code"
 case "$code" in

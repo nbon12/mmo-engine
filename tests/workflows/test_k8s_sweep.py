@@ -11,9 +11,11 @@ Run: python3 -m unittest discover -s tests/workflows -v   (needs PyYAML)
 import json
 import os
 import re
+import signal
 import string
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -69,6 +71,29 @@ class Entrypoint(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertEqual("1", (shard / "exit-code").read_text().strip())
 
+    def test_sigterm_reaches_the_simulator_and_the_pod_stops_with_it(self):
+        work = tempfile.mkdtemp()
+        bin_dir = Path(work) / "bin"
+        bin_dir.mkdir()
+        marker = Path(work) / "terminated"
+        # A stub simulator that runs until SIGTERM, then records it and exits 143.
+        stub(bin_dir, "dotnet", f'trap \'touch "{marker}"; exit 143\' TERM\nwhile :; do sleep 0.1; done\n')
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", JOB_COMPLETION_INDEX="0", SWEEP_SHARDS="1",
+                   SWEEP_RUN_PARALLELISM="1", SWEEP_RESULTS=str(Path(work) / "results"))
+        process = subprocess.Popen(["sh", str(ENTRYPOINT)], env=env)
+        try:
+            deadline = time.monotonic() + 10
+            while not (Path(work) / "results" / "shard-1").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(0.3)
+            process.send_signal(signal.SIGTERM)
+            code = process.wait(timeout=10)
+        finally:
+            process.kill()
+        self.assertTrue(marker.exists(), "the simulator never got SIGTERM")
+        self.assertEqual(143, code)
+        self.assertEqual("143", (Path(work) / "results" / "shard-1" / "exit-code").read_text().strip())
+
     def test_refuses_to_run_outside_an_indexed_job(self):
         env = {k: v for k, v in os.environ.items() if k != "JOB_COMPLETION_INDEX"}
         env.update(SWEEP_SHARDS="2", SWEEP_RUN_PARALLELISM="1")
@@ -101,6 +126,7 @@ class JobManifest(unittest.TestCase):
         self.assertEqual(4, job["completions"])
         self.assertEqual(2, job["parallelism"])
         self.assertEqual("Never", job["template"]["spec"]["restartPolicy"])
+        self.assertEqual("Failed", job["podReplacementPolicy"])
         container = job["template"]["spec"]["containers"][0]
         self.assertEqual("mmo-engine/regionizer-sim:local", container["image"])
         env = {e["name"]: e["value"] for e in container["env"]}

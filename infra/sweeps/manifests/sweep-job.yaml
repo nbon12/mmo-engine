@@ -34,6 +34,8 @@ spec:
   parallelism: ${PARALLELISM}
   # A pod lost to a crash or an eviction is retried once; its shard starts over (job-entrypoint.sh).
   backoffLimitPerIndex: 1
+  # A retried index's new pod starts only once the old one has stopped, so two pods never write one shard.
+  podReplacementPolicy: Failed
   maxFailedIndexes: 0
   template:
     metadata:
