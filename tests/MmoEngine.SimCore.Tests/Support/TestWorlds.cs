@@ -1,5 +1,6 @@
 using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Formats;
+using MmoEngine.SimCore.Server;
 
 namespace MmoEngine.SimCore.Tests.Support;
 
@@ -11,8 +12,17 @@ namespace MmoEngine.SimCore.Tests.Support;
 /// </summary>
 public static class TestWorlds
 {
+    private static readonly Lazy<CollisionWorld> TestWorldValue = new(() => Load(TestWorldGenerator.Generate()));
+
     /// <summary>Negative zero, written by its bits so no constant folding can turn it into +0.</summary>
     public static float NegativeZero => BitConverter.UInt32BitsToSingle(0x80000000u);
+
+    /// <summary>
+    /// The generated test world, <c>CollisionFile.Decode(CollisionFile.Encode(TestWorldGenerator.Generate()))</c>,
+    /// decoded once on first use and shared: a <see cref="CollisionWorld"/> is immutable. Scenario tests run
+    /// on it, never on the committed <c>simcore/content/test-world.mmcd</c>.
+    /// </summary>
+    public static CollisionWorld TestWorld => TestWorldValue.Value;
 
     /// <summary>
     /// The <c>tiny-world</c> fixture of contracts/collision-data-format.md#tiny-world: origin (−1, −1),

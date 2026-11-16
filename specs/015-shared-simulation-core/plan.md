@@ -583,6 +583,12 @@ The design documents settled these points, which the spec leaves open. They are 
   tiered compilation off was not chosen: the core runs unoptimised in the Debug test build, which the
   JIT does not tier, and a review run reported a stray count with tiering off as well. T076, T115,
   T172, T199 and T246 use the same rule.
+- **`MovementWorlds.Stair`'s top runs 20 m deep, not 2 m (T063, T070).** T063 asked for a 2 m deep box
+  step, but T070 holds Forward for 2 simulated seconds (about 13.65 m at the placeholder run speed and
+  acceleration) and asserts that the climbing rows end Grounded on the stair top; a 2 m deep step
+  would leave the character back on the floor behind it. The step keeps its rise and its front face
+  2 m ahead of the start, and its top runs 20 m along +Z, so the run ends on it with margin and the
+  step-up itself is unchanged. T063 now says so.
 
 ## Delivery
 
