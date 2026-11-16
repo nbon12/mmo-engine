@@ -1,6 +1,7 @@
 using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Geometry;
+using MmoEngine.SimCore.Math;
 using MmoEngine.SimCore.Tests.Support;
 
 namespace MmoEngine.SimCore.Tests.Collision;
@@ -18,27 +19,67 @@ public sealed class CollisionWorldBuildTests
     /// <summary>tiny-world's heightfield triangles: 2 · (3 − 1) · (3 − 1).</summary>
     private const int TinyHeightfieldTriangles = 8;
 
-    /// <summary>tiny-world's third mesh triangle, indices (0, 0, 1): a repeated index, so degenerate.</summary>
+    /// <summary>
+    /// tiny-world's third mesh triangle, and the triangle each degenerate case puts in its place: always
+    /// ID 10, after the wall quad's 8 and 9.
+    /// </summary>
     private const int DegenerateId = 10;
 
     /// <summary>
-    /// Edge case "degenerate triangles": tiny-world's mesh holds the triangle (0, 0, 1). The world loads,
-    /// counts it, keeps its ID unused and registers it in no grid cell.
+    /// One row per clause of the contract's degeneracy rule. <c>repeated-index</c> is tiny-world itself,
+    /// whose triangle (0, 0, 1) has a zero-length edge. The others keep tiny-world's heightfield and wall
+    /// quad and replace triangle 10 with three distinct vertices whose every edge is at least 1 mm:
+    /// <c>collinear</c> has |AB × AC|² = 0; <c>sliver</c> has |AB × AC|² = 1e-10, at most 1e-8·(maxEdge²)²
+    /// but above 4e-12, so only the sliver clause catches it; <c>tiny-area</c> has edges of 1.2 mm and
+    /// |AB × AC|² ≈ 2.07e-12, at most 4e-12 but above 1e-8·(maxEdge²)², so only the absolute clause
+    /// catches it.
     /// </summary>
-    [Fact]
-    public void DegenerateTrianglesLoadAndAreIgnored()
-    {
-        var world = TestWorlds.Load(TestWorlds.TinyWorld());
+    public static TheoryData<string> DegenerateCases => ["repeated-index", "collinear", "sliver", "tiny-area"];
 
-        Assert.Equal(1, world.DegenerateTriangleCount);
-        Assert.False(world.Meshes.TryGetMeshTriangle(DegenerateId, out _), "triangle 10 (indices 0, 0, 1) is degenerate, so its ID must stay unused");
-        Assert.True(world.Meshes.TryGetMeshTriangle(8, out _), "triangle 8 (the wall quad's first half) must be kept");
-        Assert.True(world.Meshes.TryGetMeshTriangle(9, out _), "triangle 9 (the wall quad's second half) must be kept");
+    /// <summary>
+    /// Edge case "degenerate triangles": a mesh with a degenerate (zero-area) triangle loads, and that
+    /// triangle is ignored. The world counts it, keeps its ID unused, registers it in no grid cell, and
+    /// keeps the wall quad's two triangles in cell (0, 0).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DegenerateCases))]
+    public void DegenerateTrianglesLoadAndAreIgnored(string caseName)
+    {
+        var world = TestWorlds.Load(DegenerateWorld(caseName));
+
+        Assert.True(world.DegenerateTriangleCount == 1, $"{caseName}: DegenerateTriangleCount is {world.DegenerateTriangleCount}, expected 1");
+        Assert.False(world.Meshes.TryGetMeshTriangle(DegenerateId, out _), $"{caseName}: triangle 10 is degenerate, so its ID must stay unused");
+        Assert.True(world.Meshes.TryGetMeshTriangle(8, out _), $"{caseName}: triangle 8 (the wall quad's first half) must be kept");
+        Assert.True(world.Meshes.TryGetMeshTriangle(9, out _), $"{caseName}: triangle 9 (the wall quad's second half) must be kept");
 
         var cellStart = world.Grid.CellStart.ToArray();
         var cellTriangles = world.Grid.CellTriangles.ToArray();
         Assert.DoesNotContain(DegenerateId, cellTriangles);
         int[] cell00 = [8, 9];
+        Assert.Equal(cell00, cellTriangles[cellStart[0]..cellStart[1]]);
+    }
+
+    /// <summary>
+    /// The control for the sliver clause: the contract's near-sliver (0.46, 0, 0), (0.47, 0, 0),
+    /// (0.46, 0.5, 0), 10 mm by 0.5 m, is not degenerate. It is kept as triangle 10 with the finite unit
+    /// normal (0, 0, 1), and cell (0, 0) holds [8, 9, 10].
+    /// </summary>
+    [Fact]
+    public void NearSliverTriangleIsKept()
+    {
+        var world = TestWorlds.Load(WithTriangleTen(0.46f, 0f, 0f, 0.47f, 0f, 0f, 0.46f, 0.5f, 0f));
+
+        Assert.Equal(0, world.DegenerateTriangleCount);
+        Assert.True(world.Meshes.TryGetMeshTriangle(DegenerateId, out var triangle), "triangle 10 (the near-sliver) must be kept");
+        var normal = triangle.Normal;
+        Assert.True(
+            float.IsFinite(normal.X) && float.IsFinite(normal.Y) && float.IsFinite(normal.Z)
+                && System.MathF.Abs(normal.X) <= 1e-6f && System.MathF.Abs(normal.Y) <= 1e-6f && System.MathF.Abs(normal.Z - 1f) <= 1e-6f,
+            $"triangle 10's normal is ({normal.X:R}, {normal.Y:R}, {normal.Z:R}), expected (0, 0, 1) within 1e-6");
+
+        var cellStart = world.Grid.CellStart.ToArray();
+        var cellTriangles = world.Grid.CellTriangles.ToArray();
+        int[] cell00 = [8, 9, 10];
         Assert.Equal(cell00, cellTriangles[cellStart[0]..cellStart[1]]);
     }
 
@@ -205,31 +246,167 @@ public sealed class CollisionWorldBuildTests
     }
 
     /// <summary>
-    /// <c>MaxQueryCandidates(w)</c> is <c>2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²</c>: the heightfield
-    /// cells a box of width w can overlap, two triangles each, plus the grid cells it can overlap, 64
-    /// triangles each. On <see cref="TestWorlds.Flat"/> (cell size 1, grid cell size 4), 1.22 m is the
-    /// placeholder capsule's widest box (3 · 0.4 + 2 · 0.01, research R6), and the larger rows take the grid
-    /// term past one grid cell.
+    /// <c>MaxQueryCandidates(w)</c> is <c>2·n(cellSize)² + 64·n(gridCellSize)²</c> with
+    /// <c>n(c) = ⌊(w + 1/64)/c⌋ + 2</c>: the heightfield cells a box of width w can overlap per axis, two
+    /// triangles each, plus the grid cells it can overlap, 64 triangles each. The 1/64 m margin covers the
+    /// float rounding of the box's edges and of the cell function, so a whole-number ratio w/c gets the
+    /// extra cell its rounded edges can reach. 1.22 m is the placeholder capsule's widest box
+    /// (3 · 0.4 + 2 · 0.01, research R6); the (1f, …) and (4f, …) rows are whole-number ratios, and the
+    /// larger rows take the grid term past one grid cell.
     /// </summary>
     [Theory]
-    [InlineData(1.22f, 274)]
-    [InlineData(0.5f, 264)]
-    [InlineData(4f, 306)]
-    [InlineData(4.5f, 648)]
-    [InlineData(8.5f, 1224)]
-    public void MaxQueryCandidatesCoversTheWidestCapsuleBox(float width, int expected)
+    [InlineData(1f, 4f, 1.22f, 274)]
+    [InlineData(1f, 4f, 0.5f, 264)]
+    [InlineData(1f, 4f, 1f, 274)]
+    [InlineData(1f, 4f, 4f, 648)]
+    [InlineData(1f, 4f, 4.5f, 648)]
+    [InlineData(1f, 4f, 8.5f, 1224)]
+    [InlineData(1f, 1f, 1f, 594)]
+    [InlineData(0.25f, 1f, 1.22f, 648)]
+    public void MaxQueryCandidatesCoversTheWidestCapsuleBox(float cellSize, float gridCellSize, float width, int expected)
     {
-        const float cellSize = 1f;
-        const float gridCellSize = 4f;
         var world = TestWorlds.Load(TestWorlds.Flat(cellSize: cellSize, gridCellSize: gridCellSize));
 
-        var heightfieldCells = (int)System.MathF.Ceiling(width / cellSize) + 1;
-        var gridCells = (int)System.MathF.Ceiling(width / gridCellSize) + 1;
+        var heightfieldCells = (int)System.Math.Floor(((double)width + (1.0 / 64.0)) / cellSize) + 2;
+        var gridCells = (int)System.Math.Floor(((double)width + (1.0 / 64.0)) / gridCellSize) + 2;
         var formula = (2 * heightfieldCells * heightfieldCells) + (64 * gridCells * gridCells);
         Assert.Equal(expected, formula);
 
         Assert.Equal(expected, world.MaxQueryCandidates(width));
     }
+
+    /// <summary>
+    /// Worlds and box widths for <see cref="MaxQueryCandidatesCoversEveryFloatBoxOfThatWidth"/>: whole-number
+    /// ratios w/c (the 4 m box on 4 m grid cells, and the 1 m box that a 0.3 m capsule with a 0.05 m skin
+    /// sweeps on 1 m cells), the placeholder capsule's box, the widest capsule the configuration allows
+    /// (3 · 1 + 2 · 0.05) on the smallest cells, a world near the 8192 m limit where float spacing is
+    /// coarsest, and cell sizes that do not round exactly.
+    /// </summary>
+    public static TheoryData<string> FloatBoxCases =>
+    [
+        "whole-grid-ratio",
+        "capsule-0.3-skin-0.05",
+        "placeholder-capsule",
+        "widest-capsule-smallest-cells",
+        "near-the-limit",
+        "inexact-cells",
+    ];
+
+    /// <summary>
+    /// The capacity holds for real float boxes, not only for exact widths: for boxes whose low edge is a
+    /// heightfield or grid cell boundary or one of its float neighbours, and whose high edge is
+    /// <c>low + w</c> rounded in float plus up to two more float steps of rounding, the cells the box
+    /// overlaps (grid cells by <c>UniformGrid.CellX</c>, heightfield cells by the same floor of the offset
+    /// from the origin over the cell size) need at most <c>MaxQueryCandidates(w)</c> slots. The
+    /// counterexample to the earlier <c>⌈w/c⌉ + 1</c> count: on 4 m grid cells from origin 0, the box
+    /// [3.9999998, 3.9999998 + 4f = 8] spans grid cells 0 to 2, three cells for a 4 m width.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(FloatBoxCases))]
+    public void MaxQueryCandidatesCoversEveryFloatBoxOfThatWidth(string caseName)
+    {
+        var (origin, cellSize, gridCellSize, samples, width) = caseName switch
+        {
+            "whole-grid-ratio" => (0f, 1f, 4f, 17, 4f),
+            "capsule-0.3-skin-0.05" => (0f, 1f, 4f, 17, (3f * 0.3f) + (2f * 0.05f)),
+            "placeholder-capsule" => (-32f, 1f, 4f, 65, (3f * 0.4f) + (2f * 0.01f)),
+            "widest-capsule-smallest-cells" => (-32f, 0.25f, 1f, 257, (3f * 1f) + (2f * 0.05f)),
+            "near-the-limit" => (8100f, 1f, 4f, 65, 4f),
+            "inexact-cells" => (-1000.3f, 0.37f, 1.11f, 33, 1.11f),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+        var world = TestWorlds.Load(new CollisionData(origin, origin, cellSize, gridCellSize, samples, samples, new float[samples * samples], []));
+        var capacity = world.MaxQueryCandidates(width);
+
+        var lowEdges = new List<float>();
+        for (var k = 0; k < samples; k++)
+        {
+            AddNeighbours(lowEdges, origin + ((float)k * cellSize));
+        }
+
+        for (var k = 0; k <= world.GridCellsX; k++)
+        {
+            AddNeighbours(lowEdges, origin + ((float)k * gridCellSize));
+        }
+
+        var failures = new List<string>();
+        var boxes = 0;
+        foreach (var low in lowEdges)
+        {
+            var high = low + width;
+            for (var extra = 0; extra <= 2; extra++)
+            {
+                var heightfieldCells = HeightfieldCell(high, origin, cellSize) - HeightfieldCell(low, origin, cellSize) + 1;
+                var gridCells = world.Grid.CellX(high) - world.Grid.CellX(low) + 1;
+                var needed = (2 * heightfieldCells * heightfieldCells) + (64 * gridCells * gridCells);
+                if (needed > capacity)
+                {
+                    failures.Add($"[{low:R}, {high:R}] overlaps {heightfieldCells} heightfield and {gridCells} grid cells per axis, {needed} slots");
+                }
+
+                boxes++;
+                high = MathF.BitIncrement(high);
+            }
+        }
+
+        Assert.True(boxes > 0, $"{caseName}: no boxes were tried");
+        Assert.True(
+            failures.Count == 0,
+            $"{caseName}: MaxQueryCandidates({width:R}) is {capacity}, but {failures.Count} of {boxes} boxes need more; first: {string.Join("; ", failures.Take(5))}");
+    }
+
+    /// <summary>The edge itself, its two float neighbours below and one above.</summary>
+    private static void AddNeighbours(List<float> edges, float edge)
+    {
+        var below = MathF.BitDecrement(edge);
+        edges.Add(MathF.BitDecrement(below));
+        edges.Add(below);
+        edges.Add(edge);
+        edges.Add(MathF.BitIncrement(edge));
+    }
+
+    /// <summary>The heightfield cell holding x, unclamped: the floor of the offset from the origin over the cell size.</summary>
+    private static int HeightfieldCell(float x, float origin, float cellSize) => SimMath.FloorToInt((x - origin) / cellSize);
+
+    private static CollisionData DegenerateWorld(string caseName) => caseName switch
+    {
+        "repeated-index" => TestWorlds.TinyWorld(),
+        "collinear" => WithTriangleTen(0f, 0f, 0f, 1f, 0f, 0f, 2f, 0f, 0f),
+        "sliver" => WithTriangleTen(0f, 0f, 0f, 1f, 0f, 0f, 0.5f, 1e-5f, 0f),
+        "tiny-area" => WithTriangleTen(0f, 0f, 0f, 0.0012f, 0f, 0f, 0f, 0.0012f, 0f),
+        _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown degenerate case."),
+    };
+
+    /// <summary>
+    /// tiny-world with its mesh's third triangle replaced: the wall quad's four vertices and triangles
+    /// (0, 1, 2) and (0, 2, 3) (IDs 8 and 9), then three new vertices A, B and C forming triangle
+    /// (4, 5, 6) (ID 10).
+    /// </summary>
+    private static CollisionData WithTriangleTen(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz) =>
+        TestWorlds.TinyWorld() with
+        {
+            Meshes =
+            [
+                new MeshData(
+                    MeshId: 1,
+                    Vertices:
+                    [
+                        -0.5f, 0f, 0.5f,
+                        0.5f, 0f, 0.5f,
+                        0.5f, 1f, 0.5f,
+                        -0.5f, 1f, 0.5f,
+                        ax, ay, az,
+                        bx, by, bz,
+                        cx, cy, cz,
+                    ],
+                    Indices:
+                    [
+                        0, 1, 2,
+                        0, 2, 3,
+                        4, 5, 6,
+                    ]),
+            ],
+        };
 
     private static void AssertBoundaryPlane(CollisionWorld world, int id, Vec3 expectedNormal, Vec3 pointOnSide)
     {

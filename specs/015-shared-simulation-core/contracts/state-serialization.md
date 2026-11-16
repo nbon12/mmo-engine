@@ -92,12 +92,12 @@ The weapon state holds no floats ([research R9](../research.md#r9-weapons)).
 | --- | --- | --- | --- | --- |
 | 0 | 1 | u8 | `phase` | `WeaponPhase`: 0 Ready, 1 Firing, 2 Reloading, 3 Switching, 4 Overheated |
 | 1 | 1 | u8 | `flags` | bit 0 TriggerLatched; bits 1 to 7 are 0 |
-| 2 | 2 | u16 LE | `phaseSteps` | steps left in Switching or Reloading; the equip time owed while Overheated; otherwise 0 |
+| 2 | 2 | u16 LE | `phaseSteps` | steps left in Switching, [1, `EquipSteps`], or Reloading, [1, `ReloadSteps`]; the equip time owed while Overheated, [0, `EquipSteps`] for the active weapon and 0 for a holstered one; otherwise 0 |
 | 4 | 4 | i32 LE | `fireWait` | fire-rate units still to wait; 0 ≤ `fireWait` < `ShotCost` |
 | 8 | 4 | u32 LE | `shotCounter` | shots fired by this weapon; wraps at 2³² |
 | 12 | 2 | u16 LE | `magazine` | ≤ `magazineSize` |
 | 14 | 2 | u16 LE | `reserve` | rounds outside the magazine |
-| 16 | 4 | u32 LE | `heat` | heat × `stepRateHz` |
+| 16 | 4 | u32 LE | `heat` | heat × `stepRateHz`; below `OverheatThresholdScaled` + `HeatPerShotScaled` |
 | 20 | 2 | u16 LE | `stepsSinceShot` | saturates at 65535 |
 | 22 | 4 | i32 LE | `recoilPitch` | binary angle units, [0, `RecoilMaxPitchUnits`] |
 | 26 | 4 | i32 LE | `recoilYaw` | binary angle units, [−`RecoilMaxYawUnits`, `RecoilMaxYawUnits`] |
@@ -325,7 +325,7 @@ run these):
 | `weaponCount` = `input.weaponSlots` | `Inconsistent` | `characters[i].weaponCount` |
 | `position` inside the playable area (the heightfield's X–Z extent) | `OutOfRange` | `characters[i].position.x` or `.z` |
 | grounded: `groundNormal.y` ≥ `CosSlopeLimit`; airborne: `groundNormal` is exactly (0, 1, 0) | `OutOfRange`; `Inconsistent` | `characters[i].groundNormal.y`; `.groundNormal.x` |
-| every rule of the weapon record: `magazine` ≤ `magazineSize`, 0 ≤ `fireWait` < `ShotCost`, the recoil bounds, and a holstered weapon is Ready or Overheated | `OutOfRange`; `Inconsistent` (holstered phase) | that field |
+| the rules of the weapon record that need the configuration, in layout order: a holstered weapon is Ready or Overheated; `phaseSteps` in its phase's range; 0 ≤ `fireWait` < `ShotCost`; `magazine` ≤ `magazineSize`; `heat` < `OverheatThresholdScaled` + `HeatPerShotScaled`; the recoil bounds | `Inconsistent` (holstered phase); `OutOfRange` (the others) | that field |
 | `class` below the number of projectile classes | `OutOfRange` | `projectiles[j].class` |
 
 The message shape is the formats' `"<format> <field> at offset <n>: <detail>"`, for example:
@@ -467,10 +467,12 @@ and whose `Hash` is its hash, valid until the next step ([data-model.md](../data
 Tests that pin this contract, in `tests/MmoEngine.SimCore.Tests/`:
 
 - the worked example's bytes and hash;
-- a Theory over every float field: −0 written there is committed and hashed as +0, and the hash
-  equals that of the same state with +0 (edge case);
+- a Theory over every float field: −0 written there is committed and hashed as +0, the field of
+  the committed state itself (not only its bytes) holds +0, and the hash equals that of the same
+  state with +0 (edge case);
 - a Theory over every float field: NaN, +∞ or −∞ there refuses the step with that field's path, and
-  the previous state and hash are kept (FR-017);
+  the previous state and hash are kept (FR-017); in a later character or projectile, the path names
+  the element's position in its list, not element 0 and not its ID;
 - the character and projectile floats are covered through a stepped world, and the event floats
   (`events.shots[k].direction`, `events.hits[k].point` and `.t`) at the serializer, where
   `StateSerializer.Write` takes the event spans directly; the keep-the-previous-state rule is
@@ -478,6 +480,7 @@ Tests that pin this contract, in `tests/MmoEngine.SimCore.Tests/`:
 - `MaxLength` against a state filled to every maximum;
 - a property (CsCheck, fixed seed): reading a written state and writing it again gives the same
   bytes;
-- every load refusal in the two tables above, by code and field;
+- every load refusal in the two tables above, by code and field, and a weapon at either end of
+  each `phaseSteps` range and one below the heat limit loads;
 - the divergence report for a one-ulp change at step k of a stream names step k and the field, with
   both bit patterns (US2 scenario 4, SC-002).

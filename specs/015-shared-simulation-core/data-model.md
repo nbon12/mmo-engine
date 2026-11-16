@@ -172,7 +172,7 @@ at field `grid.cells[cx,cz]` or `grid.registrations`
 | --- | --- | --- |
 | Checksum | `u64` | the file's XxHash64 trailer. It identifies the world; a recorded stream names its world by it (FR-021). |
 | Heightfield, Meshes, Grid | as above | immutable |
-| MaxQueryCandidates(box width) | `int` | the largest candidate count a capsule query box of that width can return, from the cell sizes and the per-cell limit. The world calls it with the widest box its configured capsule can sweep (a sub-move is at most r long) and sizes its candidate buffer from the result. |
+| MaxQueryCandidates(box width) | `int` | the largest candidate count a capsule query box of that width can return, from the cell sizes and the per-cell limit: 2·n(cellSize)² + 64·n(gridCellSize)² with n(c) = ⌊(w + 1/64)/c⌋ + 2. An interval of real length L overlaps at most ⌊L/c⌋ + 2 cells, and the 1/64 m margin covers the float rounding of the box's edges and cell indices, which can make a computed box reach a little past w. The world calls it with the widest box its configured capsule can sweep (a sub-move is at most r long) and sizes its candidate buffer from the result. |
 
 Queries, all allocation-free, writing into a caller-supplied span:
 
@@ -250,7 +250,7 @@ radius r = `movement.capsuleRadius`, height h = `standHeight` or `crouchHeight`,
 Position + (0, r, 0) to Position + (0, h − r, 0).
 
 The state guard (run when a state is loaded with `SimWorld.Reset`) refuses a state that breaks any
-rule in this table, a duplicate or unsorted ID, more characters than `world.maxCharacters`, or a
+rule in this table or in [WeaponState](#weaponstate)'s, a duplicate or unsorted ID, more characters than `world.maxCharacters`, or a
 non-empty event list. Refusals are `FormatError`s with the field path
 ([contracts/state-serialization.md](contracts/state-serialization.md)).
 
@@ -368,7 +368,7 @@ One per slot per character. The weapon step writes it; it holds no floats.
 | --- | --- | --- |
 | Phase | `u8` `WeaponPhase` | Ready, Firing, Reloading, Switching or Overheated |
 | Flags | `u8` | bit 0 TriggerLatched (a semi-automatic weapon has fired and waits for release); bits 1 to 7 are 0 |
-| PhaseSteps | `u16` | steps left in Switching or Reloading; while Overheated, the equip time still owed (0 if none); otherwise 0 |
+| PhaseSteps | `u16` | steps left in Switching, [1, EquipSteps], or Reloading, [1, ReloadSteps] (reaching 0 completes them, and a duration of 0 completes at entry); while Overheated, the equip time still owed, [0, EquipSteps] for the active weapon and 0 for a holstered one; otherwise 0 |
 | FireWait | `i32` | fire-rate units still to wait; 0 ≤ FireWait < ShotCost after every step |
 | ShotCounter | `u32` | shots this weapon has fired; wraps at 2³²; an input to the spread hash |
 | Magazine | `u16` | ≤ `magazineSize` |

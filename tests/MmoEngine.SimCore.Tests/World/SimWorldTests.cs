@@ -31,14 +31,38 @@ public sealed class SimWorldTests
         "position-z-minus-40",
         "grounded-normal-y-0.5",
         "airborne-tilted-normal",
+        "ready-phase-steps-1",
+        "firing-phase-steps-1",
+        "switching-phase-steps-0",
+        "switching-phase-steps-16",
+        "reloading-phase-steps-0",
+        "reloading-phase-steps-61",
+        "overheated-phase-steps-16",
+        "holstered-overheated-phase-steps-1",
         "magazine-31",
         "fire-wait-1800",
         "fire-wait-minus-1",
+        "heat-3000000",
+        "heat-3300000-heat-per-shot-10000",
         "recoil-pitch-1093",
         "recoil-yaw-minus-547",
         "holstered-weapon-firing",
         "projectile-class-2",
         "position-x-nan",
+    ];
+
+    /// <summary>The weapons at the edges of the phaseSteps and heat rules, which Reset accepts.</summary>
+    public static TheoryData<string> AcceptedWeapons =>
+    [
+        "switching-phase-steps-1",
+        "switching-phase-steps-15",
+        "reloading-phase-steps-1",
+        "reloading-phase-steps-60",
+        "overheated-phase-steps-0",
+        "overheated-phase-steps-15",
+        "holstered-overheated-phase-steps-0",
+        "heat-2999999",
+        "heat-3299999-heat-per-shot-10000",
     ];
 
     /// <summary>
@@ -77,8 +101,9 @@ public sealed class SimWorldTests
     /// <c>Reset</c> runs the byte-only checks and then the checks that need the compiled configuration and
     /// the collision world, and refuses with <c>CoreFormatException</c>, format <c>state</c>, the code and
     /// the field, at the field's offset from the state's first byte. The placeholders at 30 Hz allow 64
-    /// characters, 2 weapon slots, a rifle magazine of 30, <c>ShotCost</c> 1800, recoil of at most 1092
-    /// pitch and ±546 yaw units, and 2 projectile classes.
+    /// characters, 2 weapon slots, a rifle magazine of 30, a rifle <c>EquipSteps</c> of 15 and
+    /// <c>ReloadSteps</c> of 60, <c>ShotCost</c> 1800, a heat limit of 3,000,000 (threshold 100,000 × 30, no
+    /// heat per shot), recoil of at most 1092 pitch and ±546 yaw units, and 2 projectile classes.
     /// </summary>
     [Theory]
     [MemberData(nameof(RefusedStates))]
@@ -95,6 +120,28 @@ public sealed class SimWorldTests
         Assert.Equal(refusal.Field, exception.Error.Field);
         Assert.Equal(refusal.Offset, exception.Error.Offset);
         Assert.StartsWith($"state {refusal.Field} at offset {refusal.Offset}: ", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The weapon rules are not tighter than the contract: a weapon at either end of its phase's
+    /// <c>phaseSteps</c> range, a holstered Overheated weapon with 0, and heat one below the limit (with
+    /// and without heat per shot) load, and the next step commits.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AcceptedWeapons))]
+    public void ResetAcceptsWeaponsAtTheEdgesOfTheirRules(string caseName)
+    {
+        var (state, edit) = Accepted(caseName);
+        var config = edit is null ? TestConfigs.Compiled(30) : CompiledConfig.Create(TestConfigs.With(edit));
+        var world = NewWorld(config);
+
+        world.Reset(state, Salt);
+        Assert.Equal(0u, world.CurrentStep);
+        var report = world.Step([]);
+
+        Assert.True(report.Fault.Code == StepFaultCode.None, $"{caseName}: the step after Reset faulted with {report.Fault.Code} at {report.Fault.Path}");
+        Assert.Equal(1u, report.Step);
+        Assert.Equal(1u, world.CurrentStep);
     }
 
     /// <summary>
@@ -242,6 +289,26 @@ public sealed class SimWorldTests
                 FormatErrorCode.Inconsistent,
                 "characters[0].groundNormal.x",
                 TestStates.CharacterOffset(0) + 28),
+            // phaseSteps is 0 in Ready and Firing, [1, EquipSteps] in Switching, [1, ReloadSteps] in
+            // Reloading, [0, EquipSteps] for the active weapon while Overheated, and 0 for a holstered
+            // Overheated weapon.
+            "ready-phase-steps-1" => WeaponZero(TestStates.Rifle with { PhaseSteps = 1 }, "phaseSteps", 2),
+            "firing-phase-steps-1" => WeaponZero(TestStates.Rifle with { Phase = 1, PhaseSteps = 1 }, "phaseSteps", 2),
+            "switching-phase-steps-0" => WeaponZero(TestStates.Rifle with { Phase = 3, PhaseSteps = 0 }, "phaseSteps", 2),
+            "switching-phase-steps-16" => WeaponZero(TestStates.Rifle with { Phase = 3, PhaseSteps = 16 }, "phaseSteps", 2),
+            "reloading-phase-steps-0" => WeaponZero(TestStates.Rifle with { Phase = 2, PhaseSteps = 0 }, "phaseSteps", 2),
+            "reloading-phase-steps-61" => WeaponZero(TestStates.Rifle with { Phase = 2, PhaseSteps = 61 }, "phaseSteps", 2),
+            "overheated-phase-steps-16" => WeaponZero(TestStates.Rifle with { Phase = 4, PhaseSteps = 16 }, "phaseSteps", 2),
+            "holstered-overheated-phase-steps-1" => new(
+                TestStates.Build(0, [standing with { ActiveSlot = 0, Weapons = [TestStates.Rifle, TestStates.Launcher with { Phase = 4, PhaseSteps = 1 }] }]),
+                null,
+                FormatErrorCode.OutOfRange,
+                "characters[0].weapons[1].phaseSteps",
+                TestStates.WeaponOffset(0, 1) + 2),
+
+            // Heat stays below OverheatThresholdScaled + HeatPerShotScaled.
+            "heat-3000000" => WeaponZero(TestStates.Rifle with { Heat = 3_000_000 }, "heat", 16),
+            "heat-3300000-heat-per-shot-10000" => WeaponZero(TestStates.Rifle with { Heat = 3_300_000 }, "heat", 16) with { Edit = HeatPerShot10000 },
             "magazine-31" => new(
                 TestStates.Build(0, [standing with { Weapons = [TestStates.Rifle with { Magazine = 31 }, TestStates.Launcher] }]),
                 null,
@@ -294,6 +361,43 @@ public sealed class SimWorldTests
                 FormatErrorCode.NonFinite,
                 "characters[0].position.x",
                 TestStates.CharacterOffset(0) + 4),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+    }
+
+    /// <summary>
+    /// A standing character whose active slot 0 holds <paramref name="rifle"/>, refused under the
+    /// placeholders at <c>characters[0].weapons[0].</c><paramref name="field"/>, <c>OutOfRange</c>, at
+    /// <paramref name="offsetInRecord"/> into the weapon record.
+    /// </summary>
+    private static ResetRefusal WeaponZero(WeaponRecord rifle, string field, int offsetInRecord) => new(
+        TestStates.Build(0, [TestStates.StandingCharacter(1, 0.5f, 0.5f) with { Weapons = [rifle, TestStates.Launcher] }]),
+        null,
+        FormatErrorCode.OutOfRange,
+        $"characters[0].weapons[0].{field}",
+        TestStates.WeaponOffset(0, 0) + offsetInRecord);
+
+    /// <summary>Weapon 0 heats: <c>heatPerShot</c> 10000, so HeatPerShotScaled is 300,000 at 30 Hz.</summary>
+    private static void HeatPerShot10000(SimConfig config) => config.Weapons![0]!.HeatPerShot = 10000;
+
+    /// <summary>A state <c>Reset</c> accepts, and the configuration edit it is loaded under (none: the placeholders at 30 Hz).</summary>
+    private static (byte[] State, Action<SimConfig>? Edit) Accepted(string caseName)
+    {
+        var standing = TestStates.StandingCharacter(1, 0.5f, 0.5f);
+        byte[] WithRifle(WeaponRecord rifle) => TestStates.Build(0, [standing with { Weapons = [rifle, TestStates.Launcher] }]);
+        return caseName switch
+        {
+            "switching-phase-steps-1" => (WithRifle(TestStates.Rifle with { Phase = 3, PhaseSteps = 1 }), null),
+            "switching-phase-steps-15" => (WithRifle(TestStates.Rifle with { Phase = 3, PhaseSteps = 15 }), null),
+            "reloading-phase-steps-1" => (WithRifle(TestStates.Rifle with { Phase = 2, PhaseSteps = 1 }), null),
+            "reloading-phase-steps-60" => (WithRifle(TestStates.Rifle with { Phase = 2, PhaseSteps = 60 }), null),
+            "overheated-phase-steps-0" => (WithRifle(TestStates.Rifle with { Phase = 4, PhaseSteps = 0 }), null),
+            "overheated-phase-steps-15" => (WithRifle(TestStates.Rifle with { Phase = 4, PhaseSteps = 15 }), null),
+            "holstered-overheated-phase-steps-0" => (
+                TestStates.Build(0, [standing with { ActiveSlot = 0, Weapons = [TestStates.Rifle, TestStates.Launcher with { Phase = 4 }] }]),
+                null),
+            "heat-2999999" => (WithRifle(TestStates.Rifle with { Heat = 2_999_999 }), null),
+            "heat-3299999-heat-per-shot-10000" => (WithRifle(TestStates.Rifle with { Heat = 3_299_999 }), HeatPerShot10000),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
         };
     }

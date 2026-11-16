@@ -17,6 +17,14 @@ public sealed partial class CollisionWorld
     /// <summary>The most mesh triangles one grid cell may hold (contracts/collision-data-format.md#limits).</summary>
     public const int MaxTrianglesPerCell = 64;
 
+    /// <summary>
+    /// How far, in metres, a query box's computed edges and cell indices may reach past its nominal width
+    /// through float rounding (<see cref="MaxQueryCandidates"/>). Coordinates are at most 8192 m, where a
+    /// float step is about 0.001 m, so a few roundings stay well under 1/64 m (0.0156 m), and the smallest
+    /// cell is 0.25 m.
+    /// </summary>
+    internal const float QueryWidthMargin = 1f / 64f;
+
     /// <summary>The heightfield triangles per heightfield cell.</summary>
     private const int TrianglesPerHeightfieldCell = 2;
 
@@ -73,9 +81,12 @@ public sealed partial class CollisionWorld
 
     /// <summary>
     /// The most candidates a box query of width <paramref name="boxWidth"/> can return:
-    /// <c>2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²</c>, the heightfield cells such a box can overlap
-    /// with their two triangles each, plus the grid cells it can overlap with at most 64 triangles each. A
-    /// <c>SimWorld</c> sizes its candidate buffer from it for the widest box its capsule can sweep.
+    /// <c>2·n(cellSize)² + 64·n(gridCellSize)²</c> with <c>n(c) = ⌊(w + 1/64)/c⌋ + 2</c>, the heightfield
+    /// cells such a box can overlap per axis with their two triangles each, plus the grid cells it can
+    /// overlap with at most 64 triangles each. An interval of real length L overlaps at most ⌊L/c⌋ + 2
+    /// cells; <see cref="QueryWidthMargin"/> covers the float rounding that makes a computed box, and its
+    /// cells, reach a little past w (without it, a whole-number ratio w/c falls one cell short per axis).
+    /// A <c>SimWorld</c> sizes its candidate buffer from it for the widest box its capsule can sweep.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="boxWidth"/> is negative or not finite.</exception>
     public int MaxQueryCandidates(float boxWidth)
@@ -85,8 +96,9 @@ public sealed partial class CollisionWorld
             throw new ArgumentOutOfRangeException(nameof(boxWidth), boxWidth, "A box width is finite and not negative.");
         }
 
-        var heightfieldCells = checked(SimMath.TruncateToInt(System.MathF.Ceiling(boxWidth / Heightfield.CellSize)) + 1);
-        var gridCells = checked(SimMath.TruncateToInt(System.MathF.Ceiling(boxWidth / Grid.CellSize)) + 1);
+        var reach = boxWidth + QueryWidthMargin;
+        var heightfieldCells = checked(SimMath.FloorToInt(reach / Heightfield.CellSize) + 2);
+        var gridCells = checked(SimMath.FloorToInt(reach / Grid.CellSize) + 2);
         return checked((TrianglesPerHeightfieldCell * heightfieldCells * heightfieldCells) + (MaxTrianglesPerCell * gridCells * gridCells));
     }
 

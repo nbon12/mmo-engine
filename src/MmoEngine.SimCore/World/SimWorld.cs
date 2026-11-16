@@ -137,6 +137,12 @@ public sealed class SimWorld
     /// <summary>The inputs stage 1 gave each character in the last step, by character index.</summary>
     internal ReadOnlySpan<InputCommand> LastStepInputs => _inputs.AsSpan(0, _inputCount);
 
+    /// <summary>The committed characters in index order: what the last committed step or <c>Reset</c> left.</summary>
+    internal ReadOnlySpan<CharacterState> CommittedCharacters => _characters.AsSpan(0, _characterCount);
+
+    /// <summary>The committed projectiles in ascending ID order.</summary>
+    internal ReadOnlySpan<Projectile> CommittedProjectiles => _projectiles.AsSpan(0, _projectileCount);
+
     /// <summary>The candidate buffer's capacity.</summary>
     internal int CandidateCapacity => _candidates.Length;
 
@@ -392,8 +398,9 @@ public sealed class SimWorld
     /// and the collision world, in layout order: the counts against the maxima; then each character's
     /// position inside the playable area, its ground normal (grounded: y ≥ <c>CosSlopeLimit</c>; airborne:
     /// exactly (0, 1, 0)), its <c>weaponCount</c> against <c>input.weaponSlots</c>, and each weapon (a
-    /// holstered weapon is Ready or Overheated, 0 ≤ <c>fireWait</c> &lt; <c>ShotCost</c>,
-    /// <c>magazine</c> ≤ <c>magazineSize</c>, and the recoil bounds); then each projectile's class.
+    /// holstered weapon is Ready or Overheated, <c>phaseSteps</c> in its phase's range,
+    /// 0 ≤ <c>fireWait</c> &lt; <c>ShotCost</c>, <c>magazine</c> ≤ <c>magazineSize</c>, <c>heat</c> below
+    /// the overheat threshold plus one shot's heat, and the recoil bounds); then each projectile's class.
     /// </summary>
     private void CheckFits(StateSnapshot snapshot, in StateErrorContext context)
     {
@@ -468,12 +475,23 @@ public sealed class SimWorld
         }
     }
 
-    /// <summary>The weapon record's rules, in layout order: phase, fireWait, magazine, recoilPitch, recoilYaw.</summary>
+    /// <summary>
+    /// The weapon record's rules, in layout order: phase (a holstered weapon is Ready or Overheated),
+    /// phaseSteps (the range its phase allows, <see cref="PhaseStepsRange"/>), fireWait, magazine, heat
+    /// (below <c>OverheatThresholdScaled + HeatPerShotScaled</c>), recoilPitch and recoilYaw.
+    /// </summary>
     private void CheckWeapon(WeaponState state, CompiledWeapon weapon, bool holstered, int index, int offset, in StateErrorContext context)
     {
         if (holstered && state.Phase is not (WeaponPhase.Ready or WeaponPhase.Overheated))
         {
             throw Refusal(context, FormatErrorCode.Inconsistent, StateSerializer.PhaseField, index, offset, Text($"a holstered weapon is Ready or Overheated, not {state.Phase}"));
+        }
+
+        var (minSteps, maxSteps) = PhaseStepsRange(state.Phase, holstered, weapon);
+        if (state.PhaseSteps < minSteps || state.PhaseSteps > maxSteps)
+        {
+            var which = holstered ? "a holstered" : "an active";
+            throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.PhaseStepsField, index, offset + 2, Text($"{state.PhaseSteps} is outside [{minSteps}, {maxSteps}] for {which} {state.Phase} weapon"));
         }
 
         if (state.FireWait < 0 || state.FireWait >= Config.ShotCost)
@@ -486,6 +504,13 @@ public sealed class SimWorld
             throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.MagazineField, index, offset + 12, Text($"{state.Magazine} is above magazineSize {weapon.MagazineSize}"));
         }
 
+        // Both terms are at most 6 × 10⁸ (contracts/config-rules.md), so the sum fits in a uint.
+        var heatLimit = weapon.OverheatThresholdScaled + weapon.HeatPerShotScaled;
+        if (state.Heat >= heatLimit)
+        {
+            throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.HeatField, index, offset + 16, Text($"{state.Heat} is not below the overheat threshold plus one shot's heat, {heatLimit}"));
+        }
+
         if (state.RecoilPitch < 0 || state.RecoilPitch > weapon.RecoilMaxPitchUnits)
         {
             throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.RecoilPitchField, index, offset + 22, Text($"{state.RecoilPitch} is outside [0, {weapon.RecoilMaxPitchUnits}]"));
@@ -496,6 +521,21 @@ public sealed class SimWorld
             throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.RecoilYawField, index, offset + 26, Text($"{state.RecoilYaw} is outside [{-weapon.RecoilMaxYawUnits}, {weapon.RecoilMaxYawUnits}]"));
         }
     }
+
+    /// <summary>
+    /// The <c>phaseSteps</c> a committed state can hold in each phase (data-model.md#weapon-phases): 0 in
+    /// Ready and Firing; [1, <c>EquipSteps</c>] in Switching and [1, <c>ReloadSteps</c>] in Reloading,
+    /// because reaching 0 completes them and a duration of 0 completes at entry; [0, <c>EquipSteps</c>]
+    /// for the active weapon while Overheated (the equip time still owed); and 0 for a holstered
+    /// Overheated weapon, because switching away clears it and only the active weapon counts down.
+    /// </summary>
+    private static (int Min, int Max) PhaseStepsRange(WeaponPhase phase, bool holstered, CompiledWeapon weapon) => phase switch
+    {
+        WeaponPhase.Switching => (1, weapon.EquipSteps),
+        WeaponPhase.Reloading => (1, weapon.ReloadSteps),
+        WeaponPhase.Overheated => (0, holstered ? 0 : weapon.EquipSteps),
+        _ => (0, 0),
+    };
 
     private static CoreFormatException OutsideArea(in StateErrorContext context, int ordinal, int index, int offset, float value, float min, float max) =>
         new(new FormatError(

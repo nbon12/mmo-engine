@@ -374,10 +374,11 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - 4 bytes appended: `Oversized` 188 `fileLength`;
     - `write 64 "0000803f"`: `ChecksumMismatch` 180 `checksum`, message `collision checksum at offset 180: the trailer is 9224e3fa3b3fca9c, the content hashes to <x16>`, where `<x16>` is the XxHash64 of the mutated bytes [0, 180).
 - [X] T031 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Collision/CollisionWorldBuildTests.cs` (FR-004, edge case: degenerate triangles). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CollisionWorldBuildTests"` and confirm they fail.
-  - `DegenerateTrianglesLoadAndAreIgnored`: tiny-world loads.
+  - `DegenerateTrianglesLoadAndAreIgnored(string caseName)`, Theory with one row per clause of the contract's degeneracy rule. `repeated-index` is tiny-world itself (triangle 10 is indices 0, 0, 1). The other rows keep tiny-world's heightfield and wall quad and replace triangle 10 with three distinct vertices, every edge at least 1 mm: `collinear` (0, 0, 0), (1, 0, 0), (2, 0, 0), where |AB × AC|² is 0; `sliver` (0, 0, 0), (1, 0, 0), (0.5, 1e-5, 0), where |AB × AC|² = 1e-10 is caught only by the 1e-8·(maxEdge²)² clause; and `tiny-area` (0, 0, 0), (0.0012, 0, 0), (0, 0.0012, 0), where |AB × AC|² ≈ 2.07e-12 is caught only by the 4e-12 clause. Each row asserts:
     - `DegenerateTriangleCount` is 1.
-    - Triangle ID 10 (indices 0, 0, 1) is unused: `TryGetMeshTriangle(10, ...)` is false.
+    - Triangle ID 10 is unused: `TryGetMeshTriangle(10, ...)` is false, and 8 and 9 are kept.
     - ID 10 is in no grid cell, and cell (0, 0) holds exactly [8, 9].
+  - `NearSliverTriangleIsKept`: the contract's near-sliver (0.46, 0, 0), (0.47, 0, 0), (0.46, 0.5, 0) as triangle 10 is not degenerate. `DegenerateTriangleCount` is 0, triangle 10 is kept with a finite normal within 1e-6 of (0, 0, 1), and cell (0, 0) holds [8, 9, 10].
   - `TinyWorldDerivesItsTrianglesAndGrid`:
     - `HeightfieldTriangleCount` is 8 and `MeshTriangleCount` is 3, with IDs 8 to 10.
     - Triangles 8 and 9 have normal (0, 0, 1) and AABB (−0.5, 0, 0.5) to (0.5, 1, 0.5).
@@ -387,7 +388,8 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - Two decodes of the same bytes give identical bits for every normal, AABB and grid array.
   - `HeightAtFollowsTheFixedDiagonal`: on tiny-world, `HeightAt(0.75f, -0.75f)` is 0 (triangle k = 0), `HeightAt(0.25f, -0.25f)` is 0.125f within 1e-6 (k = 1), `HeightAt(0.5f, -0.5f)` is exactly 0 (on the diagonal), and `HeightAt(0f, 0f)` is 0.25f.
   - `SharedVerticesAreBitIdentical`: on a 9 × 9 heightfield with origin (−1000.3f, 2000.7f) and `cellSize` 0.37f, every vertex of every heightfield triangle equals the bits of the one sample expression `(originX + (float)i*cellSize, h, originZ + (float)j*cellSize)`. A vertex shared by neighbouring cells is identical in each.
-  - `MaxQueryCandidatesCoversTheWidestCapsuleBox(float width, int expected)`, Theory on `TestWorlds.Flat()` (cellSize 1, gridCellSize 4). (1.22f, 274) is the placeholder capsule's box, research R6. Further rows are (0.5f, 264), which is 2·(1+1)² + 64·(1+1)²; (4f, 306), which is 2·(4+1)² + 64·(1+1)²; (4.5f, 648), which is 2·(5+1)² + 64·(2+1)² and takes the grid term past one grid cell; and (8.5f, 1224), which is 2·(9+1)² + 64·(3+1)². Each asserts `2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²`.
+  - `MaxQueryCandidatesCoversTheWidestCapsuleBox(float cellSize, float gridCellSize, float width, int expected)`, Theory on `TestWorlds.Flat(cellSize: cellSize, gridCellSize: gridCellSize)`. Each row asserts `2·n(cellSize)² + 64·n(gridCellSize)²` with `n(c) = ⌊(w + 1/64)/c⌋ + 2`, and `MaxQueryCandidates(w)`. Rows: (1, 4, 1.22f, 274), the placeholder capsule's box, research R6; (1, 4, 0.5f, 264), which is 2·(0+2)² + 64·(0+2)²; (1, 4, 1f, 274) and (1, 4, 4f, 648), which is 2·(4+2)² + 64·(1+2)², whole-number ratios that get the extra cell; (1, 4, 4.5f, 648), which takes the grid term past one grid cell; (1, 4, 8.5f, 1224), which is 2·(8+2)² + 64·(2+2)²; (1, 1, 1f, 594); and (0.25, 1, 1.22f, 648).
+  - `MaxQueryCandidatesCoversEveryFloatBoxOfThatWidth(string caseName)`, Theory over worlds and widths: `whole-grid-ratio` (origin 0, cell 1, grid 4, 17 samples, w 4f), `capsule-0.3-skin-0.05` (the same world, w = (3f·0.3f) + (2f·0.05f), which is 1f), `placeholder-capsule` (`Flat()`, w 1.22), `widest-capsule-smallest-cells` (origin −32, cell 0.25, grid 1, 257 samples, w 3.1), `near-the-limit` (origin 8100, cell 1, grid 4, 65 samples, w 4f) and `inexact-cells` (origin −1000.3, cell 0.37, grid 1.11, 33 samples, w 1.11). The low edges are every heightfield and grid cell boundary (the sample expression) with two float neighbours below and one above; the high edge is `low + w` in float, then up to two `MathF.BitIncrement`s more. For every box, 2·h² + 64·g² ≤ `MaxQueryCandidates(w)`, where g counts `UniformGrid.CellX(high) − CellX(low) + 1` and h counts `FloorToInt((x − origin) / cellSize)` cells likewise. The earlier `⌈w/c⌉ + 1` count fails `whole-grid-ratio` ([3.9999998, 8] spans 3 grid cells) and `capsule-0.3-skin-0.05` ([1.9999999, 3] spans 3 heightfield cells).
 - [X] T032 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/RecordedStreamTests.cs` (FR-022, contracts/recorded-stream-format.md). Each test builds the two-steps stream in the test:
   - stepHz 30, the default config, `matchSalt` `0x0123456789abcdef`, `collisionChecksum` `0x9224e3fa3b3fca9c`, seed 0;
   - the initial state `TestStates.WorkedExample`;
@@ -421,12 +423,12 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - command-bad-version, `write 905 "02"`: `UnsupportedVersion` 905 `steps[0].commands[0].input.version`, message `stream steps[0].commands[0].input.version at offset 905: unsupported version 2; this reader supports version 1`;
     - command-unknown-magic, `write 904 "4a"`: `UnknownMagic` 904 `steps[0].commands[0].input.formatId`.
 - [X] T033 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Hitboxes/HitboxBuilderTests.cs` (FR-011, data-model.md#hitbox-layout-and-hitboxes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~HitboxBuilderTests"` and confirm they fail.
-  - `WorldPointsFollowTheYawRotation(Stance stance, ushort yaw)`, Theory over {Standing, Crouched} × {0, 16384, 32768, 49152, 12345}. `HitboxBuilder.Build` uses the layout from `TestConfigs.Compiled(30)` and position (10.5, 2, −3.25).
+  - `WorldPointsFollowTheYawRotation(string layoutName, Stance stance, ushort yaw)`, Theory over {placeholder, sideways} × {Standing, Crouched} × {0, 16384, 32768, 49152, 12345}. `placeholder` is the layout of `TestConfigs.At(30)`, whose endpoints all have `right` 0. `sideways` is the same configuration with a non-zero `right` on both endpoints of every capsule of both stances (head a 0.1, b −0.05; torso a 0.08, b −0.08; legs a 0.12, b −0.12), so the `cy*lr` and `sy*lr` terms are exercised. `HitboxBuilder.Build` uses the layout from `CompiledConfig.Create` of that configuration and position (10.5, 2, −3.25).
     - It writes Head, Torso and Legs into a 3-element span, in that order.
     - Each endpoint's bits equal `wx = fx + ((sy*lf) - (cy*lr))`, `wy = fy + lu` and `wz = fz + ((cy*lf) + (sy*lr))`, with `(sy, cy)` from `SimMath.SinCosBinaryAngle(yaw)`.
     - Each radius equals the layout's.
-    - At yaw 16384, the standing head A is (10.53, 3.56, −3.25).
-  - `BoundingSphereEnclosesEveryCapsule(Stance stance)`:
+    - Literals pin the axes and signs, within 1e-5: on `placeholder` at yaw 16384, the standing head A is (10.53, 3.56, −3.25); on `sideways` the standing head A (fwd 0.03, right 0.1, up 1.56) is (10.4, 3.56, −3.22) at yaw 0 and (10.53, 3.56, −3.15) at yaw 16384.
+  - `BoundingSphereEnclosesEveryCapsule(string layoutName, Stance stance)`, over {placeholder, sideways} × {Standing, Crouched}:
     - The returned centre is (fx, fy + BoundCenterUp, fz) for every yaw. `BoundCenterUp` is 0.885 for standing and 0.57 for crouched, within 1e-6.
     - For every capsule endpoint e, |e − centre| + radius ≤ BoundRadius − 0.01, within 1e-5.
 - [X] T034 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/World/SimWorldTests.cs` (data-model.md#world-simworld). Use `TestWorlds.Flat()` and the `TestStates` states. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimWorldTests"` and confirm they fail.
@@ -441,13 +443,16 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - x = 40 or z = −40: `OutOfRange` `characters[0].position.x` or `.position.z`;
     - grounded with `groundNormal.y` 0.5: `OutOfRange` `characters[0].groundNormal.y`;
     - airborne with normal (0.1, 0.99, 0): `Inconsistent` `characters[0].groundNormal.x`;
+    - `phaseSteps` outside its phase's range, `OutOfRange` `characters[0].weapons[0].phaseSteps` (rifle `EquipSteps` 15, `ReloadSteps` 60): Ready with 1, Firing with 1, Switching with 0 and 16, Reloading with 0 and 61, the active weapon Overheated with 16; and the holstered weapon 1 Overheated with 1: `OutOfRange` `characters[0].weapons[1].phaseSteps`;
     - `magazine` 31: `OutOfRange` `characters[0].weapons[0].magazine`;
     - `fireWait` 1800 and −1: `OutOfRange` `.fireWait`;
+    - `heat` 3,000,000 (threshold 3,000,000, no heat per shot) and `heat` 3,300,000 with `weapons[0].heatPerShot` 10000: `OutOfRange` `.heat`;
     - `recoilPitch` 1093: `OutOfRange` `.recoilPitch`;
     - `recoilYaw` −547: `OutOfRange` `.recoilYaw`;
     - weapon 1 Firing while `activeSlot` is 0: `Inconsistent` `characters[0].weapons[1].phase`;
     - projectile `class` 2: `OutOfRange` `projectiles[0].class`;
     - one byte-only row, `position.x` NaN: `NonFinite`.
+  - `ResetAcceptsWeaponsAtTheEdgesOfTheirRules(string caseName)`: Reset accepts, and the next Step commits step 1, for Switching with `phaseSteps` 1 and 15, Reloading with 1 and 60, the active weapon Overheated with 0 and 15, the holstered weapon Overheated with 0, `heat` 2,999,999, and `heat` 3,299,999 with `heatPerShot` 10000.
   - `ResetKeepsThePreviousWorldOnRefusal`: Reset `StandingOnFlat` and Step once. Then a refused Reset throws. `CurrentStep` is still 1, and the next Step returns step 2 with the hash a fresh world gives for the same two steps.
   - `CharactersWithoutACommandGetTheNeutralInput`: with `TwoCharacters`, Step with only `new CharacterCommand(1, cmd)`. The internal `LastStepInputs` span holds:
     - for index 0, the neutral input: Buttons 0; AimYaw, AimPitch and WeaponSlot equal to its state; Sequence equal to its `lastSequence`;
@@ -460,11 +465,13 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
   - `NegativeZeroIsCommittedAndHashedAsPositiveZero(string fieldPath)` (edge case: negative zero; FR-016):
     - World A steps with `StepWithInjectedBits(empty, ordinal, index, 0x80000000)`, and an identical world B with bits `0x00000000`.
     - Both commit, and the field's 4 bytes in A's `State` are `00 00 00 00`.
+    - A's committed in-memory field, read through the internal `SimWorld.CommittedCharacters` or `CommittedProjectiles`, holds +0 (`0x00000000`).
     - A's `Hash` equals B's, and A's `State` equals B's byte for byte.
     - A following plain Step gives equal hashes in A and B.
   - `NonFiniteFieldRefusesTheStepAndKeepsThePreviousState(string fieldPath, uint bits)`, × {`0x7FC00000`, `0x7F800000`, `0xFF800000`} (edge case: NaN and infinity; FR-017):
     - `Fault.Code` is `StepFaultCode.NonFinite`, `Fault.Path` equals `fieldPath` (for example `characters[0].velocity.y`), `Hash` is 0, and `report.Step` is the previous step.
     - Afterwards `CurrentStep` is unchanged, and a plain Step gives the step number, state bytes and hash an untouched world gives for that step.
+  - `NonFiniteFieldOfALaterElementNamesThatElement(string fieldPath, uint bits)`, on a world Reset with characters 1 and 4 and projectiles 1 and 3 (owned by 1 and 4), over `characters[1].position.x`, `characters[1].velocity.y`, `characters[1].groundNormal.z`, `projectiles[1].origin.x`, `projectiles[1].launchVelocity.y` and `projectiles[1].position.z` × the same three bit patterns: `Fault.Path` is the path with index 1 (not 0, and not the ID 4 or 3), `Fault.ElementIndex` is 1, and the rest is asserted as above.
 - [X] T036 [P] Write failing zero-allocation tests for Phase 2's tick-path entry points in `tests/MmoEngine.SimCore.Tests/Allocation/` (FR-032, US7.3, SC-005), one class per file, each `[Collection(ZeroAllocationCollection.Name)]` (T013). Every row warms its call up twice, then counts with `GC.GetAllocatedBytesForCurrentThread()` before and after 1,000 calls into buffers allocated before the count, and asserts exactly 0. The failure message names the row and the byte count.
   - `HashAllocationTests.StateHashAllocatesNothing(string stateCase)` in `HashAllocationTests.cs`. Rows: `worked-example` (`TestStates.WorkedExample`, 136 bytes) and `max-length` (a buffer of `CompiledConfig.MaxStateLength` bytes for `TestConfigs.Compiled(30)`). The call is `StateHash.Compute`.
   - `HashAllocationTests.StepRecordWriteAllocatesNothing` in the same file: `StepRecord.Write` of the worked example's record (step 0, its 136 state bytes and its hash) into a preallocated 152-byte destination.
@@ -646,7 +653,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `CollisionWorld.cs`: an immutable `sealed partial class` with:
     - `Checksum`, `Data`, `HeightfieldTriangleCount`, `MeshTriangleCount`, `DegenerateTriangleCount`, `GridCellsX` and `GridCellsZ`;
     - `HeightAt`, and the `Heightfield`, `Meshes` and `Grid` accessors;
-    - `MaxQueryCandidates(float boxWidth)`, which is `2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²`.
+    - `MaxQueryCandidates(float boxWidth)`, which is `2·n(cellSize)² + 64·n(gridCellSize)²` with `n(c) = SimMath.FloorToInt((w + QueryWidthMargin) / c) + 2` and the internal `QueryWidthMargin` 1/64 m, which covers the float rounding of a box's edges and cell indices.
 
     It is built in file order by an internal factory from `CollisionData` and the checksum. `BoxQuery` (Phase 3) and `SegmentQuery` (Phase 7) are later partial files.
 - [X] T058 Implement `CollisionFile` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` (contracts/collision-data-format.md#layout, #check-order, #api), after T057. Together they make T030 and T031 pass.
@@ -674,7 +681,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - the `byte[MaxStateLength]` state buffer.
 
     It starts with an empty state: step 0, no characters, `nextProjectileId` 1.
-  - `Reset(ReadOnlySpan<byte> canonicalState, ulong matchSalt)` runs `StateSerializer.ReadLoaded` (format `state`), then the configuration and world checks of contracts/state-serialization.md#loading-a-state, and only then copies the state in. On refusal it throws `CoreFormatException` and keeps the previous world.
+  - `Reset(ReadOnlySpan<byte> canonicalState, ulong matchSalt)` runs `StateSerializer.ReadLoaded` (format `state`), then the configuration and world checks of contracts/state-serialization.md#loading-a-state (each weapon's `phaseSteps` range for its phase and its heat limit included), and only then copies the state in. On refusal it throws `CoreFormatException` and keeps the previous world.
   - `internal void Reset(ReadOnlySpan<byte> canonicalState, ulong matchSalt, in StateErrorContext context)` does the same with the caller's context, which both `ReadLoaded` and the configuration and world checks use for the error's format, offset and field prefix. The public overload passes the `state` context (format `state`, base 0, no prefix); `StreamRunner` passes the stream's.
   - `uint CurrentStep`.
   - `StepReport Step(ReadOnlySpan<CharacterCommand> commands)` runs the stages in order:
@@ -683,7 +690,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - stage 4 builds hitboxes with `HitboxBuilder` into scratch;
     - stage 6 calls `StateSerializer.Write` and `StateHash.Compute`;
     - stage 7 swaps next into current and sets the step. A fault commits nothing and returns `Hash` 0 with the previous step.
-  - `internal ReadOnlySpan<InputCommand> LastStepInputs` (one entry per character), and the internal buffer-size accessors `CandidateCapacity`, `StateBufferLength`, `ShotCapacity`, `HitCapacity`, `ExpiryCapacity`, `InputRejectionCapacity`, `FireBlockCapacity` and `MovementOutcomeCapacity` (`int`) for the tests.
+  - `internal ReadOnlySpan<InputCommand> LastStepInputs` (one entry per character), the internal committed-state views `CommittedCharacters` and `CommittedProjectiles` (`ReadOnlySpan<CharacterState>` and `ReadOnlySpan<Projectile>`), and the internal buffer-size accessors `CandidateCapacity`, `StateBufferLength`, `ShotCapacity`, `HitCapacity`, `ExpiryCapacity`, `InputRejectionCapacity`, `FireBlockCapacity` and `MovementOutcomeCapacity` (`int`) for the tests.
   - `internal StepReport StepWithInjectedBits(ReadOnlySpan<CharacterCommand> commands, int fieldOrdinal, int elementIndex, uint bits)` runs stages 1–5, writes `bits` into that field of the next state, then runs stages 6 and 7. It is visible to `MmoEngine.SimCore.Tests` only, and is never a delegate field.
   - There is no LINQ, lambda, boxing or exception on the step path, and every loop is bounded by a count from the configuration.
 - [X] T061 [P] Implement the CLI infrastructure in `src/MmoEngine.SimCore.Cli/`. Makes T040 pass.
@@ -3496,7 +3503,7 @@ Every acceptance scenario and Independent Test of spec.md, with the task that wr
 | US5.2 target in the path: struck hitbox, point and step | T193, T204 | `tests/MmoEngine.SimCore.Tests/Projectiles/ProjectileHitTests.cs` `ProjectileHitTests.TargetInThePathReportsTheStruckHitboxPointAndStep`; `ProjectileScenarioTests.ProjectileHitsHitboxStrikesEveryPlannedPart` |
 | US5.3 mesh between muzzle and target is hit instead | T194, T202 | `ProjectileHitTests.MeshBetweenMuzzleAndTargetIsHitInstead`; `ProjectileScenarioTests.MeshOccludesShotHitsTheWallAndNeverTheTarget` |
 | US5.4 past range or lifetime expires without a hit | T191 | `tests/MmoEngine.SimCore.Tests/Projectiles/ProjectileExpiryTests.cs` `ProjectileExpiryTests.ProjectilePastItsLimitExpiresAtThatStepWithoutAHit`; `ProjectileExpiryTests.RifleBurstShotsAboveTheHorizonExpireWithRange` |
-| US5.5 (a) hitboxes follow the stance's layout | T203, T033 | `ProjectileScenarioTests.StruckPartsMatchTheStancesLayout`; `tests/MmoEngine.SimCore.Tests/Hitboxes/HitboxBuilderTests.cs` `HitboxBuilderTests.WorldPointsFollowTheYawRotation` |
+| US5.5 (a) hitboxes follow the stance's layout | T203, T033 | `ProjectileScenarioTests.StruckPartsMatchTheStancesLayout`; `tests/MmoEngine.SimCore.Tests/Hitboxes/HitboxBuilderTests.cs` `HitboxBuilderTests.WorldPointsFollowTheYawRotation` (the placeholder layout and a layout with non-zero `right` offsets) |
 | US5.5 (b) hitboxes bit-identical in every build | T278, T116 | `tools/agreement/node/agreement.test.mjs` `'cross-build tables match the server'` (6,192 pose rows); `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.cs` `CrossBuildTablesTests.EachRowEqualsTheDirectCall` |
 | US5.6 crossing a whole hitbox in one step still hits | T195 | `ProjectileHitTests.ProjectileCrossingAWholeHitboxInOneStepStillHits` |
 | US5-IT (a) shots at known distances hit where the closed form says | T205 | `ProjectileScenarioTests.ShotsAtKnownDistancesHitWhereTheClosedFormPathSays`; `ProjectileScenarioTests.ShotsAtKnownDistancesStreamHitsWhereTheReferenceSays` (the same placements in the committed `shots-at-known-distances` stream) |
@@ -3521,9 +3528,9 @@ Every acceptance scenario and Independent Test of spec.md, with the task that wr
 | Edge: edge, vertex or concave corner never tunnels or oscillates | T073, T084 | `tests/MmoEngine.SimCore.Tests/Movement/CornerTests.cs` `CornerTests.StartsOnATriangleEdgeOrVertexNeverTunnelOrOscillate`; `MovementScenarioTests.CornerWedgeNeverTunnelsOrOscillates` |
 | Edge: a step longer than the capsule radius is subdivided | T085 | `MovementScenarioTests.FastMoveIntoAThinWallIsSubdividedAndNeverPassesThrough` |
 | Edge: pushed out of bounds is clamped and reported | T074 | `tests/MmoEngine.SimCore.Tests/Movement/BoundsTests.cs` `BoundsTests.CharacterPushedPastTheEdgeIsClampedAndReported` |
-| Edge: degenerate triangles load and are ignored | T031 | `tests/MmoEngine.SimCore.Tests/Collision/CollisionWorldBuildTests.cs` `CollisionWorldBuildTests.DegenerateTrianglesLoadAndAreIgnored` |
-| Edge: NaN or infinity refuses the step naming the field | T035, T027 | `tests/MmoEngine.SimCore.Tests/World/CanonicalisationTests.cs` `CanonicalisationTests.NonFiniteFieldRefusesTheStepAndKeepsThePreviousState` (the 18 character and projectile floats); `tests/MmoEngine.SimCore.Tests/Formats/StateSerializerTests.cs` `StateSerializerTests.WriterRefusesANonFiniteEventFloat` (the 7 event floats) |
-| Edge: negative zero canonicalised before hashing | T035, T027 | `CanonicalisationTests.NegativeZeroIsCommittedAndHashedAsPositiveZero` (the 18 character and projectile floats); `StateSerializerTests.WriterRewritesNegativeZeroInEveryEventFloat` (the 7 event floats) |
+| Edge: degenerate triangles load and are ignored | T031 | `tests/MmoEngine.SimCore.Tests/Collision/CollisionWorldBuildTests.cs` `CollisionWorldBuildTests.DegenerateTrianglesLoadAndAreIgnored` (one row per clause of the degeneracy rule), with `CollisionWorldBuildTests.NearSliverTriangleIsKept` as the control |
+| Edge: NaN or infinity refuses the step naming the field | T035, T027 | `tests/MmoEngine.SimCore.Tests/World/CanonicalisationTests.cs` `CanonicalisationTests.NonFiniteFieldRefusesTheStepAndKeepsThePreviousState` (the 18 character and projectile floats) and `CanonicalisationTests.NonFiniteFieldOfALaterElementNamesThatElement` (a second character's and projectile's floats name index 1); `tests/MmoEngine.SimCore.Tests/Formats/StateSerializerTests.cs` `StateSerializerTests.WriterRefusesANonFiniteEventFloat` (the 7 event floats) |
+| Edge: negative zero canonicalised before hashing | T035, T027 | `CanonicalisationTests.NegativeZeroIsCommittedAndHashedAsPositiveZero` (the 18 character and projectile floats, in the committed bytes and in the committed in-memory state); `StateSerializerTests.WriterRewritesNegativeZeroInEveryEventFloat` (the 7 event floats) |
 | Edge: fire interval shorter than one step | T175 | `FireTimingTests.WeaponFasterThanOneStepFiresAtMostMaxShotsPerStepWithoutDrift` |
 | Edge: point-blank hit at the first step | T196 | `ProjectileHitTests.ProjectileStartingInsideAHitboxHitsAtItsFirstStep` |
 | Edge: region merges, splits, portals, tick overruns; a live step-rate change | n/a | N/A by design (spec Edge Cases); a live rate change is out of scope (spec Assumptions); no test |

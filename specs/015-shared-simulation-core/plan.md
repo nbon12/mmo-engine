@@ -527,6 +527,28 @@ The design documents settled these points, which the spec leaves open. They are 
   `Inconsistent` at the field being read, the rule T236 states. They run after the checksum, so the
   Phase 8 fixtures that reach checks 5 and 6 without `fixChecksum` stay red until T235 and T236 put
   those checks first, which leaves these refusals as unreachable backstops.
+- **`Reset` checks every rule of the weapon record, with a range for `phaseSteps` per phase (T034,
+  T060, Phase 2 review).** The guard checked only the holstered phase, `fireWait`, `magazine` and
+  the recoil bounds, although the contract said "every rule". It now also refuses `heat` at or above
+  `OverheatThresholdScaled + HeatPerShotScaled` (data-model's bound) and a `phaseSteps` outside the
+  range its phase allows: 0 in Ready and Firing, [1, `EquipSteps`] in Switching, [1, `ReloadSteps`] in
+  Reloading, [0, `EquipSteps`] for the active weapon while Overheated, and 0 for a holstered Overheated
+  weapon. These ranges are tighter than data-model's "otherwise 0" wording, and are exactly what the
+  weapon phases can produce: a loaded Switching or Reloading weapon at 0 would never complete, because
+  W2 counts down only from above 0. Both refusals are `OutOfRange`; the holstered phase stays
+  `Inconsistent`. data-model.md#weaponstate and contracts/state-serialization.md now give the ranges.
+- **`MaxQueryCandidates` counts ⌊(w + 1/64)/c⌋ + 2 cells per axis, not ⌈w/c⌉ + 1 (T031, T057,
+  Phase 2 review).** A float box reaches further than its nominal width: on 4 m grid cells from
+  origin 0, the box [3.9999998, 3.9999998 + 4f] ends at exactly 8 and spans grid cells 0 to 2, and a
+  0.3 m capsule with a 0.05 m skin has w = 1f, whose box [1.9999999, 3] spans three 1 m cells. So the
+  old count fell one cell short per axis whenever w/c is a whole number, and a valid configuration
+  could fault with `QueryCapacityExceeded`. An interval of real length L overlaps at most ⌊L/c⌋ + 2
+  cells, and the 1/64 m margin covers the rounding: coordinates are at most 8192 m, where a float
+  step is about 0.001 m, against cells of at least 0.25 m. ⌈w/c⌉ + 2 would also be sound, but it
+  raises the placeholder buffer from 274 to 608 for cells a 1.22 m box cannot reach; the margin keeps
+  research R6's 274 and every row whose ratio is not whole, and changes only the whole-number ratios
+  (4 m on 4 m grid cells: 306 to 648). `CollisionWorldBuildTests.MaxQueryCandidatesCoversEveryFloatBoxOfThatWidth`
+  checks real float boxes near cell boundaries, including near the 8192 m limit.
 
 ## Delivery
 

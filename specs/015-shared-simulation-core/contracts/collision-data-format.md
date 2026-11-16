@@ -208,7 +208,10 @@ primary data; nothing derived is stored, so the same file gives the same world i
     `CellStart[CellsX·CellsZ + 1]` and `CellTriangles[]`, each cell's list ascending, because cells
     are filled in ID order.
 - **Query capacity.** The world computes its largest candidate count for a capsule query from the
-  cell sizes and the per-cell limit (`MaxQueryCandidates` in [data-model.md](../data-model.md)). A
+  cell sizes and the per-cell limit (`MaxQueryCandidates` in [data-model.md](../data-model.md)):
+  2·n(`cellSize`)² + 64·n(`gridCellSize`)² for a box of width w, with n(c) = ⌊(w + 1/64)/c⌋ + 2 cells
+  per axis. The 1/64 m margin covers float rounding, so a box whose ratio w/c is a whole number still
+  fits when its rounded edges reach one cell further. A
   `SimWorld` sizes its candidate buffer from that count for the widest box its configured capsule
   can sweep, when it is created from a collision world and a configuration. That belongs to the
   world, not to the file decoder. A query that would overflow the buffer refuses the step
@@ -335,4 +338,6 @@ triangle.
 Tests that use these fixtures, all in `tests/MmoEngine.SimCore.Tests/Formats/`: the round trips (US6
 scenario 1), one Theory row per refusal case asserting the code, offset and field (US6 scenarios 2
 to 4), and a world-build test over `tiny-world` asserting the derived values (including
-`DegenerateTriangleCount` 1).
+`DegenerateTriangleCount` 1). Variants of `tiny-world` pin each clause of the degeneracy rule: a
+collinear triangle, a sliver caught only by the 1e-8 clause and a tiny triangle caught only by the
+4e-12 clause are dropped, and the `crowded-cell` near-sliver is kept.
