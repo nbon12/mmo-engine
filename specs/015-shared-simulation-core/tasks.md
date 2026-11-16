@@ -135,7 +135,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - a `Mutate(byte[] state, int offset, ReadOnlySpan<byte> bytes)` helper.
   - `SimcoreCli.cs`: `Run(params string[] args)` returns `(int Exit, string Stdout, string Stderr)`. It calls `Program.Run(args, stdout, stderr, environmentName: "Development")` in process with `StringWriter`s. Callers pass paths rooted at `RepoPaths.Root`.
   - `tests/MmoEngine.SimCore.Tests/Allocation/ZeroAllocationCollection.cs`: `[CollectionDefinition(Name, DisableParallelization = true)]` with `Name = "Zero allocation (per-thread allocation counters)"`. Its doc comment gives the reason as `tests/MmoEngine.Regionizer.Tests/Allocation/ZeroAllocationTests.cs` does: `GC.GetAllocatedBytesForCurrentThread` is a per-thread counter, so another test's JIT, type loading or continuations landing on this thread would be counted. Every allocation test class of this feature (T036, T076, T115, T172, T199 and T246) is `[Collection(ZeroAllocationCollection.Name)]`, so each entry point's allocation test can be written red in the phase that builds the entry point.
-- [ ] T014 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Architecture/CoreDependencyTests.cs`, in the style of `tests/MmoEngine.Regionizer.Tests/Architecture/CoreDependencyTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Architecture.CoreDependencyTests"` and confirm they fail.
+- [X] T014 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Architecture/CoreDependencyTests.cs`, in the style of `tests/MmoEngine.Regionizer.Tests/Architecture/CoreDependencyTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Architecture.CoreDependencyTests"` and confirm they fail.
   - `CoreDependencyTests.CoreReferencesOnlyTheBclAndSystemIOHashing`:
     - Given `typeof(SimCoreVersion).Assembly`, assert that every referenced assembly loads from the shared-framework directory, except exactly one, `System.IO.Hashing`.
     - Assert that no referenced name starts with `MmoEngine`.
@@ -144,15 +144,15 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - `IsTrimmable` `true`, `IsAotCompatible` `true`, `AllowUnsafeBlocks` `false` and `ImplicitUsings` `disable`;
     - exactly one `ProjectReference` to `..\MmoEngine.SimCore.Analyzers\MmoEngine.SimCore.Analyzers.csproj`, with `OutputItemType="Analyzer"`, `ReferenceOutputAssembly="false"` and `PrivateAssets="all"` (contracts/analyzer-rules.md#wiring);
     - `InternalsVisibleTo` `MmoEngine.SimCore.Tests`.
-- [ ] T015 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Architecture/CoreStateTests.cs` (FR-001, FR-015, data-model.md#ownership). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Architecture.CoreStateTests"` and confirm they fail.
-  - `CoreStateTests.CoreHasNoStaticMutableFields`: reflect over every type of the core assembly, skipping compiler-generated types and fields. Assert that every static field is a literal (`const`) or `initonly`, and that the type of each `initonly` one is one of:
+- [X] T015 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Architecture/CoreStateTests.cs` (FR-001, FR-015, data-model.md#ownership). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Architecture.CoreStateTests"` and confirm they fail.
+  - `CoreStateTests.CoreHasNoStaticMutableFields`: reflect over every type of the core assembly, skipping compiler-generated types and fields, except the backing field of a static auto-property (`<Name>k__BackingField`), which is that property's state and is checked like any other static field. Assert that every static field is a literal (`const`) or `initonly`, and that the type of each `initonly` one is one of:
     - a primitive, an enum, `string` or a readonly struct;
     - `System.Collections.Immutable.ImmutableArray<T>`;
     - a sealed type whose instance fields are all `initonly`.
 
     Arrays are refused. The failure message lists every offending `Type.Field`.
   - `CoreStateTests.NoCoreMethodTakesATimeSpanOrAFrameTime`: no public or internal method or constructor of the core has a parameter of type `TimeSpan`, `DateTime`, `DateTimeOffset` or `Stopwatch`. No `float` or `double` parameter is named `dt`, `deltaTime`, `frameTime`, `elapsed` or `elapsedSeconds`, ignoring case. The step length comes only from `CompiledConfig` (FR-015).
-- [ ] T016 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Math/SimMathTests.cs` (FR-013, research R3, R4). Assert exact bits through `BitConverter.SingleToUInt32Bits`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math.SimMathTests"` and confirm they fail.
+- [X] T016 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Math/SimMathTests.cs` (FR-013, research R3, R4). Assert exact bits through `BitConverter.SingleToUInt32Bits`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math.SimMathTests"` and confirm they fail.
   - `NonFiniteInputsReturnNaN(string function, uint inputBits)`, Theory. Each row asserts `float.IsNaN` on the result, and on both outputs for `SinCos`:
     - NaN (`0x7FC00000`) for Sin, Cos, Tan, SinCos, Asin, Acos, Atan, Sqrt, and Atan2 in either argument;
     - +∞ and −∞ for Sin, Cos, Tan and SinCos;
@@ -196,12 +196,12 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - Atan2 at (1, 1), (−1, −1), (1e-30f, −1) and (3, −4).
 
     Each row asserts an error against the `System.Math` double reference within research R3's bound, measured in ulps of the reference rounded to float: Sin and Cos 1 ulp for |x| ≤ 12867 and 2 above; Tan 1.5 and 2.5; Asin, Acos and Atan 1; Atan2 2.
-- [ ] T017 [P] Write failing test `Vec3Tests.OperationsUseTheContractsParenthesisation` in `tests/MmoEngine.SimCore.Tests/Math/Vec3Tests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~Vec3Tests"` and confirm it fails.
+- [X] T017 [P] Write failing test `Vec3Tests.OperationsUseTheContractsParenthesisation` in `tests/MmoEngine.SimCore.Tests/Math/Vec3Tests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~Vec3Tests"` and confirm it fails.
   - `Vec3.Dot((1f, 1e8f, -1e8f), (1f, 1f, 1f))` has bits `0x00000000`. The contract's `((x·x) + (y·y)) + (z·z)` gives 0, where the other association would give 1.
   - `Cross((1, 0, 0), (0, 1, 0))` is (0, 0, 1) and `Cross((0, 1, 0), (1, 0, 0))` is (0, 0, −1), each component computed as `(a.Y*b.Z) - (a.Z*b.Y)` and so on.
   - `Length((3, 4, 0))` is exactly 5f, through `SimMath.Sqrt(Dot(a, a))`.
   - `+`, `-` and scalar `*` are exact per component.
-- [ ] T018 [P] Write failing test `ReasonCodeTests.EveryCodeHasItsContractValue(Type enumType, string member, long value)` in `tests/MmoEngine.SimCore.Tests/World/ReasonCodeTests.cs` (data-model.md#reason-and-outcome-codes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ReasonCodeTests"` and confirm it fails.
+- [X] T018 [P] Write failing test `ReasonCodeTests.EveryCodeHasItsContractValue(Type enumType, string member, long value)` in `tests/MmoEngine.SimCore.Tests/World/ReasonCodeTests.cs` (data-model.md#reason-and-outcome-codes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ReasonCodeTests"` and confirm it fails.
   - It is a Theory with one row per member:
     - `InputRejection`: None 0, SequenceNotIncreasing 1, UnknownButtons 2, PitchOutOfRange 3, UnknownWeaponSlot 4;
     - `WeaponPhase`: Ready 0, Firing 1, Reloading 2, Switching 3, Overheated 4;
@@ -217,13 +217,13 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - `StepFaultCode`: None 0, NonFinite 1, QueryCapacityExceeded 2;
     - `FormatErrorCode`: None 0, UnknownMagic 1, UnsupportedVersion 2, Truncated 3, Oversized 4, Inconsistent 5, OutOfRange 6, NonFinite 7, ChecksumMismatch 8, CollisionDataMissing 9, RulesRevisionMismatch 10;
     - `Buttons`: Forward `0x0001` through Reload `0x0100`, and Known `0x01FF`.
-  - A companion Fact `EveryEnumHasExactlyTheContractMembersAndUnderlyingType` asserts each enum's member count. The underlying type is `byte` for all of them, except `Buttons` (`ushort`, `[Flags]`) and `FireMode` (`uint`, because the config block carries it as a 32-bit `valueBits`). `MovementOutcome`, `CharacterFlags` and `WeaponFlags` are also `[Flags]`.
-- [ ] T019 [P] Write failing test `FormatErrorTests.MessageHasTheContractShape` in `tests/MmoEngine.SimCore.Tests/Formats/FormatErrorTests.cs` (contracts/input-command-format.md#decoding). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~FormatErrorTests"` and confirm it fails.
+  - A companion Theory `EveryEnumHasExactlyTheContractMembersAndUnderlyingType(Type enumType, int memberCount, Type underlyingType, bool isFlags)`, one row per enum, asserts each enum's member count, underlying type and `[Flags]` attribute. The underlying type is `byte` for all of them, except `Buttons` (`ushort`, `[Flags]`) and `FireMode` (`uint`, because the config block carries it as a 32-bit `valueBits`). `MovementOutcome`, `CharacterFlags` and `WeaponFlags` are also `[Flags]`, and the other enums are not.
+- [X] T019 [P] Write failing test `FormatErrorTests.MessageHasTheContractShape` in `tests/MmoEngine.SimCore.Tests/Formats/FormatErrorTests.cs` (contracts/input-command-format.md#decoding). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~FormatErrorTests"` and confirm it fails.
   - A `FormatError` with format `input`, code `Truncated`, offset 16, field `length`, and the expected-length detail of 17 and 16 has `ToString()` `input length at offset 16: 17 bytes expected, got 16`.
   - A version error at offset 1 reads `input version at offset 1: unsupported version 2; this reader supports version 1`.
   - `new CoreFormatException(error).Message` equals `error.ToString()`, and `.Error` equals the error.
   - `default(FormatError).Code` is `None`.
-- [ ] T020 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/ConfigRuleTableTests.cs` (FR-015, FR-029, contracts/config-rules.md). The test holds its own copy of the contract's rule table, `ContractRows`: path, kind, min, max and fieldId for every one of the 116 fields of `default.json`'s instances, transcribed from config-rules.md. Every Theory row reports through both `ConfigGuard.Check` and `SimConfigValidator.Errors`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigRuleTableTests"` and confirm they fail.
+- [X] T020 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/ConfigRuleTableTests.cs` (FR-015, FR-029, contracts/config-rules.md). The test holds its own copy of the contract's rule table, `ContractRows`: path, kind, min, max and fieldId for every one of the 116 fields of `default.json`'s instances, transcribed from config-rules.md. Every Theory row reports through both `ConfigGuard.Check` and `SimConfigValidator.Errors`. The test writes values into a `SimConfig` by property path through reflection, independently of `ConfigFields`' setters, and reads the table through `ConfigFields.Templates`, `ConfigField.PathTemplate`, `.Kind`, `.MinBits` and `.MaxBits`, and `ExpandedField.FieldId`, `.Path` and `.Template` (T049). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigRuleTableTests"` and confirm they fail.
   - `EveryRowRefusesValuesOutsideItsRange(string path, string valueCase)`, Theory over each `ContractRows` row.
     - Cases: Int at min − 1 and max + 1; Float at `BitDecrement(min)` and `BitIncrement(max)`, plus NaN, +∞ and −∞; and the Enum row `weapons[i].fireMode` set to value 2.
     - Applied to `TestConfigs.Default()`, each case gives exactly one error with that path: `must be between {min} and {max}` with min and max in invariant round-trip form, `must be finite`, or `must be Auto or Semi`.
@@ -233,6 +233,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - R10 with `input.weaponSlots` 3 gives `weapons: must have exactly input.weaponSlots (3) entries`.
     - R14 with `weapons[1].projectileClass` 2 gives `weapons[1].projectileClass: must be less than the number of projectileClasses (2)`.
     - R01 passes at `walkSpeed == crouchSpeed`.
+    - R07 is checked on both sides, just below `contactSkin * 0.05f` and just above `contactSkin * 0.5f`. Float thresholds are computed in the test with the contract's parenthesisation, `CosSlopeLimit` through `SimMath.Cos`; an edit that would also break another relation adjusts that other field in both configurations (R03 lowers `eyeHeightCrouched` to 0.8, R05 lowers `snapDistance` to 0.1).
   - `EveryConfigPropertyHasExactlyOneRowAndFieldIdsAreUnique`: reflect over the property paths of `SimConfig` and its section types, with the weapon slot, projectile class, stance and capsule as placeholders. So `a.fwd` and `b.fwd` are different leaves, and the standing and crouched capsules share one `hitboxes.{stance}[{c}]` template.
     - Every leaf property path maps to exactly one `ConfigFields` template row. There are 57 template rows: 3 general, 20 movement, 21 weapon, 3 projectile class, 7 capsule fields (j 1 to 7), 2 eye heights and 1 input.
     - The template rows are in strictly ascending order of their first instance's fieldId (`0x0001` … `0x4007`, `0x4031`, `0x4131`, `0x5001`).
@@ -245,10 +246,10 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - two standing capsules give `hitboxes.standing: must have exactly 3 entries`;
     - a null `hitboxes.standing[0].a` gives `hitboxes.standing[0].a: is required`;
     - a null `weapons[1]` gives `weapons[1]: is required`.
-  - `ErrorsComeInRuleTableOrder`:
+  - `ErrorsComeInRuleTableOrder(string caseName)`, Theory with rows `field-errors` and `relation-errors`:
     - Field errors come in this order: `stepRateHz` 10, `movement.gravity` NaN, `weapons[0].reloadMs` −1, `weapons[1].magazineSize` 0, `input.weaponSlots` 9. They are reported in exactly that order, and no relation error appears.
     - A config that breaks R02 and R18 lists R02's error, then R18's.
-- [ ] T021 [P] Write failing test `DefaultConfigTests.DefaultJsonBindsValidatesAndCompilesToPinnedBits(int hz)` in `tests/MmoEngine.SimCore.Tests/Config/DefaultConfigTests.cs`, with `[MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]` (FR-029, contracts/config-rules.md#compile-time-conversions). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~DefaultConfigTests"` and confirm it fails.
+- [X] T021 [P] Write failing test `DefaultConfigTests.DefaultJsonBindsValidatesAndCompilesToPinnedBits(int hz)` in `tests/MmoEngine.SimCore.Tests/Config/DefaultConfigTests.cs`, with `[MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]` (FR-029, contracts/config-rules.md#compile-time-conversions). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~DefaultConfigTests"` and confirm it fails.
   - `simcore/config/default.json`, opened read-only and bound by `SimConfigJson`, has no binding error. With `stepRateHz = hz`, `ConfigGuard.Check` and `SimConfigValidator.Errors` are both empty.
   - `CompiledConfig.Create` gives these integers:
     - `ShotCost` 60·hz;
@@ -261,7 +262,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - `RecoilRecoveryPerStep` 91/61/30;
     - `OverheatThresholdScaled` 100000·hz, `HeatRecoveryScaled` 40000·hz and `HeatCooldownPerStep` 50000.
   - Every float compiled value is pinned as a hex literal per hz: `Dt`, the three `*PerStep` accelerations, `GravityPerStep`, `CosSlopeLimit`, `AxisTop[2]`, `SweepTarget`, `SweepTolerance`, `PushOutThreshold`, `HeadroomClearance`, `VersMax[2]`, `HalfG[2]`, `MaxRangeSq[2]`, and per stance `BoundCenterUp`, `BoundRadius` and `EyeHeight`. Each pinned value is also asserted within 1 ulp of the contract formula evaluated in double, so a pin cannot record a wrong value. The pins are recorded from the first green run.
-- [ ] T022 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/CompiledConfigTests.cs` (contracts/config-rules.md#compile-time-conversions, contracts/state-serialization.md#maximum-length). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CompiledConfigTests"` and confirm they fail.
+- [X] T022 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/CompiledConfigTests.cs` (contracts/config-rules.md#compile-time-conversions, contracts/state-serialization.md#maximum-length). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CompiledConfigTests"` and confirm they fail.
   - `PlaceholderConversionsAtThirtyHzMatchTheContract`: `CompiledConfig.Create(TestConfigs.At(30))` gives:
     - `ShotCost` 1800 and `Rpm` 600 and 30;
     - `ReloadSteps` 60 and 105, and `EquipSteps` 15 and 23;
@@ -271,7 +272,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - `Config` equal field for field to the input, but not the same instance.
   - `AngleUnitsRoundTiesToEven`. The test finds a `recoilKickPitchDeg` value d, searching up from 0.00274658f with `BitIncrement`, where `(d * 65536f) / 360f` is `0x3EFFFFFF`. For that d, `RecoilKickPitchUnits` is 0. A d giving exactly 0.5 units also gives 0, and one giving 1.5 gives 2. `recoilRecoveryDegPerSecond` 0.001 at 60 Hz gives `RecoilRecoveryPerStep` 1, raised from 0, and a rate of 0 gives 0.
   - `CreateThrowsTheGuardsErrors`: with `movement.gravity` NaN and `stepRateHz` 61, `Create` throws `ConfigValidationException`. Its `Errors` equal `ConfigGuard.Check`'s list, `[stepRateHz: must be between 20 and 60, movement.gravity: must be finite]`, and its `Message` starts `The configuration is invalid: `.
-- [ ] T023 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/ConfigBlockTests.cs` (contracts/recorded-stream-format.md#config-block). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigBlockTests"` and confirm they fail.
+- [X] T023 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Config/ConfigBlockTests.cs` (contracts/recorded-stream-format.md#config-block). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigBlockTests"` and confirm they fail.
   - `BlockRoundTripsToTheSameBitsAndGuardResult`:
     - `ConfigBlock.Encode(TestConfigs.Default())` is 698 bytes. `count` is 116, and the entries are strictly ascending.
     - Entry 0 is `0x0001` with value bits 30. Entry 9's value bits at offset 58 are `0x411CF5C3` (`movement.gravity` 9.81f). The last entry is `0x5001` with value 2.
@@ -287,7 +288,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - the last fieldId as `0x6001`: `Inconsistent`, 692, `entries[115].fieldId`, with a message naming `0x6001`;
     - the last entry deleted and count 115: `Inconsistent`, 692, `input.weaponSlots`, with message `config input.weaponSlots at offset 692: field 0x5001 is missing`;
     - an instance gap, weapon slot 0's 21 entries deleted and count 95: `Inconsistent`, 140, `weapons[0].roundsPerMinute`, with a message naming `0x2001`.
-- [ ] T024 [P] Write failing test `SimConfigJsonTests.JsonProblemsUseTheRepoWording(string caseName)` in `tests/MmoEngine.SimCore.Tests/Config/SimConfigJsonTests.cs` (contracts/config-rules.md#server, the wording of `src/MmoEngine.Regionizer.Simulator/Config/RunConfigLoader.cs`). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimConfigJsonTests"` and confirm it fails.
+- [X] T024 [P] Write failing test `SimConfigJsonTests.JsonProblemsUseTheRepoWording(string caseName)` in `tests/MmoEngine.SimCore.Tests/Config/SimConfigJsonTests.cs` (contracts/config-rules.md#server, the wording of `src/MmoEngine.Regionizer.Simulator/Config/RunConfigLoader.cs`). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimConfigJsonTests"` and confirm it fails.
   - It is a Theory over JSON text, each row asserting exactly one error:
     - truncated `{`: a message starting `is not valid JSON (`;
     - `[]`: `config: must be a JSON object`;
@@ -295,12 +296,12 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - `"stepRateHz": "fast"`: `stepRateHz: has an invalid value or is not a known field (...)`;
     - `"fireMode": "Burst"`: path `weapons[0].fireMode`.
   - A Fact `NineDotEightOneBindsToTheLiteralsBits` asserts that `default.json` binds `movement.gravity` to bits `0x411CF5C3`, the bits of `9.81f`, and that `movement` absent binds as null.
-- [ ] T025 [P] Write failing test `SimConfigValidatorTests.ValidatorReportsTheGuardsErrorsUnchanged(string caseName)` in `tests/MmoEngine.SimCore.Tests/Config/SimConfigValidatorTests.cs` (FR-029). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimConfigValidatorTests"` and confirm it fails.
+- [X] T025 [P] Write failing test `SimConfigValidatorTests.ValidatorReportsTheGuardsErrorsUnchanged(string caseName)` in `tests/MmoEngine.SimCore.Tests/Config/SimConfigValidatorTests.cs` (FR-029). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimConfigValidatorTests"` and confirm it fails.
   - It is a Theory with rows default, `stepRateHz` 61, gravity NaN, an R11 violation, and zero weapons.
   - `SimConfigValidator.Errors(config)` sequence-equals `ConfigGuard.Check(config)`, path for path and message for message.
   - `new SimConfigValidator().Validate(config).Errors` has the same `PropertyName` and `ErrorMessage` pairs in the same order.
   - The default row has no errors.
-- [ ] T026 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Inputs/InputCodecTests.cs` (FR-018, contracts/input-command-format.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~InputCodecTests"` and confirm they fail.
+- [X] T026 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Inputs/InputCodecTests.cs` (FR-018, contracts/input-command-format.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~InputCodecTests"` and confirm they fail.
   - `ExampleEncodesToItsContractBytes`:
     - `TryEncode(new InputCommand(1, 100, Buttons.Forward | Buttons.Fire, 16384, -1024, 0), span17)` returns true and writes `49 01 01 00 00 00 64 00 00 00 81 00 00 40 00 fc 00`.
     - `TryDecode` of those bytes returns true with that exact command.
@@ -315,7 +316,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - 16 bytes: message `input length at offset 16: 17 bytes expected, got 16`;
     - 20 bytes: `Oversized` 17 `length`, `17 bytes expected, got 20`.
   - `EncodeThenDecodeIsTheIdentity`: a CsCheck property with a fixed seed constant declared in the test and printed on failure. Over random 17-byte buffers with byte 0 `0x49` and byte 1 `0x01`, `TryDecode` succeeds, and `TryEncode` of the result gives the same 17 bytes.
-- [ ] T027 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/StateSerializerTests.cs` (FR-016, contracts/state-serialization.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StateSerializerTests"` and confirm they fail.
+- [X] T027 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/StateSerializerTests.cs` (FR-016, contracts/state-serialization.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StateSerializerTests"` and confirm they fail.
   - `WorkedExampleHasItsBytesAndHash`:
     - `StateSerializer.Write` of the worked example's values gives exactly `TestStates.WorkedExample`, 136 bytes, with events at `0x7c`.
     - `StateHash.Compute` of it is `0x35038da2f2d9459c`, and `ToString("x16")` is `35038da2f2d9459c`.
@@ -347,15 +348,15 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
 
     Every row except the `events.expiries.count` row also asserts the same code and field from `StateSerializer.ReadCommitted`.
   - `ReadCommittedAcceptsAStateWithEvents`: `StateSerializer.Write` of the worked example's records plus one shot event (character 1, slot 0, shot counter 0, projectile 1, direction (0, 0, 1)) and one movement outcome event (character 1, `HeadroomBlocked`). `ReadCommitted` of those bytes returns the same characters, weapons, `NextProjectileId` and exactly those two events, and writing the snapshot again gives the same bytes. `ReadLoaded` of the same bytes throws `CoreFormatException` with `Inconsistent`, field `events.shots.count` and detail `a loaded state has no events, found 1`.
-- [ ] T028 [P] Write failing test `StateHashTests.HashIsXxHash64WithSeedZero` in `tests/MmoEngine.SimCore.Tests/Hashing/StateHashTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StateHashTests"` and confirm it fails.
+- [X] T028 [P] Write failing test `StateHashTests.HashIsXxHash64WithSeedZero` in `tests/MmoEngine.SimCore.Tests/Hashing/StateHashTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StateHashTests"` and confirm it fails.
   - `StateHash.Compute` of the empty span is `0xEF46DB3751D8E999`.
   - Of `TestStates.WorkedExample` it is `0x35038da2f2d9459c`.
   - Of 1 MiB of bytes `(byte)(i * 31)` it equals `XxHash64.HashToUInt64(bytes, 0)`.
-- [ ] T029 [P] Write failing test `StepRecordTests.RecordIsStepLengthStateAndHash` in `tests/MmoEngine.SimCore.Tests/Batch/StepRecordTests.cs` (contracts/state-serialization.md#step-record). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StepRecordTests"` and confirm it fails.
+- [X] T029 [P] Write failing test `StepRecordTests.RecordIsStepLengthStateAndHash` in `tests/MmoEngine.SimCore.Tests/Batch/StepRecordTests.cs` (contracts/state-serialization.md#step-record). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StepRecordTests"` and confirm it fails.
   - `StepRecord.Write` of the worked example is 152 bytes: `00 00 00 00`, then `88 00 00 00`, then the 136 state bytes, then `9c 45 d9 f2 a2 8d 03 35`.
   - Writing into 151 bytes returns false.
   - `StepRecord.TryRead` walks two packed records back to back, giving each one's step, state and hash, and refuses a record truncated mid-state.
-- [ ] T030 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/CollisionFileTests.cs` (FR-021, contracts/collision-data-format.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CollisionFileTests"` and confirm they fail.
+- [X] T030 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/CollisionFileTests.cs` (FR-021, contracts/collision-data-format.md). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CollisionFileTests"` and confirm they fail.
   - `TinyWorldEncodesToItsContractBytesAndChecksum`:
     - `CollisionFile.Encode(TestWorlds.TinyWorld())` is 188 bytes, equal to the contract's hex dump. The trailer is `9c ca 3f 3b fa e3 24 92`, and the decoded `Checksum` is `0x9224e3fa3b3fca9c`.
     - `HeightfieldOnly()` encodes to 92 bytes.
@@ -372,7 +373,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - truncated to 100: `Truncated` 100 `fileLength`, message `collision fileLength at offset 100: the file declares 188 bytes, 100 are present`;
     - 4 bytes appended: `Oversized` 188 `fileLength`;
     - `write 64 "0000803f"`: `ChecksumMismatch` 180 `checksum`, message `collision checksum at offset 180: the trailer is 9224e3fa3b3fca9c, the content hashes to <x16>`, where `<x16>` is the XxHash64 of the mutated bytes [0, 180).
-- [ ] T031 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Collision/CollisionWorldBuildTests.cs` (FR-004, edge case: degenerate triangles). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CollisionWorldBuildTests"` and confirm they fail.
+- [X] T031 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Collision/CollisionWorldBuildTests.cs` (FR-004, edge case: degenerate triangles). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CollisionWorldBuildTests"` and confirm they fail.
   - `DegenerateTrianglesLoadAndAreIgnored`: tiny-world loads.
     - `DegenerateTriangleCount` is 1.
     - Triangle ID 10 (indices 0, 0, 1) is unused: `TryGetMeshTriangle(10, ...)` is false.
@@ -387,7 +388,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
   - `HeightAtFollowsTheFixedDiagonal`: on tiny-world, `HeightAt(0.75f, -0.75f)` is 0 (triangle k = 0), `HeightAt(0.25f, -0.25f)` is 0.125f within 1e-6 (k = 1), `HeightAt(0.5f, -0.5f)` is exactly 0 (on the diagonal), and `HeightAt(0f, 0f)` is 0.25f.
   - `SharedVerticesAreBitIdentical`: on a 9 × 9 heightfield with origin (−1000.3f, 2000.7f) and `cellSize` 0.37f, every vertex of every heightfield triangle equals the bits of the one sample expression `(originX + (float)i*cellSize, h, originZ + (float)j*cellSize)`. A vertex shared by neighbouring cells is identical in each.
   - `MaxQueryCandidatesCoversTheWidestCapsuleBox(float width, int expected)`, Theory on `TestWorlds.Flat()` (cellSize 1, gridCellSize 4). (1.22f, 274) is the placeholder capsule's box, research R6. Further rows are (0.5f, 264), which is 2·(1+1)² + 64·(1+1)²; (4f, 306), which is 2·(4+1)² + 64·(1+1)²; (4.5f, 648), which is 2·(5+1)² + 64·(2+1)² and takes the grid term past one grid cell; and (8.5f, 1224), which is 2·(9+1)² + 64·(3+1)². Each asserts `2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²`.
-- [ ] T032 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/RecordedStreamTests.cs` (FR-022, contracts/recorded-stream-format.md). Each test builds the two-steps stream in the test:
+- [X] T032 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Formats/RecordedStreamTests.cs` (FR-022, contracts/recorded-stream-format.md). Each test builds the two-steps stream in the test:
   - stepHz 30, the default config, `matchSalt` `0x0123456789abcdef`, `collisionChecksum` `0x9224e3fa3b3fca9c`, seed 0;
   - the initial state `TestStates.WorkedExample`;
   - step 1 with the example command for index 0 and expected hash 1, and step 2 with no command and expected hash 2.
@@ -419,7 +420,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
   - `EmbeddedInputErrorsCarryTheirStepAndCommandPath(string caseName)`, with every mutation followed by `fixChecksum`:
     - command-bad-version, `write 905 "02"`: `UnsupportedVersion` 905 `steps[0].commands[0].input.version`, message `stream steps[0].commands[0].input.version at offset 905: unsupported version 2; this reader supports version 1`;
     - command-unknown-magic, `write 904 "4a"`: `UnknownMagic` 904 `steps[0].commands[0].input.formatId`.
-- [ ] T033 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Hitboxes/HitboxBuilderTests.cs` (FR-011, data-model.md#hitbox-layout-and-hitboxes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~HitboxBuilderTests"` and confirm they fail.
+- [X] T033 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Hitboxes/HitboxBuilderTests.cs` (FR-011, data-model.md#hitbox-layout-and-hitboxes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~HitboxBuilderTests"` and confirm they fail.
   - `WorldPointsFollowTheYawRotation(Stance stance, ushort yaw)`, Theory over {Standing, Crouched} × {0, 16384, 32768, 49152, 12345}. `HitboxBuilder.Build` uses the layout from `TestConfigs.Compiled(30)` and position (10.5, 2, −3.25).
     - It writes Head, Torso and Legs into a 3-element span, in that order.
     - Each endpoint's bits equal `wx = fx + ((sy*lf) - (cy*lr))`, `wy = fy + lu` and `wz = fz + ((cy*lf) + (sy*lr))`, with `(sy, cy)` from `SimMath.SinCosBinaryAngle(yaw)`.
@@ -428,7 +429,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
   - `BoundingSphereEnclosesEveryCapsule(Stance stance)`:
     - The returned centre is (fx, fy + BoundCenterUp, fz) for every yaw. `BoundCenterUp` is 0.885 for standing and 0.57 for crouched, within 1e-6.
     - For every capsule endpoint e, |e − centre| + radius ≤ BoundRadius − 0.01, within 1e-5.
-- [ ] T034 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/World/SimWorldTests.cs` (data-model.md#world-simworld). Use `TestWorlds.Flat()` and the `TestStates` states. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimWorldTests"` and confirm they fail.
+- [X] T034 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/World/SimWorldTests.cs` (data-model.md#world-simworld). Use `TestWorlds.Flat()` and the `TestStates` states. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SimWorldTests"` and confirm they fail.
   - `StepAdvancesTheStepNumberAndHashesTheCanonicalState(int hz)`, over `TestRates.All`. A world from `TestConfigs.Compiled(hz)`, Reset with `StandingOnFlat` and salt 7, steps once with no commands.
     - `Fault.Code` is `None`, and `report.Step` and `CurrentStep` are 1.
     - The state's `step` field is 1, `State.Length` is 136, and `Hash` equals `StateHash.Compute(report.State)`.
@@ -455,7 +456,7 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
     - the candidate buffer is `collision.MaxQueryCandidates((3f * 0.4f) + (2f * 0.01f))`, which is 274;
     - the state buffer is 91,672 bytes;
     - the shot buffer holds 64, the hit and expiry buffers hold 1,024 each, and the other three event buffers hold 64 each.
-- [ ] T035 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/World/CanonicalisationTests.cs`. Each uses a world on `Flat()` Reset with `WithFlyingProjectile`. Each Theory runs over the 18 float paths of the character and projectile records: `characters[0].position.x` … `characters[0].groundNormal.z` and `projectiles[0].origin.x` … `projectiles[0].position.z`. The paths map to `(fieldOrdinal, elementIndex)` through `StateSerializer.TryFindField`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CanonicalisationTests"` and confirm they fail.
+- [X] T035 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/World/CanonicalisationTests.cs`. Each uses a world on `Flat()` Reset with `WithFlyingProjectile`. Each Theory runs over the 18 float paths of the character and projectile records: `characters[0].position.x` … `characters[0].groundNormal.z` and `projectiles[0].origin.x` … `projectiles[0].position.z`. The paths map to `(fieldOrdinal, elementIndex)` through `StateSerializer.TryFindField`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CanonicalisationTests"` and confirm they fail.
   - `NegativeZeroIsCommittedAndHashedAsPositiveZero(string fieldPath)` (edge case: negative zero; FR-016):
     - World A steps with `StepWithInjectedBits(empty, ordinal, index, 0x80000000)`, and an identical world B with bits `0x00000000`.
     - Both commit, and the field's 4 bytes in A's `State` are `00 00 00 00`.
@@ -464,24 +465,24 @@ Every test below is in `tests/MmoEngine.SimCore.Tests/` (namespace `MmoEngine.Si
   - `NonFiniteFieldRefusesTheStepAndKeepsThePreviousState(string fieldPath, uint bits)`, × {`0x7FC00000`, `0x7F800000`, `0xFF800000`} (edge case: NaN and infinity; FR-017):
     - `Fault.Code` is `StepFaultCode.NonFinite`, `Fault.Path` equals `fieldPath` (for example `characters[0].velocity.y`), `Hash` is 0, and `report.Step` is the previous step.
     - Afterwards `CurrentStep` is unchanged, and a plain Step gives the step number, state bytes and hash an untouched world gives for that step.
-- [ ] T036 [P] Write failing zero-allocation tests for Phase 2's tick-path entry points in `tests/MmoEngine.SimCore.Tests/Allocation/` (FR-032, US7.3, SC-005), one class per file, each `[Collection(ZeroAllocationCollection.Name)]` (T013). Every row warms its call up twice, then counts with `GC.GetAllocatedBytesForCurrentThread()` before and after 1,000 calls into buffers allocated before the count, and asserts exactly 0. The failure message names the row and the byte count.
+- [X] T036 [P] Write failing zero-allocation tests for Phase 2's tick-path entry points in `tests/MmoEngine.SimCore.Tests/Allocation/` (FR-032, US7.3, SC-005), one class per file, each `[Collection(ZeroAllocationCollection.Name)]` (T013). Every row warms its call up twice, then counts with `GC.GetAllocatedBytesForCurrentThread()` before and after 1,000 calls into buffers allocated before the count, and asserts exactly 0. The failure message names the row and the byte count.
   - `HashAllocationTests.StateHashAllocatesNothing(string stateCase)` in `HashAllocationTests.cs`. Rows: `worked-example` (`TestStates.WorkedExample`, 136 bytes) and `max-length` (a buffer of `CompiledConfig.MaxStateLength` bytes for `TestConfigs.Compiled(30)`). The call is `StateHash.Compute`.
   - `HashAllocationTests.StepRecordWriteAllocatesNothing` in the same file: `StepRecord.Write` of the worked example's record (step 0, its 136 state bytes and its hash) into a preallocated 152-byte destination.
   - `InputAllocationTests.DecodeAllocatesNothing(string inputCase)` in `InputAllocationTests.cs`. Rows: `valid`, the 17-byte example `49 01 01 00 00 00 64 00 00 00 81 00 00 40 00 fc 00` from contracts/input-command-format.md, and each of the six refusal inputs of that contract, in contract order. The call is `InputCodec.TryDecode`.
   - `HitboxAllocationTests.BuildAllocatesNothing(Stance stance)` in `HitboxAllocationTests.cs`. Rows: Standing and Crouched. The call is `HitboxBuilder.Build` with that stance's `HitboxLayout` from `TestConfigs.Compiled(30)`, position (0.5, 0, 0.5) and aim yaw `(ushort)(64 * i)` for call i, into a preallocated three-element `Hitbox` span.
   - `WorldAllocationTests.StepAllocatesNothing(int hz)` in `WorldAllocationTests.cs`, over `TestRates.All`. A `SimWorld` on `TestWorlds.Flat()` with `TestConfigs.Compiled(hz)`, Reset with `TestStates.StandingOnFlat` and salt 7. The call is `SimWorld.Step` with an empty command span, and every report has `Fault.Code` `None`. Phases 3, 6 and 7 replace the stage bodies, so this row is the world-level regression they keep green.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Allocation"` and confirm it fails: it does not compile until `StateHash`, `StepRecord`, `InputCodec`, `HitboxBuilder` and `SimWorld` exist.
-- [ ] T037 [P] Write failing test `ConfigCommandTests.ConfigCheckExitsZeroForValidOneForInvalidTwoForMissing(string caseName)` in `tests/MmoEngine.SimCore.Tests/Cli/ConfigCommandTests.cs` (FR-029, contracts/simcore-cli.md#config-check). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigCommandTests"` and confirm it fails.
+- [X] T037 [P] Write failing test `ConfigCommandTests.ConfigCheckExitsZeroForValidOneForInvalidTwoForMissing(string caseName)` in `tests/MmoEngine.SimCore.Tests/Cli/ConfigCommandTests.cs` (FR-029, contracts/simcore-cli.md#config-check). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ConfigCommandTests"` and confirm it fails.
   - It is a Theory through `SimcoreCli.Run`, with these rows:
     - `config check <RepoPaths.Root>/simcore/config/default.json`: exit 0 and empty stdout;
     - a temp copy with `stepRateHz` 61 and `walkSpeed` 0: exit 1 and stdout exactly `stepRateHz: must be between 20 and 60\nmovement.walkSpeed: must be between 0.1 and 20\n`;
     - a missing file: exit 2, with stderr naming the path;
     - no file argument: exit 2.
-- [ ] T038 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Cli/EnvironmentTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Cli.EnvironmentTests"` and confirm they fail.
+- [X] T038 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Cli/EnvironmentTests.cs`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Cli.EnvironmentTests"` and confirm they fail.
   - `UnknownEnvironmentExitsTwoNamingTheVariable`: `Program.Run(["config", "check", <default.json>], out, err, environmentName: "Prod")` exits 2, and stderr contains `DOTNET_ENVIRONMENT: must be one of Development, Dev, Test, Staging, Production, was 'Prod'`. With `environmentName: null` it exits 0, defaulting to Development.
   - `KnownEnvironmentsEqualTheSimulators`: `SimEnvironment.Allowed` sequence-equals `MmoEngine.Regionizer.Simulator.Config.EnvironmentNames.Allowed`, and `SimEnvironment.Default` is `Development`.
-- [ ] T039 [P] Write failing test `CliLoggingTests.EveryLogLineIsCompactJsonWithToolSimcore` in `tests/MmoEngine.SimCore.Tests/Cli/CliLoggingTests.cs`. `SimcoreCli.Run("config", "check", <default.json>)` writes at least one stderr line. Every non-empty line parses as a JSON object with `@t`, `@mt` and `"Tool": "simcore"`, and nothing is logged to stdout. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CliLoggingTests"` and confirm it fails.
-- [ ] T040 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Cli/AtomicFileTests.cs` (contracts/simcore-cli.md#settings-output-and-exit-codes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~AtomicFileTests"` and confirm they fail.
+- [X] T039 [P] Write failing test `CliLoggingTests.EveryLogLineIsCompactJsonWithToolSimcore` in `tests/MmoEngine.SimCore.Tests/Cli/CliLoggingTests.cs`. `SimcoreCli.Run("config", "check", <default.json>)` writes at least one stderr line. Every non-empty line parses as a JSON object with `@t`, `@mt` and `"Tool": "simcore"`, and nothing is logged to stdout. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CliLoggingTests"` and confirm it fails.
+- [X] T040 [P] Write failing tests in `tests/MmoEngine.SimCore.Tests/Cli/AtomicFileTests.cs` (contracts/simcore-cli.md#settings-output-and-exit-codes). Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~AtomicFileTests"` and confirm they fail.
   - `WriteReplacesTheFileThroughATempFileInTheSameDirectory`: `AtomicFile.WriteAllBytes(path, bytes)` in a `TempDirectories` folder creates the file with exactly those bytes. A second write replaces it, and the folder then holds only that file.
   - `FailedWriteLeavesTheOriginalAndNoTempFile`: `AtomicFile.Write(path, stream => throw new IOException())` rethrows. The original file keeps its bytes, and no other file remains in the folder.
 
@@ -515,11 +516,12 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
 
     `emit_cs.py --list` prints `name 0xXXXXXXXX` per constant.
 
-  Run them with `python3 -m venv "$TMPDIR/simcore-venv" && "$TMPDIR/simcore-venv/bin/pip" install -r tools/simcore/requirements.txt && "$TMPDIR/simcore-venv/bin/python" tools/simcore/emit_cs.py --out src/MmoEngine.SimCore/Math`. Commit both `.g.cs` files, and paste the `--list` lines into the `SimMathTests.CoefficientsHaveTheirPinnedBits` rows of T016. Makes `SimMathTests.CoefficientsHaveTheirPinnedBits` pass.
+  Run them with `python3 -m venv "$TMPDIR/simcore-venv" && "$TMPDIR/simcore-venv/bin/pip" install -r tools/simcore/requirements.txt && "$TMPDIR/simcore-venv/bin/python" tools/simcore/emit_cs.py --out src/MmoEngine.SimCore/Math`. Commit both `.g.cs` files, and paste the `--list` lines, one string per line, into `SimMathTests.CoefficientLines`, which feeds the `SimMathTests.CoefficientsHaveTheirPinnedBits` rows of T016 (its 2/π rows are already there). Makes `SimMathTests.CoefficientsHaveTheirPinnedBits` pass.
 - [ ] T043 [P] Add `simcore/config/default.json` as the example of contracts/config-rules.md#the-configuration-file, verbatim (two weapons, two projectile classes, 30 Hz). Together with the config and server tasks below, it makes T021 pass.
 - [ ] T044 Implement `src/MmoEngine.SimCore/Formats/FormatError.cs` and `src/MmoEngine.SimCore/Formats/CoreFormatException.cs` (contracts/collision-data-format.md#api). Makes T019 pass.
   - `FormatError` is a `readonly struct` with `Format`, `Code`, `Offset` (`long`), `Field` and `Detail`. `ToString()` gives `"<format> <field> at offset <n>: <detail>"`.
   - `Detail` is formatted when read, from a stored `FormatDetail` template (a small enum in the same file: ExpectedLength, UnknownFormatId, UnsupportedVersion, DeclaredLength, CountsNeed, ChecksumMismatch, NotFinite, OutOfRangeFloat, NotAbove, Missing, …) and up to three `ulong` arguments, so creating one on the tick path allocates nothing. Decoders off the tick path may pass a preformatted detail string instead.
+  - The tick-path constructor is `internal FormatError(string format, FormatErrorCode code, long offset, string field, FormatDetail detail, ulong a = 0, ulong b = 0, ulong c = 0)`. `FormatDetail.ExpectedLength` with (17, 16) reads `17 bytes expected, got 16`, and `FormatDetail.UnsupportedVersion` with (2, 1) reads `unsupported version 2; this reader supports version 1`. `default(FormatError).Code` is `None`, and two errors with the same fields are equal.
   - `CoreFormatException(FormatError)` has `Message == error.ToString()`.
 - [ ] T045 Implement `src/MmoEngine.SimCore/Math/SimMath.cs` (`public static class SimMath`, research R3 and R4). Inside it write `System.MathF` fully qualified, and evaluate every polynomial by Horner in `float` with every operation parenthesised and no FMA. Makes the remaining tests of T016 pass (NonFiniteInputsReturnNaN, SignedZerosAndSubnormalsFollowTheContract, SaturatingConversionsClampNaNAndOutOfRange, MinMaxAreCompareSelects, SinCosBinaryAngleIsExactAtTheQuadrants, EachReductionPathMeetsItsBoundAtSampleInputs).
   - `Sin`, `Cos`, `SinCos(float, out float s, out float c)` and `Tan` reduce as follows:
@@ -552,16 +554,18 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `SimConfig.cs`: sealed classes `SimConfig`, `WorldConfig`, `MovementConfig`, `WeaponConfig`, `ProjectileClassConfig`, `HitboxesConfig`, `HitboxCapsuleConfig` (`A`, `B`, `Radius`), `HitboxPointConfig` (`Fwd`, `Right`, `Up`) and `InputConfig`.
     - They have `get; set;` properties: `int` for Int rows, `float` for Float rows and `FireMode` for the Enum row.
     - Sections, array elements and capsule points are nullable, so a missing one is a shape error.
+    - `Weapons`, `ProjectileClasses`, `Hitboxes.Standing` and `Hitboxes.Crouched` are `List<T?>?`: tests assign `[]`, set an element to null and walk them as `IList`.
+    - The classes have no public instance property besides the rule table's fields, sections and lists: `CompiledConfigTests` walks them by reflection and counts the default's 116 leaves, and `ConfigRuleTableTests` maps every leaf to one template row.
     - `SimConfig.Clone()` makes a deep copy.
   - `ConfigError.cs`: `sealed record ConfigError(string Path, string Message)`, whose `ToString()` is `"{Path}: {Message}"`.
   - `ConfigValidationException.cs`: the contract's exact shape.
 - [ ] T049 Implement the rule table in `src/MmoEngine.SimCore/Config/` (contracts/config-rules.md#rule-table, #relations, #check-order-and-the-error-list). Makes the `ConfigGuard` assertions of T020 pass; its `SimConfigValidator` half passes with the server task below.
-  - `ConfigFields.cs`: `ImmutableArray<ConfigField>`, one template row per field definition of the six sections (57 rows), in ascending order of each row's first-instance fieldId. Each row holds:
-    - section, field number, the path template (for example `weapons[{i}].roundsPerMinute` or `hitboxes.{stance}[{c}].a.fwd`), kind, unit, min and max;
+  - `ConfigFields.cs`: `public static ImmutableArray<ConfigField> Templates`, one template row per field definition of the six sections (57 rows), in ascending order of each row's first-instance fieldId. Each row, a sealed class `ConfigField`, holds:
+    - section, field number, the path template `PathTemplate` (for example `weapons[{i}].roundsPerMinute`, `projectileClasses[{k}].maxRangeM` or `hitboxes.{stance}[{c}].a.fwd`), `Kind` (`ConfigFieldKind`: Int, Float, Enum), unit, and the bounds as value bits, `MinBits` and `MaxBits` (an Int bound's two's complement, a Float bound's bits, the Enum row's 0 and 1);
     - a getter and a setter that take a `SimConfig` and the instance (slot, class, or stance and capsule) and work in `uint` value bits (Int as two's complement, Float as its bits, Enum as its value, set by the lossless cast `(FireMode)bits`).
 
     `FieldId(section, instance, field)` is `section << 12 | instance << 8 | field`, and hitbox capsule fields are `0x4000 | s << 8 | c << 4 | j`.
-  - `ConfigFields.Expand(int weaponCount, int projectileClassCount)` is the one expansion every consumer uses. It returns an `ImmutableArray<ExpandedField>` (`FieldId`, the concrete `Path`, the `Template` row and the instance) for each present instance, in ascending fieldId:
+  - `ConfigFields.Expand(int weaponCount, int projectileClassCount)` is the one expansion every consumer uses. It returns an `ImmutableArray<ExpandedField>` (`FieldId` as a `ushort`, the concrete `Path`, the `Template` row, the same `ConfigField` instance as in `Templates`, and the instance) for each present instance, in ascending fieldId:
     - the general, movement and input rows once each;
     - the weapon rows for slots 0 to weaponCount − 1, and the projectile-class rows for classes 0 to projectileClassCount − 1;
     - the seven capsule templates over s 0 and 1 and c 0 to 2, with `0x4000 | s << 8 | c << 4 | j`;
@@ -588,22 +592,24 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `src/MmoEngine.SimCore/World/StepFault.cs`: `readonly struct StepFault(StepFaultCode Code, int FieldOrdinal, int ElementIndex)`, whose `Path` is formatted on demand through the layout table;
   - `src/MmoEngine.SimCore/World/StepReport.cs`: a `ref struct` with `Step`, `Fault`, `Hash`, `State`, `Events` and `Counters` (`StepCounters` with Sweeps, SlideCapHits and FireBlocks);
   - `src/MmoEngine.SimCore/World/CharacterCommand.cs`: `readonly record struct CharacterCommand(int CharacterIndex, InputCommand Command)`.
+  - The state and event structs have settable members named as the state layout (`CharacterState.Id`, `Position`, `Velocity`, `GroundNormal`, `AimYaw`, `AimPitch`, `Stance`, `Flags`, `LastSequence`, `ActiveSlot`, `WeaponCount`; `WeaponState.Phase`, `Flags`, `PhaseSteps`, `FireWait`, `ShotCounter`, `Magazine`, `Reserve`, `Heat`, `StepsSinceShot`, `RecoilPitch`, `RecoilYaw`; `Projectile.Id`, `OwnerId`, `Class`, `LaunchStep`, `Origin`, `LaunchVelocity`, `Position`; `ProjectileHit.ProjectileId`, `Kind`, `TargetId`, `Hitbox`, `Point`, `T`; `ShotEvent.CharacterId`, `Slot`, `ShotCounter`, `ProjectileId`, `Direction`; `ExpiryEvent.ProjectileId`, `Reason`; `InputRejectionEvent` and `FireBlockEvent` `.CharacterId`, `.Reason`; `MovementOutcomeEvent.CharacterId`, `Flags`), with value equality. Tests build them with object initializers and `with`.
 
   Supports the serializer and world tasks.
 - [ ] T052 Implement `src/MmoEngine.SimCore/Formats/StateSerializer.cs`, `src/MmoEngine.SimCore/Hashing/StateHash.cs` and `src/MmoEngine.SimCore/Batch/StepRecord.cs` (contracts/state-serialization.md). Makes T027, T028, T029 and T036's `HashAllocationTests` pass.
   - `StateSerializer` holds the layout as data: `ImmutableArray<StateField>` (ordinal, record kind, offset in record, size, type, name). It provides:
     - the constants of #api and `MaxLength(c, p, w, s)`, which is `24 + c·(67 + 30·w + 25·s) + 80·p`;
     - `TryFindField(string path, out int fieldOrdinal, out int elementIndex)` and `FieldPath(int fieldOrdinal, int elementIndex)`;
-    - `Write(...)` over the world's spans (header values, characters, weapons, projectiles and the six event spans) into a caller buffer, in layout order. It applies the finite check `(b & 0x7F800000) == 0x7F800000`, returning a `StepFault` naming the first such field, and rewrites `0x80000000` to 0 in both the buffer and the source field. It allocates nothing.
-    - `ReadLoaded(ReadOnlySpan<byte>, in StateErrorContext context)`, which runs the byte-only checks of #loading-a-state in layout order and returns a `StateSnapshot`. The `StateErrorContext` carries the format (`state` or `stream`), the base offset and the field prefix (`initialState.`). The reader allocates; it is not tick path. A refusal throws `CoreFormatException` with the exact detail text, for example `9000 is outside [-8192, 8192]` and `a loaded state has no events, found 1`.
+    - `StepFault Write(uint step, uint nextProjectileId, int weaponSlots, Span<CharacterState> characters, ReadOnlySpan<WeaponState> weapons, Span<Projectile> projectiles, Span<ShotEvent> shots, Span<ProjectileHit> hits, ReadOnlySpan<ExpiryEvent> expiries, ReadOnlySpan<InputRejectionEvent> inputRejections, ReadOnlySpan<FireBlockEvent> fireBlocks, ReadOnlySpan<MovementOutcomeEvent> movementOutcomes, Span<byte> destination, out int length)` over the world's spans (weapons flat by character index × `weaponSlots` + slot, each character's `weaponCount` written as `weaponSlots`) into a caller buffer that may be longer than the state, in layout order. The tests call it with these parameter names. It applies the finite check `(b & 0x7F800000) == 0x7F800000`, returning a `StepFault` naming the first such field, and rewrites `0x80000000` to 0 in both the buffer and the source field. It allocates nothing.
+    - `ReadLoaded(ReadOnlySpan<byte>, in StateErrorContext context)`, where the static `StateErrorContext.State` is the standalone context (format `state`, base 0, no prefix), which runs the byte-only checks of #loading-a-state in layout order and returns a `StateSnapshot`. The `StateErrorContext` carries the format (`state` or `stream`), the base offset and the field prefix (`initialState.`). The reader allocates; it is not tick path. A refusal throws `CoreFormatException` with the exact detail text, for example `9000 is outside [-8192, 8192]` and `a loaded state has no events, found 1`.
     - `ReadCommitted(ReadOnlySpan<byte> state)` (internal), the reader for a state that `SimWorld.Step` committed: test support reads `StepReport.State` with it. It runs the same byte-only checks in the same order with format `state`, except the last row (all six event counts 0), and it decodes the six event lists. A committed state with events therefore reads back, and every other byte-only refusal is the same as `ReadLoaded`'s. It allocates and is not tick path.
-    - Both readers return a `StateSnapshot`: the step, the characters with their weapons, the projectiles, `NextProjectileId` and the six event lists (always empty from `ReadLoaded`).
+    - Both readers return a `StateSnapshot`: `Step`, `NextProjectileId`, `Characters`, `Weapons` (flat, in record order), `Projectiles` and the six event lists `Shots`, `Hits`, `Expiries`, `InputRejections`, `FireBlocks` and `MovementOutcomes` (always empty from `ReadLoaded`), each enumerable.
   - `StateHash.Compute` is `XxHash64.HashToUInt64(bytes, 0)`.
-  - `StepRecord` writes and reads `u32 step | u32 stateLength | state | u64 hash`, little-endian.
+  - `StepRecord` writes and reads `u32 step | u32 stateLength | state | u64 hash`, little-endian: `static bool Write(uint step, ReadOnlySpan<byte> state, ulong hash, Span<byte> destination, out int written)` returns false and writes nothing when the destination is shorter than 16 + the state length, and `static bool TryRead(ReadOnlySpan<byte> source, out uint step, out ReadOnlySpan<byte> state, out ulong hash, out int length)` returns false for a record that is not whole. Both allocate nothing.
 - [ ] T053 Implement `src/MmoEngine.SimCore/Config/CompiledConfig.cs`: `CompiledConfig.Create(SimConfig)` runs `ConfigGuard.Check` and throws `ConfigValidationException` on any error. It then computes every value of contracts/config-rules.md#compile-time-conversions in `float` with the shown parenthesisation, or in `int`. Makes T022 pass.
   - `ceilSteps(ms)` is `(ms * Hz + 999) / 1000`, and `angleUnits` is `SimMath.RoundToInt((deg * 65536f) / 360f)`.
   - `RecoilRecoveryPerStep` is raised to 1 when the rate is above 0.
   - It builds a `HitboxLayout` per stance, with BoundCenterUp, BoundRadius plus 0.01f, and EyeHeight.
+  - The tests read `ShotCost`, `Dt`, `GroundAccelPerStep`, `GroundDecelPerStep`, `AirAccelPerStep`, `GravityPerStep`, `CosSlopeLimit`, `SweepTarget`, `SweepTolerance`, `PushOutThreshold` and `HeadroomClearance`; `AxisTop[s]` and `HitboxLayouts[s]` by stance (0 standing, 1 crouched); `HalfG[k]`, `MaxRangeSq[k]` and `LifetimeSteps[k]` by class; and `Weapons[i]` by slot, with the `int`s `Rpm`, `ReloadSteps`, `EquipSteps`, `HeatCooldownDelaySteps`, `RecoilRecoveryDelaySteps`, `RecoilKickPitchUnits`, `RecoilKickYawUnits`, `RecoilMaxPitchUnits`, `RecoilMaxYawUnits` and `RecoilRecoveryPerStep`, the `uint`s `HeatPerShotScaled`, `OverheatThresholdScaled`, `HeatRecoveryScaled` and `HeatCooldownPerStep`, and the `float` `VersMax`.
   - It stores per-slot compiled weapons and per-class projectile values in `ImmutableArray`s, `MaxShotsPerStepMax` (S), `MaxStateLength = StateSerializer.MaxLength(maxCharacters, maxProjectiles, weaponSlots, S)`, `MaxStepRecordLength = MaxStateLength + 16`, and `Config` as a deep copy.
 - [ ] T054 Implement `src/MmoEngine.SimCore/Config/ConfigBlock.cs` (contracts/recorded-stream-format.md#config-block). Makes T023 pass.
   - `Encode(SimConfig)` takes a shape-valid config and writes `u16 count`, then `{u16 fieldId, u32 valueBits}` per row of `ConfigFields.Expand` for the config's weapon and projectile-class counts, in ascending fieldId.
@@ -626,15 +632,15 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - the one sample expression;
     - the fixed v00 → v11 diagonal, with triangle IDs `2·(j·(columns − 1) + i) + k`, generated on demand by `GetTriangle(int id, out Vec3 a, out Vec3 b, out Vec3 c)`;
     - `HeightAt` by the same diagonal rule;
-    - the playable area, and the boundary planes −4 to −1.
+    - the playable area as `MinX`, `MaxX`, `MinZ` and `MaxZ`, and the boundary planes −4 to −1 through `GetBoundaryPlane(int id, out Vec3 normal, out float distance)`: the plane is the points p with `Vec3.Dot(normal, p) == distance`, its normal facing into the playable area.
   - `MeshSet.cs`:
     - triangles in ID order (H + global index) with normal `(AB × AC) / SimMath.Sqrt(|AB × AC|²)` and AABB from `SimMath.Min` and `SimMath.Max`;
     - a triangle is dropped as degenerate when |e|² < 1e-6 for any edge, or |AB × AC|² ≤ 1e-8·(maxEdge²)², or ≤ 4e-12. Its ID stays unused and `DegenerateTriangleCount` counts it;
-    - `TryGetMeshTriangle(int id, out MeshTriangle)`.
+    - `TryGetMeshTriangle(int id, out MeshTriangle)`, false for a heightfield ID, a dropped degenerate ID or an ID past the last triangle; `MeshTriangle` has `Normal`, `Min` and `Max` (`Vec3`).
   - `UniformGrid.cs`:
     - `CellsX = max(1, SimMath.TruncateToInt(System.MathF.Ceiling(extentX / gridCellSize)))`, and CellsZ likewise;
     - one clamped cell function `clamp(SimMath.FloorToInt((x - originX) / gridCellSize), 0, CellsX - 1)`;
-    - a counting pass in ID order, building CSR `CellStart[CellsX·CellsZ + 1]` and ascending `CellTriangles`.
+    - a counting pass in ID order, building CSR `CellStart[CellsX·CellsZ + 1]` and ascending `CellTriangles`, exposed read-only (the tests copy them with `ToArray()`).
 
     The per-cell and registration refusals (check 9) are Phase 8's.
   - `CollisionWorld.cs`: an immutable `sealed partial class` with:
@@ -650,7 +656,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
 
   Checks 5, 6, 8 and 9 are Phase 8's, and their fixtures are its red tests.
 - [ ] T059 Implement `src/MmoEngine.SimCore/Formats/RecordedStream.cs` with `RecordedStep` and `RecordedCommand` (contracts/recorded-stream-format.md#api). Makes T032 pass.
-  - It has a public constructor over `rulesRevision`, `stepHz`, `seed`, `matchSalt`, `collisionChecksum`, `SimConfig`, the initial state bytes and the steps. `CharacterCount` comes from the state header.
+  - It has a public constructor `RecordedStream(uint rulesRevision, int stepHz, ulong seed, ulong matchSalt, ulong collisionChecksum, SimConfig config, ReadOnlyMemory<byte> initialState, IReadOnlyList<RecordedStep> steps)`; the tests call it with these parameter names. `CharacterCount` comes from the state header.
   - `Decode` runs checks 1–4 and 7, then:
     - check 9 through the internal `ConfigBlock` overload (`stream`, base 64, `config.`);
     - the byte-only half of check 11 through `StateSerializer.ReadLoaded` (`stream`, base `64 + configLength`, `initialState.`);
@@ -677,7 +683,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - stage 4 builds hitboxes with `HitboxBuilder` into scratch;
     - stage 6 calls `StateSerializer.Write` and `StateHash.Compute`;
     - stage 7 swaps next into current and sets the step. A fault commits nothing and returns `Hash` 0 with the previous step.
-  - `internal ReadOnlySpan<InputCommand> LastStepInputs`, and internal buffer-size accessors for the tests.
+  - `internal ReadOnlySpan<InputCommand> LastStepInputs` (one entry per character), and the internal buffer-size accessors `CandidateCapacity`, `StateBufferLength`, `ShotCapacity`, `HitCapacity`, `ExpiryCapacity`, `InputRejectionCapacity`, `FireBlockCapacity` and `MovementOutcomeCapacity` (`int`) for the tests.
   - `internal StepReport StepWithInjectedBits(ReadOnlySpan<CharacterCommand> commands, int fieldOrdinal, int elementIndex, uint bits)` runs stages 1–5, writes `bits` into that field of the next state, then runs stages 6 and 7. It is visible to `MmoEngine.SimCore.Tests` only, and is never a delegate field.
   - There is no LINQ, lambda, boxing or exception on the step path, and every loop is bounded by a count from the configuration.
 - [ ] T061 [P] Implement the CLI infrastructure in `src/MmoEngine.SimCore.Cli/`. Makes T040 pass.

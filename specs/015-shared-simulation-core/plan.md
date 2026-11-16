@@ -480,6 +480,17 @@ The design documents settled these points, which the spec leaves open. They are 
   other operations use a fixed keyword or their source text (analyzer-rules.md#messages). The
   quickstart's MMO1004 line is asserted verbatim by `BuildTests.ABuildWithAViolationFails`.
 
+### Decisions made during implementation
+
+- **T018's companion test is a Theory, not a Fact.** `EveryEnumHasExactlyTheContractMembersAndUnderlyingType`
+  takes one row per enum (member count, underlying type, `[Flags]`), because the repo's rule is that
+  data variations are Theories, never loops inside a Fact; it also asserts that the non-flags enums
+  are not `[Flags]`.
+- **T015 checks static auto-property backing fields.** Skipping every compiler-generated field, as the
+  task first said, would let a settable static auto-property (`<Name>k__BackingField`) pass, which is
+  exactly the static mutable state the test exists to refuse. The test skips compiler-generated types
+  and fields except those backing fields.
+
 ## Delivery
 
 The work ships as two vertical slices. Each is a PR that leaves `main` green.

@@ -1,0 +1,88 @@
+using System.Text.Json.Nodes;
+using MmoEngine.SimCore.Tests.Support;
+
+namespace MmoEngine.SimCore.Tests.Cli;
+
+/// <summary>
+/// FR-029, contracts/simcore-cli.md#config-check: <c>simcore config check &lt;file&gt;</c> binds the file
+/// with <c>SimConfigJson</c>, validates it with <c>SimConfigValidator</c> and prints one
+/// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
+/// valid. It exits 0 when valid, 1 when invalid and 2 on a usage error or a missing file.
+/// </summary>
+public sealed class ConfigCommandTests
+{
+    /// <summary>The two errors of the invalid copy, in rule-table order (stepRateHz is section 0, walkSpeed section 1).</summary>
+    private const string InvalidOutput =
+        "stepRateHz: must be between 20 and 60\n" +
+        "movement.walkSpeed: must be between 0.1 and 20\n";
+
+    public static TheoryData<string> Cases => ["valid", "invalid", "missing-file", "no-file-argument"];
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void ConfigCheckExitsZeroForValidOneForInvalidTwoForMissing(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-check");
+        var row = Row(caseName, directory);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(row.Args);
+
+        Assert.True(
+            exit == row.Exit,
+            $"{caseName}: simcore {string.Join(' ', row.Args)} exited {exit}, expected {row.Exit}; stdout: {stdout}; stderr: {stderr}");
+        if (row.Stdout is not null)
+        {
+            Assert.Equal(row.Stdout, stdout);
+        }
+
+        if (row.StderrContains is not null)
+        {
+            Assert.Contains(row.StderrContains, stderr, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>A row's arguments and what it must give. Only the invalid row writes a file, into <paramref name="directory"/>.</summary>
+    private static ConfigCheckRow Row(string caseName, TempDirectory directory)
+    {
+        switch (caseName)
+        {
+            case "valid":
+                return new(["config", "check", DefaultConfigPath], Exit: 0, Stdout: string.Empty);
+
+            case "invalid":
+                return new(["config", "check", WriteInvalidCopy(directory)], Exit: 1, Stdout: InvalidOutput);
+
+            case "missing-file":
+                var missing = directory.Combine("missing.json");
+                return new(["config", "check", missing], Exit: 2, StderrContains: $"{missing}: the file does not exist");
+
+            case "no-file-argument":
+                return new(["config", "check"], Exit: 2);
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case.");
+        }
+    }
+
+    /// <summary>The committed placeholders, opened by the CLI by their absolute path.</summary>
+    private static string DefaultConfigPath => RepoPaths.Combine("simcore", "config", "default.json");
+
+    /// <summary>
+    /// A copy of <c>simcore/config/default.json</c> with <c>stepRateHz</c> 61 and <c>movement.walkSpeed</c>
+    /// 0, written into <paramref name="directory"/>. The repository file is only read.
+    /// </summary>
+    private static string WriteInvalidCopy(TempDirectory directory)
+    {
+        var config = JsonNode.Parse(RepoPaths.ReadAllText("simcore", "config", "default.json"))!.AsObject();
+        config["stepRateHz"] = 61;
+        config["movement"]!["walkSpeed"] = 0;
+        var path = directory.Combine("default.json");
+        File.WriteAllText(path, config.ToJsonString());
+        return path;
+    }
+
+    /// <summary>
+    /// The arguments, the exit code, the exact stdout when given, and a text stderr must contain when given.
+    /// </summary>
+    private sealed record ConfigCheckRow(string[] Args, int Exit, string? Stdout = null, string? StderrContains = null);
+}
