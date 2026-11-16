@@ -77,7 +77,7 @@ spec["base"]["population"]["total"] = 20
 spec["base"]["map"] = {"widthMetres": 2000, "heightMetres": 2000}
 json.dump(spec, open(sys.argv[2], "w"))
 PY
-"$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job" >/dev/null || fail "the sweep did not run as a Kubernetes Job"
+SWEEP_TIMEOUT=900 "$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job" >/dev/null || fail "the sweep did not run as a Kubernetes Job"
 sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain" --scenarios "$ROOT/simulator/scenarios" >/dev/null || fail "the plain-process sweep failed"
 python3 "$ROOT/infra/sweeps/trim.py" "$OUT/plain/infantry-radius" "$OUT/plain-trimmed" >/dev/null
 python3 - "$OUT/job/infantry-radius" "$OUT/plain-trimmed" <<'PY' || fail "the Job's merged sweep differs from the plain-process sweep"
@@ -97,6 +97,11 @@ def rows(d):
 job_rows, plain_rows = rows(job), rows(plain)
 assert len(job_rows) == 5, f"cells.csv has {len(job_rows) - 1} rows, expected 4"
 assert job_rows == plain_rows, f"cells.csv differs:\n{job_rows}\n{plain_rows}"
+PY
+python3 - "$OUT/job/infantry-radius/c000/seed-0/manifest.json" "$(git -C "$ROOT" rev-parse HEAD)" <<'PY' || fail "the Job's runs don't record the image's revision"
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+assert manifest["gitSha"] == sys.argv[2], f"gitSha {manifest['gitSha']}, expected {sys.argv[2]}"
 PY
 
 if [ "${1:-}" = "--observability" ]; then

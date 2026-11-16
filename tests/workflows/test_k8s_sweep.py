@@ -82,10 +82,18 @@ class JobManifest(unittest.TestCase):
               "IMAGE": "mmo-engine/regionizer-sim:local", "RUNNER_CLASS": "k8s-kind", "CPU": "2",
               "MEMORY": "512Mi", "STORAGE": "5Gi", "ACCESS_MODE": "ReadWriteOnce"}
 
-    def render(self):
+    def render(self, template=TEMPLATE):
         # k8s-sweep.sh renders with string.Template.substitute, which fails on a placeholder it lacks.
-        text = string.Template(TEMPLATE.read_text()).substitute(self.VALUES)
+        text = string.Template(template.read_text()).substitute(self.VALUES)
         return {doc["kind"]: doc for doc in yaml.safe_load_all(text)}
+
+    def test_the_reader_pod_mounts_the_jobs_results_volume_read_only(self):
+        reader = self.render(SWEEPS / "manifests" / "sweep-reader.yaml")["Pod"]
+        self.assertEqual("sweep-spacing-reader", reader["metadata"]["name"])
+        claim = reader["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
+        self.assertEqual(self.render()["PersistentVolumeClaim"]["metadata"]["name"], claim)
+        self.assertEqual([{"name": "results", "mountPath": "/results", "readOnly": True}],
+                         reader["spec"]["containers"][0]["volumeMounts"])
 
     def test_the_job_is_indexed_with_one_completion_per_shard(self):
         job = self.render()["Job"]["spec"]
@@ -118,18 +126,75 @@ class JobManifest(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/app/job-entrypoint.sh"]', dockerfile)
         sdk = json.loads((ROOT / "global.json").read_text())["sdk"]["version"]
         self.assertIn(f"ARG SDK_VERSION={sdk}", dockerfile)
+        # The image has no repository: the revision it was built from reaches manifest.json's gitSha.
+        self.assertIn("ENV DOTNET_NOLOGO=true DOTNET_CLI_TELEMETRY_OPTOUT=true MMO_GIT_SHA=${GIT_SHA}", dockerfile)
+        self.assertIn('--build-arg "GIT_SHA=$GIT_SHA"', SCRIPT.read_text())
         self.assertTrue(os.access(ENTRYPOINT, os.X_OK), "job-entrypoint.sh must be executable")
         self.assertTrue(os.access(SCRIPT, os.X_OK), "k8s-sweep.sh must be executable")
 
 
 class Script(unittest.TestCase):
-    """k8s-sweep.sh's argument handling, before it touches a cluster (kubectl is a stub that fails)."""
+    """k8s-sweep.sh with stub kubectl and docker: argument handling, and how it gives up on a Job that can't run.
 
-    def run_script(self, *args, **env):
-        bin_dir = tempfile.mkdtemp()
-        stub(bin_dir, "kubectl", "echo unexpected kubectl call >&2\nexit 99\n")
-        full_env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", **env)
-        return subprocess.run(["bash", str(SCRIPT), *args], env=full_env, capture_output=True, text=True)
+    The stub kubectl logs every call to $STUB_LOG and answers `get jobs,pods` with the JSON in $STUB_STATE.
+    """
+
+    def run_script(self, *args, state=None, **env):
+        work = tempfile.mkdtemp()
+        bin_dir = Path(work) / "bin"
+        bin_dir.mkdir()
+        stub(bin_dir, "kubectl", 'printf "%s\\n" "$*" >> "$STUB_LOG"\n'
+                                 'case "$*" in *"get jobs,pods"*) cat "$STUB_STATE" ;; *"-f -"*) cat >/dev/null ;; esac\n')
+        for tool in ("docker", "kind", "k3d"):
+            stub(bin_dir, tool, f"echo unexpected {tool} call >&2\nexit 99\n")
+        state_file = Path(work) / "state.json"
+        state_file.write_text(json.dumps({"items": state or []}))
+        self.log = Path(work) / "kubectl.log"
+        self.log.write_text("")
+        full_env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", STUB_LOG=str(self.log),
+                        STUB_STATE=str(state_file), **env)
+        return subprocess.run(["bash", str(SCRIPT), *args], env=full_env, capture_output=True, text=True,
+                              timeout=60)
+
+    def test_a_pod_that_cannot_get_its_image_fails_the_run_at_once_and_everything_is_removed(self):
+        pod = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"},
+               "status": {"phase": "Pending", "containerStatuses": [
+                   {"state": {"waiting": {"reason": "ImagePullBackOff"}}}]}}
+        job = {"kind": "Job", "status": {}}
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[job, pod],
+                                 HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Stuck sweep-infantry-radius-0-abc ImagePullBackOff", result.stderr)
+        deletes = [line for line in self.log.read_text().splitlines()
+                   if line.startswith("-n sweeps delete job/sweep-infantry-radius pod/sweep-infantry-radius-reader "
+                                      "pvc/sweep-infantry-radius-results configmap/sweep-infantry-radius-spec")]
+        # Once before the run (an earlier run's leftovers) and once on the way out.
+        self.assertEqual(2, len(deletes), self.log.read_text())
+
+    def test_a_job_whose_pods_never_start_fails_after_the_start_timeout(self):
+        pod = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"}, "status": {"phase": "Pending"}}
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[pod],
+                                 HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1", SWEEP_START_TIMEOUT="0")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Stuck: no pod started in 0s", result.stderr)
+
+    def test_sweep_keep_leaves_the_job_and_its_volume(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
+            "conditions": [{"type": "Failed", "status": "True"}]}}],
+            HARNESS_CLUSTER="none", SWEEP_SKIP_BUILD="1", SWEEP_KEEP="1")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("job/sweep-infantry-radius: Failed", result.stderr)
+        self.assertEqual(1, self.log.read_text().count("delete job/sweep-infantry-radius"))
+
+    def test_every_kubectl_call_uses_the_clusters_context_and_its_own_runner_class(self):
+        text = SCRIPT.read_text()
+        self.assertIn('CONTEXT=(--context "$TOOL-$CLUSTER")', text)
+        bare = [line for line in text.splitlines()
+                if re.search(r"(^|[|;&]\s*)kubectl\b", line.strip()) and "k() {" not in line]
+        self.assertEqual([], bare, "call kubectl through k(), which adds the context")
+        # The Harness workflow sets MMO_RUNNER_CLASS for host runs; pods get their own class.
+        self.assertIn('RUNNER_CLASS="${SWEEP_RUNNER_CLASS:-k8s-$TOOL}"', text)
+        self.assertNotIn("MMO_RUNNER_CLASS", text)
 
     def test_refuses_more_shards_than_seeds(self):
         result = self.run_script("infantry-radius", "11", tempfile.mkdtemp())
@@ -153,11 +218,12 @@ class Script(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("is not empty", result.stderr)
 
-    def test_refuses_an_unknown_cluster_tool(self):
-        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), HARNESS_CLUSTER="minikube",
-                                 SWEEP_SKIP_BUILD="1")
+    def test_refuses_an_unknown_cluster_tool_before_building_the_image(self):
+        # docker is a stub that fails: the check comes before the build.
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), HARNESS_CLUSTER="minikube")
         self.assertEqual(2, result.returncode)
         self.assertIn("HARNESS_CLUSTER must be kind, k3d or none, was minikube", result.stderr)
+        self.assertNotIn("unexpected docker call", result.stderr)
 
     def test_merges_the_trimmed_shards_and_exits_with_the_sweeps_code(self):
         text = SCRIPT.read_text()
@@ -171,6 +237,7 @@ class Script(unittest.TestCase):
         self.assertIn('sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain"', smoke)
         self.assertIn('open(f"{job}/sweep.json").read() == open(f"{plain}/sweep.json").read()', smoke)
         self.assertTrue(re.search(r"assert job_rows == plain_rows", smoke))
+        self.assertIn('manifest["gitSha"] == sys.argv[2]', smoke)
 
 
 if __name__ == "__main__":

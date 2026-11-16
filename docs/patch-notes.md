@@ -22,17 +22,18 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-16 — Sweeps run as Kubernetes Jobs
 
-Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) (FR-032) · Issue: #62
+Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) (FR-032) · PR: #64 (closes #62)
 
 ### Behavior and contract changes
 
-- **A sweep now runs as an indexed Kubernetes Job:** `infra/sweeps/k8s-sweep.sh <sweep | spec.json> <shards> <out-dir>` builds the simulator image (`infra/sweeps/Dockerfile`), loads it into the kind or k3d cluster (`HARNESS_CLUSTER`, as `up.sh`), runs one pod per shard (`infra/sweeps/manifests/sweep-job.yaml`), copies the shards out, trims them and merges them with `merge-shards.py` into `<out-dir>/<sweep>/`. It exits 3 when a run stopped on a violation, as `run-sweep.sh` does.
-- **Completion index i runs `--shard i+1/n`** (`infra/sweeps/job-entrypoint.sh`). Exit 3 still counts as a finished shard (recorded in `shard-<k>/exit-code`); any other failure fails the pod, which is retried once from scratch.
+- **A sweep now runs as an indexed Kubernetes Job:** `infra/sweeps/k8s-sweep.sh <sweep | spec.json> <shards> <out-dir>` builds the simulator image (`infra/sweeps/Dockerfile`), loads it into the kind or k3d cluster (`HARNESS_CLUSTER`, as `up.sh`), runs one pod per shard (`infra/sweeps/manifests/sweep-job.yaml`), copies the shards out, trims them and merges them with `merge-shards.py` into `<out-dir>/<sweep>/`. It exits 3 when a run stopped on a violation, as `run-sweep.sh` does. It uses the `kind-<name>`/`k3d-<name>` kubectl context, fails at once when a pod can't get its image (or no pod starts in `SWEEP_START_TIMEOUT`), and deletes the Job, volume and ConfigMap afterwards unless `SWEEP_KEEP=1`. Pods record `k8s-<cluster>` as their runner class (`SWEEP_RUNNER_CLASS`).
+- **`MMO_GIT_SHA` sets the simulator's `gitSha`** (`RunManifest.GitSha`) when there's no repository to ask; the image bakes in the revision it was built from.
+- **Completion index i runs `--shard i+1/n --parallelism <SWEEP_CPU>`** (`infra/sweeps/job-entrypoint.sh`); each pod's CPU limit equals its request, so pods sharing a node don't inflate each other's wall-clock columns. Exit 3 still counts as a finished shard (recorded in `shard-<k>/exit-code`); any other failure fails the pod, which is retried once from scratch.
 - **`smoke.sh` step 4** runs a tiny infantry-radius sweep (2 cells, 2 seeds, 3 ticks) as a 2-shard Job and requires its merged `sweep.json` to equal a plain-process run byte for byte, and `cells.csv` to equal it on every column but the wall-clock `bookkeepingP99Micros`. The observability steps are now 5 and 6. The Harness workflow also triggers on `infra/sweeps/**`, `simulator/scenarios/**`, `simulator/sweeps/infantry-radius.json` and `.dockerignore`.
 
 ### Shared pieces to reuse
 
-- The image pins the SDK to `global.json` (10.0.100) and the runtime it ships (10.0.0), and the Job sets the Sweeps workflow's `DOTNET_EnableAVX512F=0` and `DOTNET_TieredPGO=0`.
+- The image builds with the SDK `global.json` names (10.0.100) and runs on the latest 10.0 runtime, and the Job sets the Sweeps workflow's `DOTNET_EnableAVX512F=0` and `DOTNET_TieredPGO=0`.
 
 ### Open follow-ups
 

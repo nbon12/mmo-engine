@@ -5,9 +5,10 @@
 #
 # The image runs job-entrypoint.sh, which maps an indexed Job's completion index to `sweep --shard k/n`.
 # infra/sweeps/k8s-sweep.sh builds it, loads it into the local cluster and runs the Job.
-# The SDK matches global.json's feature band (10.0.1xx); the runtime is the one that SDK ships.
+# The SDK matches global.json (its 10.0.1xx feature band; it only compiles). The runtime takes the latest
+# 10.0 patch, as setup-dotnet's latestPatch roll-forward does for the plain-process runs.
 ARG SDK_VERSION=10.0.100
-ARG RUNTIME_VERSION=10.0.0
+ARG RUNTIME_VERSION=10.0
 FROM mcr.microsoft.com/dotnet/sdk:${SDK_VERSION} AS build
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./
@@ -19,5 +20,8 @@ FROM mcr.microsoft.com/dotnet/runtime:${RUNTIME_VERSION}
 WORKDIR /app
 COPY --from=build /app/ /app/
 COPY infra/sweeps/job-entrypoint.sh /app/job-entrypoint.sh
-ENV DOTNET_NOLOGO=true DOTNET_CLI_TELEMETRY_OPTOUT=true
+# The image has no repository, so the revision it was built from is recorded in manifest.json's gitSha
+# (k8s-sweep.sh passes `git rev-parse HEAD`).
+ARG GIT_SHA=unknown
+ENV DOTNET_NOLOGO=true DOTNET_CLI_TELEMETRY_OPTOUT=true MMO_GIT_SHA=${GIT_SHA}
 ENTRYPOINT ["/app/job-entrypoint.sh"]

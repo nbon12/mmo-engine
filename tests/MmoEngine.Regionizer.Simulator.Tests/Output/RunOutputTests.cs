@@ -316,6 +316,19 @@ public sealed class RunOutputTests
         Assert.Equal("unknown", RunManifest.GitSha(Path.Combine(notARepo, "missing")));
     }
 
+    [Fact]
+    public void AConfiguredSourceRevisionWinsOverGitSoAnImageWithoutARepositoryRecordsIt()
+    {
+        var notARepo = TestRuns.TempDir();
+        Directory.CreateDirectory(notARepo);
+        const string sha = "0123456789abcdef0123456789abcdef01234567";
+
+        Assert.Equal(sha, RunManifest.GitSha(notARepo, $" {sha}\n"));
+        Assert.Equal("unknown", RunManifest.GitSha(notARepo, ""));
+        Assert.Equal("unknown", RunManifest.GitSha(notARepo, null));
+        Assert.Matches("^[0-9a-f]{40}$", RunManifest.GitSha(TestRuns.RepositoryRoot(), "  "));
+    }
+
     [Theory]
     [InlineData("plain", "plain")]
     [InlineData("a,b", "\"a,b\"")]

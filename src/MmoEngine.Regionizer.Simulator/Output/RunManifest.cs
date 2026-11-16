@@ -76,9 +76,20 @@ public static class RunManifest
         };
     }
 
-    /// <summary>The source revision: <c>git rev-parse HEAD</c> in <paramref name="workingDirectory"/>, or "unknown".</summary>
-    public static string GitSha(string? workingDirectory = null)
+    /// <summary>
+    /// The source revision: <c>MMO_GIT_SHA</c> when set (a container image has no repository; spec 014, FR-032),
+    /// else <c>git rev-parse HEAD</c> in <paramref name="workingDirectory"/>, or "unknown".
+    /// </summary>
+    public static string GitSha(string? workingDirectory = null) =>
+        GitSha(workingDirectory, Environment.GetEnvironmentVariable("MMO_GIT_SHA"));
+
+    internal static string GitSha(string? workingDirectory, string? configured)
     {
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
         string[] candidates = File.Exists("/usr/bin/git") ? ["/usr/bin/git", "git"] : ["git"];
         var directory = workingDirectory ?? Environment.CurrentDirectory;
         return candidates.Select(git => TryGit(git, directory)).FirstOrDefault(sha => sha is not null) ?? "unknown";
