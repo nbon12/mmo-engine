@@ -392,16 +392,20 @@ public sealed partial class ConfigRuleTableTests
     private static (object Value, string Message) OutOfRange(ContractRow row, string valueCase)
     {
         var range = $"must be between {row.Min} and {row.Max}";
+
+        // Each value is boxed as its own type. Without the casts the switch's natural type would be
+        // (float, string), the best common type of the arms, and the Int and Enum values would be boxed
+        // as floats, which their int and FireMode properties refuse.
         return (row.Kind, valueCase) switch
         {
-            ("Int", BelowMin) => (ParseInt(row.Min!) - 1, range),
-            ("Int", AboveMax) => (ParseInt(row.Max!) + 1, range),
-            ("Float", BelowMin) => (float.BitDecrement(ParseFloat(row.Min!)), range),
-            ("Float", AboveMax) => (float.BitIncrement(ParseFloat(row.Max!)), range),
-            ("Float", NaN) => (float.NaN, "must be finite"),
-            ("Float", PositiveInfinity) => (float.PositiveInfinity, "must be finite"),
-            ("Float", NegativeInfinity) => (float.NegativeInfinity, "must be finite"),
-            ("Enum", NotAMember) => (2u, "must be Auto or Semi"),
+            ("Int", BelowMin) => ((object)(ParseInt(row.Min!) - 1), range),
+            ("Int", AboveMax) => ((object)(ParseInt(row.Max!) + 1), range),
+            ("Float", BelowMin) => ((object)float.BitDecrement(ParseFloat(row.Min!)), range),
+            ("Float", AboveMax) => ((object)float.BitIncrement(ParseFloat(row.Max!)), range),
+            ("Float", NaN) => ((object)float.NaN, "must be finite"),
+            ("Float", PositiveInfinity) => ((object)float.PositiveInfinity, "must be finite"),
+            ("Float", NegativeInfinity) => ((object)float.NegativeInfinity, "must be finite"),
+            ("Enum", NotAMember) => ((object)2u, "must be Auto or Semi"),
             _ => throw new ArgumentOutOfRangeException(nameof(valueCase), valueCase, $"No {valueCase} case for a {row.Kind} row."),
         };
     }

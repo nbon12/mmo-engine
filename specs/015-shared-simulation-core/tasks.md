@@ -537,20 +537,20 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
   - `Min` is `a < b ? a : b`, `Max` is `a > b ? a : b`, and `Clamp` uses `System.Math.Clamp`, allowed inside SimMath only.
   - `FloorToInt`, `RoundToInt` (ties to even) and `TruncateToInt` saturate first: NaN gives 0, ≥ 2³¹ gives `int.MaxValue`, and < −2³¹ gives `int.MinValue`. Only then do they cast.
   - Non-finite input to a radian function returns the `float.NaN` constant.
-- [ ] T046 Implement `src/MmoEngine.SimCore/Geometry/Vec3.cs`, a `readonly struct Vec3(float X, float Y, float Z)`:
+- [X] T046 Implement `src/MmoEngine.SimCore/Geometry/Vec3.cs`, a `readonly struct Vec3(float X, float Y, float Z)`:
   - `+`, `-` and scalar `*` per component;
   - `Dot` as `((a.X*b.X) + (a.Y*b.Y)) + (a.Z*b.Z)`;
   - `Cross` as `((a.Y*b.Z) - (a.Z*b.Y), (a.Z*b.X) - (a.X*b.Z), (a.X*b.Y) - (a.Y*b.X))`;
   - `LengthSquared` as `Dot(a, a)`, and `Length` as `SimMath.Sqrt(LengthSquared)`.
 
   `ClosestPoints` is Phase 3's and `SegmentCapsule` Phase 7's. Makes T017 pass.
-- [ ] T047 Implement `src/MmoEngine.SimCore/Inputs/InputCommand.cs` (`readonly record struct InputCommand(uint Sequence, uint ClientStep, Buttons Buttons, ushort AimYaw, short AimPitch, byte WeaponSlot)`) and `src/MmoEngine.SimCore/Inputs/InputCodec.cs`. Makes T026 pass.
+- [X] T047 Implement `src/MmoEngine.SimCore/Inputs/InputCommand.cs` (`readonly record struct InputCommand(uint Sequence, uint ClientStep, Buttons Buttons, ushort AimYaw, short AimPitch, byte WeaponSlot)`) and `src/MmoEngine.SimCore/Inputs/InputCodec.cs`. Makes T026 pass.
   - The constants are `FormatId 0x49`, `FormatVersion 1` and `EncodedSize 17`.
   - `TryEncode` writes the 17 little-endian bytes of contracts/input-command-format.md#layout without validating them. It returns false and writes nothing when the destination is short.
   - `TryDecode` runs the six checks of #decoding in order, with format `input` and literal field names. It throws nothing and allocates nothing, and on refusal it returns `default` with the error.
 
   `InputValidator` is Phase 3's. This task also makes T036's `InputAllocationTests.DecodeAllocatesNothing` pass.
-- [ ] T048 Implement the configuration model in `src/MmoEngine.SimCore/Config/` (data-model.md#configuration, contracts/config-rules.md#shape and #error-shape). Supports T020.
+- [X] T048 Implement the configuration model in `src/MmoEngine.SimCore/Config/` (data-model.md#configuration, contracts/config-rules.md#shape and #error-shape). Supports T020.
   - `SimConfig.cs`: sealed classes `SimConfig`, `WorldConfig`, `MovementConfig`, `WeaponConfig`, `ProjectileClassConfig`, `HitboxesConfig`, `HitboxCapsuleConfig` (`A`, `B`, `Radius`), `HitboxPointConfig` (`Fwd`, `Right`, `Up`) and `InputConfig`.
     - They have `get; set;` properties: `int` for Int rows, `float` for Float rows and `FireMode` for the Enum row.
     - Sections, array elements and capsule points are nullable, so a missing one is a shape error.
@@ -559,7 +559,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - `SimConfig.Clone()` makes a deep copy.
   - `ConfigError.cs`: `sealed record ConfigError(string Path, string Message)`, whose `ToString()` is `"{Path}: {Message}"`.
   - `ConfigValidationException.cs`: the contract's exact shape.
-- [ ] T049 Implement the rule table in `src/MmoEngine.SimCore/Config/` (contracts/config-rules.md#rule-table, #relations, #check-order-and-the-error-list). Makes the `ConfigGuard` assertions of T020 pass; its `SimConfigValidator` half passes with the server task below.
+- [X] T049 Implement the rule table in `src/MmoEngine.SimCore/Config/` (contracts/config-rules.md#rule-table, #relations, #check-order-and-the-error-list). Makes the `ConfigGuard` assertions of T020 pass; its `SimConfigValidator` half passes with the server task below.
   - `ConfigFields.cs`: `public static ImmutableArray<ConfigField> Templates`, one template row per field definition of the six sections (57 rows), in ascending order of each row's first-instance fieldId. Each row, a sealed class `ConfigField`, holds:
     - section, field number, the path template `PathTemplate` (for example `weapons[{i}].roundsPerMinute`, `projectileClasses[{k}].maxRangeM` or `hitboxes.{stance}[{c}].a.fwd`), `Kind` (`ConfigFieldKind`: Int, Float, Enum), unit, and the bounds as value bits, `MinBits` and `MaxBits` (an Int bound's two's complement, a Float bound's bits, the Enum row's 0 and 1);
     - a getter and a setter that take a `SimConfig` and the instance (slot, class, or stance and capsule) and work in `uint` value bits (Int as two's complement, Float as its bits, Enum as its value, set by the lossless cast `(FireMode)bits`).
@@ -577,7 +577,7 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - Shape errors first, and any one of them ends the check.
     - Then every row of `ConfigFields.Expand` for the config's weapon and projectile-class counts, in ascending fieldId. A non-finite float reports only `must be finite`; Int and Float rows report `must be between {min} and {max}` with invariant round-trip numbers; an Enum row reports `must be Auto or Semi` unless the value `is FireMode.Auto or FireMode.Semi` (a pattern test, not `Enum.IsDefined`).
     - Then the relations in order, only when there was no earlier error.
-- [ ] T050 Implement `src/MmoEngine.SimCore/Hitboxes/HitboxLayout.cs` and `src/MmoEngine.SimCore/Hitboxes/Hitbox.cs` (data-model.md#hitbox-layout-and-hitboxes):
+- [X] T050 Implement `src/MmoEngine.SimCore/Hitboxes/HitboxLayout.cs` and `src/MmoEngine.SimCore/Hitboxes/Hitbox.cs` (data-model.md#hitbox-layout-and-hitboxes):
   - `HitboxLayout` is a sealed class with `Capsules` (an `ImmutableArray` of 3 `HitboxCapsuleLayout` in Head, Torso, Legs order, each with local A and B as fwd/right/up floats and a radius), `BoundCenterUp`, `BoundRadius` and `EyeHeight`;
   - `readonly struct Hitbox(HitboxPart Part, Vec3 A, Vec3 B, float Radius)`;
   - `readonly struct HitboxBounds(Vec3 Centre, float Radius)`.

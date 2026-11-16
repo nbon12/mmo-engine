@@ -503,6 +503,20 @@ The design documents settled these points, which the spec leaves open. They are 
   atan(x) ≈ x − x·Q(x²) with Q of degree 6 in z, which R3 left open; its fit error is 0.001 ulp. The
   generator also emits 2/π and the hi/lo pairs of π/2, π/4, π, atan(½), atan(3/2) and 3π/4, so every
   irrational constant SimMath uses is generated and pinned by `SimMathTests.CoefficientsHaveTheirPinnedBits`.
+- **The guard lists every shape error, then stops (T049).** "Any shape error ends the check" could
+  also be read as stopping at the first one. `ConfigGuard.Check` lists them all, in section order, so
+  one run shows everything that is missing, and then runs no field or relation check. A null
+  `weapons`, `projectileClasses` or capsule list counts as a list with no entries and gets the count
+  message, because the shape table gives those lists no `is required` row.
+  contracts/config-rules.md#check-order-and-the-error-list now says so.
+- **`ConfigRuleTableTests.OutOfRange` boxes each value as its own type (T020, T049).** Its switch arms
+  were tuples of `int`, `float` and `uint`, so the switch's natural type was `(float, string)` and the
+  Int and Enum values reached their properties as boxed floats, which reflection refuses. Each arm now
+  casts its value to `object`; the cases and the expected messages are unchanged.
+- **`Vec3` has bitwise value equality (T046).** T051's state and event structs have value equality and
+  hold `Vec3`s. Comparing component bits (−0 differs from +0, a NaN equals itself) is the canonical
+  state's own rule, and it avoids `ValueType.Equals`' reflection; the hash mixes the bits with no
+  per-process seed.
 
 ## Delivery
 

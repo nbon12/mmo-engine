@@ -260,7 +260,10 @@ Why each one matters:
 
 ## Check order and the error list
 
-1. Shape. Any shape error ends the check, because the missing parts can't be read.
+1. Shape. Every shape error is listed, in section order: `world`, `movement`, `weapons` and its
+   entries, `projectileClasses` and its entries, `hitboxes` with each stance's list, entries and
+   points, then `input`. A missing list counts as one with no entries. Any shape error ends the
+   check, because the missing parts can't be read.
 2. Fields in ascending fieldId, which is also the order of the tables above (instances ascending).
    A float that is not finite reports only `must be finite`.
 3. Relations, R01 to R19, each over its instances in ascending order, only when steps 1 and 2 found
