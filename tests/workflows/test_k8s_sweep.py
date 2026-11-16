@@ -125,7 +125,8 @@ class JobManifest(unittest.TestCase):
         dockerfile = (SWEEPS / "Dockerfile").read_text()
         self.assertIn('ENTRYPOINT ["/app/job-entrypoint.sh"]', dockerfile)
         sdk = json.loads((ROOT / "global.json").read_text())["sdk"]["version"]
-        self.assertIn(f"ARG SDK_VERSION={sdk}", dockerfile)
+        self.assertRegex(dockerfile, rf"FROM mcr\.microsoft\.com/dotnet/sdk:{re.escape(sdk)}@sha256:[0-9a-f]{{64}} AS build")
+        self.assertRegex(dockerfile, r"FROM mcr\.microsoft\.com/dotnet/runtime:10\.0\.\d+@sha256:[0-9a-f]{64}\n")
         # The image has no repository: the revision it was built from reaches manifest.json's gitSha.
         self.assertIn("ENV DOTNET_NOLOGO=true DOTNET_CLI_TELEMETRY_OPTOUT=true MMO_GIT_SHA=${GIT_SHA}", dockerfile)
         self.assertIn('--build-arg "GIT_SHA=$GIT_SHA"', SCRIPT.read_text())
@@ -256,11 +257,67 @@ class Script(unittest.TestCase):
         self.assertIn("HARNESS_CLUSTER must be kind, k3d or none, was minikube", result.stderr)
         self.assertNotIn("unexpected docker call", result.stderr)
 
-    def test_merges_the_trimmed_shards_and_exits_with_the_sweeps_code(self):
-        text = SCRIPT.read_text()
-        self.assertIn('infra/sweeps/trim.py" "$shard/$NAME"', text)
-        self.assertIn('infra/sweeps/merge-shards.py" "$OUT/$NAME" "${trimmed[@]}"', text)
-        self.assertRegex(text, r'if \[ "\$shard_code" = 3 \]; then\n.*\n\s*code=3')
+    @staticmethod
+    def volume(root, runs_by_shard, codes):
+        """The results volume of a finished 2-cell, 2-seed infantry-radius Job: shard-<k>/infantry-radius/ holding
+        that shard's runs (full results, ticks.csv included) and shard-<k>/exit-code."""
+        for k, runs in runs_by_shard.items():
+            folder = Path(root) / f"shard-{k}" / "infantry-radius"
+            index = {"formatVersion": 1, "name": "infantry-radius", "scenario": "Baseline", "mode": "OneAtATime",
+                     "sweepSeed": 3, "seeds": [{"index": 0, "seed": 10}, {"index": 1, "seed": 11}], "cells": []}
+            rows = []
+            for cell in ("c000", "c001"):
+                mine = [i for c, i in runs if c == cell]
+                index["cells"].append({"cellId": cell, "parameters": {"p": cell}, "runs": [
+                    {"seedIndex": i, "seed": 10 + i, "folder": f"{cell}/seed-{i}", "completed": True} for i in mine]})
+                for i in mine:
+                    run = folder / cell / f"seed-{i}"
+                    run.mkdir(parents=True)
+                    for name in ("summary.json", "manifest.json", "ticks.csv"):
+                        (run / name).write_text(f"{cell}-{i} {name}")
+                    rows.append(f"{cell},{i},{10 + i},run-{cell}-{i}")
+            (folder / "sweep.json").write_text(json.dumps(index))
+            (folder / "cells.csv").write_text("cellId,seedIndex,seed,runId\n" + "".join(r + "\n" for r in rows))
+            (Path(root) / f"shard-{k}" / "exit-code").write_text(f"{codes[k]}\n")
+
+    def run_complete_job(self, codes):
+        """Runs the script against a stub cluster whose Job completed; `kubectl cp` copies a fake volume."""
+        work = tempfile.mkdtemp()
+        volume = Path(work) / "volume"
+        self.volume(volume, {1: [("c000", 0), ("c001", 0)], 2: [("c000", 1), ("c001", 1)]}, codes)
+        bin_dir = Path(work) / "bin"
+        bin_dir.mkdir()
+        state = Path(work) / "state.json"
+        state.write_text(json.dumps({"items": [{"kind": "Job", "status": {
+            "conditions": [{"type": "Complete", "status": "True"}]}}]}))
+        stub(bin_dir, "kubectl", f'case "$*" in\n'
+                                 f'  *"get jobs,pods"*) cat "{state}" ;;\n'
+                                 f'  *" cp "*) eval "dest=\\${{$#}}"; cp -r "{volume}" "$dest" ;;\n'
+                                 f'  *"-f -"*) cat >/dev/null ;;\nesac\n')
+        out = Path(work) / "out"
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", HARNESS_CLUSTER="none")
+        result = subprocess.run(["bash", str(SCRIPT), "infantry-radius", "2", str(out)], env=env,
+                                capture_output=True, text=True, timeout=60)
+        return result, out
+
+    def test_a_completed_job_is_copied_out_trimmed_and_merged_into_one_sweep(self):
+        result, out = self.run_complete_job({1: 0, 2: 0})
+        self.assertEqual(0, result.returncode, result.stderr)
+        merged = out / "infantry-radius"
+        index = json.loads((merged / "sweep.json").read_text())
+        self.assertEqual([[0, 1], [0, 1]], [[r["seedIndex"] for r in c["runs"]] for c in index["cells"]])
+        self.assertEqual(["cellId,seedIndex,seed,runId", "c000,0,10,run-c000-0", "c000,1,11,run-c000-1",
+                          "c001,0,10,run-c001-0", "c001,1,11,run-c001-1"],
+                         (merged / "cells.csv").read_text().splitlines())
+        # Trimmed: what the memo reads, without per-tick files; the full shards stay under shards/.
+        self.assertEqual(["manifest.json", "summary.json"], sorted(p.name for p in (merged / "c001" / "seed-1").iterdir()))
+        self.assertTrue((out / "shards" / "shard-2" / "infantry-radius" / "c001" / "seed-1" / "ticks.csv").exists())
+
+    def test_a_shard_that_exited_3_still_merges_and_the_script_exits_3(self):
+        result, out = self.run_complete_job({1: 0, 2: 3})
+        self.assertEqual(3, result.returncode, result.stderr)
+        self.assertIn("shard 2/2 exited 3", result.stdout)
+        self.assertTrue((out / "infantry-radius" / "sweep.json").exists())
 
     def test_smoke_runs_a_sweep_as_a_job_and_compares_it_with_a_plain_run(self):
         smoke = (ROOT / "infra" / "harness" / "smoke.sh").read_text()

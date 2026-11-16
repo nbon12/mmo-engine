@@ -65,9 +65,11 @@ RUN_ID="$(harness load "$OUT/run" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"
 [ -n "$RUN_ID" ] || fail "load printed no runId"
 harness rules run --run-id "$RUN_ID" --rules "$ROOT/harness/rules" --baselines "$ROOT/harness/baselines" --artifacts "$OUT/artifacts" >/dev/null || fail "rules did not pass the clean run"
 
-echo "4. a sweep runs as an indexed Kubernetes Job, and its merged shards match a plain-process run (FR-032)"
-# The committed infantry-radius sweep cut to 2 radii, 2 seeds, 20 entities and 3 ticks, in 2 shards.
-python3 - "$ROOT/simulator/sweeps/infantry-radius.json" "$OUT/sweep-spec.json" <<'PY'
+# Once per cluster: the core profile's run (the observability profile doesn't change what the Job needs).
+if [ "${1:-}" != "--observability" ]; then
+  echo "4. a sweep runs as an indexed Kubernetes Job, and its merged shards match a plain-process run (FR-032)"
+  # The committed infantry-radius sweep cut to 2 radii, 2 seeds, 20 entities and 3 ticks, in 2 shards.
+  python3 - "$ROOT/simulator/sweeps/infantry-radius.json" "$OUT/sweep-spec.json" <<'PY'
 import json, sys
 spec = json.load(open(sys.argv[1]))
 spec["seeds"] = 2
@@ -77,10 +79,10 @@ spec["base"]["population"]["total"] = 20
 spec["base"]["map"] = {"widthMetres": 2000, "heightMetres": 2000}
 json.dump(spec, open(sys.argv[2], "w"))
 PY
-SWEEP_TIMEOUT=900 "$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job" >/dev/null || fail "the sweep did not run as a Kubernetes Job"
-sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain" --scenarios "$ROOT/simulator/scenarios" >/dev/null || fail "the plain-process sweep failed"
-python3 "$ROOT/infra/sweeps/trim.py" "$OUT/plain/infantry-radius" "$OUT/plain-trimmed" >/dev/null
-python3 - "$OUT/job/infantry-radius" "$OUT/plain-trimmed" <<'PY' || fail "the Job's merged sweep differs from the plain-process sweep"
+  SWEEP_TIMEOUT=900 "$ROOT/infra/sweeps/k8s-sweep.sh" "$OUT/sweep-spec.json" 2 "$OUT/job" >/dev/null || fail "the sweep did not run as a Kubernetes Job"
+  sim sweep "$OUT/sweep-spec.json" --out "$OUT/plain" --scenarios "$ROOT/simulator/scenarios" >/dev/null || fail "the plain-process sweep failed"
+  python3 "$ROOT/infra/sweeps/trim.py" "$OUT/plain/infantry-radius" "$OUT/plain-trimmed" >/dev/null
+  python3 - "$OUT/job/infantry-radius" "$OUT/plain-trimmed" <<'PY' || fail "the Job's merged sweep differs from the plain-process sweep"
 import csv, os, sys
 job, plain = sys.argv[1], sys.argv[2]
 runs = lambda d: sorted(os.path.relpath(r, d) for r, _, files in os.walk(d) if "summary.json" in files)
@@ -98,11 +100,14 @@ job_rows, plain_rows = rows(job), rows(plain)
 assert len(job_rows) == 5, f"cells.csv has {len(job_rows) - 1} rows, expected 4"
 assert job_rows == plain_rows, f"cells.csv differs:\n{job_rows}\n{plain_rows}"
 PY
-python3 - "$OUT/job/infantry-radius/c000/seed-0/manifest.json" "$(git -C "$ROOT" rev-parse HEAD)" <<'PY' || fail "the Job's runs don't record the image's revision"
+  python3 - "$OUT/job/infantry-radius/c000/seed-0/manifest.json" "$(git -C "$ROOT" rev-parse HEAD)" <<'PY' || fail "the Job's runs don't record the image's revision"
 import json, sys
 manifest = json.load(open(sys.argv[1]))
 assert manifest["gitSha"] == sys.argv[2], f"gitSha {manifest['gitSha']}, expected {sys.argv[2]}"
 PY
+else
+  echo "4. (the sweep-as-a-Job check runs with the core profile)"
+fi
 
 if [ "${1:-}" = "--observability" ]; then
   echo "5. observability profile: Prometheus and Grafana are ready"

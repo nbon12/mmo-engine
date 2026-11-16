@@ -312,21 +312,24 @@ public sealed class RunOutputTests
         Directory.CreateDirectory(notARepo);
 
         Assert.Matches("^[0-9a-f]{40}$", RunManifest.GitSha(repo));
-        Assert.Equal("unknown", RunManifest.GitSha(notARepo));
-        Assert.Equal("unknown", RunManifest.GitSha(Path.Combine(notARepo, "missing")));
+        Assert.Equal("unknown", RunManifest.GitSha(notARepo, null));
+        Assert.Equal("unknown", RunManifest.GitSha(Path.Combine(notARepo, "missing"), null));
     }
 
     [Fact]
-    public void AConfiguredSourceRevisionWinsOverGitSoAnImageWithoutARepositoryRecordsIt()
+    public void WithoutARepositoryTheConfiguredSourceRevisionIsRecordedButGitStillWins()
     {
         var notARepo = TestRuns.TempDir();
         Directory.CreateDirectory(notARepo);
         const string sha = "0123456789abcdef0123456789abcdef01234567";
+        var repo = TestRuns.RepositoryRoot();
 
         Assert.Equal(sha, RunManifest.GitSha(notARepo, $" {sha}\n"));
         Assert.Equal("unknown", RunManifest.GitSha(notARepo, ""));
         Assert.Equal("unknown", RunManifest.GitSha(notARepo, null));
-        Assert.Matches("^[0-9a-f]{40}$", RunManifest.GitSha(TestRuns.RepositoryRoot(), "  "));
+        Assert.Equal(RunManifest.GitSha(repo, null), RunManifest.GitSha(repo, sha));
+        Assert.Matches("^[0-9a-f]{40}$", RunManifest.GitSha(repo, sha));
+        Assert.NotEqual(sha, RunManifest.GitSha(repo, sha));
     }
 
     [Theory]

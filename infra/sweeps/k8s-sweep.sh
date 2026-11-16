@@ -13,8 +13,8 @@
 #
 # Environment:
 #   HARNESS_CLUSTER       kind (default) or k3d: where the image is loaded and which kubectl context is used
-#                         (kind-<name> or k3d-<name>); none to skip loading and use the current context (the
-#                         cluster pulls SWEEP_IMAGE itself)
+#                         (kind-<name> or k3d-<name>); none to use the current context with SWEEP_IMAGE as it is
+#                         (no local build: that cluster must be able to pull it)
 #   HARNESS_CLUSTER_NAME  cluster name (default mmo-harness, as up.sh)
 #   SWEEP_IMAGE           image name (default mmo-engine/regionizer-sim:local)
 #   SWEEP_SKIP_BUILD      1 to use SWEEP_IMAGE as it is, without building it
@@ -45,12 +45,13 @@ log() { printf '[k8s sweep] %s\n' "$*" >&2; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1" >&2; exit 2; }; }
 case "$TOOL" in
   kind|k3d) need "$TOOL"; CONTEXT=(--context "$TOOL-$CLUSTER") ;;
-  none) CONTEXT=() ;;
+  none) CONTEXT=(); SWEEP_SKIP_BUILD=1 ;;
   *) echo "HARNESS_CLUSTER must be kind, k3d or none, was $TOOL" >&2; exit 2 ;;
 esac
 need kubectl; need python3
 # Every kubectl call goes to the cluster the image was loaded into, whatever the current context is.
-k() { kubectl "${CONTEXT[@]}" "$@"; }
+# (The +-expansion keeps an empty CONTEXT working under set -u on bash before 4.4.)
+k() { kubectl ${CONTEXT[@]+"${CONTEXT[@]}"} "$@"; }
 
 if [ -f "$WHICH" ]; then SPEC="$WHICH"; else SPEC="$ROOT/simulator/sweeps/$WHICH.json"; fi
 [ -f "$SPEC" ] || { echo "no sweep spec $WHICH (a file, or a name in simulator/sweeps/)" >&2; exit 2; }
@@ -73,7 +74,8 @@ if [ "${SWEEP_SKIP_BUILD:-}" != 1 ]; then
   # The image has no repository, so it carries the revision it was built from (manifest.json's gitSha).
   GIT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
   log "building $IMAGE at $GIT_SHA"
-  docker build -q -f "$ROOT/infra/sweeps/Dockerfile" --build-arg "GIT_SHA=$GIT_SHA" -t "$IMAGE" "$ROOT" >/dev/null
+  # Its output goes to stderr, so a compile error reaches the log (as lib.sh does for the CLIs).
+  docker build -f "$ROOT/infra/sweeps/Dockerfile" --build-arg "GIT_SHA=$GIT_SHA" -t "$IMAGE" "$ROOT" >&2
 fi
 case "$TOOL" in
   kind) log "loading $IMAGE into kind cluster $CLUSTER"; kind load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null ;;
@@ -93,8 +95,10 @@ print(string.Template(open(sys.argv[1]).read()).substitute(os.environ))' "$ROOT/
 }
 remove() { k -n "$NS" delete "job/$JOB" "pod/$READER" "pvc/$JOB-results" "configmap/$JOB-spec" --ignore-not-found "$@" >/dev/null; }
 k create namespace "$NS" --dry-run=client -o yaml | k apply -f - >/dev/null
-# A Job's pod template can't change, and the results volume must start empty: remove an earlier run's.
-remove --wait
+# A Job's pod template can't change, and the results volume must start empty: remove an earlier run's, and wait
+# for its pods to go, so none of them is taken for this run's.
+remove --wait --cascade=foreground
+k -n "$NS" wait --for=delete pod -l "mmo-engine/sweep=$NAME" --timeout=5m >/dev/null 2>&1 || true
 # Whatever happens next, the Job, its volume and its ConfigMap go (the results are copied out first).
 if [ "${SWEEP_KEEP:-}" != 1 ]; then trap 'remove --wait=false || true' EXIT; fi
 k -n "$NS" create configmap "$JOB-spec" --from-file=spec.json="$SPEC" >/dev/null

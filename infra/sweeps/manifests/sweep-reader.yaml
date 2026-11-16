@@ -13,7 +13,8 @@ spec:
     - name: reader
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
-      command: ["sleep", "3600"]
+      # Waits until deleted, and exits on SIGTERM at once (a plain sleep as PID 1 ignores it).
+      command: ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]
       volumeMounts:
         - name: results
           mountPath: /results

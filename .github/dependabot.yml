@@ -7,3 +7,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+
+  # The simulator image's .NET base images, pinned by digest (spec 014 FR-032, infra/sweeps/Dockerfile).
+  - package-ecosystem: docker
+    directory: /infra/sweeps
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
