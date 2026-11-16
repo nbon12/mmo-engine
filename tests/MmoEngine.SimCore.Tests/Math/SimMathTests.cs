@@ -50,7 +50,52 @@ public sealed class SimMathTests
     /// <c>const float</c> of <c>SimMathCoefficients</c>. The generator task (T042) pastes them here
     /// verbatim, one string per line.
     /// </summary>
-    private static readonly string[] CoefficientLines = [];
+    private static readonly string[] CoefficientLines =
+    [
+        "SinS1 0xBE2AAAA2",
+        "SinS2 0x3C088363",
+        "SinS3 0xB94C8E13",
+        "CosC1 0x3D2AAAAB",
+        "CosC2 0xBAB60BAE",
+        "CosC3 0x37D037C8",
+        "CosC4 0xB49AC28E",
+        "TanT1 0x3EAAAAB0",
+        "TanT2 0x3E0886CA",
+        "TanT3 0x3D5D6E45",
+        "TanT4 0x3CAE4E86",
+        "TanT5 0x3C31D00B",
+        "TanT6 0x38839B6B",
+        "TanT7 0x3B8FE733",
+        "AsinA0 0x3E2AAAE4",
+        "AsinA1 0x3D998102",
+        "AsinA2 0x3D3A3DDD",
+        "AsinA3 0x3CC61F15",
+        "AsinA4 0x3D2CAE46",
+        "AtanB0 0x3EAAAAAA",
+        "AtanB1 0xBE4CCC49",
+        "AtanB2 0x3E123820",
+        "AtanB3 0xBDE1832A",
+        "AtanB4 0x3DA9EA60",
+        "AtanB5 0xBD33ACA0",
+        "HalfPiPart1 0x3FC90000",
+        "HalfPiPart2 0x39FDA000",
+        "HalfPiPart3 0x33A22000",
+        "HalfPiPart4 0x2C34611A",
+        "TwoOverPiSingle 0x3F22F983",
+        "BinaryAngleHi 0x38C90000",
+        "BinaryAngleLo 0x32FDAA22",
+        "HalfPiHi 0x3FC90FDB",
+        "HalfPiLo 0xB33BBD2E",
+        "QuarterPiHi 0x3F490FDB",
+        "QuarterPiLo 0xB2BBBD2E",
+        "PiHi 0x40490FDB",
+        "PiLo 0xB3BBBD2E",
+        "AtanHalfHi 0x3EED6338",
+        "AtanHalfLo 0x31AC376A",
+        "AtanThreeHalvesHi 0x3F7B985F",
+        "AtanThreeHalvesLo 0xB2D7E096",
+        "ThreeQuarterPi 0x4016CBE4",
+    ];
 
     /// <summary>The 320 bits of 2/π in <c>TwoOverPi.Words</c>, most significant word first.</summary>
     private static readonly uint[] TwoOverPiWords =

@@ -123,28 +123,33 @@ Each function has one fixed algorithm:
   - 4-part Cody–Waite for |x| ≤ 12867. The split constants have 11, 11, 11 and 24 bits, `k` comes
     from `RoundToInt`, and a Fast2Sum tail goes into the kernels;
   - exact integer Payne–Hanek above that, multiplying by a 96-bit window of a 320-bit 2/π table in
-    `UInt128`, with one hand-written rounding.
+    `UInt128`, then by π/2 in Q62 fixed point (the exact sum of the four Cody–Waite parts), with one
+    hand-written rounding to float. The next 24 bits go into the kernels as the tail, as on the
+    Cody–Waite path.
 - **Kernels.**
   - Sin: degree 7.
   - Cos: degree 10, with fdlibm-style compensation.
   - Tan: degree 15, with an accurate reciprocal.
-  - Asin and acos: share a degree-5 polynomial, with a square-root correction above ½.
-  - Atan: uses fdlibm's breakpoints.
+  - Asin and acos: share a degree-5 polynomial in x² (asin(x) ≈ x + x·R(x²), R(z) = z·(A0 + … + z·A4)),
+    with a square-root correction above ½.
+  - Atan: uses fdlibm's breakpoints, with the kernel x − x·Q(x²), Q of degree 6 in x².
   - Atan2: follows C99 Annex F.
 - **`SinCosBinaryAngle`** reduces in integers. The quadrant is `(a + 0x2000) >> 14`, and an 8-bit
   constant makes `i·C_hi` exact. All aim maths uses this function.
 - **Non-finite input** returns the `float.NaN` constant.
 
-The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in parentheses:
+The documented bounds (FR-013, SC-004, US3.8), with the measured maximum in parentheses. The maxima
+were measured on the implementation (T045) by exhaustive sweeps against `Math.*(double)`; the
+prototype measured 1.550 / 2.072 on the large-argument path, which now keeps a tail.
 
 | Function | Domain | Bound (measured) |
 |---|---|---|
-| Sin, Cos, SinCos | \|x\| ≤ 12867, exhaustive | ≤ 1 ulp (0.793 / 0.800) |
-| Tan | \|x\| ≤ 12867, exhaustive | ≤ 1.5 ulp (1.102) |
-| Sin, Cos / Tan | finite \|x\| > 12867 (9.6e8 floats) | ≤ 2 / 2.5 ulp (1.550 / 2.072) |
-| Asin, Acos | [−1, 1], exhaustive | ≤ 1 ulp (0.713 / 0.781) |
-| Atan | all floats, exhaustive | ≤ 1 ulp (0.849) |
-| Atan2 | 2^22 directions × 5 radii, plus 64 M random pairs | ≤ 2 ulp (1.488) |
+| Sin, Cos, SinCos | \|x\| ≤ 12867, exhaustive | ≤ 1 ulp (0.790 / 0.799) |
+| Tan | \|x\| ≤ 12867, exhaustive | ≤ 1.5 ulp (1.278) |
+| Sin, Cos / Tan | finite \|x\| > 12867 (9.6e8 floats) | ≤ 2 / 2.5 ulp (0.804 / 1.317) |
+| Asin, Acos | [−1, 1], exhaustive | ≤ 1 ulp (0.875 / 0.902) |
+| Atan | all floats, exhaustive | ≤ 1 ulp (0.851) |
+| Atan2 | 2^22 directions × 5 radii, plus 64 M random pairs | ≤ 2 ulp (1.475) |
 | SinCosBinaryAngle | all 65,536 angles | ≤ 1 ulp (0.737) |
 
 **Coefficients are generated clean-room.**

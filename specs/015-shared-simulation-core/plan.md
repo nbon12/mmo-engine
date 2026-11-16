@@ -490,6 +490,19 @@ The design documents settled these points, which the spec leaves open. They are 
   task first said, would let a settable static auto-property (`<Name>k__BackingField`) pass, which is
   exactly the static mutable state the test exists to refuse. The test skips compiler-generated types
   and fields except those backing fields.
+- **The Payne–Hanek path keeps a tail, and takes π/2 from the Cody–Waite parts (T045).** After the
+  96-bit window of 2/π, the fraction is multiplied by π/2 in Q62 fixed point, which is the exact sum
+  of the four pinned Cody–Waite parts rather than a second, unpinned π/2 constant, and rounded once to
+  float; the next 24 bits go into the kernels as the tail, as on the Cody–Waite path, because R3 asks
+  for no more than one rounding of r and a dropped tail costs accuracy for nothing. R3's prototype
+  measured 1.550 / 2.072 ulp on this path; with the tail the exhaustive sweep gives 0.804 / 1.317,
+  inside the same bounds. research.md R3's measured maxima now come from this
+  implementation, and T164 cites them.
+- **"Degree 5" for asin and the atan degree are read in x² (T042, T045).** asin(x) ≈ x + x·R(x²) with
+  R(z) = z·(A0 + … + z·A4), degree 5 in z (a degree-5 polynomial in x would be ~3e-4 off at ½), and
+  atan(x) ≈ x − x·Q(x²) with Q of degree 6 in z, which R3 left open; its fit error is 0.001 ulp. The
+  generator also emits 2/π and the hi/lo pairs of π/2, π/4, π, atan(½), atan(3/2) and 3π/4, so every
+  irrational constant SimMath uses is generated and pinned by `SimMathTests.CoefficientsHaveTheirPinnedBits`.
 
 ## Delivery
 
