@@ -197,6 +197,9 @@ public sealed partial class ConfigRuleTableTests
         "two-standing-capsules",
         "standing-0-a-null",
         "weapon-1-null",
+        "world-and-input-null",
+        "weapons-null",
+        "standing-null",
     ];
 
     public static TheoryData<string> OrderCases => ["field-errors", "relation-errors"];
@@ -313,17 +316,18 @@ public sealed partial class ConfigRuleTableTests
     }
 
     /// <summary>
-    /// A shape error ends the check: each row gives exactly its one error, even when the configuration
-    /// has other problems (contracts/config-rules.md#shape, #check-order-and-the-error-list).
+    /// Every shape error is listed, in section order, and then the check ends: each row gives exactly its
+    /// errors, even when the configuration has other problems. A null list counts as one with no entries
+    /// and gets the count message (contracts/config-rules.md#shape, #check-order-and-the-error-list).
     /// </summary>
     [Theory]
     [MemberData(nameof(ShapeCases))]
     public void ShapeErrorsEndTheCheck(string caseName)
     {
-        var (edit, error) = Shape(caseName);
+        var (edit, errors) = Shape(caseName);
         var config = TestConfigs.With(edit);
 
-        AssertErrors(config, [error]);
+        AssertErrors(config, errors);
     }
 
     /// <summary>
@@ -665,8 +669,8 @@ public sealed partial class ConfigRuleTableTests
         };
     }
 
-    /// <summary>A shape case's edit of the placeholders and the one error it must give.</summary>
-    private static (Action<SimConfig> Edit, ConfigError Error) Shape(string caseName)
+    /// <summary>A shape case's edit of the placeholders and the errors it must give, in order.</summary>
+    private static (Action<SimConfig> Edit, ConfigError[] Errors) Shape(string caseName)
     {
         var weapons = TestConfigs.Default().Weapons!;
         return caseName switch
@@ -678,17 +682,30 @@ public sealed partial class ConfigRuleTableTests
                     c.Movement = null;
                     c.StepRateHz = 0;
                 },
-                new("movement", "is required")),
-            "zero-weapons" => (c => c.Weapons = [], new("weapons", "must have between 1 and 8 entries")),
+                [new("movement", "is required")]),
+            "zero-weapons" => (c => c.Weapons = [], [new("weapons", "must have between 1 and 8 entries")]),
             "nine-weapons" => (
                 c => c.Weapons = [.. weapons, .. weapons, .. weapons, .. weapons, weapons[0]],
-                new("weapons", "must have between 1 and 8 entries")),
-            "zero-projectile-classes" => (c => c.ProjectileClasses = [], new("projectileClasses", "must have between 1 and 8 entries")),
+                [new("weapons", "must have between 1 and 8 entries")]),
+            "zero-projectile-classes" => (c => c.ProjectileClasses = [], [new("projectileClasses", "must have between 1 and 8 entries")]),
             "two-standing-capsules" => (
                 c => c.Hitboxes!.Standing = [c.Hitboxes.Standing![0], c.Hitboxes.Standing[1]],
-                new("hitboxes.standing", "must have exactly 3 entries")),
-            "standing-0-a-null" => (c => c.Hitboxes!.Standing![0]!.A = null, new("hitboxes.standing[0].a", "is required")),
-            "weapon-1-null" => (c => c.Weapons![1] = null, new("weapons[1]", "is required")),
+                [new("hitboxes.standing", "must have exactly 3 entries")]),
+            "standing-0-a-null" => (c => c.Hitboxes!.Standing![0]!.A = null, [new("hitboxes.standing[0].a", "is required")]),
+            "weapon-1-null" => (c => c.Weapons![1] = null, [new("weapons[1]", "is required")]),
+
+            // Every shape error is listed, in section order: world comes first and input last.
+            "world-and-input-null" => (
+                c =>
+                {
+                    c.World = null;
+                    c.Input = null;
+                },
+                [new("world", "is required"), new("input", "is required")]),
+
+            // A null list counts as a list with no entries: the count message, not "is required".
+            "weapons-null" => (c => c.Weapons = null, [new("weapons", "must have between 1 and 8 entries")]),
+            "standing-null" => (c => c.Hitboxes!.Standing = null, [new("hitboxes.standing", "must have exactly 3 entries")]),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
         };
     }

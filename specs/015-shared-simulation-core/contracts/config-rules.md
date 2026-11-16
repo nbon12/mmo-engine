@@ -382,7 +382,9 @@ reuse:
   `ConfigGuard.Check`'s, path for path and message for message.
 - The environment name (`DOTNET_ENVIRONMENT`) is checked with the repo's existing pattern.
 - `simcore config check <file>` binds and validates a file, prints one `path: message` line per error
-  and exits 0 when valid, 1 when invalid and 2 on a usage error.
+  and exits 0 when valid, 1 when invalid and 2 on a usage error or a file it cannot check: one that is
+  missing, longer than 1 MiB or cannot be read
+  ([simcore-cli.md](simcore-cli.md#config-check)).
 
 A server loads its configuration at startup and refuses to start on any error (fail fast).
 

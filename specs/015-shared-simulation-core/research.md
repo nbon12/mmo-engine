@@ -112,7 +112,8 @@ the BCL-plus-`System.IO.Hashing` reference set and the analyzer wiring.
 
 - `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `SinCos` and `SinCosBinaryAngle`;
 - `Sqrt`, which wraps the correctly rounded `MathF.Sqrt`;
-- `Min`, `Max` and `Clamp`;
+- `Min`, `Max` and `Clamp`, as compare-selects (`a < b ? a : b`, `a > b ? a : b` and
+  `value < min ? min : (value > max ? max : value)`), so they never throw;
 - `FloorToInt`, `RoundToInt` and `TruncateToInt`, which saturate.
 
 Each function has one fixed algorithm:

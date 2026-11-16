@@ -39,7 +39,7 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- <command> [options]
 | `agreement prepare --work <dir> [--seeds 1-50] [--streams simcore/streams] [--content simcore/content] [--config simcore/config/default.json]` | Writes the agreement work directory and the server build's records | 0; 1 a committed stream diverged on the server; 2 |
 | `agreement compare --work <dir> [--require <builds>] [--summary <file>]` | Compares every build's records with the server's | 0 all agree; 1 a divergence; 2 cannot run |
 | `measure validate-report <file>` | Checks the measurement report ([measurement-report.md](measurement-report.md)) | 0 valid; 1 invalid; 2 unreadable |
-| `config check <file>` | Validates a configuration file ([config-rules.md](config-rules.md)) | 0 valid; 1 invalid; 2 usage |
+| `config check <file>` | Validates a configuration file ([config-rules.md](config-rules.md)) | 0 valid; 1 invalid; 2 usage or refused input |
 
 ## Content files
 
@@ -374,8 +374,11 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- config check simcore/config/de
 ```
 
 Binds the file with `SimConfigJson` and validates it with `SimConfigValidator`, which applies the core's
-rule table ([config-rules.md](config-rules.md#server)). Output: one `path: message` line per error, in
-rule-table order; nothing when valid. Exit 0 valid, 1 invalid, 2 when the file is missing.
+rule table ([config-rules.md](config-rules.md#server)). Output: one `path: message` line per binding or
+validation error, in rule-table order; nothing when valid. Exit 0 valid, 1 invalid. A file the command
+cannot check is a refused input, reported as one line on stderr with exit 2 and nothing on stdout:
+`<path>: the file does not exist`, `<path>: the file is <n> bytes; the limit is 1048576` (a file longer
+than 1 MiB, refused from its length before it is read), or `<path>: the file cannot be read (<reason>)`.
 
 ## Agreement work directory
 

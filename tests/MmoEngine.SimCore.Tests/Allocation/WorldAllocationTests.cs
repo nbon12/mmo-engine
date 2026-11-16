@@ -8,14 +8,12 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// owned by the world and sized from the configured maxima when the world is created
 /// (data-model.md#world-simworld). Phases 3, 6 and 7 replace the movement, weapon and projectile stage
 /// bodies, so this row is the world-level regression they keep green. Each rate warms the step up twice,
-/// then counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across 1,000 steps, and requires exactly
-/// 0 bytes.
+/// then counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000 steps
+/// (<see cref="ZeroAllocation"/>), and requires the smallest batch to be exactly 0 bytes.
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class WorldAllocationTests
 {
-    private const int WarmUpCalls = 2;
-    private const int MeasuredCalls = 1_000;
     private const ulong Salt = 7;
 
     /// <summary>
@@ -29,33 +27,20 @@ public sealed class WorldAllocationTests
     {
         var world = new SimWorld(TestConfigs.Compiled(hz), TestWorlds.Load(TestWorlds.Flat()));
         world.Reset(TestStates.StandingOnFlat, Salt);
-        var commands = ReadOnlySpan<CharacterCommand>.Empty;
         var faults = 0;
-        for (var i = 0; i < WarmUpCalls; i++)
+
+        var counts = ZeroAllocation.MeasureBatches(_ =>
         {
-            if (world.Step(commands).Fault.Code != StepFaultCode.None)
+            if (world.Step(ReadOnlySpan<CharacterCommand>.Empty).Fault.Code != StepFaultCode.None)
             {
                 faults++;
             }
-        }
+        });
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < MeasuredCalls; i++)
-        {
-            if (world.Step(commands).Fault.Code != StepFaultCode.None)
-            {
-                faults++;
-            }
-        }
-
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-        Assert.True(
-            allocated == 0,
-            $"{hz} Hz: SimWorld.Step with no commands allocated {allocated} bytes over {MeasuredCalls} steps");
+        ZeroAllocation.AssertABatchAllocatedNothing(counts, $"{hz} Hz: SimWorld.Step with no commands");
         Assert.True(
             faults == 0,
-            $"{hz} Hz: {faults} of {WarmUpCalls + MeasuredCalls} steps reported a fault instead of StepFaultCode.None");
-        Assert.Equal((uint)(WarmUpCalls + MeasuredCalls), world.CurrentStep);
+            $"{hz} Hz: {faults} of {ZeroAllocation.TotalCalls} steps reported a fault instead of StepFaultCode.None");
+        Assert.Equal((uint)ZeroAllocation.TotalCalls, world.CurrentStep);
     }
 }

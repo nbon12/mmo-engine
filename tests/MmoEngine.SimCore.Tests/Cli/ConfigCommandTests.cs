@@ -7,7 +7,8 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// FR-029, contracts/simcore-cli.md#config-check: <c>simcore config check &lt;file&gt;</c> binds the file
 /// with <c>SimConfigJson</c>, validates it with <c>SimConfigValidator</c> and prints one
 /// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
-/// valid. It exits 0 when valid, 1 when invalid and 2 on a usage error or a missing file.
+/// valid. It exits 0 when valid, 1 when invalid, and 2 on a usage error or a refused input: a missing
+/// file or one longer than 1 MiB, named on stderr.
 /// </summary>
 public sealed class ConfigCommandTests
 {
@@ -16,11 +17,14 @@ public sealed class ConfigCommandTests
         "stepRateHz: must be between 20 and 60\n" +
         "movement.walkSpeed: must be between 0.1 and 20\n";
 
-    public static TheoryData<string> Cases => ["valid", "invalid", "missing-file", "no-file-argument"];
+    /// <summary>The largest configuration file <c>config check</c> reads, 1 MiB.</summary>
+    private const long MaxFileLength = 1024 * 1024;
+
+    public static TheoryData<string> Cases => ["valid", "invalid", "missing-file", "oversized-file", "no-file-argument"];
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void ConfigCheckExitsZeroForValidOneForInvalidTwoForMissing(string caseName)
+    public void ConfigCheckExitsZeroForValidOneForInvalidTwoForMissingOrRefused(string caseName)
     {
         using var directory = TempDirectories.Create("config-check");
         var row = Row(caseName, directory);
@@ -41,7 +45,10 @@ public sealed class ConfigCommandTests
         }
     }
 
-    /// <summary>A row's arguments and what it must give. Only the invalid row writes a file, into <paramref name="directory"/>.</summary>
+    /// <summary>
+    /// A row's arguments and what it must give. Only the invalid and oversized rows write a file, into
+    /// <paramref name="directory"/>.
+    /// </summary>
     private static ConfigCheckRow Row(string caseName, TempDirectory directory)
     {
         switch (caseName)
@@ -55,6 +62,16 @@ public sealed class ConfigCommandTests
             case "missing-file":
                 var missing = directory.Combine("missing.json");
                 return new(["config", "check", missing], Exit: 2, StderrContains: $"{missing}: the file does not exist");
+
+            // One byte over the limit: refused from its length, before it is read, so nothing is
+            // bound and nothing reaches stdout.
+            case "oversized-file":
+                var oversized = WriteOversizedFile(directory);
+                return new(
+                    ["config", "check", oversized],
+                    Exit: 2,
+                    Stdout: string.Empty,
+                    StderrContains: $"{oversized}: the file is {MaxFileLength + 1} bytes; the limit is {MaxFileLength}");
 
             case "no-file-argument":
                 return new(["config", "check"], Exit: 2);
@@ -78,6 +95,15 @@ public sealed class ConfigCommandTests
         config["movement"]!["walkSpeed"] = 0;
         var path = directory.Combine("default.json");
         File.WriteAllText(path, config.ToJsonString());
+        return path;
+    }
+
+    /// <summary>A sparse file one byte longer than 1 MiB, written into <paramref name="directory"/>.</summary>
+    private static string WriteOversizedFile(TempDirectory directory)
+    {
+        var path = directory.Combine("oversized.json");
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+        stream.SetLength(MaxFileLength + 1);
         return path;
     }
 

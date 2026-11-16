@@ -431,8 +431,16 @@ public static class SimMath
     /// <summary><c>a &gt; b ? a : b</c>: the same bits in every build for signed zeros and NaNs.</summary>
     public static float Max(float a, float b) => a > b ? a : b;
 
-    /// <summary><paramref name="value"/> limited to [<paramref name="min"/>, <paramref name="max"/>].</summary>
-    public static float Clamp(float value, float min, float max) => System.Math.Clamp(value, min, max);
+    /// <summary>
+    /// <c>value &lt; min ? min : (value &gt; max ? max : value)</c>: <paramref name="value"/> limited to
+    /// [<paramref name="min"/>, <paramref name="max"/>], with the same bits in every build. It never throws:
+    /// a value below <paramref name="min"/> gives <paramref name="min"/>, otherwise a value above
+    /// <paramref name="max"/> gives <paramref name="max"/>, even when the bounds cross. A NaN value is
+    /// returned unchanged, a NaN bound only skips its own comparison, and a signed zero inside the range
+    /// keeps its sign. Whenever min ≤ max it gives the bits <c>System.Math.Clamp</c> gives, which throws
+    /// (and allocates) when min &gt; max, so step code never calls it.
+    /// </summary>
+    public static float Clamp(float value, float min, float max) => value < min ? min : (value > max ? max : value);
 
     /// <summary>
     /// The largest integer not above <paramref name="x"/>, saturated: NaN gives 0, 2^31 and above give

@@ -49,11 +49,13 @@ allowed sample none ([contracts/analyzer-rules.md](contracts/analyzer-rules.md#t
 
 ```bash
 dotnet run --project src/MmoEngine.SimCore.Cli -- config check simcore/config/default.json
-echo $?   # 0 valid, 1 invalid, 2 usage
+echo $?   # 0 valid, 1 invalid, 2 usage or a file it cannot check
 ```
 
 Expected: no output and exit 0. An invalid file prints one `path: message` line per error and exits 1
-([contracts/config-rules.md](contracts/config-rules.md)).
+([contracts/config-rules.md](contracts/config-rules.md)). A missing file, one larger than 1 MiB or one
+that cannot be read is named on stderr and exits 2
+([contracts/simcore-cli.md](contracts/simcore-cli.md#config-check)).
 
 ## Reproduce the test world
 

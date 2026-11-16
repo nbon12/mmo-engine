@@ -345,8 +345,10 @@ public sealed class SimMathTests
 
     /// <summary>
     /// Min is <c>a &lt; b ? a : b</c> and Max is <c>a &gt; b ? a : b</c>, so a signed zero or a NaN
-    /// in either argument gives the same bits in every build (research R4). Clamp(value, min, max)
-    /// returns the bound a value lies beyond. The third argument is used by Clamp only.
+    /// in either argument gives the same bits in every build (research R4). Clamp(value, min, max) is
+    /// <c>value &lt; min ? min : (value &gt; max ? max : value)</c>: it returns the bound a value lies
+    /// beyond, a NaN value unchanged and a signed zero with its sign, and it does not throw when the
+    /// bounds cross. The third argument is used by Clamp only.
     /// </summary>
     [Theory]
     [InlineData("Min", PlusZero, MinusZero, 0u, MinusZero)]
@@ -360,6 +362,10 @@ public sealed class SimMathTests
     [InlineData("Clamp", Five, PlusZero, One, One)]
     [InlineData("Clamp", MinusFive, PlusZero, One, PlusZero)]
     [InlineData("Clamp", Half, PlusZero, One, Half)]
+    [InlineData("Clamp", PayloadNaN, PlusZero, One, PayloadNaN)]
+    [InlineData("Clamp", MinusZero, PlusZero, One, MinusZero)]
+    [InlineData("Clamp", Half, One, PlusZero, One)]
+    [InlineData("Clamp", Five, One, PlusZero, PlusZero)]
     public void MinMaxAreCompareSelects(string function, uint aBits, uint bBits, uint cBits, uint expectedBits)
     {
         var a = Float(aBits);

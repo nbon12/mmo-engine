@@ -245,8 +245,9 @@ benchmark project replaces them with runner-class measurements (FR-030, SC-007).
 - **Allocations**: The world owns every buffer: the canonical-state buffer, the collision query
   span, the hitbox span and the event lists, all sized from the configured maxima. Steps write into
   caller-owned spans and fixed-capacity arrays. The core has no LINQ, lambdas, boxing or static
-  mutable state. Zero-allocation tests run 1,000 steps after warm-up, for each of the movement,
-  weapon, projectile and full-world steps, and assert 0 bytes (US7.3, FR-032, SC-005).
+  mutable state. Zero-allocation tests run three batches of 1,000 steps after warm-up, for each of
+  the movement, weapon, projectile and full-world steps, and assert that the smallest batch is 0 bytes
+  (US7.3, FR-032, SC-005).
 - **Degradation**: The core has no Delivery work. The core runs at 20 Hz when configured for it (the
   20 Hz streams and tests). A live 30 to 20 Hz drop needs a state conversion between rates, which this
   feature does not provide; it is a follow-up for sub-spec 5 (spec Edge Cases and Assumptions).
@@ -508,7 +509,8 @@ The design documents settled these points, which the spec leaves open. They are 
   one run shows everything that is missing, and then runs no field or relation check. A null
   `weapons`, `projectileClasses` or capsule list counts as a list with no entries and gets the count
   message, because the shape table gives those lists no `is required` row.
-  contracts/config-rules.md#check-order-and-the-error-list now says so.
+  contracts/config-rules.md#check-order-and-the-error-list and T049 now say so, and T020's
+  `ShapeErrorsEndTheCheck` rows `world-and-input-null`, `weapons-null` and `standing-null` pin both.
 - **`ConfigRuleTableTests.OutOfRange` boxes each value as its own type (T020, T049).** Its switch arms
   were tuples of `int`, `float` and `uint`, so the switch's natural type was `(float, string)` and the
   Int and Enum values reached their properties as boxed floats, which reflection refuses. Each arm now
@@ -549,6 +551,38 @@ The design documents settled these points, which the spec leaves open. They are 
   research R6's 274 and every row whose ratio is not whole, and changes only the whole-number ratios
   (4 m on 4 m grid cells: 306 to 648). `CollisionWorldBuildTests.MaxQueryCandidatesCoversEveryFloatBoxOfThatWidth`
   checks real float boxes near cell boundaries, including near the 8192 m limit.
+- **`config check` exits 2 for a config file it refuses or cannot read (T037, T062, Phase 2 review).**
+  The CLI's exit-code table gives 2 for "an unreadable or refused input", but the command passed
+  `SimConfigJson.Load`'s size and read errors through as binding errors and exited 1, as its own
+  section ("2 when the file is missing") allowed. The general table wins, so `config check` matches
+  every other command's refusals: it checks the length against `SimConfigJson.MaxFileLength` and reads
+  the file itself, writes `<path>: …` to stderr and exits 2, and binds the text with
+  `SimConfigJson.Parse`. `SimConfigJson.Load` is unchanged, because the server's fail-fast startup
+  wants one error list whatever the cause. The `oversized-file` row pins the refusal. An unreadable
+  file has no row: file permissions do not stop a test run as root, so there is no portable fixture.
+- **`SimMath.Clamp` is a compare-select, not `System.Math.Clamp` (T016, T045, Phase 2 review).**
+  `System.Math.Clamp` throws `ArgumentException`, and allocates its message, when min > max. Step code
+  must throw and allocate nothing, and later phases clamp against bounds computed in `float`, which
+  could cross by an ulp. `value < min ? min : (value > max ? max : value)` gives the same bits whenever
+  min ≤ max (including a NaN value or bound and the signed zeros) and never throws.
+  `MinMaxAreCompareSelects` pins NaN, −0 and both crossed-bound branches. The analyzer's "float
+  `Clamp` inside SimMath only" allowance stays, so research R4 and contracts/analyzer-rules.md are
+  unchanged there. T183's pitch clamp is in `int`, so it now names the integer `System.Math.Clamp`,
+  which the analyzer allows, rather than `SimMath.Clamp`, which has no `int` overload.
+- **Zero-allocation tests require the smallest of three 1,000-call batches to be 0 bytes (T013, T036,
+  Phase 2 review).** During review, `WorldAllocationTests.StepAllocatesNothing(20)` counted 4,952 bytes
+  over 1,000 steps in one of five full-suite runs, and every rerun counted 0; more than 70 full-suite
+  runs here, sequential, after a rebuild and four at a time, did not reproduce it, and a probe with
+  other threads allocating and collecting showed no stray count. With the cause unknown and outside the code under test, a single
+  counted window can fail a correct step. Each test now warms up twice as before and then counts three
+  separate batches through `ZeroAllocation.MeasureBatches`: a per-call allocation, or one that recurs
+  within 1,000 calls, shows in every batch, while a one-off stray count lands in one. What this gives
+  up is a single allocation made once, after the warm-up, which the batches would read as stray; the
+  world's buffers are sized at construction (data-model.md#world-simworld), so no step has such a
+  path. There is no byte tolerance, and the failure message lists every batch. More warm-up or turning
+  tiered compilation off was not chosen: the core runs unoptimised in the Debug test build, which the
+  JIT does not tier, and a review run reported a stray count with tiering off as well. T076, T115,
+  T172, T199 and T246 use the same rule.
 
 ## Delivery
 
