@@ -626,8 +626,8 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - It refuses a file larger than 1 MiB before reading.
   - `SimConfigValidator.cs`: `AbstractValidator<SimConfig>` with the contract's `RuleFor(c => c).Custom(...)` over `ConfigGuard.Check`, and `static IReadOnlyList<ConfigError> Errors(SimConfig)`.
   - `SimEnvironment.cs`: `VariableName` `DOTNET_ENVIRONMENT`, `Default` `Development`, `Allowed` [Development, Dev, Test, Staging, Production], and `Resolve(string?)` with the simulator's message `must be one of …, was '<value>'`.
-- [ ] T056 Implement `src/MmoEngine.SimCore/Hitboxes/HitboxBuilder.cs`. `HitboxBuilder.Build(HitboxLayout layout, Vec3 position, ushort aimYaw, Span<Hitbox> destination)` takes `(sy, cy)` from `SimMath.SinCosBinaryAngle(aimYaw)` and writes Head, Torso and Legs, with `wx = fx + ((sy*lf) - (cy*lr))`, `wy = fy + lu` and `wz = fz + ((cy*lf) + (sy*lr))`. It returns `HitboxBounds((fx, fy + BoundCenterUp, fz), BoundRadius)`, and it is allocation-free. Makes T033 and T036's `HitboxAllocationTests` pass.
-- [ ] T057 Implement the collision world build in `src/MmoEngine.SimCore/Collision/` (data-model.md#collision-world, contracts/collision-data-format.md#derived-data-built-at-load), with the records `CollisionData` and `MeshData` of contracts/collision-data-format.md#api in `src/MmoEngine.SimCore/Formats/CollisionFile.cs`. Supports T031.
+- [X] T056 Implement `src/MmoEngine.SimCore/Hitboxes/HitboxBuilder.cs`. `HitboxBuilder.Build(HitboxLayout layout, Vec3 position, ushort aimYaw, Span<Hitbox> destination)` takes `(sy, cy)` from `SimMath.SinCosBinaryAngle(aimYaw)` and writes Head, Torso and Legs, with `wx = fx + ((sy*lf) - (cy*lr))`, `wy = fy + lu` and `wz = fz + ((cy*lf) + (sy*lr))`. It returns `HitboxBounds((fx, fy + BoundCenterUp, fz), BoundRadius)`, and it is allocation-free. Makes T033 and T036's `HitboxAllocationTests` pass.
+- [X] T057 Implement the collision world build in `src/MmoEngine.SimCore/Collision/` (data-model.md#collision-world, contracts/collision-data-format.md#derived-data-built-at-load), with the records `CollisionData` and `MeshData` of contracts/collision-data-format.md#api in `src/MmoEngine.SimCore/Formats/CollisionFile.cs`. Supports T031.
   - `Heightfield.cs`:
     - the one sample expression;
     - the fixed v00 → v11 diagonal, with triangle IDs `2·(j·(columns − 1) + i) + k`, generated on demand by `GetTriangle(int id, out Vec3 a, out Vec3 b, out Vec3 c)`;
@@ -649,22 +649,22 @@ Core code obeys the analyzer rules from this phase on, before Phase 5 turns them
     - `MaxQueryCandidates(float boxWidth)`, which is `2·(⌈w/cellSize⌉+1)² + 64·(⌈w/gridCellSize⌉+1)²`.
 
     It is built in file order by an internal factory from `CollisionData` and the checksum. `BoxQuery` (Phase 3) and `SegmentQuery` (Phase 7) are later partial files.
-- [ ] T058 Implement `CollisionFile` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` (contracts/collision-data-format.md#layout, #check-order, #api), after T057. Together they make T030 and T031 pass.
+- [X] T058 Implement `CollisionFile` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` (contracts/collision-data-format.md#layout, #check-order, #api), after T057. Together they make T030 and T031 pass.
   - It has `FormatVersion`, `HeaderLength`, `MaxFileLength` and `Magic`.
-  - `Decode` runs checks 1 to 4 and 7 in order, with format `collision` and the contract's messages. It then parses the header, heights, directory, vertices and indices through bounds-checked slices and builds the world. It never returns a partial world.
+  - `Decode` runs checks 1 to 4 and 7 in order, with format `collision` and the contract's messages. It then parses the header, heights, directory, vertices and indices through bounds-checked slices and builds the world. It never returns a partial world. Until T235 puts check 6 first, a slice that runs past the content is refused as `Inconsistent` at 8 `fileLength` with the `the counts need <n> bytes; fileLength is <m>` detail (n: what the counts read so far need).
   - `Encode(CollisionData)` writes the header, body and the XxHash64 trailer, computing `fileLength`. It then decodes its own output, so it throws exactly what `Decode` would.
 
   Checks 5, 6, 8 and 9 are Phase 8's, and their fixtures are its red tests.
-- [ ] T059 Implement `src/MmoEngine.SimCore/Formats/RecordedStream.cs` with `RecordedStep` and `RecordedCommand` (contracts/recorded-stream-format.md#api). Makes T032 pass.
+- [X] T059 Implement `src/MmoEngine.SimCore/Formats/RecordedStream.cs` with `RecordedStep` and `RecordedCommand` (contracts/recorded-stream-format.md#api). Makes T032 pass.
   - It has a public constructor `RecordedStream(uint rulesRevision, int stepHz, ulong seed, ulong matchSalt, ulong collisionChecksum, SimConfig config, ReadOnlyMemory<byte> initialState, IReadOnlyList<RecordedStep> steps)`; the tests call it with these parameter names. `CharacterCount` comes from the state header.
   - `Decode` runs checks 1–4 and 7, then:
     - check 9 through the internal `ConfigBlock` overload (`stream`, base 64, `config.`);
     - the byte-only half of check 11 through `StateSerializer.ReadLoaded` (`stream`, base `64 + configLength`, `initialState.`);
-    - parsing of the step entries, with `InputCodec.TryDecode` for each command. A failed decode throws `CoreFormatException` re-reported with format `stream`, the file offset (the command's input offset plus the codec's offset) and the field `steps[i].commands[c].input.<field>`.
+    - parsing of the step entries, with `InputCodec.TryDecode` for each command. A failed decode throws `CoreFormatException` re-reported with format `stream`, the file offset (the command's input offset plus the codec's offset) and the field `steps[i].commands[c].input.<field>`. The parse is bounds-checked: until T236 puts check 6 first, a block that runs past the content is `Inconsistent` at 56 `fileLength` (`the blocks need <n> bytes; fileLength is <m>`), and an entry that runs past the steps block is already `Inconsistent` at the field being read, which T236 keeps.
   - `Encode()` computes the block lengths, `fileLength` and the trailer, then decodes its output.
 
   Checks 5, 6, 8, 10, the character-count half of 11, and the rest of 12 (step numbers, command counts, character indices and the block fill) are Phase 8's.
-- [ ] T060 Implement `src/MmoEngine.SimCore/World/SimWorld.cs` (data-model.md#world-simworld and #world-step-order). Makes T034, T035 and T036's `WorldAllocationTests` pass.
+- [X] T060 Implement `src/MmoEngine.SimCore/World/SimWorld.cs` (data-model.md#world-simworld and #world-step-order). Makes T034, T035 and T036's `WorldAllocationTests` pass.
   - The constructor `SimWorld(CompiledConfig config, CollisionWorld collision)` allocates every buffer once from the maxima:
     - current and next characters, weapons (maxCharacters × weaponSlots) and projectiles;
     - inputs and rejection reasons per character;

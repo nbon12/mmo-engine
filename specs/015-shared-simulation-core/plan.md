@@ -517,6 +517,16 @@ The design documents settled these points, which the spec leaves open. They are 
   hold `Vec3`s. Comparing component bits (−0 differs from +0, a NaN equals itself) is the canonical
   state's own rule, and it avoids `ValueType.Equals`' reflection; the hash mixes the bits with no
   per-process seed.
+- **Phase 2's decoders refuse a block that overruns, instead of throwing a slice exception (T058,
+  T059).** Checks 5, 6 and 12 are Phase 8's (T235, T236), so in Phase 2 a checksum-valid file whose
+  counts or block lengths disagree with its length reaches the parse. Its slices are bounds-checked
+  and refuse with `CoreFormatException`, which is what the decoders' API promises, rather than letting
+  an `ArgumentOutOfRangeException` escape: a collision slice past the content is `Inconsistent` at 8
+  `fileLength` with the `CountsNeed` detail, a stream block is `Inconsistent` at 56 `fileLength`
+  (`the blocks need <n> bytes; fileLength is <m>`), and a step entry past the steps block is
+  `Inconsistent` at the field being read, the rule T236 states. They run after the checksum, so the
+  Phase 8 fixtures that reach checks 5 and 6 without `fixChecksum` stay red until T235 and T236 put
+  those checks first, which leaves these refusals as unreachable backstops.
 
 ## Delivery
 
