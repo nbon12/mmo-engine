@@ -117,19 +117,20 @@ This is the only way the committed expected hashes change (FR-028). No test and 
 writes under `simcore/streams/`; the tests open stream files read-only.
 
 1. Refuse with exit 2 when `--reason` is missing, empty, whitespace only, longer than 500 characters
-   or more than one line; when both or neither of `--scenario` and `--all` are given; or when
-   `--scenario` names an unknown scenario (the message lists the known names).
+   or more than one line (the message names `--reason`); when both or neither of `--scenario` and
+   `--all` are given (the message names both options); or when `--scenario` names an unknown scenario
+   (the message names it and lists the known names).
 2. For each selected scenario, in name order, build its stream with `ScenarioCatalog`: the
    configuration (from `--config` plus the scenario's overrides), the initial state, the match salt
    and the commands, against the collision file in `--content` that the scenario names.
 3. Run it through the server build (`StreamRunner`) to compute every step's expected hash. A step
    fault stops the command with exit 1 and prints `streams record: <name>: <message>` on stderr,
    where the message is the `StepFaultException`'s (`step <n> faulted: <code> at <path>`). A refusal
-   (an invalid configuration, a missing collision file, a refused content file per
-   [content files](#content-files)) exits 2. Either way nothing is written. A valid configuration
-   does not fault, so the test `RecordExitsOneWhenAServerRunFaultsAndWritesNothing` injects the fault
-   through the CLI's internal stream-runner parameter (`Program.Run`'s `runStream`); the CLI never
-   calls core internals.
+   (an invalid configuration, printed as its `path: message` lines; a missing collision file, named on
+   stderr; a refused content file per [content files](#content-files)) exits 2. Either way nothing is
+   written. A valid configuration does not fault, so the test
+   `RecordExitsOneWhenAServerRunFaultsAndWritesNothing` injects the fault through the CLI's internal
+   stream-runner parameter (`Program.Run`'s `runStream`); the CLI never calls core internals.
 4. Write `<out>/<name>.mmrs` with `rulesRevision` = `SimCoreVersion.RulesRevision`
    ([recorded-stream-format.md](recorded-stream-format.md)). An unchanged stream is not rewritten.
 5. With `--all`, a `.mmrs` file in `<out>` whose scenario is no longer in the catalog is deleted and
@@ -202,8 +203,9 @@ prints it:
 The last line is `streams verify: <n> streams, <m> match, <d> diverged, <c> not comparable, <r> refused`.
 
 Exit 1 when any stream diverged; otherwise 2 when any was not comparable or refused, or when the
-directory holds no stream; otherwise 0. Only Match passes. A committed stream carries the expected
-hashes, not the states, so a verify divergence names the step and both hashes but no fields
+directory holds no stream (the total line reports 0 streams) or does not exist (stderr names it);
+otherwise 0. Only Match passes. A committed stream carries the expected hashes, not the states, so a
+verify divergence names the step and both hashes but no fields
 ([state-serialization.md](state-serialization.md#divergence-report)). The field-by-field report comes
 from `agreement compare`, where both sides have their states.
 

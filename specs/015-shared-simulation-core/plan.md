@@ -669,6 +669,17 @@ The design documents settled these points, which the spec leaves open. They are 
   steps, still more than twice the about 0.92 s of airtime T082 needs to see the landing. T105 now
   says so. `StreamRunner`'s refusal of a `perturbStep` it cannot apply names the parameter
   (`ParamName` `perturbStep`), which T088 asserts; T088 and T100 now say so.
+- **`LoadAllDecodesEveryFileInOrdinalOrder` loads two different worlds, and the `streams` refusals
+  name what they refuse (T091, T092, T107, T108).** T092's second `ContentFilesTests` Fact loaded two
+  copies of `test-world.mmcd`, which decode to equal worlds, so it could not see the order its name
+  promises. `a.mmcd` is now the encoded `tiny-world` and `b.mmcd` the committed test world, written in
+  that reverse order, and the test asserts the tiny world comes first. The refusal tests also pin what
+  a usable refusal says, which the contract left open: both or neither selector names `--scenario` and
+  `--all`, an unknown scenario is named beside the known ones, an empty `--content` names
+  `test-world.mmcd`, and a missing `--dir` is named on stderr. The stream whose collision file is
+  absent is `flat-run-30hz` with another `collisionChecksum`, so it fails only that check. The record
+  tests also check that nothing else in the temp copy changes and that a re-added stream is
+  byte-identical to the committed one. T091, T092 and contracts/simcore-cli.md now say so.
 
 ## Delivery
 
