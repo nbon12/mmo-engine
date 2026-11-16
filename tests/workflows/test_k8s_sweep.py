@@ -127,6 +127,11 @@ class JobManifest(unittest.TestCase):
         self.assertEqual(2, job["parallelism"])
         self.assertEqual("Never", job["template"]["spec"]["restartPolicy"])
         self.assertEqual("Failed", job["podReplacementPolicy"])
+        # A non-zero exit fails its index at once (the simulator is deterministic); disruptions are retried.
+        rules = job["podFailurePolicy"]["rules"]
+        self.assertEqual({"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]}, rules[0])
+        self.assertEqual({"action": "FailIndex", "onExitCodes": {"containerName": "sweep", "operator": "NotIn",
+                                                                 "values": [0]}}, rules[1])
         container = job["template"]["spec"]["containers"][0]
         self.assertEqual("mmo-engine/regionizer-sim:local", container["image"])
         env = {e["name"]: e["value"] for e in container["env"]}
@@ -184,7 +189,8 @@ class Script(unittest.TestCase):
         bin_dir = Path(work) / "bin"
         bin_dir.mkdir()
         stub(bin_dir, "kubectl", 'printf "%s\\n" "$*" >> "$STUB_LOG"\n'
-                                 'case "$*" in *"get jobs,pods"*) cat "$STUB_STATE" ;; *"-f -"*) cat >/dev/null ;; esac\n')
+                                 'case "$*" in *"get jobs,pods"*) cat "$STUB_STATE" ;; *"get pvc/"*) printf "%s" "${STUB_KEPT:-}" ;;'
+                                 ' *"-f -"*) cat >/dev/null ;; esac\n')
         for tool in ("docker", "kind", "k3d"):
             stub(bin_dir, tool, f"echo unexpected {tool} call >&2\nexit 99\n")
         state_file = Path(work) / "state.json"
@@ -210,7 +216,7 @@ class Script(unittest.TestCase):
         self.assertIn("Stuck sweep-infantry-radius-0-abc ErrImageNeverPull", result.stderr)
         deletes = [line for line in self.log.read_text().splitlines()
                    if line.startswith("-n sweeps delete job/sweep-infantry-radius pod/sweep-infantry-radius-reader "
-                                      "pvc/sweep-infantry-radius-results configmap/sweep-infantry-radius-spec")]
+                                      "configmap/sweep-infantry-radius-spec pvc/sweep-infantry-radius-results")]
         # Once before the run (an earlier run's leftovers) and once on the way out.
         self.assertEqual(2, len(deletes), self.log.read_text())
 
@@ -223,6 +229,16 @@ class Script(unittest.TestCase):
         self.assertIn("Stuck sweep-infantry-radius-0-abc ImagePullBackOff for 3s", result.stderr)
         # Not on the first poll: it kept polling through the grace period.
         self.assertGreaterEqual(time.monotonic() - started, 3)
+
+    def test_a_stuck_pod_does_not_hide_the_shards_that_already_ran(self):
+        done = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-1-def"}, "status": {"phase": "Succeeded"}}
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(),
+                                 state=[{"kind": "Job", "status": {}}, done, self.waiting_pod("CreateContainerError")],
+                                 HARNESS_CLUSTER="none")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Stuck sweep-infantry-radius-0-abc CreateContainerError", result.stderr)
+        self.assertIn("-n sweeps cp sweep-infantry-radius-reader:/results", self.log.read_text(),
+                      "the finished shard must be copied out")
 
     def test_a_job_whose_pods_never_start_fails_after_the_start_timeout(self):
         pod = {"kind": "Pod", "metadata": {"name": "sweep-infantry-radius-0-abc"}, "status": {"phase": "Pending"}}
@@ -257,9 +273,11 @@ class Script(unittest.TestCase):
                                 capture_output=True, text=True, timeout=60)
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("kept pvc/sweep-infantry-radius-results", result.stderr)
+        self.assertTrue(any(c.startswith("-n sweeps annotate --overwrite pvc/sweep-infantry-radius-results mmo-engine/kept=")
+                            for c in log.read_text().splitlines()), "a kept volume must be marked")
         calls = log.read_text().splitlines()
         copy = next(i for i, c in enumerate(calls) if " cp " in f" {c} ")
-        self.assertFalse(any("pvc/" in c for c in calls[copy:]), "the volume must survive a failed copy")
+        self.assertFalse(any("delete" in c and "pvc/" in c for c in calls[copy:]), "the volume must survive a failed copy")
 
     def test_a_failed_poll_is_retried_rather_than_ending_the_run(self):
         work = tempfile.mkdtemp()
@@ -279,6 +297,21 @@ class Script(unittest.TestCase):
                                 capture_output=True, text=True, timeout=60)
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("Stuck p-0 ErrImageNeverPull", result.stderr)
+
+    def test_a_volume_an_earlier_run_kept_is_never_deleted_without_being_told(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), HARNESS_CLUSTER="none",
+                                 STUB_KEPT="2026-11-16T11:00:00Z")
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertIn("was kept by an earlier run (2026-11-16T11:00:00Z)", result.stderr)
+        self.assertNotIn("delete", self.log.read_text())
+
+    def test_sweep_discard_kept_lets_the_run_replace_a_kept_volume(self):
+        result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
+            "conditions": [{"type": "Failed", "status": "True"}]}}],
+            HARNESS_CLUSTER="none", STUB_KEPT="2026-11-16T11:00:00Z", SWEEP_DISCARD_KEPT="1", SWEEP_KEEP="1")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("delete job/sweep-infantry-radius pod/sweep-infantry-radius-reader "
+                      "configmap/sweep-infantry-radius-spec pvc/sweep-infantry-radius-results", self.log.read_text())
 
     def test_sweep_keep_leaves_the_job_and_its_volume(self):
         result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), state=[{"kind": "Job", "status": {
@@ -311,6 +344,15 @@ class Script(unittest.TestCase):
         result = self.run_script("infantry-radius", "010", tempfile.mkdtemp())
         self.assertEqual(2, result.returncode)
         self.assertIn("shards must be 1 to the sweep's 10 seeds, was 010", result.stderr)
+
+    def test_refuses_timeouts_and_pod_counts_that_are_not_whole_numbers(self):
+        for env, message in ((dict(SWEEP_TIMEOUT="6h"), "SWEEP_TIMEOUT must be whole seconds, was 6h"),
+                             (dict(SWEEP_PULL_GRACE="2m"), "SWEEP_PULL_GRACE must be whole seconds, was 2m"),
+                             (dict(SWEEP_PARALLELISM="0"), "SWEEP_PARALLELISM must be a whole number of pods, was 0")):
+            result = self.run_script("infantry-radius", "2", tempfile.mkdtemp(), **env)
+            self.assertEqual(2, result.returncode, env)
+            self.assertIn(message, result.stderr)
+            self.assertEqual("", self.log.read_text(), "nothing may reach the cluster")
 
     def test_refuses_an_unknown_sweep(self):
         result = self.run_script("no-such-sweep", "1", tempfile.mkdtemp())
@@ -395,7 +437,8 @@ class Script(unittest.TestCase):
     def test_a_shard_that_exited_3_still_merges_and_the_script_exits_3(self):
         result, out = self.run_complete_job({1: 0, 2: 3})
         self.assertEqual(3, result.returncode, result.stderr)
-        self.assertIn("shard 2/2 exited 3", result.stdout)
+        # On stderr, so callers that discard stdout (smoke.sh) still show it.
+        self.assertIn("shard 2/2 exited 3", result.stderr)
         self.assertTrue((out / "infantry-radius" / "sweep.json").exists())
 
     def test_smoke_runs_a_sweep_as_a_job_and_compares_it_with_a_plain_run(self):

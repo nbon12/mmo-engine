@@ -11,9 +11,18 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0.100@sha256:c7445f141c04f1a6b454181bd098dcfa606c61ba0bd213d0a702489e5bd4cd71 AS build
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./
+# The project files first, so a source edit reuses the restored packages (the restore layer stays cached).
+COPY src/MmoEngine.Regionizer/MmoEngine.Regionizer.csproj src/MmoEngine.Regionizer/
+COPY src/MmoEngine.Maps/MmoEngine.Maps.csproj src/MmoEngine.Maps/
+COPY src/MmoEngine.Regionizer.Simulator/MmoEngine.Regionizer.Simulator.csproj src/MmoEngine.Regionizer.Simulator/
+COPY src/MmoEngine.Regionizer.Simulator.Cli/MmoEngine.Regionizer.Simulator.Cli.csproj src/MmoEngine.Regionizer.Simulator.Cli/
+RUN dotnet restore src/MmoEngine.Regionizer.Simulator.Cli
 COPY simulator/scenarios/ simulator/scenarios/
-COPY src/ src/
-RUN dotnet publish src/MmoEngine.Regionizer.Simulator.Cli -c Release -nologo -o /app
+COPY src/MmoEngine.Regionizer/ src/MmoEngine.Regionizer/
+COPY src/MmoEngine.Maps/ src/MmoEngine.Maps/
+COPY src/MmoEngine.Regionizer.Simulator/ src/MmoEngine.Regionizer.Simulator/
+COPY src/MmoEngine.Regionizer.Simulator.Cli/ src/MmoEngine.Regionizer.Simulator.Cli/
+RUN dotnet publish src/MmoEngine.Regionizer.Simulator.Cli -c Release -nologo --no-restore -o /app
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0.15@sha256:80a51954ac70925e5783cb1ed35129a4243dcb1cddef20066b67346e17db284d
 WORKDIR /app

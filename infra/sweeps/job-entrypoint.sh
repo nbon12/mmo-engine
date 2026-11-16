@@ -22,9 +22,13 @@ rm -rf "$out"
 mkdir -p "$out"
 # The shell is PID 1, which ignores SIGTERM unless it traps it: pass it on to the simulator and wait for it to
 # stop, so a deleted pod stops writing its shard within the grace period.
+# The trap is set first, so a SIGTERM that arrives before the simulator starts is not lost.
+child=""
+terminated=""
+trap 'terminated=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM
 dotnet /app/regionizer-sim.dll sweep "$SPEC" --out "$out" --scenarios /app/scenarios --shard "$k/$SWEEP_SHARDS" --parallelism "$SWEEP_RUN_PARALLELISM" &
 child=$!
-trap 'kill -TERM "$child" 2>/dev/null' TERM
+if [ -n "$terminated" ]; then kill -TERM "$child" 2>/dev/null; fi
 set +e
 wait "$child"
 code=$?

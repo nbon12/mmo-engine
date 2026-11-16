@@ -30,6 +30,8 @@
 #   SWEEP_RUNNER_CLASS    the runner class recorded in each manifest.json (default k8s-<cluster>)
 #   SWEEP_KEEP            1 to keep the Job, its volume and its ConfigMap afterwards, untouched (default: deleted;
 #                         a volume whose shards could not be copied out is always kept)
+#   SWEEP_DISCARD_KEPT    1 to let this run delete a results volume an earlier failed run kept (by default the
+#                         run refuses to start over it, since it may hold the only copy of finished shards)
 # Needs: docker (unless SWEEP_SKIP_BUILD=1), kubectl, kind or k3d, python3.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -70,6 +72,11 @@ print(spec["name"], spec["seeds"])' "$SPEC")
   || { echo "shards must be 1 to the sweep's $SEEDS seeds, was $SHARDS" >&2; exit 2; }
 CPU="${SWEEP_CPU:-1}"
 [[ "$CPU" =~ ^[1-9][0-9]*$ ]] || { echo "SWEEP_CPU must be a whole number of CPUs (it is also the runs at once), was $CPU" >&2; exit 2; }
+# Seconds and pod counts: whole numbers, so a value like 6h can't silently end the wait.
+for setting in "TIMEOUT=$TIMEOUT" "START_TIMEOUT=$START_TIMEOUT" "PULL_GRACE=$PULL_GRACE"; do
+  [[ "${setting#*=}" =~ ^(0|[1-9][0-9]*)$ ]] || { echo "SWEEP_${setting%%=*} must be whole seconds, was ${setting#*=}" >&2; exit 2; }
+done
+[[ "${SWEEP_PARALLELISM:-$SHARDS}" =~ ^[1-9][0-9]*$ ]] || { echo "SWEEP_PARALLELISM must be a whole number of pods, was $SWEEP_PARALLELISM" >&2; exit 2; }
 if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then echo "$OUT is not empty; use a new folder" >&2; exit 2; fi
 mkdir -p "$OUT"
 
@@ -97,12 +104,23 @@ render() {
 import os, string, sys
 print(string.Template(open(sys.argv[1]).read()).substitute(os.environ))' "$ROOT/infra/sweeps/manifests/$1"
 }
-remove() { k -n "$NS" delete "job/$JOB" "pod/$READER" "pvc/$JOB-results" "configmap/$JOB-spec" --ignore-not-found "$@" >/dev/null; }
+# Deletes the run's objects: the Job, the reader pod and the ConfigMap, and the results volume unless $1 is
+# "keep-volume"; the rest of the arguments go to kubectl delete.
+remove() {
+  local objects=("job/$JOB" "pod/$READER" "configmap/$JOB-spec")
+  if [ "${1:-}" = keep-volume ]; then shift; else objects+=("pvc/$JOB-results"); fi
+  k -n "$NS" delete "${objects[@]}" --ignore-not-found "$@" >/dev/null
+}
+# Marks the results volume as kept, so a later run of the same sweep won't delete it without being told to.
+keep_mark() {
+  k -n "$NS" annotate --overwrite "pvc/$JOB-results" "mmo-engine/kept=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true
+}
 # On the way out: everything, except a volume whose shards could not be copied out.
 KEEP_VOLUME=""
 clean_up() {
   if [ -n "$KEEP_VOLUME" ]; then
-    k -n "$NS" delete "job/$JOB" "pod/$READER" "configmap/$JOB-spec" --ignore-not-found --wait=false >/dev/null || true
+    remove keep-volume --wait=false || true
+    keep_mark
     echo "kept pvc/$JOB-results in namespace $NS: its shards could not be copied out" >&2
   else
     remove --wait=false || true
@@ -111,6 +129,12 @@ clean_up() {
 k create namespace "$NS" --dry-run=client -o yaml | k apply -f - >/dev/null
 # A Job's pod template can't change, and the results volume must start empty: remove an earlier run's, and wait
 # for its pods to go, so none of them is taken for this run's.
+# A volume an earlier failed run kept may hold the only copy of finished shards: never delete it silently.
+kept="$(k -n "$NS" get "pvc/$JOB-results" --ignore-not-found -o jsonpath='{.metadata.annotations.mmo-engine/kept}' 2>/dev/null || true)"
+if [ -n "$kept" ] && [ "${SWEEP_DISCARD_KEPT:-}" != 1 ]; then
+  echo "pvc/$JOB-results in namespace $NS was kept by an earlier run ($kept); copy its shards out, or rerun with SWEEP_DISCARD_KEPT=1 to delete it" >&2
+  exit 2
+fi
 remove --wait --cascade=foreground
 k -n "$NS" wait --for=delete pod -l "mmo-engine/sweep=$NAME" --timeout=5m >/dev/null 2>&1 || true
 # Whatever happens next, the Job, its volume and its ConfigMap go (the results are copied out first).
@@ -119,8 +143,9 @@ k -n "$NS" create configmap "$JOB-spec" --from-file=spec.json="$SPEC" >/dev/null
 log "running $NAME as $SHARDS shards (job/$JOB in namespace $NS)"
 render sweep-job.yaml | k apply -f - >/dev/null
 
-# The Job's state: Complete, Failed, Stuck (a pod's image can never be pulled or its container can't be created),
-# Pulling (a pod is failing to pull its image, which may pass), Started (a pod has run), or nothing yet.
+# The Job's state, then whether any pod has run (ran or -): the state is Complete, Failed, Stuck (a pod's image
+# can never be pulled or its container can't be created), Pulling (a pod is failing to pull its image, which may
+# pass), Started (a pod is running or has run), or Waiting.
 job_state() {
   k -n "$NS" get jobs,pods -l "mmo-engine/sweep=$NAME" -o json | python3 -c '
 import json, sys
@@ -128,24 +153,22 @@ STUCK = {"ErrImageNeverPull", "InvalidImageName", "CreateContainerConfigError", 
 PULLING = {"ErrImagePull", "ImagePullBackOff"}
 items = json.load(sys.stdin)["items"]
 pods = [i for i in items if i["kind"] == "Pod"]
+ran = "ran" if any(p.get("status", {}).get("phase") in ("Running", "Succeeded", "Failed") for p in pods) else "-"
+state = "Started" if ran == "ran" else "Waiting"
 for job in (i for i in items if i["kind"] == "Job"):
     for c in job.get("status", {}).get("conditions", []):
         if c["type"] in ("Complete", "Failed") and c["status"] == "True":
-            print(c["type"])
-            sys.exit()
-for pod in pods:
-    for status in pod.get("status", {}).get("containerStatuses", []):
-        reason = status.get("state", {}).get("waiting", {}).get("reason", "")
-        if reason in STUCK:
-            print("Stuck", pod["metadata"]["name"], reason)
-            sys.exit()
-for pod in pods:
-    for status in pod.get("status", {}).get("containerStatuses", []):
-        reason = status.get("state", {}).get("waiting", {}).get("reason", "")
-        if reason in PULLING:
-            print("Pulling", pod["metadata"]["name"], reason)
-            sys.exit()
-print("Started" if any(p.get("status", {}).get("phase") in ("Running", "Succeeded", "Failed") for p in pods) else "")'
+            state = c["type"]
+if state not in ("Complete", "Failed"):
+    waiting = [(p["metadata"]["name"], s.get("state", {}).get("waiting", {}).get("reason", ""))
+               for p in pods for s in p.get("status", {}).get("containerStatuses", [])]
+    stuck = [w for w in waiting if w[1] in STUCK]
+    pulling = [w for w in waiting if w[1] in PULLING]
+    if stuck:
+        state = "Stuck %s %s" % stuck[0]
+    elif pulling:
+        state = "Pulling %s %s" % pulling[0]
+print(ran, state)'
 }
 state=""
 started=""
@@ -154,7 +177,7 @@ errors=0
 begun=$SECONDS
 while [ $((SECONDS - begun)) -lt "$TIMEOUT" ]; do
   # One failed poll (an API server restart, a reset connection) is retried; a minute of them gives up.
-  if ! state="$(job_state)"; then
+  if ! polled="$(job_state)"; then
     errors=$((errors + 1))
     if [ "$errors" -ge 12 ]; then state="Unreachable: 12 polls in a row failed"; break; fi
     state=""
@@ -162,9 +185,11 @@ while [ $((SECONDS - begun)) -lt "$TIMEOUT" ]; do
     continue
   fi
   errors=0
+  # Any pod that has run counts, even while another is stuck: its shard must be copied out on failure.
+  if [ "${polled%% *}" = ran ]; then started=1; fi
+  state="${polled#* }"
   case "$state" in
     Complete|Failed|Stuck*) break ;;
-    Started) started=1 ;;
   esac
   # A pull that keeps failing past the grace period is as stuck as one that never can succeed.
   if [[ "$state" == Pulling* ]]; then
@@ -192,6 +217,7 @@ if [ "$state" != Complete ]; then
   k -n "$NS" describe pods -l "job-name=$JOB" 2>&1 | tail -40 >&2 || true
   k -n "$NS" logs -l "job-name=$JOB" --tail=50 --prefix >&2 || true
   if [ "${SWEEP_KEEP:-}" = 1 ]; then
+    keep_mark
     echo "SWEEP_KEEP=1: left job/$JOB and pvc/$JOB-results in namespace $NS as they are" >&2
     exit 1
   fi
@@ -221,7 +247,7 @@ for i in $(seq 1 "$SHARDS"); do
   [ -f "$shard/exit-code" ] || { echo "shard $i wrote no exit-code" >&2; exit 1; }
   shard_code="$(cat "$shard/exit-code")"
   if [ "$shard_code" = 3 ]; then
-    echo "::warning::sweep $NAME shard $i/$SHARDS exited 3 (a run stopped on a violation or timer fault); keeping its results"
+    echo "::warning::sweep $NAME shard $i/$SHARDS exited 3 (a run stopped on a violation or timer fault); keeping its results" >&2
     code=3
   fi
   python3 "$ROOT/infra/sweeps/trim.py" "$shard/$NAME" "$OUT/_trimmed/shard-$i" >/dev/null

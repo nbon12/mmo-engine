@@ -32,8 +32,20 @@ spec:
   completionMode: Indexed
   completions: ${SHARDS}
   parallelism: ${PARALLELISM}
-  # A pod lost to a crash or an eviction is retried once; its shard starts over (job-entrypoint.sh).
+  # A pod lost to a disruption (eviction, preemption, node drain) is retried and its shard starts over
+  # (job-entrypoint.sh); a pod that exits non-zero fails its index at once, since the simulator is deterministic
+  # and a rerun would fail the same way, hours later.
   backoffLimitPerIndex: 1
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+      - action: FailIndex
+        onExitCodes:
+          containerName: sweep
+          operator: NotIn
+          values: [0]
   # A retried index's new pod starts only once the old one has stopped, so two pods never write one shard.
   podReplacementPolicy: Failed
   maxFailedIndexes: 0
