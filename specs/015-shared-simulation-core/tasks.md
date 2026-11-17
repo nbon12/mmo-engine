@@ -826,12 +826,12 @@ Conventions for this phase (they hold for every task below):
 
 ### Tests (write first, confirm red)
 
-- [ ] T110 [P] [US2] Write failing tests `SplitMix64Tests.NextFromSeedZeroGivesTheReferenceSequence`, `SplitMix64Tests.MixIsTheFinaliserOfTheDataModel` and `SplitMix64Tests.AtIsTheCounterthValueOfNext(ulong seed, ulong counter)` in `tests/MmoEngine.SimCore.Tests/Hashing/SplitMix64Tests.cs`. These pin the core generator that `CrossBuildTables`, `StreamGenerator` and Phase 6's `Spread` draw from (wasm-api.md#cross-build-tables, simcore-cli.md#generated-streams, data-model.md#weapon-step).
+- [X] T110 [P] [US2] Write failing tests `SplitMix64Tests.NextFromSeedZeroGivesTheReferenceSequence`, `SplitMix64Tests.MixIsTheFinaliserOfTheDataModel` and `SplitMix64Tests.AtIsTheCounterthValueOfNext(ulong seed, ulong counter)` in `tests/MmoEngine.SimCore.Tests/Hashing/SplitMix64Tests.cs`. These pin the core generator that `CrossBuildTables`, `StreamGenerator` and Phase 6's `Spread` draw from (wasm-api.md#cross-build-tables, simcore-cli.md#generated-streams, data-model.md#weapon-step).
   - Given state 0, When `SplitMix64.Next(ref state)` is called three times, assert `0xE220A8397B1DCDAF`, `0x6E789E6AA1B965F4` and `0x06C45D188009454F`.
   - Assert `SplitMix64.Mix(0) == 0`, `SplitMix64.Mix(0x9E3779B97F4A7C15) == 0xE220A8397B1DCDAF`, and that `Mix(0x0123456789ABCDEF)` equals the data-model.md finaliser (`z ^= z >> 30; z *= 0xBF58476D1CE4E5B9; z ^= z >> 27; z *= 0x94D049BB133111EB; z ^= z >> 31`) computed in the test.
   - Theory rows (seed, counter) in {0, 0x5EED0001, 1000} x {0, 1, 63}: assert `SplitMix64.At(seed, counter)` equals the value of the (counter + 1)-th `Next` call from that seed.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~SplitMix64Tests"` and confirm it fails (the type does not exist yet).
-- [ ] T111 [US2] Write failing test `StreamRunnerTests.PerturbationDivergesAtExactlyThatStep(int hz)` in `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.cs` (SC-002, wasm-api.md#streamrunner, Theory over `TestRates.All`).
+- [X] T111 [US2] Write failing test `StreamRunnerTests.PerturbationDivergesAtExactlyThatStep(int hz)` in `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.cs` (SC-002, wasm-api.md#streamrunner, Theory over `TestRates.All`).
   - Given the committed `simcore/streams/flat-run-<hz>hz.mmrs` and `simcore/content/test-world.mmcd`, opened read-only through `RepoPaths`, with k the stream's step number at index `(stepCount - 1) / 2` (15 for flat-run-30hz).
   - When `StreamRunner.Run(stream, collision, perturbStep: k)` and `StreamRunner.Run(stream, collision)` are compared record by record, assert:
     - the two outputs have the same record count;
@@ -842,7 +842,7 @@ Conventions for this phase (they hold for every task below):
     - every later record differs from the unperturbed one, and the steps keep their numbers k + 1, k + 2 and onward.
   - Also assert `Run(..., perturbStep: -1)` is byte-identical to `Run(...)`. A `perturbStep` of 0, -2 or the last step number + 1 throws `ArgumentOutOfRangeException` with `ParamName == "perturbStep"`.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StreamRunnerTests.PerturbationDivergesAtExactlyThatStep"` and confirm it fails.
-- [ ] T112 [US2] Write failing test `StreamRunnerTests.RefusesBeforeStepZero(string caseName)` in `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.cs` (supports US2.5 and US6.5, recorded-stream-format.md#opening-a-stream-to-run). Each row starts from a copy of the flat-run-30hz bytes in memory. Assert that `Assert.Throws` gives exactly the stated exception type with these values, and that no records are returned:
+- [X] T112 [US2] Write failing test `StreamRunnerTests.RefusesBeforeStepZero(string caseName)` in `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.cs` (supports US2.5 and US6.5, recorded-stream-format.md#opening-a-stream-to-run). Each row starts from a copy of the flat-run-30hz bytes in memory. Assert that `Assert.Throws` gives exactly the stated exception type with these values, and that no records are returned:
   - `unsupported-version`: the u16 at offset 4 set to 2. `CoreFormatException` with code `UnsupportedVersion`, offset 4, field `version`, and message `stream version at offset 4: unsupported version 2; this reader supports version 1`.
   - `rules-revision`: the u32 at offset 8 set to `SimCoreVersion.RulesRevision + 1`, with the XxHash64 trailer rewritten. `CoreFormatException` with `RulesRevisionMismatch`, offset 8, field `rulesRevision`, and message `stream rulesRevision at offset 8: rules revision 2 in the stream; this core implements rules revision 1`.
   - `collision-missing-list`: the list overload with an empty list. `CollisionDataMissing`, offset 36, field `collisionChecksum`, and detail `collision data <test-world checksum x16> was not supplied`.
@@ -850,7 +850,7 @@ Conventions for this phase (they hold for every task below):
   - `config-invalid`: the stream re-encoded with `movement.gravity` NaN. `ConfigValidationException` whose errors are exactly [`movement.gravity: must be finite`].
   - `initial-state-outside-world`: the u32 at file offset 778 (`initialState.characters[0].position.x`) set to `0x459C4000` (5000f: inside ±8192, so the decode accepts it, but outside the test world's playable area), with the XxHash64 trailer rewritten. `CoreFormatException` with format `stream`, code `OutOfRange`, offset 778 and field `initialState.characters[0].position.x`, so its message starts `stream initialState.characters[0].position.x at offset 778: `.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StreamRunnerTests.RefusesBeforeStepZero"` and confirm the `rules-revision` row fails.
-- [ ] T113 [US2] Write failing test `BatchStepperTests.QueuedCommandsEqualOneAtATime(int batchSize, int hz)` in `tests/MmoEngine.SimCore.Tests/Batch/BatchStepperTests.cs` (US2.6, wasm-api.md#batchstepper). Use `MemberData` crossing {1, 2, 7, 32} with `TestRates.All`.
+- [X] T113 [US2] Write failing test `BatchStepperTests.QueuedCommandsEqualOneAtATime(int batchSize, int hz)` in `tests/MmoEngine.SimCore.Tests/Batch/BatchStepperTests.cs` (US2.6, wasm-api.md#batchstepper). Use `MemberData` crossing {1, 2, 7, 32} with `TestRates.All`.
   - Given: a batchable stream built in the test by a private helper. It has one character on `simcore/content/test-world.mmcd` with `TestConfigs.At(hz)`, and 96 steps, each with one command for character index 0. Command k has:
     - sequence k + 1;
     - buttons `(Buttons)((k * 37) % 512)`;
@@ -864,7 +864,7 @@ Conventions for this phase (they hold for every task below):
     - the concatenated records of A (each read from `ReportSegment`'s header: count at 0, length L at 4, records at 8) equal B's byte for byte;
     - both equal `StreamRunner.Run(stream, collision)` byte for byte.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~BatchStepperTests.QueuedCommandsEqualOneAtATime"` and confirm it fails (compile failure: `BatchStepper` does not exist).
-- [ ] T114 [US2] Write failing browser-guard and report tests in `tests/MmoEngine.SimCore.Tests/Batch/BatchStepperTests.cs` (FR-025, FR-029 browser guard, config-rules.md#browser-guard, wasm-api.md#report-buffer-layouts and #return-codes):
+- [X] T114 [US2] Write failing browser-guard and report tests in `tests/MmoEngine.SimCore.Tests/Batch/BatchStepperTests.cs` (FR-025, FR-029 browser guard, config-rules.md#browser-guard, wasm-api.md#report-buffer-layouts and #return-codes):
   - `LoadCallsReturnTheirCodes(string caseName)` Theory. After each call, read the report buffer's u32 text length at offset 0 and the UTF-8 text at 4.
     - `collision-ok`: the test world gives `Ok` and length 0.
     - `collision-refused`: the test world with byte 0 changed gives `FormatRefused`, and the text equals the `CoreFormatException.Message` that `CollisionFile.Decode` throws for the same bytes.

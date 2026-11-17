@@ -40,6 +40,22 @@ public static class StreamBytes
     }
 
     /// <summary>
+    /// A copy of <paramref name="stream"/> with <paramref name="bytes"/> written at file offset
+    /// <paramref name="offset"/> and the trailer recomputed, so a value check behind the checksum is reached
+    /// (the contract's <c>fixChecksum</c>).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The bytes do not lie wholly before the trailer.</exception>
+    public static byte[] WithBytes(byte[] stream, int offset, ReadOnlySpan<byte> bytes)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((long)offset + bytes.Length, (long)stream.Length - TrailerLength, nameof(offset));
+        var copy = (byte[])stream.Clone();
+        bytes.CopyTo(copy.AsSpan(offset));
+        return FixTrailer(copy);
+    }
+
+    /// <summary>
     /// A copy of <paramref name="stream"/> with <c>steps[stepIndex].expectedHash</c> set to
     /// <paramref name="hash"/> and the trailer recomputed.
     /// </summary>
