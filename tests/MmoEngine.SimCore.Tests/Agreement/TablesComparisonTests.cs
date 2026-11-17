@@ -93,7 +93,18 @@ public sealed class TablesComparisonTests
             "two-rows",
             "tables: build node-interp, first mismatch at math row {row}: Atan2(a 0x00000000, b 0xBF800000) r0 server 0x40490FDB build 0x40490FDA"
         },
+        {
+            "pose-standing",
+            "tables: build node-interp, first mismatch at pose row {row}: Standing yaw 0x0001 at (0, 0, 0) torso A.x server 0x{server} build 0x{build}"
+        },
+        {
+            "pose-unknown-stance",
+            "tables: build node-interp, first mismatch at pose row {row}: stance 7 yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x{server} build 0x{build}"
+        },
     };
+
+    /// <summary>Rows of <see cref="RefusesInputsAndServerResultsThatAreNotOneTable"/>.</summary>
+    public static TheoryData<string> InconsistentTableCases => ["server-short", "inputs-short", "server-other-count"];
 
     /// <summary>
     /// Given the build's results equal to the server's, Then <c>Compare("node-interp", inputs, server,
@@ -108,7 +119,10 @@ public sealed class TablesComparisonTests
     /// Sin row with a = +0 against the build's NaN 0x7FC00000; <c>results-header</c>, the build's header
     /// with M − 1; <c>results-length</c>, the build's results one byte short with the header unchanged,
     /// reported with both lengths; and <c>two-rows</c>, the torso A.x change of <c>pose-torso-a-x</c> together with the
-    /// Atan2 change of <c>atan2-axis-r0</c>, of which only the first row, the Atan2 one, is reported.
+    /// Atan2 change of <c>atan2-axis-r0</c>, of which only the first row, the Atan2 one, is reported;
+    /// <c>pose-standing</c>, torso A.x one ulp up in the Standing, yaw 0x0001, (0, 0, 0) row; and
+    /// <c>pose-unknown-stance</c>, the torso A.x change of <c>pose-torso-a-x</c> with that row's stance byte in
+    /// the inputs set to 7, which the line names <c>stance 7</c>.
     /// </summary>
     [Theory]
     [MemberData(nameof(Cases))]
@@ -156,6 +170,16 @@ public sealed class TablesComparisonTests
                 break;
             case "results-length":
                 build = build[..^1];
+                break;
+            case "pose-standing":
+                row = PoseRowOf(tables, 0, 0x0001, 0f, 0f, 0f);
+                (serverBits, buildBits) = Change(server, build, PoseResult(tables, row, TorsoAX), bits => bits + 1u);
+                break;
+            case "pose-unknown-stance":
+                row = PoseRowOf(tables, Crouched, 0x4000, 4096.25f, 37.5f, -7000.125f);
+                (serverBits, buildBits) = Change(server, build, PoseResult(tables, row, TorsoAX), bits => bits + 1u);
+                inputs = (byte[])inputs.Clone();
+                inputs[HeaderLength + (MathRowLength * tables.MathRows) + (PoseRowLength * row)] = 7;
                 break;
             case "two-rows":
                 var poseRow = PoseRowOf(tables, Crouched, 0x4000, 4096.25f, 37.5f, -7000.125f);
@@ -225,6 +249,47 @@ public sealed class TablesComparisonTests
         Assert.NotNull(diverged.FirstMismatch);
         Assert.StartsWith($"tables: build node-interp, first mismatch at math row {row}: ", diverged.FirstMismatch, StringComparison.Ordinal);
         Assert.EndsWith(" r0 server 0x7FC00000 build 0x00000000", diverged.FirstMismatch, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// contracts/wasm-api.md#cross-build-tables (comparing): the inputs and the server's results are the
+    /// reference, so when they are not one whole table, with (<c>server-short</c>) the server's results one
+    /// byte short, (<c>inputs-short</c>) the inputs one byte short, or (<c>server-other-count</c>) the server's
+    /// header naming one math row fewer, <c>Compare</c> throws an <see cref="ArgumentException"/> for
+    /// <c>serverResults</c>, whose message gives both lengths, instead of comparing a build against them.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InconsistentTableCases))]
+    public void RefusesInputsAndServerResultsThatAreNotOneTable(string caseName)
+    {
+        var tables = Tables.Value;
+        var (inputs, server) = caseName switch
+        {
+            "server-short" => (tables.Inputs, tables.Results[..^1]),
+            "inputs-short" => (tables.Inputs[..^1], tables.Results),
+            "server-other-count" => (tables.Inputs, WithMathCount(tables.Results, (uint)(tables.MathRows - 1))),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of RefusesInputsAndServerResultsThatAreNotOneTable."),
+        };
+
+        TablesResult? result = null;
+        var thrown = Assert.Throws<ArgumentException>(() => result = TablesComparison.Compare(BuildName, inputs, server, tables.Results));
+
+        Assert.Null(result);
+        Assert.Equal("serverResults", thrown.ParamName);
+        Assert.StartsWith(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"The inputs ({inputs.Length} bytes) and the server's results ({server.Length} bytes) do not hold the same whole table."),
+            thrown.Message,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>A copy of <paramref name="results"/> whose header names <paramref name="count"/> math rows.</summary>
+    private static byte[] WithMathCount(byte[] results, uint count)
+    {
+        var copy = (byte[])results.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(copy.AsSpan(MathRowCountOffset), count);
+        return copy;
     }
 
     /// <summary>The first math row with <paramref name="function"/>, a bits <paramref name="a"/> and b bits <paramref name="b"/>.</summary>

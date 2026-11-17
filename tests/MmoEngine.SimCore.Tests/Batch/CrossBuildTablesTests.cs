@@ -162,6 +162,10 @@ public sealed class CrossBuildTablesTests
         "length",
         "function",
         "stance",
+        "short-magic",
+        "short-version",
+        "short-header",
+        "reserved",
     ];
 
     /// <summary>
@@ -407,7 +411,11 @@ public sealed class CrossBuildTablesTests
     /// <c>Inconsistent</c> at 8, field <c>length</c>, <c>&lt;n&gt; bytes, the counts need &lt;m&gt;</c>;
     /// <c>function</c> ID 11 in math row 0 is <c>OutOfRange</c> at 16, field <c>mathRows[0].function</c>,
     /// <c>unknown function ID 11</c>; and <c>stance</c> 2 in pose row 0 is <c>OutOfRange</c> at 16 + 12·M,
-    /// field <c>poseRows[0].stance</c>, <c>unknown stance 2</c>.
+    /// field <c>poseRows[0].stance</c>, <c>unknown stance 2</c>. A table cut short of the field being read is
+    /// <c>Truncated</c> at its length, <c>&lt;needed&gt; bytes expected, got &lt;length&gt;</c>: 2 bytes
+    /// (<c>short-magic</c>) for the 4-byte magic, 5 (<c>short-version</c>) for the version, which ends at 6, and
+    /// 10 (<c>short-header</c>) for the 16-byte header, field <c>header</c>; and a reserved u16 of 1
+    /// (<c>reserved</c>) is <c>Inconsistent</c> at 6, field <c>reserved</c>, <c>the reserved u16 is 1, not 0</c>.
     /// </summary>
     [Theory]
     [MemberData(nameof(MalformedCases))]
@@ -447,6 +455,22 @@ public sealed class CrossBuildTablesTests
                 offset = HeaderLength + (MathRowLength * (long)m);
                 copy[offset] = 2;
                 (code, field, detail) = (FormatErrorCode.OutOfRange, "poseRows[0].stance", "unknown stance 2");
+                break;
+            case "short-magic":
+                copy = inputs[..2];
+                (code, offset, field, detail) = (FormatErrorCode.Truncated, 2, "magic", "4 bytes expected, got 2");
+                break;
+            case "short-version":
+                copy = inputs[..5];
+                (code, offset, field, detail) = (FormatErrorCode.Truncated, 5, "version", "6 bytes expected, got 5");
+                break;
+            case "short-header":
+                copy = inputs[..10];
+                (code, offset, field, detail) = (FormatErrorCode.Truncated, 10, "header", "16 bytes expected, got 10");
+                break;
+            case "reserved":
+                BinaryPrimitives.WriteUInt16LittleEndian(copy.AsSpan(6), 1);
+                (code, offset, field, detail) = (FormatErrorCode.Inconsistent, 6, "reserved", "the reserved u16 is 1, not 0");
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of RefusesMalformedTables.");

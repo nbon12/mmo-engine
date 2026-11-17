@@ -1165,7 +1165,7 @@ Conventions for this phase (they hold for every task below):
     - `RulesRevisionMismatch`.
   - Every other refusal, including an embedded `steps[i].commands[c].input.version`, stays `REFUSED`.
   - Exit 1 if any stream diverged; else 2 if any is not comparable or refused; else 0.
-- [ ] T135 [US2] Implement `simcore agreement prepare` per simcore-cli.md#agreement-prepare, #agreement-work-directory and #manifestjson, with every path option carrying `PathOptions.RequireNonEmpty` (T106, simcore-cli.md#settings-output-and-exit-codes). Makes the prepare tests of T123 and T125 pass (FR-026 server half).
+- [X] T135 [US2] Implement `simcore agreement prepare` per simcore-cli.md#agreement-prepare, #agreement-work-directory and #manifestjson, with every path option carrying `PathOptions.RequireNonEmpty` (T106, simcore-cli.md#settings-output-and-exit-codes). Makes the prepare tests of T123 and T125 pass (FR-026 server half).
   - Files:
     - `src/MmoEngine.SimCore.Cli/Agreement/BuildNames.cs`: the seven known builds in contract order, and the default `--require` of `node-interp,node-interp-nojit,chromium-worker`;
     - `src/MmoEngine.SimCore.Cli/Agreement/AgreementManifest.cs`: the manifest model, written with `Utf8JsonWriter` in the contract example's field order and read back with `System.Text.Json`; 64-bit values in x16;
@@ -1188,9 +1188,11 @@ Conventions for this phase (they hold for every task below):
     6. `refusals/`: `unsupported-version` (flat-run-30hz with the u16 at 4 = 2) and `rules-revision` (the u32 at 8 = revision + 1, trailer rewritten), plus `collision-missing` paired with the small collision file.
     7. `tables/inputs.bin`, `tables/config.bin` and `server/tables.bin`.
     8. `manifest.json`, last. The `perturbation` entry is flat-run-30hz at the step at index (stepCount - 1) / 2; a missing flat-run-30hz exits 2.
+  - Every stream (committed and generated) runs before the first write, so any refusal leaves `--work` as it was. Exit 2 also for a `--streams` with no `flat-run-30hz.mmrs`, a `--content` with no `test-world.mmcd` (the generated streams' world), and a generated stream the server refuses or faults on (`agreement prepare: seed-<nnn>: <message>`).
+  - Step 1 shares `streams verify`'s per-stream check, `StreamsCommand.VerifyStream`, and step 3 copies each collision file byte for byte through `ContentFiles.TryLoadAll`'s overload that also gives each file's bytes.
   - Output: `prepared <work>: <n> streams (<named> named, <generated> generated), <steps> steps, rules revision <r>`.
   - Not [P]: edits `Program.cs`, and depends on the `BatchStepper`, `StreamRunner`, `CrossBuildTables` and `StreamGenerator` tasks.
-- [ ] T136 [US2] Implement `simcore agreement compare` per simcore-cli.md#agreement-compare, after T135, T130 and T131, with every path option carrying `PathOptions.RequireNonEmpty` (T106). Makes the compare tests of T124 pass (US2.4, US2.5, FR-026 server half).
+- [X] T136 [US2] Implement `simcore agreement compare` per simcore-cli.md#agreement-compare, after T135, T130 and T131, with every path option carrying `PathOptions.RequireNonEmpty` (T106). Makes the compare tests of T124 pass (US2.4, US2.5, FR-026 server half).
   - Files:
     - `src/MmoEngine.SimCore.Cli/Agreement/AgreementComparison.cs`: per known build with a folder, per manifest stream, reads `<build>/<stream>.records` or `<stream>.error.txt` against `server/<stream>.records` and the expected hashes from `streams/<stream>.mmrs`, through `DivergenceReport.CompareBuild` and `BuildError`. Then `tables.bin` or `tables.error.txt` through `TablesComparison` and `TablesResult.Missing`. Statuses are `Match`, `Diverged` and `NotRun`;
     - `src/MmoEngine.SimCore.Cli/Agreement/AgreementReport.cs`: writes `report/agreement.json` in the contract's shape and `report/divergences/<build>/<stream>.txt` and `tables.txt` via `AtomicFile`, and appends the `--summary` Markdown section in one write;
@@ -1206,8 +1208,10 @@ Conventions for this phase (they hold for every task below):
     - a server records file or `server/tables.bin` is missing;
     - a required build is `NotRun`;
     - `--require` names an unknown build;
-    - the manifest's `rulesRevision` or a `formats` version differs from the core's. That case prints `NOT COMPARABLE work <work>: rules revision <m> in the work directory; this core implements rules revision <c>` or `<format name> format version <m> in the work directory; this reader supports version <c>`.
+    - the manifest's `formatVersion`, `rulesRevision` or a `formats` version differs from this build's. That case prints `NOT COMPARABLE work <work>: rules revision <m> in the work directory; this core implements rules revision <c>` or `<format name> format version <m> in the work directory; this reader supports version <c>` (format names `manifest`, `input command`, `collision data`, `recorded stream`), then `agreement: not comparable`.
   - Otherwise exit 1 if any build is `Diverged`, else 0. Unknown folders are ignored.
+  - A build's error file takes the place of its records or table results, without its trailing line breaks. A build with neither `tables.bin` nor `tables.error.txt` is `Missing` with `<build>/tables.bin was not written`. A tables-only divergence's first report is the first-mismatch line, or `tables: build <b>, results missing: <message>`; `tables.txt` is written for `Missing` too.
+  - `agreement.json`'s `outcome` is `Match`, `Diverged` or `CannotRun` (a required build did not run). The report files and the summary are written whenever the builds were compared, and not for a NotComparable or unreadable work directory.
 - [ ] T137 [US2] Run the phase's coverage check:
   - `dotnet test tests/MmoEngine.SimCore.Tests --collect:"XPlat Code Coverage" --results-directory <unique temp>/coverage`;
   - then `python3 tools/coverage_gate.py --base origin/main --coverage-dir <unique temp>/coverage`.

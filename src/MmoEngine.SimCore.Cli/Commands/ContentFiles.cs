@@ -39,7 +39,14 @@ public static class ContentFiles
     /// is checked, so a caller knows the name of the file a refusal is about, and that the i-th name it was
     /// told is the i-th world's file.
     /// </summary>
-    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening)
+    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening) => LoadAll(contentDir, opening, read: null);
+
+    /// <summary>
+    /// <see cref="LoadAll(string, Action{string}?)"/>, also giving <paramref name="read"/> each file's bytes
+    /// once they are read and before they are decoded, so a caller can copy a file byte for byte
+    /// (<c>agreement prepare</c>'s <c>collision/&lt;checksum&gt;.mmcd</c>).
+    /// </summary>
+    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening, Action<byte[]>? read)
     {
         ArgumentException.ThrowIfNullOrEmpty(contentDir);
         var paths = Directory.GetFiles(contentDir, "*" + Extension, SearchOption.TopDirectoryOnly)
@@ -50,7 +57,7 @@ public static class ContentFiles
         for (var i = 0; i < paths.Length; i++)
         {
             opening?.Invoke(Path.GetFileName(paths[i]));
-            worlds[i] = Load(paths[i]);
+            worlds[i] = Load(paths[i], read);
         }
 
         return worlds;
@@ -68,13 +75,27 @@ public static class ContentFiles
         string command,
         TextWriter stderr,
         out IReadOnlyList<string> names,
-        out IReadOnlyList<CollisionWorld> worlds)
+        out IReadOnlyList<CollisionWorld> worlds) => TryLoadAll(contentDir, command, stderr, out names, out worlds, out _);
+
+    /// <summary>
+    /// <see cref="TryLoadAll(string, string, TextWriter, out IReadOnlyList{string}, out IReadOnlyList{CollisionWorld})"/>,
+    /// also giving each file's bytes, index for index with the worlds.
+    /// </summary>
+    internal static bool TryLoadAll(
+        string contentDir,
+        string command,
+        TextWriter stderr,
+        out IReadOnlyList<string> names,
+        out IReadOnlyList<CollisionWorld> worlds,
+        out IReadOnlyList<byte[]> files)
     {
         var opened = new List<string>();
+        var read = new List<byte[]>();
         try
         {
-            worlds = LoadAll(contentDir, opened.Add);
+            worlds = LoadAll(contentDir, opened.Add, read.Add);
             names = opened;
+            files = read;
             return true;
         }
         catch (CoreFormatException ex)
@@ -89,11 +110,12 @@ public static class ContentFiles
 
         names = [];
         worlds = [];
+        files = [];
         return false;
     }
 
-    /// <summary>One file: refused from its length, or read through a read-only stream and decoded.</summary>
-    private static CollisionWorld Load(string path)
+    /// <summary>One file: refused from its length, or read through a read-only stream, given to <paramref name="read"/> and decoded.</summary>
+    private static CollisionWorld Load(string path, Action<byte[]>? read)
     {
         var length = new FileInfo(path).Length;
         if (length > CollisionFile.MaxFileLength)
@@ -114,6 +136,7 @@ public static class ContentFiles
             stream.ReadExactly(bytes);
         }
 
+        read?.Invoke(bytes);
         return CollisionFile.Decode(bytes);
     }
 

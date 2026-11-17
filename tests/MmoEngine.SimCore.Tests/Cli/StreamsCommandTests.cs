@@ -77,7 +77,14 @@ public sealed class StreamsCommandTests
 
     public static TheoryData<string> SelectorCases => ["both", "neither", "unknown"];
 
-    public static TheoryData<string> RefusedInputCases => ["invalid-config", "empty-content", "oversized-content"];
+    public static TheoryData<string> RefusedInputCases =>
+        ["invalid-config", "empty-content", "oversized-content", "invalid-at-the-scenario-rate", "unreadable-old-stream", "unwritable-stream"];
+
+    /// <summary>Old copies of flat-run-30hz that decode: from another rules revision, or one step short.</summary>
+    public static TheoryData<string> DecodableOldStreamCases => ["other-rules-revision", "fewer-steps"];
+
+    /// <summary>Streams <c>streams verify</c> refuses before their first step: an invalid embedded configuration, or a file that cannot be read.</summary>
+    public static TheoryData<string> RefusedVerifyCases => ["invalid-config", "unreadable-file"];
 
     public static TheoryData<string> EmptyDirectoryCases => ["empty", "missing"];
 
@@ -374,13 +381,20 @@ public sealed class StreamsCommandTests
     }
 
     /// <summary>
-    /// contracts/simcore-cli.md#streams-record step 3 and #content-files: Given <c>--scenario flat-run-30hz</c>
+    /// contracts/simcore-cli.md#streams-record steps 3 to 6 and #content-files: Given <c>--scenario flat-run-30hz</c>
     /// with (<c>invalid-config</c>) the copied configuration's <c>movement.gravity</c> set to 0,
     /// (<c>empty-content</c>) an empty <c>--content</c> directory, or (<c>oversized-content</c>) a sparse
-    /// <c>big.mmcd</c> of 268,435,457 bytes next to the copied <c>test-world.mmcd</c>, When
+    /// <c>big.mmcd</c> of 268,435,457 bytes next to the copied <c>test-world.mmcd</c>; or
+    /// (<c>invalid-at-the-scenario-rate</c>) <c>--scenario flat-run-20hz</c> with the rifle at 1500 rounds a
+    /// minute, which rule R11 accepts at the file's 30 Hz and refuses at the scenario's 20 Hz;
+    /// (<c>unreadable-old-stream</c>) <c>flat-run-30hz.mmrs</c> replaced by a dangling symbolic link; or
+    /// (<c>unwritable-stream</c>) <c>flat-run-30hz.mmrs</c> replaced by a directory; When
     /// <c>streams record</c> runs, Then it exits 2 and writes nothing, and stderr gives
-    /// <c>movement.gravity: must be between 0.1 and 100</c>, names <c>test-world.mmcd</c>, or has the line
-    /// <c>streams record: content big.mmcd: collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456</c>.
+    /// <c>movement.gravity: must be between 0.1 and 100</c>, names <c>test-world.mmcd</c>, has the line
+    /// <c>streams record: content big.mmcd: collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456</c>,
+    /// has <c>streams record: flat-run-20hz: the configuration is invalid</c> and the
+    /// <c>weapons[0].roundsPerMinute</c> error, or has
+    /// <c>streams record: &lt;out&gt;: the streams cannot be read (</c> or <c>…cannot be written (</c>.
     /// </summary>
     [Theory]
     [MemberData(nameof(RefusedInputCases))]
@@ -388,10 +402,27 @@ public sealed class StreamsCommandTests
     {
         using var sandbox = Sandbox.Create($"streams-record-{caseName}");
         var content = sandbox.Content;
+        var scenario = FlatRun30;
+        string? dangling = null;
         switch (caseName)
         {
             case "invalid-config":
                 EditConfig(sandbox.Config, "movement", "gravity", 0);
+                break;
+            case "invalid-at-the-scenario-rate":
+                scenario = "flat-run-20hz";
+                var config = JsonNode.Parse(File.ReadAllText(sandbox.Config))!.AsObject();
+                config["weapons"]![0]!["roundsPerMinute"] = 1500;
+                File.WriteAllText(sandbox.Config, config.ToJsonString());
+                break;
+            case "unreadable-old-stream":
+                // The link is made after the snapshot and removed before the check, since it cannot be read.
+                File.Delete(sandbox.Stream(FlatRun30));
+                dangling = sandbox.Stream(FlatRun30);
+                break;
+            case "unwritable-stream":
+                File.Delete(sandbox.Stream(FlatRun30));
+                Directory.CreateDirectory(sandbox.Stream(FlatRun30));
                 break;
             case "empty-content":
                 content = Directory.CreateDirectory(Path.Combine(sandbox.Root, "empty-content")).FullName;
@@ -404,10 +435,19 @@ public sealed class StreamsCommandTests
         }
 
         var before = Snapshot(sandbox.Root);
+        if (dangling is not null)
+        {
+            File.CreateSymbolicLink(dangling, Path.Combine(sandbox.Root, "no-such-target"));
+        }
 
         var (exit, stdout, stderr) = SimcoreCli.Run(
-            "streams", "record", "--scenario", FlatRun30, "--reason", "Test regeneration",
+            "streams", "record", "--scenario", scenario, "--reason", "Test regeneration",
             "--out", sandbox.Streams, "--content", content, "--config", sandbox.Config);
+
+        if (dangling is not null)
+        {
+            File.Delete(dangling);
+        }
 
         Assert.True(exit == 2, $"{caseName}: simcore streams record exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
         switch (caseName)
@@ -417,6 +457,16 @@ public sealed class StreamsCommandTests
                 break;
             case "empty-content":
                 Assert.Contains("test-world.mmcd", stderr, StringComparison.Ordinal);
+                break;
+            case "invalid-at-the-scenario-rate":
+                Assert.Contains("streams record: flat-run-20hz: the configuration is invalid", Lines(stderr));
+                Assert.Contains(Lines(stderr), line => line.StartsWith("weapons[0].roundsPerMinute: must be at most", StringComparison.Ordinal));
+                break;
+            case "unreadable-old-stream":
+                Assert.Contains(Lines(stderr), line => line.StartsWith($"streams record: {sandbox.Streams}: the streams cannot be read (", StringComparison.Ordinal));
+                break;
+            case "unwritable-stream":
+                Assert.Contains(Lines(stderr), line => line.StartsWith($"streams record: {sandbox.Streams}: the streams cannot be written (", StringComparison.Ordinal));
                 break;
             default:
                 Assert.Contains($"streams record: {OversizedRefusal}", Lines(stderr));
@@ -546,6 +596,122 @@ public sealed class StreamsCommandTests
             ],
             entry[1..]);
         Assert.Equal([$"changed streams/{RegenerationLog}", $"changed streams/{FlatRun30}.mmrs"], Differences(before, Snapshot(sandbox.Root)));
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-record steps 4 and 6 and #regenerationsmd: Given copies of the committed
+    /// streams, content and configuration whose <c>flat-run-30hz.mmrs</c> is replaced by a copy that decodes
+    /// but differs: (<c>other-rules-revision</c>) the committed file with rules revision 2 (trailer fixed), or
+    /// (<c>fewer-steps</c>) the committed stream re-encoded without its last step; When
+    /// <c>streams record --scenario flat-run-30hz --reason "Test regeneration"</c> runs, Then it exits 0, the
+    /// stream is rewritten byte-identical to the committed one, stdout is exactly
+    /// <c>flat-run-30hz: changed; file &lt;old&gt; -&gt; &lt;new&gt;; final state &lt;old final&gt; -&gt; &lt;new final&gt;; first changed step &lt;s&gt;</c>
+    /// and the total line, and the log entry's rules revision line is <c>- Rules revision: 1 (was 2)</c> or
+    /// <c>- Rules revision: 1</c>: s is <c>none</c> for the other revision, whose expected hashes are all equal,
+    /// and the last step, the first step only the new stream holds, for the shorter one.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DecodableOldStreamCases))]
+    public void RecordComparesADecodableOldStreamStepByStep(string caseName)
+    {
+        using var sandbox = Sandbox.Create($"streams-record-{caseName}");
+        var streamPath = sandbox.Stream(FlatRun30);
+        var committed = File.ReadAllBytes(streamPath);
+        var stream = RecordedStream.Decode(committed);
+        byte[] old;
+        string firstChanged;
+        string revision;
+        switch (caseName)
+        {
+            case "other-rules-revision":
+                var two = new byte[4];
+                BinaryPrimitives.WriteUInt32LittleEndian(two, SimCoreVersion.RulesRevision + 1u);
+                old = StreamBytes.WithBytes(committed, 8, two);
+                firstChanged = "none";
+                revision = $"- Rules revision: {SimCoreVersion.RulesRevision} (was {SimCoreVersion.RulesRevision + 1u})";
+                break;
+            case "fewer-steps":
+                old = new RecordedStream(
+                    stream.RulesRevision,
+                    stream.StepHz,
+                    stream.Seed,
+                    stream.MatchSalt,
+                    stream.CollisionChecksum,
+                    stream.Config,
+                    stream.InitialState,
+                    [.. stream.Steps.Take(stream.Steps.Count - 1)]).Encode();
+                firstChanged = stream.Steps[^1].Step.ToString(CultureInfo.InvariantCulture);
+                revision = $"- Rules revision: {SimCoreVersion.RulesRevision}";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
+        }
+
+        File.WriteAllBytes(streamPath, old);
+        var oldFinal = RecordedStream.Decode(old).Steps[^1].ExpectedHash;
+        var oldLog = File.ReadAllText(sandbox.LogPath);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(sandbox.RecordArgs("--scenario", FlatRun30, "--reason", "Test regeneration"));
+
+        Assert.True(exit == 0, $"{caseName}: simcore streams record --scenario {FlatRun30} exited {exit}; stdout: {stdout}; stderr: {stderr}");
+        var newBytes = File.ReadAllBytes(streamPath);
+        Assert.True(newBytes.AsSpan().SequenceEqual(committed), $"{caseName}: the re-recorded {FlatRun30} differs from the committed one");
+        var newFinal = stream.Steps[^1].ExpectedHash;
+        Assert.Equal(
+            $"{FlatRun30}: changed; file {StreamBytes.Trailer(old):x16} -> {StreamBytes.Trailer(committed):x16}; final state {oldFinal:x16} -> {newFinal:x16}; first changed step {firstChanged}\n" +
+            "streams record: 1 streams, 1 changed, 0 added, 0 removed, 0 unchanged\n",
+            stdout);
+        var entry = AppendedEntry(oldLog, File.ReadAllText(sandbox.LogPath), caseName);
+        Assert.Contains(revision, entry);
+        Assert.Contains(
+            $"| {FlatRun30} | {StreamBytes.Trailer(old):x16} -> {StreamBytes.Trailer(committed):x16} | {oldFinal:x16} -> {newFinal:x16} | {firstChanged} |",
+            entry);
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-verify (the Refused outcome): Given a <c>--dir</c> holding
+    /// <c>flat-run-30hz.mmrs</c> as (<c>invalid-config</c>) the committed stream re-encoded with
+    /// <c>movement.gravity</c> 0 in its configuration, or (<c>unreadable-file</c>) a dangling symbolic link,
+    /// with the copied content, When <c>streams verify</c> runs, Then it exits 2 and stdout is exactly the
+    /// refusal, <c>REFUSED stream flat-run-30hz: the configuration is invalid</c> followed by
+    /// <c>  movement.gravity: must be between 0.1 and 100</c>, or one line starting
+    /// <c>REFUSED stream flat-run-30hz: the file cannot be read (</c>, then
+    /// <c>streams verify: 1 streams, 0 match, 0 diverged, 0 not comparable, 1 refused</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RefusedVerifyCases))]
+    public void VerifyRefusesAnInvalidConfigurationOrAnUnreadableFile(string caseName)
+    {
+        using var directory = TempDirectories.Create($"streams-verify-{caseName}");
+        var streams = Directory.CreateDirectory(directory.Combine("streams")).FullName;
+        var content = Directory.CreateDirectory(directory.Combine("content")).FullName;
+        CopyCommitted(content, "content", "test-world.mmcd");
+        var path = Path.Combine(streams, $"{FlatRun30}.mmrs");
+        switch (caseName)
+        {
+            case "invalid-config":
+                var stream = RecordedStream.Decode(RepoPaths.ReadAllBytes("simcore", "streams", $"{FlatRun30}.mmrs"));
+                var config = stream.Config;
+                config.Movement!.Gravity = 0f;
+                File.WriteAllBytes(path, new RecordedStream(
+                    stream.RulesRevision, stream.StepHz, stream.Seed, stream.MatchSalt, stream.CollisionChecksum, config, stream.InitialState, stream.Steps).Encode());
+                break;
+            case "unreadable-file":
+                File.CreateSymbolicLink(path, directory.Combine("no-such-target"));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
+        }
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("streams", "verify", "--dir", streams, "--content", content);
+
+        Assert.True(exit == 2, $"{caseName}: simcore streams verify exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        var lines = Lines(stdout);
+        string[] refusal = caseName == "invalid-config"
+            ? [$"REFUSED stream {FlatRun30}: the configuration is invalid", "  movement.gravity: must be between 0.1 and 100"]
+            : [lines[0]];
+        Assert.StartsWith(caseName == "invalid-config" ? refusal[0] : $"REFUSED stream {FlatRun30}: the file cannot be read (", lines[0]);
+        Assert.Equal([.. refusal, "streams verify: 1 streams, 0 match, 0 diverged, 0 not comparable, 1 refused"], lines);
     }
 
     /// <summary>

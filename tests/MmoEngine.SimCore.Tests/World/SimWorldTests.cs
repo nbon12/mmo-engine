@@ -204,6 +204,33 @@ public sealed class SimWorldTests
     }
 
     /// <summary>
+    /// Stage 1 reads the commands in order and skips one whose index is below the character being merged.
+    /// With <see cref="TestStates.TwoCharacters"/> and two commands for index 0, the first (sequence 6, Forward)
+    /// is index 0's input; the second (sequence 7, Back) is skipped when index 1 is merged, so index 1
+    /// (character 4) gets the neutral input, no buttons and its own <c>lastSequence</c> 0, and no input is
+    /// rejected.
+    /// </summary>
+    [Fact]
+    public void ACommandForAnIndexAlreadyMergedIsSkipped()
+    {
+        var world = NewWorld(TestConfigs.Compiled(30));
+        world.Reset(TestStates.TwoCharacters, Salt);
+        var first = new InputCommand(6, 1, Buttons.Forward, 16384, -512, 1);
+        var second = new InputCommand(7, 1, Buttons.Back, 0, 0, 0);
+        CharacterCommand[] commands = [new CharacterCommand(0, first), new CharacterCommand(0, second)];
+
+        var report = world.Step(commands);
+
+        Assert.Equal(StepFaultCode.None, report.Fault.Code);
+        var inputs = world.LastStepInputs;
+        Assert.Equal(2, inputs.Length);
+        Assert.Equal(first, inputs[0]);
+        Assert.Equal((Buttons)0, inputs[1].Buttons);
+        Assert.Equal(0u, inputs[1].Sequence);
+        Assert.Equal(0, BinaryPrimitives.ReadUInt16LittleEndian(report.State[^6..]));
+    }
+
+    /// <summary>
     /// Every buffer is allocated once, at construction, from the maxima of the placeholders on
     /// <see cref="TestWorlds.Flat"/>: the candidate buffer for the widest box the 0.4 m capsule with a
     /// 0.01 m skin sweeps (274 candidates), the 91,672-byte state buffer (64 characters, 1024 projectiles,

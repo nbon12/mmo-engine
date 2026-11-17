@@ -56,6 +56,7 @@ public static class Program
         using var logger = CliLogging.Create(stderr);
         var root = new RootCommand("simcore: the shared simulation core's tools (specs/015-shared-simulation-core/contracts/simcore-cli.md).")
         {
+            AgreementCommand.Create(stdout, stderr, logger),
             ConfigCommand.Create(stdout, stderr, logger),
             ContentCommand.Create(stdout, stderr, logger),
             StreamsCommand.Create(stdout, stderr, logger, runStream),

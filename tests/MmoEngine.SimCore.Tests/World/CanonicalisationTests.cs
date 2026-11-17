@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Tests.Support;
 using MmoEngine.SimCore.World;
@@ -214,6 +215,105 @@ public sealed class CanonicalisationTests
         Assert.Equal(expectedStep, world.CurrentStep);
         Assert.Equal(expectedState, next.State.ToArray());
         Assert.Equal(expectedHash, next.Hash);
+    }
+
+    /// <summary>
+    /// Rows <c>(path, bits, offset in the committed state, width in bytes)</c> of
+    /// <see cref="InjectedBitsReachTheNamedField"/>: every integer field of the character, of each weapon slot
+    /// and of the projectile, with a value its type holds, at the offsets of
+    /// contracts/state-serialization.md's layout tables. <c>weaponCount</c> is not a row: the serializer writes
+    /// the configuration's <c>input.weaponSlots</c> there, whatever the in-memory count holds.
+    /// </summary>
+    public static TheoryData<string, uint, int, int> IntegerFieldCases
+    {
+        get
+        {
+            var character = TestStates.CharacterOffset(0);
+            var projectile = TestStates.ProjectileOffset(1, 0);
+            var data = new TheoryData<string, uint, int, int>
+            {
+                { "characters[0].id", 9u, character, 4 },
+                { "characters[0].aimYaw", 0xBEEFu, character + 40, 2 },
+                { "characters[0].aimPitch", 0xFE00u, character + 42, 2 },
+                { "characters[0].stance", 1u, character + 44, 1 },
+                { "characters[0].flags", 0u, character + 45, 1 },
+                { "characters[0].lastSequence", 0x01020304u, character + 46, 4 },
+                { "characters[0].activeSlot", 1u, character + 50, 1 },
+                { "projectiles[0].id", 7u, projectile, 4 },
+                { "projectiles[0].ownerId", 3u, projectile + 4, 4 },
+                { "projectiles[0].class", 1u, projectile + 8, 1 },
+                { "projectiles[0].launchStep", 0x00ABCDEFu, projectile + 9, 4 },
+            };
+            foreach (var slot in new[] { 0, 1 })
+            {
+                var weapon = TestStates.WeaponOffset(0, slot);
+                var prefix = $"characters[0].weapons[{slot}].";
+                data.Add(prefix + "phase", 3u, weapon, 1);
+                data.Add(prefix + "flags", 1u, weapon + 1, 1);
+                data.Add(prefix + "phaseSteps", 0x1234u, weapon + 2, 2);
+                data.Add(prefix + "fireWait", 0xFFFFFFF0u, weapon + 4, 4);
+                data.Add(prefix + "shotCounter", 0x89ABCDEFu, weapon + 8, 4);
+                data.Add(prefix + "magazine", 17u, weapon + 12, 2);
+                data.Add(prefix + "reserve", 0x0102u, weapon + 14, 2);
+                data.Add(prefix + "heat", 3_000_000u, weapon + 16, 4);
+                data.Add(prefix + "stepsSinceShot", 42u, weapon + 20, 2);
+                data.Add(prefix + "recoilPitch", 0x80000001u, weapon + 22, 4);
+                data.Add(prefix + "recoilYaw", 0x7FFFFFFEu, weapon + 26, 4);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// The injection hook writes exactly the field it names: Given the world of
+    /// <see cref="NegativeZeroIsCommittedAndHashedAsPositiveZero"/>, When <c>StepWithInjectedBits</c> writes
+    /// <paramref name="bits"/> into <paramref name="fieldPath"/>, Then the step commits (stage 6 checks only
+    /// floats) and the committed state holds the bits' low <paramref name="width"/> bytes, little-endian, at
+    /// <paramref name="offset"/>, and differs from an untouched world's state nowhere else.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(IntegerFieldCases))]
+    public void InjectedBitsReachTheNamedField(string fieldPath, uint bits, int offset, int width)
+    {
+        var (ordinal, index) = Field(fieldPath);
+        var untouched = NewWorld().Step([]).State.ToArray();
+        var world = NewWorld();
+
+        var report = world.StepWithInjectedBits([], ordinal, index, bits);
+
+        Assert.Equal(StepFaultCode.None, report.Fault.Code);
+        var state = report.State.ToArray();
+        var expected = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(expected, bits);
+        Assert.Equal(expected[..width], state[offset..(offset + width)]);
+        var differing = Enumerable.Range(0, state.Length).Where(i => state[i] != untouched[i]).ToArray();
+        Assert.All(differing, i => Assert.InRange(i, offset, offset + width - 1));
+    }
+
+    /// <summary>
+    /// The injection hook writes only character, weapon and projectile fields of present elements: Given the
+    /// world of <see cref="NegativeZeroIsCommittedAndHashedAsPositiveZero"/>, When <c>StepWithInjectedBits</c>
+    /// names the header's <c>step</c>, an <c>events.shots.count</c>, <c>characters[1].id</c> (one character),
+    /// <c>characters[0].weapons[2].phase</c> (two slots) or <c>projectiles[1].id</c> (one projectile), Then it
+    /// throws <see cref="ArgumentOutOfRangeException"/> before running any stage, and the world's step is
+    /// unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData("step")]
+    [InlineData("events.shots.count")]
+    [InlineData("characters[1].id")]
+    [InlineData("characters[0].weapons[2].phase")]
+    [InlineData("projectiles[1].id")]
+    public void InjectionRefusesAFieldItCannotWrite(string fieldPath)
+    {
+        var (ordinal, index) = Field(fieldPath);
+        var world = NewWorld();
+        var step = world.CurrentStep;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => world.StepWithInjectedBits([], ordinal, index, 0u));
+
+        Assert.Equal(step, world.CurrentStep);
     }
 
     private static SimWorld NewWorld()

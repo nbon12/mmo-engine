@@ -305,16 +305,18 @@ internal static class StreamsCommand
         var (matched, diverged, notComparable, refused) = (0, 0, 0, 0);
         foreach (var path in paths)
         {
-            var name = Path.GetFileNameWithoutExtension(path);
-            switch (VerifyOne(name, path, worlds, stdout))
+            var verified = VerifyStream(Path.GetFileNameWithoutExtension(path), path, worlds);
+            stdout.Write(verified.Text);
+            stdout.Write('\n');
+            switch (verified.Outcome)
             {
-                case Outcome.Match:
+                case VerifyOutcome.Match:
                     matched++;
                     break;
-                case Outcome.Diverged:
+                case VerifyOutcome.Diverged:
                     diverged++;
                     break;
-                case Outcome.NotComparable:
+                case VerifyOutcome.NotComparable:
                     notComparable++;
                     break;
                 default:
@@ -355,8 +357,16 @@ internal static class StreamsCommand
             && string.Equals(error.Format, StreamFormat, StringComparison.Ordinal)
             && string.Equals(error.Field, StreamVersionField, StringComparison.Ordinal));
 
-    /// <summary>Runs one stream file and prints its outcome.</summary>
-    private static Outcome VerifyOne(string name, string path, IReadOnlyList<CollisionWorld> worlds, TextWriter stdout)
+    /// <summary>
+    /// Runs one stream file through the server build and checks every step's hash against the stream's
+    /// expected hash, as <c>streams verify</c> does for each stream and <c>agreement prepare</c> does for each
+    /// committed stream (contracts/simcore-cli.md#agreement-prepare step 1). The result holds the outcome and
+    /// its text, without a final line break: <c>&lt;name&gt;: match, &lt;steps&gt; steps, final &lt;hash&gt;</c>,
+    /// the divergence report against the expected hashes, the <c>NOT COMPARABLE stream</c> line, or the
+    /// <c>REFUSED stream</c> line (with one indented <c>path: message</c> line per configuration error). A
+    /// match also holds the file's bytes, the server build's records and the decoded stream.
+    /// </summary>
+    internal static VerifiedStream VerifyStream(string name, string path, IReadOnlyList<CollisionWorld> worlds)
     {
         byte[] bytes;
         byte[] records;
@@ -369,25 +379,25 @@ internal static class StreamsCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            stdout.Write($"REFUSED stream {name}: the file cannot be read ({ex.Message})\n");
-            return Outcome.Refused;
+            return VerifiedStream.Failed(name, VerifyOutcome.Refused, $"REFUSED stream {name}: the file cannot be read ({ex.Message})");
         }
         catch (CoreFormatException ex) when (IsNotComparable(ex.Error))
         {
-            stdout.Write(DivergenceReport.NotComparable(name, ex.Error));
-            stdout.Write('\n');
-            return Outcome.NotComparable;
+            return VerifiedStream.Failed(name, VerifyOutcome.NotComparable, DivergenceReport.NotComparable(name, ex.Error));
         }
         catch (Exception ex) when (ex is CoreFormatException or StepFaultException)
         {
-            stdout.Write($"REFUSED stream {name}: {ex.Message}\n");
-            return Outcome.Refused;
+            return VerifiedStream.Failed(name, VerifyOutcome.Refused, $"REFUSED stream {name}: {ex.Message}");
         }
         catch (ConfigValidationException ex)
         {
-            stdout.Write($"REFUSED stream {name}: the configuration is invalid\n");
-            WriteConfigErrors(stdout, ex.Errors, indent: "  ");
-            return Outcome.Refused;
+            var text = new StringBuilder($"REFUSED stream {name}: the configuration is invalid");
+            foreach (var error in ex.Errors)
+            {
+                text.Append($"\n  {error.Path}: {error.Message}");
+            }
+
+            return VerifiedStream.Failed(name, VerifyOutcome.Refused, text.ToString());
         }
 
         // Decode refuses a step entry whose number is not the initial state's step + i + 1, and the runner
@@ -404,17 +414,20 @@ internal static class StreamsCommand
 
             if (hash != entry.ExpectedHash)
             {
-                stdout.Write(DivergenceReport.AgainstExpected(name, step, entry.ExpectedHash, hash));
-                stdout.Write('\n');
-                return Outcome.Diverged;
+                return VerifiedStream.Failed(name, VerifyOutcome.Diverged, DivergenceReport.AgainstExpected(name, step, entry.ExpectedHash, hash));
             }
 
             last = hash;
             offset += length;
         }
 
-        stdout.Write(string.Create(CultureInfo.InvariantCulture, $"{name}: match, {stream.Steps.Count} steps, final {last:x16}\n"));
-        return Outcome.Match;
+        return new VerifiedStream(
+            name,
+            VerifyOutcome.Match,
+            string.Create(CultureInfo.InvariantCulture, $"{name}: match, {stream.Steps.Count} steps, final {last:x16}"),
+            bytes,
+            records,
+            stream);
     }
 
     /// <summary>Why <paramref name="reason"/> is refused, or null when it is a usable reason.</summary>
@@ -542,7 +555,7 @@ internal static class StreamsCommand
     }
 
     /// <summary>Every <c>*.mmrs</c> in <paramref name="directory"/>, in ordinal order.</summary>
-    private static string[] StreamPaths(string directory)
+    internal static string[] StreamPaths(string directory)
     {
         var paths = Directory.GetFiles(directory, "*" + StreamFiles.Extension, SearchOption.TopDirectoryOnly)
             .Where(path => path.EndsWith(StreamFiles.Extension, StringComparison.Ordinal))
@@ -604,8 +617,27 @@ internal static class StreamsCommand
     /// <summary><c>streams record</c>'s options.</summary>
     internal sealed record RecordOptions(string? Scenario, bool All, string? Reason, string Out, string Content, string Config);
 
+    /// <summary>
+    /// One stream's verify result: its name, outcome and printed text (no final line break), and for a match
+    /// the file's bytes, the server build's packed step records and the decoded stream (null otherwise).
+    /// </summary>
+    internal sealed record VerifiedStream(string Name, VerifyOutcome Outcome, string Text, byte[]? Bytes, byte[]? Records, RecordedStream? Stream)
+    {
+        /// <summary>A stream that did not match: only its name, outcome and text.</summary>
+        public static VerifiedStream Failed(string name, VerifyOutcome outcome, string text) => new(name, outcome, text, null, null, null);
+    }
+
     /// <summary>A scenario's new stream: its encoded bytes and the decoded stream with the expected hashes.</summary>
     private sealed record Recording(string Name, byte[] Bytes, RecordedStream Stream);
+
+    /// <summary>A verified stream's outcome (contracts/recorded-stream-format.md#outcomes).</summary>
+    internal enum VerifyOutcome
+    {
+        Match,
+        Diverged,
+        NotComparable,
+        Refused,
+    }
 
     private enum ChangeKind
     {
@@ -613,14 +645,6 @@ internal static class StreamsCommand
         Changed,
         Added,
         Removed,
-    }
-
-    private enum Outcome
-    {
-        Match,
-        Diverged,
-        NotComparable,
-        Refused,
     }
 
     /// <summary>

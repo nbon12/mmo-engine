@@ -858,6 +858,28 @@ The design documents settled these points, which the spec leaves open. They are 
   generator, with no characters of its own, so `fuzz-all-buttons` builds the generator's stream at
   any rate. The character-schedule definition was not stretched to fit, because the fuzz stream's
   commands are drawn, not held.
+- **`agreement prepare` runs every stream before it writes, and refuses three more inputs (T135).**
+  The contract listed the refusals of the arguments and of a committed stream, but the perturbation
+  and the refusal fixtures need `flat-run-30hz`, the generated streams need a world to run on, and a
+  generated stream could still fault. Prepare now runs the committed and the generated streams first
+  and writes only once all have run, so every refusal leaves `--work` as it was; a missing
+  `flat-run-30hz.mmrs`, a missing `test-world.mmcd` in `--content` and a generated stream the server
+  refuses or faults on each exit 2 with an `agreement prepare: ` line. Step 1 shares `streams verify`'s
+  check (`StreamsCommand.VerifyStream`), and the collision files are copied byte for byte through a
+  `ContentFiles.TryLoadAll` overload that also gives each file's bytes. simcore-cli.md#agreement-prepare
+  and T135 now say so. Writing as each stream ran was not chosen, because a later failure would leave
+  a half-prepared directory behind.
+- **`agreement compare` settles five cases the contract left open (T136).** `agreement.json`'s
+  `outcome` is `CannotRun` when a required build did not run, since the run neither matched nor only
+  diverged, and the report and summary are still written then (not for a NotComparable or unreadable
+  work directory). A build's error file takes the place of its records or table results, without its
+  trailing line breaks, and a build with neither tables file is `Missing` with
+  `<build>/tables.bin was not written`. Missing tables also get `tables.txt` (the contract named only
+  diverged ones) and print `tables: build <b>, results missing: <message>` as their first report, so
+  the bare message never stands alone on stdout. The manifest's own `formatVersion` is checked with
+  the rules revision and the formats, before the rest is read. simcore-cli.md#agreement-compare and
+  T136 now say so. Failing the run for a stale error file beside records was not chosen, because a
+  build that threw has no records to trust.
 
 ## Delivery
 

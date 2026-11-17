@@ -157,6 +157,9 @@ public sealed class DivergenceReportTests
         }
     }
 
+    /// <summary>Rows of <see cref="DifferentCountsListAbsentElements"/>: which side holds the element the other lacks.</summary>
+    public static TheoryData<string> DifferentCountCases => ["server-has-the-projectile", "build-has-the-projectile", "build-has-fewer-weapons"];
+
     /// <summary>
     /// FR-026: Given a server state from <see cref="TestStates"/> with one character (ID 7) and one projectile
     /// (ID 1, <c>nextProjectileId</c> 2), and a build state that is the same without the projectile (still
@@ -165,37 +168,168 @@ public sealed class DivergenceReportTests
     /// projectile's 13 paths in layout order (<c>projectiles[0].id</c>, <c>.ownerId</c>, <c>.class</c>,
     /// <c>.launchStep</c>, <c>.origin.x</c> to <c>.z</c>, <c>.launchVelocity.x</c> to <c>.z</c>,
     /// <c>.position.x</c> to <c>.z</c>) as <c>server 0x&lt;bits&gt; &lt;decimal&gt;  node-interp absent</c>,
-    /// after the summary line <c>  14 fields differ</c>, and nothing else.
+    /// after the summary line <c>  14 fields differ</c>, and nothing else. With the sides swapped
+    /// (<c>build-has-the-projectile</c>), the same 14 lines show <c>server absent</c> and the build's values.
+    /// With two characters of the placeholder two weapons on the server and the build's first character
+    /// holding only the rifle (<c>build-has-fewer-weapons</c>), 12 fields differ:
+    /// <c>characters[0].weaponCount</c> (2 against 1) and the launcher's 11 fields of
+    /// <c>characters[0].weapons[1]</c> with <c>node-interp absent</c>, while the second character, which follows
+    /// at another offset in each state, matches field for field.
     /// </summary>
-    [Fact]
-    public void DifferentCountsListAbsentElements()
+    [Theory]
+    [MemberData(nameof(DifferentCountCases))]
+    public void DifferentCountsListAbsentElements(string caseName)
     {
         var character = TestStates.StandingCharacter(7, 0.5f, 0.5f);
-        var server = TestStates.Build(StatesStep, [character], [Projectile]);
-        var build = TestStates.Build(StatesStep, [character], [], nextProjectileId: 2);
-        Assert.Equal(2u, BinaryPrimitives.ReadUInt32LittleEndian(server.AsSpan(8)));
+        var withProjectile = TestStates.Build(StatesStep, [character], [Projectile]);
+        var withoutProjectile = TestStates.Build(StatesStep, [character], [], nextProjectileId: 2);
+        Assert.Equal(2u, BinaryPrimitives.ReadUInt32LittleEndian(withProjectile.AsSpan(8)));
+        var projectileValues = new (string Path, string Value)[]
+        {
+            ("projectiles[0].id", UIntValue(Projectile.Id)),
+            ("projectiles[0].ownerId", UIntValue(Projectile.OwnerId)),
+            ("projectiles[0].class", UIntValue(Projectile.Class)),
+            ("projectiles[0].launchStep", UIntValue(Projectile.LaunchStep)),
+            ("projectiles[0].origin.x", FloatValue(Projectile.Origin.X)),
+            ("projectiles[0].origin.y", FloatValue(Projectile.Origin.Y)),
+            ("projectiles[0].origin.z", FloatValue(Projectile.Origin.Z)),
+            ("projectiles[0].launchVelocity.x", FloatValue(Projectile.LaunchVelocity.X)),
+            ("projectiles[0].launchVelocity.y", FloatValue(Projectile.LaunchVelocity.Y)),
+            ("projectiles[0].launchVelocity.z", FloatValue(Projectile.LaunchVelocity.Z)),
+            ("projectiles[0].position.x", FloatValue(Projectile.Position.X)),
+            ("projectiles[0].position.y", FloatValue(Projectile.Position.Y)),
+            ("projectiles[0].position.z", FloatValue(Projectile.Position.Z)),
+        };
+        byte[] server;
+        byte[] build;
+        string summary;
+        (string Path, string Server, string Build)[] expectedFields;
+        switch (caseName)
+        {
+            case "server-has-the-projectile":
+                (server, build, summary) = (withProjectile, withoutProjectile, "  14 fields differ");
+                expectedFields = [("projectileCount", UIntValue(1), UIntValue(0)), .. projectileValues.Select(field => (field.Path, field.Value, "absent"))];
+                break;
+            case "build-has-the-projectile":
+                (server, build, summary) = (withoutProjectile, withProjectile, "  14 fields differ");
+                expectedFields = [("projectileCount", UIntValue(0), UIntValue(1)), .. projectileValues.Select(field => (field.Path, "absent", field.Value))];
+                break;
+            case "build-has-fewer-weapons":
+                var second = TestStates.StandingCharacter(9, 4.5f, 0.5f);
+                server = TestStates.Build(StatesStep, [character, second]);
+                build = TestStates.Build(StatesStep, [character with { Weapons = [TestStates.Rifle] }, second]);
+                summary = "  12 fields differ";
+                var launcher = TestStates.Launcher;
+                expectedFields =
+                [
+                    ("characters[0].weaponCount", UIntValue(2), UIntValue(1)),
+                    ("characters[0].weapons[1].phase", UIntValue(launcher.Phase), "absent"),
+                    ("characters[0].weapons[1].flags", UIntValue(launcher.Flags), "absent"),
+                    ("characters[0].weapons[1].phaseSteps", UIntValue(launcher.PhaseSteps), "absent"),
+                    ("characters[0].weapons[1].fireWait", UIntValue((uint)launcher.FireWait), "absent"),
+                    ("characters[0].weapons[1].shotCounter", UIntValue(launcher.ShotCounter), "absent"),
+                    ("characters[0].weapons[1].magazine", UIntValue(launcher.Magazine), "absent"),
+                    ("characters[0].weapons[1].reserve", UIntValue(launcher.Reserve), "absent"),
+                    ("characters[0].weapons[1].heat", UIntValue(launcher.Heat), "absent"),
+                    ("characters[0].weapons[1].stepsSinceShot", UIntValue(launcher.StepsSinceShot), "absent"),
+                    ("characters[0].weapons[1].recoilPitch", UIntValue((uint)launcher.RecoilPitch), "absent"),
+                    ("characters[0].weapons[1].recoilYaw", UIntValue((uint)launcher.RecoilYaw), "absent"),
+                ];
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of DifferentCountsListAbsentElements.");
+        }
 
         var comparison = CompareStates(server, build);
 
-        var expectedFields = new (string Path, string Server, string Build)[]
+        AssertStatesReport(comparison, server, build, summary, expectedFields, unreadableLine: null);
+        Assert.Equal(expectedFields.Length, comparison.DifferingFields);
+    }
+
+    /// <summary>Rows of <see cref="StateFieldReaderStopsAtTheFirstFieldItCannotHold"/>: where the state is cut.</summary>
+    public static TheoryData<string> ReaderStopCases => ["header", "weapon", "projectile", "event-count", "event-record", "whole"];
+
+    /// <summary>
+    /// contracts/state-serialization.md#divergence-report ("decoded through the state layout table"): Given a
+    /// state of one character with the placeholder two weapons, one projectile, one shot event and one input
+    /// rejection event, cut (<c>header</c>) to 6 bytes, (<c>weapon</c>) at its second weapon,
+    /// (<c>projectile</c>) at its projectile, (<c>event-count</c>) at the shot count, (<c>event-record</c>) at
+    /// the shot record, or (<c>whole</c>) not cut, When <c>StateFieldReader.Read</c> reads it, Then the last
+    /// field it reads whole is <c>characterCount</c> at 4, <c>characters[0].weapons[0].recoilYaw</c>,
+    /// <c>characters[0].weapons[1].recoilYaw</c>, <c>projectiles[0].position.z</c>,
+    /// <c>events.shots.count</c> or <c>events.movementOutcomes.count</c>, each at its layout offset, and its
+    /// unreadable offset is the cut (null for the whole state, which also holds
+    /// <c>events.shots[0].direction.z</c> and <c>events.inputRejections[0].reason</c> at their offsets).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReaderStopCases))]
+    public void StateFieldReaderStopsAtTheFirstFieldItCannotHold(string caseName)
+    {
+        var state = TestStates.Build(
+            StatesStep,
+            [TestStates.StandingCharacter(1, 0.5f, 0.5f)],
+            [Projectile],
+            events: new EventRecords
+            {
+                Shots = [new ShotRecord(1, 0, 0, Projectile.Id, (0f, 0f, 1f))],
+                InputRejections = [new SmallEventRecord(1, 2)],
+            });
+        var events = TestStates.ProjectileOffset(1, 1);
+        var shot = events + 2;
+        var rejection = events + 2 + TestStates.ShotLength + 2 + 2 + 2;
+        (int? Cut, string LastPath, int LastOffset) row = caseName switch
         {
-            ("projectileCount", UIntValue(1), UIntValue(0)),
-            ("projectiles[0].id", UIntValue(Projectile.Id), "absent"),
-            ("projectiles[0].ownerId", UIntValue(Projectile.OwnerId), "absent"),
-            ("projectiles[0].class", UIntValue(Projectile.Class), "absent"),
-            ("projectiles[0].launchStep", UIntValue(Projectile.LaunchStep), "absent"),
-            ("projectiles[0].origin.x", FloatValue(Projectile.Origin.X), "absent"),
-            ("projectiles[0].origin.y", FloatValue(Projectile.Origin.Y), "absent"),
-            ("projectiles[0].origin.z", FloatValue(Projectile.Origin.Z), "absent"),
-            ("projectiles[0].launchVelocity.x", FloatValue(Projectile.LaunchVelocity.X), "absent"),
-            ("projectiles[0].launchVelocity.y", FloatValue(Projectile.LaunchVelocity.Y), "absent"),
-            ("projectiles[0].launchVelocity.z", FloatValue(Projectile.LaunchVelocity.Z), "absent"),
-            ("projectiles[0].position.x", FloatValue(Projectile.Position.X), "absent"),
-            ("projectiles[0].position.y", FloatValue(Projectile.Position.Y), "absent"),
-            ("projectiles[0].position.z", FloatValue(Projectile.Position.Z), "absent"),
+            "header" => (6, "characterCount", 4),
+            "weapon" => (TestStates.WeaponOffset(0, 1), "characters[0].weapons[0].recoilYaw", TestStates.WeaponOffset(0, 0) + 26),
+            "projectile" => (TestStates.ProjectileOffset(1, 0), "characters[0].weapons[1].recoilYaw", TestStates.WeaponOffset(0, 1) + 26),
+            "event-count" => (events, "projectiles[0].position.z", TestStates.ProjectileOffset(1, 0) + 45),
+            "event-record" => (shot, "events.shots.count", events),
+            "whole" => (null, "events.movementOutcomes.count", rejection + TestStates.SmallEventLength + 2),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of StateFieldReaderStopsAtTheFirstFieldItCannotHold."),
         };
-        AssertStatesReport(comparison, server, build, "  14 fields differ", expectedFields, unreadableLine: null);
-        Assert.Equal(14, comparison.DifferingFields);
+        Assert.Equal(rejection + TestStates.SmallEventLength + 4, state.Length);
+
+        var reading = StateFieldReader.Read(row.Cut is { } cut ? state.AsSpan(0, cut) : state);
+
+        Assert.Equal(row.Cut, reading.UnreadableOffset);
+        var last = reading.Fields[^1];
+        Assert.Equal(row.LastPath, last.Path);
+        Assert.Equal(row.LastOffset, last.Offset);
+        if (row.Cut is null)
+        {
+            var paths = reading.Fields.ToDictionary(field => field.Path, field => field.Offset, StringComparer.Ordinal);
+            Assert.Equal(shot + 21, paths["events.shots[0].direction.z"]);
+            Assert.Equal(rejection + 4, paths["events.inputRejections[0].reason"]);
+            Assert.Equal(2u, reading.Fields.Single(field => field.Path == "events.inputRejections[0].reason").Bits);
+        }
+    }
+
+    /// <summary>
+    /// contracts/state-serialization.md#field-paths: Given a server state whose one character holds nine
+    /// rifles, one past the eight a weapon path index can carry, and a build state with the ninth rifle's
+    /// <c>magazine</c> 29, When the two are compared, Then <c>StateFieldReader</c> reads the server state to
+    /// its end with <c>characters[0].weapons[8].phase</c> at the ninth weapon's offset, and the report's one
+    /// field line is <c>characters[0].weapons[8].magazine  server 0x0000001E 30  node-interp 0x0000001D 29</c>.
+    /// </summary>
+    [Fact]
+    public void WeaponPastTheEighthSlotIsNamedByItsSlot()
+    {
+        var nine = Enumerable.Repeat(TestStates.Rifle, 9).ToArray();
+        var server = TestStates.Build(StatesStep, [TestStates.StandingCharacter(1, 0.5f, 0.5f) with { Weapons = nine }]);
+        var build = TestStates.Mutate((byte[])server.Clone(), TestStates.WeaponOffset(0, 8, weaponSlots: 9) + 12, TestStates.U16(29));
+
+        var reading = StateFieldReader.Read(server);
+        var comparison = CompareStates(server, build);
+
+        Assert.Null(reading.UnreadableOffset);
+        Assert.Equal(TestStates.WeaponOffset(0, 8, weaponSlots: 9), reading.Fields.Single(field => field.Path == "characters[0].weapons[8].phase").Offset);
+        AssertStatesReport(
+            comparison,
+            server,
+            build,
+            "  1 field differs",
+            [("characters[0].weapons[8].magazine", UIntValue(30), UIntValue(29))],
+            unreadableLine: null);
     }
 
     /// <summary>Rows of <see cref="UnreadableStateIsListedToItsOffset"/>.</summary>

@@ -259,6 +259,12 @@ It writes the [work directory](#agreement-work-directory):
    server build's results, `server/tables.bin`.
 8. `manifest.json`, last, so a work directory without a manifest is incomplete.
 
+Every stream runs before the first file is written, so a refusal at any of these steps leaves `--work`
+as it was. Besides the refusals above, each exits 2 with an `agreement prepare: ` line on stderr:
+`--streams` holding no `flat-run-30hz.mmrs` (the perturbation and the refusals are built from it),
+`--content` holding no `test-world.mmcd` (the generated streams run on it), and a generated stream the
+server build refuses or faults on (`agreement prepare: seed-<nnn>: <message>`).
+
 Output: one line, `prepared <work>: <n> streams (<named> named, <generated> generated), <steps> steps, rules revision <r>`.
 
 ## `agreement compare`
@@ -274,8 +280,9 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare -
   is `NotRun`. Folders with other names are ignored.
 
 For each compared build and each manifest stream, the comparison reads `<build>/<stream>.records` and
-the server's `server/<stream>.records`, step by step. The first step where any of these holds is the
-first divergent step:
+the server's `server/<stream>.records`, step by step. A `<stream>.error.txt` takes the place of the
+records when the build wrote one; its trailing line breaks are not part of the message. The first step
+where any of these holds is the first divergent step:
 
 - the build's record is missing, or the build wrote `<stream>.error.txt` instead;
 - the step numbers differ;
@@ -284,9 +291,10 @@ first divergent step:
 
 Each compared build's `<build>/tables.bin` is then compared with `server/tables.bin` under the
 [tables rule](wasm-api.md#cross-build-tables) (`TablesComparison`): the result is `Match`, `Diverged`
-with the first mismatching row, or `Missing` when the file is absent or the build wrote
-`tables.error.txt` instead (its message is reported). This is the cross-build check of US3 scenario 8,
-SC-004 and US5 scenario 5, which the streams cannot give.
+with the first mismatching row, or `Missing` when the file is absent (`<build>/tables.bin was not
+written`) or the build wrote `tables.error.txt` instead (its message, without trailing line breaks, is
+reported). This is the cross-build check of US3 scenario 8, SC-004 and US5 scenario 5, which the
+streams cannot give.
 
 | Per-build status | When |
 | --- | --- |
@@ -300,7 +308,22 @@ is `NotRun`, or the manifest's rules revision or format versions differ from the
 (NotComparable, naming both values). Otherwise exit 1 when any build is `Diverged`, else 0. A
 Firefox or WebKit build that Playwright could not install is reported `NotRun`, never as a pass.
 
-Output, one line per known build, the first divergence report of each diverged build, then the outcome:
+The NotComparable check reads only `formatVersion`, `rulesRevision` and `formats`, before the rest of
+the manifest, and prints one `NOT COMPARABLE work <work>: <detail>` line per difference, in this order:
+`manifest format version <m> in the work directory; this reader supports version <c>`,
+`rules revision <m> in the work directory; this core implements rules revision <c>`, then
+`<input command | collision data | recorded stream> format version <m> in the work directory; this
+reader supports version <c>`. The last line is then `agreement: not comparable`, and nothing is
+compared or written. Every other exit 2 before the comparison ends with
+`agreement: cannot run: <reason>`, the reason naming the unknown `--require` build, the manifest, or the
+missing or refused file by its work-directory path.
+
+Output, one line per known build, the first divergence report of each diverged build, then the outcome.
+A build's first report is its first diverged stream's divergence report or, when only its tables
+diverged, its tables line: the first mismatch, or `tables: build <b>, results missing: <message>`. A
+required build that did not run makes the last line
+`agreement: cannot run: required build <b> did not run` (`required builds <b>, <c> did not run` for
+several), after the build lines and reports:
 
 ```text
 node-interp: match, 69 streams, 24300 steps, tables match
@@ -350,14 +373,18 @@ Files, under `<work>/report/`:
   ```
 
 - `divergences/<build>/<stream>.txt`, the divergence report for each diverged stream, and
-  `divergences/<build>/tables.txt`, the first mismatching table row when the tables diverged.
-- In `agreement.json`, each compared build's `tables` is `{ "status": "Match" | "Diverged" | "Missing",
+  `divergences/<build>/tables.txt`, the first mismatching table row when the tables diverged, or the
+  missing results' message when they are missing.
+- In `agreement.json`, `outcome` is `Match`, `Diverged`, or `CannotRun` when a required build did not
+  run, and each compared build's `tables` is `{ "status": "Match" | "Diverged" | "Missing",
   "firstMismatch": <the mismatch line or the error message, or null> }`.
-- With `--summary <file>`, a Markdown section is appended to that file: a `## SimCore agreement`
-  heading, a table with one row per build (build, required, status, streams, steps, first divergence,
-  tables), and each diverged build's first divergence report, or first mismatching table row, in a
-  code block. CI passes
-  `$GITHUB_STEP_SUMMARY`.
+- With `--summary <file>`, a Markdown section is appended to that file in one write: a `## SimCore
+  agreement` heading, the outcome line, a table with one row per build (build, required, status,
+  streams, steps, first divergence, tables; `-` in the last four cells of a build that did not run),
+  and each diverged build's first divergence report, or first mismatching table row, in a `text` code
+  block after a `<build>:` line. CI passes `$GITHUB_STEP_SUMMARY`.
+- The files and the summary are written whenever the builds were compared, a required build that did
+  not run included, and not when the work directory is NotComparable or cannot be read.
 
 ### Divergence report
 

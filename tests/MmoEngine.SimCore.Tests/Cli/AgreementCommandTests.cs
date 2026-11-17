@@ -97,7 +97,10 @@ public sealed class AgreementCommandTests
 
     /// <summary>The inputs <c>agreement prepare</c> refuses before it writes anything.</summary>
     public static TheoryData<string> RefusedPrepareCases =>
-        ["non-empty-work", "work-is-a-file", "seeds-0-5", "seeds-5-3", "seeds-1-1000", "seeds-abc", "missing-streams", "oversized-content"];
+    [
+        "non-empty-work", "work-is-a-file", "seeds-0-5", "seeds-5-3", "seeds-1-1000", "seeds-abc", "missing-streams", "oversized-content",
+        "missing-content", "missing-config", "no-flat-run-30hz", "no-test-world", "generated-stream-refused", "work-under-a-file",
+    ];
 
     /// <summary>Rows (case, the exact line a refused or NotComparable committed stream prints).</summary>
     public static TheoryData<string, string> RefusedStreamCases => new()
@@ -116,7 +119,11 @@ public sealed class AgreementCommandTests
     };
 
     public static TheoryData<string> CannotRunCases =>
-        ["no-manifest", "invalid-manifest", "missing-server-records", "missing-server-tables", "unknown-required-build"];
+    [
+        "no-manifest", "invalid-manifest", "missing-server-records", "missing-server-tables", "unknown-required-build",
+        "truncated-server-records", "corrupt-work-stream", "path-outside-work", "missing-manifest-member", "invalid-stream-name",
+        "unwritable-summary",
+    ];
 
     /// <summary>
     /// FR-026 server half and contracts/simcore-cli.md#agreement-prepare: Given the committed streams, content
@@ -193,9 +200,14 @@ public sealed class AgreementCommandTests
     /// contracts/simcore-cli.md#agreement-prepare and #content-files: Given a <c>--work</c> that is a
     /// non-empty directory or a file, a <c>--seeds</c> of <c>0-5</c>, <c>5-3</c>, <c>1-1000</c> or
     /// <c>abc</c>, a <c>--streams</c> directory that does not exist, or a <c>--content</c> directory holding a
-    /// copy of <c>test-world.mmcd</c> and a sparse <c>big.mmcd</c> of 268,435,457 bytes, When
-    /// <c>agreement prepare</c> runs, Then it exits 2, stderr has an <c>agreement prepare: </c> line naming the
-    /// refused input (for the oversized file exactly
+    /// copy of <c>test-world.mmcd</c> and a sparse <c>big.mmcd</c> of 268,435,457 bytes; or a
+    /// <c>--content</c> or <c>--config</c> that does not exist, a <c>--streams</c> holding only
+    /// <c>flat-run-20hz.mmrs</c> (no <c>flat-run-30hz</c>), a <c>--content</c> holding the test world as
+    /// <c>world.mmcd</c> (no <c>test-world.mmcd</c>), <c>--seeds 3</c> with a <c>--config</c> whose rifle fires
+    /// 1500 rounds a minute (valid at its 30 Hz, refused by rule R11 at seed 3's 20 Hz), or a <c>--work</c>
+    /// below a file, which cannot be created once every stream has run; When <c>agreement prepare</c> runs,
+    /// Then it exits 2, stderr has an <c>agreement prepare: </c> line naming the refused input (for the
+    /// oversized file exactly
     /// <c>agreement prepare: content big.mmcd: collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456</c>),
     /// nothing is prepared, and every file and directory in the temp directory is unchanged, with none added:
     /// a refused work directory keeps its one file, and a work directory that did not exist still does not.
@@ -210,6 +222,7 @@ public sealed class AgreementCommandTests
         var seeds = WorkDirectories.DefaultSeeds;
         string? streams = null;
         string? content = null;
+        string? config = null;
         var workExisted = false;
         string named;
         switch (caseName)
@@ -251,13 +264,44 @@ public sealed class AgreementCommandTests
                 CreateSparse(Path.Combine(content, "big.mmcd"), OversizedLength);
                 named = "big.mmcd";
                 break;
+            case "missing-content":
+                content = directory.Combine("no-such-content");
+                named = content;
+                break;
+            case "missing-config":
+                config = directory.Combine("no-such-config.json");
+                named = config;
+                break;
+            case "no-flat-run-30hz":
+                streams = Directory.CreateDirectory(directory.Combine("streams")).FullName;
+                CopyCommitted(streams, "streams", "flat-run-20hz.mmrs");
+                named = FlatRun30;
+                break;
+            case "no-test-world":
+                content = Directory.CreateDirectory(directory.Combine("content")).FullName;
+                File.WriteAllBytes(Path.Combine(content, "world.mmcd"), TestWorldFile());
+                named = "test-world.mmcd";
+                break;
+            case "generated-stream-refused":
+                seeds = "3";
+                config = directory.Combine("fast-rifle.json");
+                var fastRifle = JsonNode.Parse(RepoPaths.ReadAllText("simcore", "config", "default.json"))!.AsObject();
+                fastRifle["weapons"]![0]!["roundsPerMinute"] = 1500;
+                File.WriteAllText(config, fastRifle.ToJsonString());
+                named = "seed-003";
+                break;
+            case "work-under-a-file":
+                File.WriteAllText(directory.Combine("blocker"), "a file where the work directory's parent should be\n");
+                work = Path.Combine(directory.Combine("blocker"), "work");
+                named = work;
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
         }
 
         var before = Snapshot(directory.Path);
 
-        var (exit, stdout, stderr) = SimcoreCli.Run(WorkDirectories.PrepareArgs(work, seeds, streams, content));
+        var (exit, stdout, stderr) = SimcoreCli.Run(WorkDirectories.PrepareArgs(work, seeds, streams, content, config));
 
         Assert.True(exit == 2, $"{caseName}: simcore agreement prepare exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
         var errors = Lines(stderr);
@@ -753,10 +797,16 @@ public sealed class AgreementCommandTests
     /// contracts/simcore-cli.md#agreement-compare: Given a prepared work directory with the three required
     /// builds equal to the server and (<c>no-manifest</c>) no <c>manifest.json</c>, (<c>invalid-manifest</c>) a
     /// manifest that is not valid JSON, (<c>missing-server-records</c>) no
-    /// <c>server/flat-run-30hz.records</c>, (<c>missing-server-tables</c>) no <c>server/tables.bin</c>, or
-    /// (<c>unknown-required-build</c>) <c>--require node-interp,unknown-build</c>, When <c>agreement compare</c>
-    /// runs, Then it exits 2 and its last line is <c>agreement: cannot run: &lt;reason&gt;</c>, the reason naming
-    /// the manifest, the missing file or <c>unknown-build</c>.
+    /// <c>server/flat-run-30hz.records</c>, (<c>missing-server-tables</c>) no <c>server/tables.bin</c>,
+    /// (<c>unknown-required-build</c>) <c>--require node-interp,unknown-build</c>,
+    /// (<c>truncated-server-records</c>) a <c>server/flat-run-30hz.records</c> cut 3 bytes short,
+    /// (<c>corrupt-work-stream</c>) a <c>streams/flat-run-30hz.mmrs</c> holding 64 zero bytes,
+    /// (<c>path-outside-work</c>) a manifest whose first stream's <c>file</c> is <c>../outside.mmrs</c>,
+    /// (<c>missing-manifest-member</c>) a manifest without <c>tables</c>, (<c>invalid-stream-name</c>) a
+    /// manifest whose first stream is named <c>Tables</c>, or (<c>unwritable-summary</c>) a <c>--summary</c>
+    /// that is a directory, When <c>agreement compare</c> runs, Then it exits 2 and its last line is
+    /// <c>agreement: cannot run: &lt;reason&gt;</c>, the reason naming the manifest, the missing, short or
+    /// refused file, <c>unknown-build</c>, the manifest member, or the report that cannot be written.
     /// </summary>
     [Theory]
     [MemberData(nameof(CannotRunCases))]
@@ -786,6 +836,31 @@ public sealed class AgreementCommandTests
             case "unknown-required-build":
                 extra = ["--require", "node-interp,unknown-build"];
                 named = "unknown-build";
+                break;
+            case "truncated-server-records":
+                var serverRecords = work.Combine(WorkDirectories.ServerFolder, $"{FlatRun30}.records");
+                File.WriteAllBytes(serverRecords, File.ReadAllBytes(serverRecords)[..^3]);
+                named = $"The server records of {FlatRun30} hold";
+                break;
+            case "corrupt-work-stream":
+                File.WriteAllBytes(work.Combine("streams", $"{FlatRun30}.mmrs"), new byte[64]);
+                named = $"streams/{FlatRun30}.mmrs: ";
+                break;
+            case "path-outside-work":
+                EditManifest(work, manifest => Entries(manifest, "streams", ManifestFile)[0]["file"] = "../outside.mmrs");
+                named = "../outside.mmrs is not a relative path inside the work directory";
+                break;
+            case "missing-manifest-member":
+                EditManifest(work, manifest => manifest.Remove("tables"));
+                named = "manifest.json: $.tables is missing";
+                break;
+            case "invalid-stream-name":
+                EditManifest(work, manifest => Entries(manifest, "streams", ManifestFile)[0]["name"] = "Tables");
+                named = "manifest.json: $.streams[0].name Tables is not";
+                break;
+            case "unwritable-summary":
+                extra = ["--summary", Directory.CreateDirectory(work.Beside("summary-directory")).FullName];
+                named = "the report cannot be written";
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
@@ -823,6 +898,15 @@ public sealed class AgreementCommandTests
         Assert.True(exit == 0, $"with other-build/: simcore agreement compare exited {exit}, expected 0; stdout: {stdout}; stderr: {stderr}");
         Assert.Equal(Lines(firstStdout), Lines(stdout));
         Assert.DoesNotContain("other-build", stdout, StringComparison.Ordinal);
+    }
+
+    /// <summary>Rewrites the work directory's <c>manifest.json</c> with <paramref name="edit"/> applied to it.</summary>
+    private static void EditManifest(PreparedWork work, Action<JsonObject> edit)
+    {
+        var path = work.Combine(ManifestFile);
+        var manifest = ReadJson(path);
+        edit(manifest);
+        File.WriteAllText(path, manifest.ToJsonString());
     }
 
     /// <summary>One prepared work directory entry of <c>streams[]</c>, checked against the contract's table.</summary>
