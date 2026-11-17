@@ -939,7 +939,7 @@ Conventions for this phase (they hold for every task below):
   - Identical results give `Match` and a null `FirstMismatch`.
   - `AnyNaNMatchesANaNRow(uint buildBits)` Theory: server NaN `0x7FC00000` against build `0xFFC00001` and `0x7F800001` gives `Match`; each row also checks that a finite build value `0x00000000` in the same row gives `Diverged`.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~TablesComparisonTests"` and confirm it fails.
-- [ ] T118 [US2] Write failing test `DivergenceReportTests.PerturbedRecordsReportTheFirstStepAndField` in `tests/MmoEngine.SimCore.Tests/Agreement/DivergenceReportTests.cs` (US2.4, state-serialization.md#divergence-report, simcore-cli.md#divergence-report).
+- [X] T118 [US2] Write failing test `DivergenceReportTests.PerturbedRecordsReportTheFirstStepAndField` in `tests/MmoEngine.SimCore.Tests/Agreement/DivergenceReportTests.cs` (US2.4, state-serialization.md#divergence-report, simcore-cli.md#divergence-report).
   - Given the server records `StreamRunner.Run(flat-run-30hz, test-world)` and the build records `StreamRunner.Run(flat-run-30hz, test-world, perturbStep: 15)`, with the stream's expected hashes.
   - When `DivergenceReport.CompareBuild("flat-run-30hz", "node-interp", server, build, expectedHashes)` runs, assert:
     - `Outcome == StreamOutcome.Diverged` and `FirstDivergentStep == 15`;
@@ -950,7 +950,7 @@ Conventions for this phase (they hold for every task below):
     - the fourth matches `^  characters\[0\]\.position\.x +server 0x([0-9A-F]{8}) (\S+) +node-interp 0x([0-9A-F]{8}) (\S+)$`, where the build bits equal the server bits + 1 and each decimal is that float's `ToString("R", CultureInfo.InvariantCulture)`, which parses back to its bits;
     - no line names a step before 15.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~DivergenceReportTests.PerturbedRecordsReportTheFirstStepAndField"` and confirm it fails.
-- [ ] T119 [US2] Write failing report-detail tests in `tests/MmoEngine.SimCore.Tests/Agreement/DivergenceReportTests.cs` (FR-026, state-serialization.md#divergence-report):
+- [X] T119 [US2] Write failing report-detail tests in `tests/MmoEngine.SimCore.Tests/Agreement/DivergenceReportTests.cs` (FR-026, state-serialization.md#divergence-report):
   - `DifferentCountsListAbsentElements`. The server state comes from `TestStates` with one projectile (ID 1, `nextProjectileId` 2); the build state is the same without it.
     - The report lists `projectileCount  server 0x00000001 1  node-interp 0x00000000 0`.
     - Then it lists each of the 13 projectile paths in layout order (`projectiles[0].id`, `.ownerId`, `.class`, `.launchStep`, `.origin.x` to `.z`, `.launchVelocity.x` to `.z`, `.position.x` to `.z`) as `server 0x<bits> <decimal>  node-interp absent`.

@@ -386,6 +386,9 @@ state from a buggy build can still be read.
   that exists on one side only is listed with `absent` on the other.
 - A state that cannot be read to its end is listed up to that point, followed by
   `unreadable from offset <n>`.
+- The `1 field differs` or `<k> fields differ` line, after the hash line, counts the field lines
+  listed. The `unreadable` line is not a field, so a state cut where every readable field still
+  matches shows `0 fields differ`.
 
 **Values.** Every value is shown as its bits and as a decimal:
 
