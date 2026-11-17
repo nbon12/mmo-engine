@@ -3,12 +3,15 @@ using System;
 namespace MmoEngine.SimCore.World;
 
 /// <summary>
-/// What one world step did, summed over its characters: the sweeps the movement step ran, the slides that
-/// used every sweep with motion left, and the fire blocks. Tests use them to check every loop stays within
-/// its bound (FR-005); they are not part of the hashed state.
+/// What one world step did, summed over its characters: the sub-moves and sweeps the movement step ran,
+/// the slides that used every sweep with motion left, and the fire blocks. Tests use them to check every
+/// loop stays within its bound (FR-005); they are not part of the hashed state.
 /// </summary>
 public readonly record struct StepCounters
 {
+    /// <summary>The movement sub-moves run, 1 to <c>movement.maxSubMoves</c> per character.</summary>
+    public int SubMoves { get; init; }
+
     /// <summary>The collision sweeps the movement step ran.</summary>
     public int Sweeps { get; init; }
 

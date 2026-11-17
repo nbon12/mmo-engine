@@ -10,7 +10,10 @@ namespace MmoEngine.SimCore.World;
 /// <c>default(StepFault)</c> is <see cref="StepFaultCode.None"/>: the step committed.
 /// </summary>
 /// <param name="Code">None, NonFinite or QueryCapacityExceeded.</param>
-/// <param name="FieldOrdinal">The field's ordinal in <see cref="StateSerializer.Layout"/>.</param>
+/// <param name="FieldOrdinal">
+/// The field's ordinal in <see cref="StateSerializer.Layout"/>. A <see cref="StepFaultCode.QueryCapacityExceeded"/>
+/// fault names the moving character by its <c>id</c> field, such as <c>characters[0].id</c>.
+/// </param>
 /// <param name="ElementIndex">
 /// The element's index in its list; for a weapon field, the character index × 8 + the slot
 /// (<see cref="StateSerializer.FieldPath"/>); 0 for a header or count field.

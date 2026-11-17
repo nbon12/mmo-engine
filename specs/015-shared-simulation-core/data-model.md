@@ -660,7 +660,7 @@ of the maximum record length for the configured maxima.
 | Field | Type | Rule |
 | --- | --- | --- |
 | Code | `u8` `StepFaultCode` | None, NonFinite or QueryCapacityExceeded |
-| Path | layout field number and element index | the field, as the state layout table names it; formatted on demand, for example `characters[3].velocity.y` or `projectiles[0].position.x`, where the index is the element's position in ID order |
+| Path | layout field number and element index | the field, as the state layout table names it; formatted on demand, for example `characters[3].velocity.y` or `projectiles[0].position.x`, where the index is the element's position in ID order; `QueryCapacityExceeded` names the moving character's `id` field, for example `characters[0].id` |
 
 Recording a fault allocates nothing; only formatting the path does.
 

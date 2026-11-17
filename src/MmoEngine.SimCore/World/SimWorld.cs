@@ -22,8 +22,9 @@ namespace MmoEngine.SimCore.World;
 /// </summary>
 /// <remarks>
 /// The world has one writer, its caller, and takes no locks. Characters join and leave only through
-/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. In this phase the movement, weapon and projectile stages
-/// (2, 3 and 5) copy the state forward unchanged; Phases 3, 6 and 7 replace their bodies.
+/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. Stage 1 validates the inputs and stage 2 steps movement;
+/// in this phase the weapon and projectile stages (3 and 5) copy the state forward unchanged, and Phases 6
+/// and 7 replace their bodies.
 /// </remarks>
 public sealed class SimWorld
 {
@@ -75,6 +76,11 @@ public sealed class SimWorld
     private int _fireBlockCount;
     private int _movementOutcomeCount;
 
+    // Stage 2's counters, summed over the characters (StepReport.Counters).
+    private int _subMoves;
+    private int _sweeps;
+    private int _slideCapHits;
+
     // Stage 6: the canonical serialisation that is hashed and reported.
     private readonly byte[] _stateBuffer;
 
@@ -93,8 +99,18 @@ public sealed class SimWorld
     {
     }
 
-    private SimWorld(CompiledConfig config, CollisionWorld collision, int candidateCapacity)
+    /// <summary>
+    /// A world like the public constructor's, except that the candidate buffer holds
+    /// <paramref name="candidateCapacity"/> triangle IDs: the tests' way to make a collision query overflow
+    /// and see the step refused with <see cref="StepFaultCode.QueryCapacityExceeded"/>.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The capacity is negative.</exception>
+    internal SimWorld(CompiledConfig config, CollisionWorld collision, int candidateCapacity)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(collision);
+        ArgumentOutOfRangeException.ThrowIfNegative(candidateCapacity);
         Config = config;
         Collision = collision;
         _weaponSlots = config.WeaponSlots;
@@ -217,15 +233,16 @@ public sealed class SimWorld
 
     /// <summary>
     /// Computes step n = <see cref="CurrentStep"/> + 1 from <paramref name="commands"/> (ascending character
-    /// index, at most one per character): stage 1 merges the commands with the characters, stages 2 to 5
-    /// step movement, weapons, hitboxes and projectiles, stage 6 canonicalises, checks, serialises and hashes
-    /// the next state, and stage 7 commits it. A fault commits nothing and reports hash 0 with the previous
-    /// step. It allocates nothing and throws nothing for any commands.
+    /// index, at most one per character): stage 1 validates the commands and merges them with the
+    /// characters, stages 2 to 5 step movement, weapons, hitboxes and projectiles, stage 6 canonicalises,
+    /// checks, serialises and hashes the next state, and stage 7 commits it. A fault (a collision query
+    /// that overflows the candidate buffer in stage 2, or a non-finite float in stage 6) commits nothing
+    /// and reports hash 0 with the previous step. It allocates nothing and throws nothing for any commands.
     /// </summary>
     public StepReport Step(ReadOnlySpan<CharacterCommand> commands)
     {
-        RunStagesOneToFive(commands);
-        return SerialiseAndCommit();
+        var fault = RunStagesOneToFive(commands);
+        return fault.Code == StepFaultCode.None ? SerialiseAndCommit() : Refused(fault);
     }
 
     /// <summary>
@@ -238,7 +255,12 @@ public sealed class SimWorld
     internal StepReport StepWithInjectedBits(ReadOnlySpan<CharacterCommand> commands, int fieldOrdinal, int elementIndex, uint bits)
     {
         CheckInjectable(fieldOrdinal, elementIndex);
-        RunStagesOneToFive(commands);
+        var fault = RunStagesOneToFive(commands);
+        if (fault.Code != StepFaultCode.None)
+        {
+            return Refused(fault);
+        }
+
         Inject(fieldOrdinal, elementIndex, bits);
         return SerialiseAndCommit();
     }
@@ -252,27 +274,52 @@ public sealed class SimWorld
 
     // ---------------------------------------------------------------- the stages
 
-    private void RunStagesOneToFive(ReadOnlySpan<CharacterCommand> commands)
+    /// <summary>Stages 1 to 5. A stage that faults stops the step there and returns its fault.</summary>
+    private StepFault RunStagesOneToFive(ReadOnlySpan<CharacterCommand> commands)
     {
+        BeginStep();
         MergeInputs(commands);
-        StepMovement();
+        var fault = StepMovement();
+        if (fault.Code != StepFaultCode.None)
+        {
+            return fault;
+        }
+
         StepWeapons();
         BuildHitboxes();
         StepProjectiles();
+        return default;
+    }
+
+    /// <summary>Empties this step's event lists and counters, so a refused step reports only its own work.</summary>
+    private void BeginStep()
+    {
+        _shotCount = 0;
+        _hitCount = 0;
+        _expiryCount = 0;
+        _inputRejectionCount = 0;
+        _fireBlockCount = 0;
+        _movementOutcomeCount = 0;
+        _subMoves = 0;
+        _sweeps = 0;
+        _slideCapHits = 0;
     }
 
     /// <summary>
     /// Stage 1: merges the ascending commands with the characters, taking at most one per character, and
-    /// gives every other character the neutral input. Only the first <c>characterCount</c> commands are
-    /// read, a command whose index is below the character being merged is skipped, and one whose index is
-    /// past the last character is ignored. Validation is Phase 3's.
+    /// validates each supplied command against its character with <see cref="InputValidator.Validate"/>
+    /// (the character's <c>LastSequence</c> and <c>input.weaponSlots</c>). An accepted command is the
+    /// character's input, so stage 2 sets its <c>AimYaw</c>, <c>AimPitch</c> and <c>LastSequence</c> from
+    /// it. A rejected command adds <c>{CharacterId, Reason}</c> to the input rejection events, in ascending
+    /// character ID, and the character, like one with no command, gets the neutral input. Only the first
+    /// <c>characterCount</c> commands are read, a command whose index is below the character being merged
+    /// is skipped, and one whose index is past the last character is ignored.
     /// </summary>
     private void MergeInputs(ReadOnlySpan<CharacterCommand> commands)
     {
         var count = _characterCount;
         var limit = commands.Length < count ? commands.Length : count;
         var k = 0;
-        _inputRejectionCount = 0;
         for (var i = 0; i < count; i++)
         {
             while (k < limit && commands[k].CharacterIndex < i)
@@ -280,17 +327,26 @@ public sealed class SimWorld
                 k++;
             }
 
+            ref readonly var character = ref _characters[i];
+            var reason = InputRejection.None;
             if (k < limit && commands[k].CharacterIndex == i)
             {
-                _inputs[i] = commands[k].Command;
+                var command = commands[k].Command;
                 k++;
+                reason = InputValidator.Validate(in command, character.LastSequence, _weaponSlots);
+                _inputs[i] = reason == InputRejection.None ? command : Neutral(in character);
+                if (reason != InputRejection.None)
+                {
+                    _inputRejections[_inputRejectionCount] = new InputRejectionEvent { CharacterId = character.Id, Reason = reason };
+                    _inputRejectionCount++;
+                }
             }
             else
             {
-                _inputs[i] = Neutral(in _characters[i]);
+                _inputs[i] = Neutral(in character);
             }
 
-            _rejections[i] = InputRejection.None;
+            _rejections[i] = reason;
         }
 
         _inputCount = count;
@@ -300,11 +356,38 @@ public sealed class SimWorld
     private static InputCommand Neutral(in CharacterState character) =>
         new(character.LastSequence, 0, 0, character.AimYaw, character.AimPitch, character.ActiveSlot);
 
-    /// <summary>Stage 2: movement, in ascending character ID. This phase copies the characters forward unchanged.</summary>
-    private void StepMovement()
+    /// <summary>
+    /// Stage 2: movement, in ascending character ID. Each next-state character is stepped by
+    /// <see cref="MovementStep.Step"/> with its stage 1 input and the world's candidate buffer; a non-zero
+    /// outcome adds <c>{CharacterId, Flags}</c> to the movement outcome events, and the sub-moves, sweeps and
+    /// slide-cap hits are summed into the step's counters. A collision query that overflows the candidate
+    /// buffer stops the stage with <see cref="StepFaultCode.QueryCapacityExceeded"/>, naming the character
+    /// by its <c>id</c> field and element index, and the step commits nothing.
+    /// </summary>
+    private StepFault StepMovement()
     {
-        _characters.AsSpan(0, _characterCount).CopyTo(_nextCharacters);
-        _movementOutcomeCount = 0;
+        var count = _characterCount;
+        _characters.AsSpan(0, count).CopyTo(_nextCharacters);
+        for (var i = 0; i < count; i++)
+        {
+            ref var character = ref _nextCharacters[i];
+            var result = MovementStep.Step(ref character, in _inputs[i], Config, Collision, _candidates);
+            _subMoves += result.SubMoves;
+            _sweeps += result.Sweeps;
+            _slideCapHits += result.SlideCapHits;
+            if (result.Fault != StepFaultCode.None)
+            {
+                return new StepFault(result.Fault, StateSerializer.CharacterIdField, i);
+            }
+
+            if (result.Outcome != MovementOutcome.None)
+            {
+                _movementOutcomes[_movementOutcomeCount] = new MovementOutcomeEvent { CharacterId = character.Id, Flags = result.Outcome };
+                _movementOutcomeCount++;
+            }
+        }
+
+        return default;
     }
 
     /// <summary>
@@ -367,7 +450,7 @@ public sealed class SimWorld
             out var length);
         if (fault.Code != StepFaultCode.None)
         {
-            return new StepReport(_step, fault, 0, ReadOnlySpan<byte>.Empty, default, default);
+            return Refused(fault);
         }
 
         var state = new ReadOnlySpan<byte>(_stateBuffer, 0, length);
@@ -388,8 +471,21 @@ public sealed class SimWorld
             _inputRejections.AsSpan(0, _inputRejectionCount),
             _fireBlocks.AsSpan(0, _fireBlockCount),
             _movementOutcomes.AsSpan(0, _movementOutcomeCount));
-        return new StepReport(step, default, hash, state, events, default);
+        return new StepReport(step, default, hash, state, events, Counters());
     }
+
+    /// <summary>A refused step's report: the previous step number, the fault, hash 0, no state and no events.</summary>
+    private StepReport Refused(StepFault fault) =>
+        new(_step, fault, 0, ReadOnlySpan<byte>.Empty, default, Counters());
+
+    /// <summary>The work this step did so far: stage 2's sums and stage 3's fire blocks.</summary>
+    private StepCounters Counters() => new()
+    {
+        SubMoves = _subMoves,
+        Sweeps = _sweeps,
+        SlideCapHits = _slideCapHits,
+        FireBlocks = _fireBlockCount,
+    };
 
     // ---------------------------------------------------------------- the configuration and world checks
 
