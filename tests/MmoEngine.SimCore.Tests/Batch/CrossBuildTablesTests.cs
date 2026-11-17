@@ -297,12 +297,14 @@ public sealed class CrossBuildTablesTests
 
     /// <summary>
     /// US3 scenario 8, US5 scenario 5 and SC-004, server half: Given <c>Evaluate(BuildInputs(), the config
-    /// block of default.json)</c>, Then the results header is <c>MMXR</c> v1 with the inputs' counts and the
+    /// block of default.json)</c>, Then the inputs hold M = 99,480 math rows and P = 6,192 pose rows, so the
+    /// comparison cannot pass on an empty table; the results header is <c>MMXR</c> v1 with the inputs' counts and the
     /// length is 16 + 8·M + 100·P; every math row's r0 and r1 bits equal the <see cref="SimMath"/> call its
     /// function ID names on its a and b bits (SinCos and SinCosBinaryAngle give sine then cosine, Atan2 takes
     /// a as y and b as x, the others give the result and 0); and every pose row's 25 floats equal
     /// <see cref="HitboxBuilder.Build"/> for that stance's <see cref="HitboxLayout"/>, yaw and position (head,
-    /// torso and legs, each A, B and radius, then the bounding sphere's centre and radius), bit for bit.
+    /// torso and legs, each A, B and radius, then the bounding sphere's centre and radius), bit for bit, with
+    /// 3,096 rows compared for each of Standing and Crouched.
     /// </summary>
     [Fact]
     public void EachRowEqualsTheDirectCall()
@@ -314,6 +316,8 @@ public sealed class CrossBuildTablesTests
 
         var m = (int)BinaryPrimitives.ReadUInt32LittleEndian(inputs.AsSpan(8));
         var p = (int)BinaryPrimitives.ReadUInt32LittleEndian(inputs.AsSpan(12));
+        Assert.True(m == MathRowCount, $"the inputs hold {m} math rows, not {MathRowCount}: the comparison below would not cover the whole table");
+        Assert.True(p == PoseRowCount, $"the inputs hold {p} pose rows, not {PoseRowCount}: the comparison below would not cover the whole table");
         Assert.True(results.Length >= HeaderLength, $"Evaluate returned {results.Length} bytes, fewer than the {HeaderLength}-byte header");
         Assert.Equal("MMXR", Encoding.ASCII.GetString(results, 0, 4));
         Assert.Equal((ushort)1, BinaryPrimitives.ReadUInt16LittleEndian(results.AsSpan(4)));
@@ -351,6 +355,7 @@ public sealed class CrossBuildTablesTests
         var expected = new float[PoseResultFloats];
         var poseMismatches = 0;
         var poseFailures = new List<string>();
+        var comparedPerStance = new int[layouts.Length];
         for (var j = 0; j < p; j++)
         {
             var row = PoseRow(inputs, m, j);
@@ -367,6 +372,7 @@ public sealed class CrossBuildTablesTests
                 continue;
             }
 
+            comparedPerStance[stance]++;
             var bounds = HitboxBuilder.Build(layouts[stance], position, yaw, hitboxes);
             for (var c = 0; c < HitboxLayout.CapsuleCount; c++)
             {
@@ -398,6 +404,9 @@ public sealed class CrossBuildTablesTests
         }
 
         Assert.True(poseMismatches == 0, $"{poseMismatches} pose result floats differ from HitboxBuilder:\n" + string.Join("\n", poseFailures));
+        Assert.True(
+            comparedPerStance.Length == 2 && comparedPerStance.All(count => count == PoseRowCount / 2),
+            $"the pose rows compared per stance are [{string.Join(", ", comparedPerStance)}], not {PoseRowCount / 2} for each of Standing and Crouched");
     }
 
     /// <summary>

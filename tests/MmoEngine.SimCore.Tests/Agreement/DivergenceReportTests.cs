@@ -246,6 +246,46 @@ public sealed class DivergenceReportTests
         Assert.Equal(expectedFields.Length, comparison.DifferingFields);
     }
 
+    /// <summary>
+    /// US2 scenario 4 ("each state field that differs with both builds' values in exact bit form"): Given a
+    /// server state at step 4 of two characters (IDs 7 and 9) and one projectile, and a build state of the
+    /// same shape in which five fields hold other values on both sides, <c>characters[0].position.x</c>
+    /// (0.5 against 0.75), <c>characters[0].velocity.y</c> (0 against −2.5), <c>characters[0].aimYaw</c>
+    /// (0 against 16384), <c>characters[1].position.z</c> (0.5 against 1.25) and
+    /// <c>projectiles[0].position.y</c> (1.5 against 1.75), When the two one-record sequences are compared,
+    /// Then <c>DifferingFields</c> is 5 and the report is exactly the header, the hash line,
+    /// <c>  5 fields differ</c> and one line per field in layout order, each with the server's and the
+    /// build's bits as <c>0x%08X</c> and their decimals, and no line for any field that is equal.
+    /// </summary>
+    [Fact]
+    public void EachDifferingFieldIsListedWithBothBuildsBits()
+    {
+        var first = TestStates.StandingCharacter(7, 0.5f, 0.5f);
+        var second = TestStates.StandingCharacter(9, 4.5f, 0.5f);
+        var server = TestStates.Build(StatesStep, [first, second], [Projectile]);
+        var build = TestStates.Build(
+            StatesStep,
+            [
+                first with { Position = (0.75f, 0f, 0.5f), Velocity = (0f, -2.5f, 0f), AimYaw = 16384 },
+                second with { Position = (4.5f, 0f, 1.25f) },
+            ],
+            [Projectile with { Position = (Projectile.Position.X, 1.75f, Projectile.Position.Z) }]);
+        Assert.Equal(server.Length, build.Length);
+        (string Path, string Server, string Build)[] expectedFields =
+        [
+            ("characters[0].position.x", FloatValue(0.5f), FloatValue(0.75f)),
+            ("characters[0].velocity.y", FloatValue(0f), FloatValue(-2.5f)),
+            ("characters[0].aimYaw", UIntValue(0), UIntValue(16384)),
+            ("characters[1].position.z", FloatValue(0.5f), FloatValue(1.25f)),
+            ("projectiles[0].position.y", FloatValue(Projectile.Position.Y), FloatValue(1.75f)),
+        ];
+
+        var comparison = CompareStates(server, build);
+
+        AssertStatesReport(comparison, server, build, "  5 fields differ", expectedFields, unreadableLine: null);
+        Assert.Equal(5, comparison.DifferingFields);
+    }
+
     /// <summary>Rows of <see cref="StateFieldReaderStopsAtTheFirstFieldItCannotHold"/>: where the state is cut.</summary>
     public static TheoryData<string> ReaderStopCases => ["header", "weapon", "projectile", "event-count", "event-record", "whole"];
 

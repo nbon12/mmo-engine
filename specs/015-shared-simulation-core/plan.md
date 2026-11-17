@@ -857,7 +857,12 @@ The design documents settled these points, which the spec leaves open. They are 
   lane. `ScenarioDefinition.Generated` gives the catalog a definition whose stream comes from a
   generator, with no characters of its own, so `fuzz-all-buttons` builds the generator's stream at
   any rate. The character-schedule definition was not stretched to fit, because the fuzz stream's
-  commands are drawn, not held.
+  commands are drawn, not held. A generated definition's `DurationSeconds` is its fixed step count at
+  its own rate (`fuzz-all-buttons`: 300 steps at 30 Hz, 10 s), so T103's rule that a build at rate hz
+  has `DurationSeconds` × hz steps holds for schedule definitions only; T103, T122 and T133 now say so
+  (Phase 4 review), and `FuzzAllButtonsDefinitionTests` pins the rate, the empty character list and
+  the 10 s. Building `DurationSeconds` × hz steps instead was not chosen, because simcore-cli.md gives
+  the fuzz stream 300 steps at any rate.
 - **`agreement prepare` runs every stream before it writes, and refuses three more inputs (T135).**
   The contract listed the refusals of the arguments and of a committed stream, but the perturbation
   and the refusal fixtures need `flat-run-30hz`, the generated streams need a world to run on, and a
@@ -920,6 +925,30 @@ The design documents settled these points, which the spec leaves open. They are 
   comparison that found nothing. `WorkDirectoryFromAnotherRulesRevisionIsNotComparable` now runs on
   the perturbed work directory and asserts the exact two stdout lines and no `report/`, and each copy
   in `NotComparableTests` also expects a wrong hash at step 12. T120 and T124 now say so.
+- **A report or summary `agreement compare` cannot write exits 2, even after a divergence (Phase 4
+  review).** The contract listed exit 2 only for inputs refused before the comparison, but writing
+  `report/agreement.json`, a divergence report or the `--summary` file can still fail after it. That
+  run prints its build lines and first reports, then
+  `agreement: cannot run: the report cannot be written (<message>)` in place of the outcome line,
+  and exits 2 even when a build diverged. Exit 2 wins over exit 1 because the run could not finish:
+  CI must see "could not run" rather than a divergence whose report it does not have.
+  `agreement.json` is written before the summary is appended, so a summary failure leaves it in
+  place. simcore-cli.md#agreement-compare, T124 and T136 now say so, and
+  `AgreementCommandTests.UnwritableSummaryAfterADivergenceExitsTwo` pins the precedence. Reporting
+  the divergence with exit 1 and a warning was not chosen, because the step summary CI shows would
+  then silently lack the section that explains the failure.
+- **`TablesComparison` refuses a reference that is not one table, and names unknown IDs (T131,
+  Phase 4 review).** wasm-api.md gave only the header, length and first-mismatch lines. Reading rows
+  past the end of inputs or server results that do not hold the same whole table would throw
+  `IndexOutOfRangeException` or compare garbage, so `Compare` checks first and throws
+  `ArgumentException` (paramName `serverResults`) naming both lengths; `agreement compare` reaches it
+  only through its own check of the server's files, which it reports as cannot run. A function ID or
+  stance byte outside the table's set, which `Evaluate` refuses and only hand-built inputs hold, is
+  named `function <n>` or `stance <n>` in the mismatch line rather than crashing the comparison.
+  wasm-api.md#cross-build-tables, T117 and T131 now say so, and `TablesComparisonTests` has the
+  `pose-unknown-stance` and `math-unknown-function` rows and
+  `RefusesInputsAndServerResultsThatAreNotOneTable`. Treating the bad reference as a Diverged build
+  was not chosen, because the fault is the server's files, not the build's.
 
 ## Delivery
 

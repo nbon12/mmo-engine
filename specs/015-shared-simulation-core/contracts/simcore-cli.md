@@ -316,6 +316,11 @@ is `NotRun`, or the manifest's rules revision or format versions differ from the
 so a bad one is refused even when no build ran, with
 `agreement: cannot run: server/<stream>.records: <n> whole records and <m> more bytes; the stream has <k> expected hashes`
 or `agreement: cannot run: server/tables.bin (<n> bytes) and tables/inputs.bin (<m> bytes) do not hold the same whole table`.
+Exit 2 also when `report/agreement.json`, a divergence report or the `--summary` file cannot be
+written: after the build lines and first reports, the last line is
+`agreement: cannot run: the report cannot be written (<message>)` in place of the outcome line, even
+when a build diverged, because a run whose report is lost could not finish. `agreement.json` is
+written before the summary is appended, so a summary that cannot be written leaves it in place.
 Otherwise exit 1 when any build is `Diverged`, else 0. A Firefox or WebKit build that Playwright
 could not install is reported `NotRun`, never as a pass.
 
@@ -327,7 +332,8 @@ the manifest, and prints one `NOT COMPARABLE work <work>: <detail>` line per dif
 reader supports version <c>`. The last line is then `agreement: not comparable`, and nothing is
 compared or written. Every other exit 2 before the comparison ends with
 `agreement: cannot run: <reason>`, the reason naming the unknown `--require` build, the manifest, or the
-missing or refused file by its work-directory path.
+missing or refused file by its work-directory path. After the comparison, the reason is a required
+build that did not run, or the report that cannot be written, which wins when both hold.
 
 Output, one line per known build, the first divergence report of each diverged build, then the outcome.
 A build's first report is its first diverged stream's divergence report or, when only its tables

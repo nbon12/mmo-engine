@@ -29,6 +29,9 @@ public sealed class FuzzAllButtonsDefinitionTests
 
     private const ulong Seed = 1000UL;
 
+    /// <summary>The rate the committed stream is recorded at, the default 30 Hz.</summary>
+    private const int RecordedRateHz = 30;
+
     /// <summary>The known button bits, 0 to 8.</summary>
     private const int KnownButtonBits = 9;
 
@@ -57,7 +60,9 @@ public sealed class FuzzAllButtonsDefinitionTests
     /// The fuzz-all-buttons row of contracts/simcore-cli.md#named-scenario-streams (US1 scenario 9, US2
     /// scenario 3): Given <c>ScenarioCatalog.Get("fuzz-all-buttons").Build(TestConfigs.Default(), test world, hz)</c>,
     /// Then <see cref="ScenarioCatalog.Names"/> holds <c>fuzz-all-buttons</c> and is in ordinal order; the
-    /// stream runs at <paramref name="hz"/> with 4 characters, 300 steps and header seed 1000; When its
+    /// stream runs at <paramref name="hz"/> with 4 characters, 300 steps and header seed 1000, while the
+    /// definition itself is recorded at 30 Hz, lists no characters (the generator places them) and has
+    /// <c>DurationSeconds</c> 10, its 300 steps at 30 Hz; When its
     /// commands are replayed through <see cref="InputValidator.Validate"/>, Then accepted commands set every
     /// button bit 0 to 8, a rejected command sets a reserved bit (<c>0xFE00</c>), accepted commands reach pitch
     /// −16384 and 16384 and every 1/16 turn of yaw, and commands are rejected with all four reasons; two
@@ -83,6 +88,14 @@ public sealed class FuzzAllButtonsDefinitionTests
         Assert.True(stream.CharacterCount == CharacterCount, $"{label}: {stream.CharacterCount} characters, expected {CharacterCount}");
         Assert.True(stream.Steps.Count == StepCount, $"{label}: {stream.Steps.Count} steps, expected {StepCount}");
         Assert.True(stream.Seed == Seed, $"{label}: header seed {stream.Seed}, expected {Seed}");
+
+        // A generated definition places its own characters and builds the same step count at every rate, so
+        // its DurationSeconds is that count at its own rate (300 at 30 Hz), not the built stream's at hz.
+        Assert.True(definition.StepRateHz == RecordedRateHz, $"{label}: the definition's rate is {definition.StepRateHz} Hz, expected {RecordedRateHz}");
+        Assert.True(definition.Characters.Count == 0, $"{label}: the definition lists {definition.Characters.Count} characters; a generated definition places its own");
+        Assert.True(
+            definition.DurationSeconds == (double)StepCount / RecordedRateHz,
+            $"{label}: DurationSeconds is {definition.DurationSeconds}, expected {StepCount} steps at {RecordedRateHz} Hz");
 
         // The commands, replayed as stage 1 of the world step validates them.
         var weaponSlots = stream.Config.Input?.WeaponSlots

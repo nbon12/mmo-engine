@@ -101,6 +101,10 @@ public sealed class TablesComparisonTests
             "pose-unknown-stance",
             "tables: build node-interp, first mismatch at pose row {row}: stance 7 yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x{server} build 0x{build}"
         },
+        {
+            "math-unknown-function",
+            "tables: build node-interp, first mismatch at math row {row}: function 11(a 0x00000000) r0 server 0x40490FDB build 0x40490FDA"
+        },
     };
 
     /// <summary>Rows of <see cref="RefusesInputsAndServerResultsThatAreNotOneTable"/>.</summary>
@@ -122,7 +126,9 @@ public sealed class TablesComparisonTests
     /// Atan2 change of <c>atan2-axis-r0</c>, of which only the first row, the Atan2 one, is reported;
     /// <c>pose-standing</c>, torso A.x one ulp up in the Standing, yaw 0x0001, (0, 0, 0) row; and
     /// <c>pose-unknown-stance</c>, the torso A.x change of <c>pose-torso-a-x</c> with that row's stance byte in
-    /// the inputs set to 7, which the line names <c>stance 7</c>.
+    /// the inputs set to 7, which the line names <c>stance 7</c>; and <c>math-unknown-function</c>, the Atan2
+    /// change of <c>atan2-axis-r0</c> with that row's function ID in the inputs set to 11, which the line names
+    /// <c>function 11</c> with the a argument only, as for every function but Atan2.
     /// </summary>
     [Theory]
     [MemberData(nameof(Cases))]
@@ -180,6 +186,12 @@ public sealed class TablesComparisonTests
                 (serverBits, buildBits) = Change(server, build, PoseResult(tables, row, TorsoAX), bits => bits + 1u);
                 inputs = (byte[])inputs.Clone();
                 inputs[HeaderLength + (MathRowLength * tables.MathRows) + (PoseRowLength * row)] = 7;
+                break;
+            case "math-unknown-function":
+                row = MathRowOf(tables, Atan2, PlusZero, MinusOne);
+                (serverBits, buildBits) = Change(server, build, MathResult(row, 0), bits => bits ^ 1u);
+                inputs = (byte[])inputs.Clone();
+                inputs[HeaderLength + (MathRowLength * row)] = 11;
                 break;
             case "two-rows":
                 var poseRow = PoseRowOf(tables, Crouched, 0x4000, 4096.25f, 37.5f, -7000.125f);

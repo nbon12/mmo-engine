@@ -386,7 +386,9 @@ public sealed class AgreementCommandTests
     }
 
     /// <summary>
-    /// contracts/simcore-cli.md#agreement-prepare step 1: Given a <c>--streams</c> temp directory holding one
+    /// contracts/simcore-cli.md#agreement-prepare step 1, and US2 scenario 5 for the <c>not-comparable</c> row
+    /// (the agreement suite loading a stream recorded in another format version refuses it, naming both
+    /// versions, instead of reporting a divergence): Given a <c>--streams</c> temp directory holding one
     /// copy of <c>flat-run-30hz.mmrs</c> and <c>--config</c> default.json, with (<c>refused</c>) the copy
     /// unchanged and an empty, existing <c>--content</c> directory, so the collision data it names is not
     /// supplied, or (<c>not-comparable</c>) the copy's <c>u16</c> at offset 4 set to 2 and <c>--content</c>
@@ -714,6 +716,45 @@ public sealed class AgreementCommandTests
         var close = Array.IndexOf(appended, "```", open + 1);
         Assert.True(close > open, $"the code block opened at line {open} of the section is not closed:\n{text}");
         Assert.Equal(report, appended[(open + 1)..close]);
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#agreement-compare (a report or summary that cannot be written): Given the
+    /// diverged work directory of <see cref="CompareExitsOneOnADivergedBuildAndWritesItsReport"/> and a
+    /// <c>--summary</c> path that is a directory, When <c>agreement compare --summary &lt;dir&gt;</c> runs,
+    /// Then it exits 2, not 1: stdout is the diverged run's seven build lines and node-interp's first report,
+    /// then, in place of <c>agreement: diverged</c>, exactly one more line,
+    /// <c>agreement: cannot run: the report cannot be written (&lt;message&gt;)</c>; and
+    /// <c>report/agreement.json</c>, written before the summary, has outcome <c>Diverged</c>.
+    /// </summary>
+    [Fact]
+    public void UnwritableSummaryAfterADivergenceExitsTwo()
+    {
+        using var work = PreparePerturbed();
+        var (streamCount, stepTotal) = Totals(CommittedStreams(), DefaultSeedCount);
+        var report = ExpectedReport(work, "node-interp", FlatRun30);
+        var summary = Directory.CreateDirectory(work.Beside("summary-directory")).FullName;
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("agreement", "compare", "--work", work.Path, "--summary", summary);
+
+        Assert.True(exit == 2, $"simcore agreement compare exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        string[] before =
+        [
+            $"node-interp: diverged in 1 of {streamCount} streams; first: {FlatRun30} at step {PerturbedStep}; tables match",
+            MatchLine("node-interp-nojit", streamCount, stepTotal),
+            MatchLine("chromium-worker", streamCount, stepTotal),
+            "firefox-worker: not run",
+            "webkit-worker: not run",
+            "node-interp-relinked: not run",
+            "node-aot: not run",
+            .. report,
+        ];
+        var lines = Lines(stdout);
+        Assert.True(lines.Length == before.Length + 1, $"stdout has {lines.Length} lines, not {before.Length + 1}: {stdout}");
+        Assert.Equal(before, lines[..^1]);
+        Assert.StartsWith("agreement: cannot run: the report cannot be written (", lines[^1]);
+        Assert.EndsWith(")", lines[^1]);
+        Assert.Equal("Diverged", Text(ReadJson(work.Combine("report", "agreement.json")), "outcome", "agreement.json"));
     }
 
     /// <summary>

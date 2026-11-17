@@ -308,7 +308,14 @@ Results, `MMXR` version 1, the same header with magic `MMXR`, then:
 | 16 + 8·*M* | 100·*P* | per pose row, 25 `f32`: the head, torso and legs capsules, each A (x, y, z), B (x, y, z) and radius, then the bounding sphere's centre (x, y, z) and radius |
 
 **Comparing** (`TablesComparison` in `src/MmoEngine.SimCore.Server/`, and `compareTables` in
-`tools/agreement/lib/tables.mjs` for the runners): the headers must be equal
+`tools/agreement/lib/tables.mjs` for the runners): the inputs and the server's results are the
+reference, so they must be one whole table: the inputs' length must match their counts, and the
+server's results must carry the same counts and the length those counts need. When they do not,
+`TablesComparison.Compare` throws `ArgumentException` (paramName `serverResults`),
+`The inputs (<n> bytes) and the server's results (<m> bytes) do not hold the same whole table.`,
+instead of comparing a build against them; `agreement compare` checks this before any build folder
+and reports it as cannot run ([agreement compare](simcore-cli.md#agreement-compare)). Then the
+headers must be equal
 (`tables: build <b>, results header differs from the server's`), and so must the lengths
 (`tables: build <b>, results are <n> bytes; the server's are <m>`, for a build that wrote a whole
 header but not every row). A math row matches when
@@ -321,6 +328,11 @@ is reported as, for example,
 tables: build chromium-worker, first mismatch at math row <i>: Atan2(a 0x00000000, b 0xBF800000) r0 server 0x40490FDB build 0x40490FDC
 tables: build node-aot, first mismatch at pose row 3871: Crouched yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x45800266 build 0x45800267
 ```
+
+A function ID or stance outside the table's set, which `Evaluate` refuses and so only hand-built
+inputs can hold, is named `function <n>` (with the a argument only, as for every function but
+Atan2, for example `function 11(a 0x00000000)`) or `stance <n>` in that line, rather than failing
+the comparison.
 
 ## Host exports
 
