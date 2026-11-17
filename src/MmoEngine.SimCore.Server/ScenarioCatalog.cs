@@ -20,11 +20,22 @@ namespace MmoEngine.SimCore.Server;
 /// </summary>
 public static class ScenarioCatalog
 {
+    /// <summary>The rate a scenario is recorded at when its row names no other.</summary>
+    private const int DefaultStepRateHz = 30;
+
     private static readonly ScenarioDefinition[] Definitions = Sorted(
     [
         FlatRun(20),
         FlatRun(30),
         FlatRun(60),
+        WallSlide45(),
+        StairsClimb(),
+        StairsBlocked(),
+        SlopeLimit(),
+        JumpLand(),
+        CrouchUnderLedge(),
+        CornerWedge(),
+        ThinWallFast(),
     ]);
 
     /// <summary>Every scenario's name, in ordinal order.</summary>
@@ -59,6 +70,144 @@ public static class ScenarioCatalog
         hz,
         durationSeconds: 1.0,
         [new ScenarioCharacter(1, TestWorldGenerator.Features.FlatRunStart, TestWorldGenerator.Features.FlatRunYaw, static _ => Buttons.Forward)]);
+
+    /// <summary>
+    /// <c>wall-slide-45</c>: one character at rest at <see cref="TestWorldFeatures.WallSlideStart"/>, 2.5 m
+    /// from the plane of the wall <see cref="TestWorldFeatures.WallMeshId"/> names (about 3 m of run-up along
+    /// its heading), holding Forward at <see cref="TestWorldFeatures.WallSlideYaw"/>, 45° into the wall, for
+    /// 3 s. The wall runs on for 30 m, far more than the slide covers after contact at any rate (US1.2).
+    /// </summary>
+    private static ScenarioDefinition WallSlide45() => Holding(
+        "wall-slide-45",
+        durationSeconds: 3.0,
+        TestWorldGenerator.Features.WallSlideStart,
+        TestWorldGenerator.Features.WallSlideYaw,
+        Buttons.Forward);
+
+    /// <summary>
+    /// <c>stairs-climb</c>: one character at rest at <see cref="TestWorldFeatures.StairsClimbStart"/>, 3 m
+    /// before the 0.30 m stair (below stepHeight), holding Forward square into its front face for 3 s (US1.3).
+    /// </summary>
+    private static ScenarioDefinition StairsClimb() => Holding(
+        "stairs-climb",
+        durationSeconds: 3.0,
+        TestWorldGenerator.Features.StairsClimbStart,
+        TestWorldGenerator.Features.StairsClimbYaw,
+        Buttons.Forward);
+
+    /// <summary>
+    /// <c>stairs-blocked</c>: one character at rest at <see cref="TestWorldFeatures.StairsBlockedStart"/>,
+    /// 3 m before the 0.50 m stair (above stepHeight), holding Forward square into its front face for 3 s
+    /// (US1.3).
+    /// </summary>
+    private static ScenarioDefinition StairsBlocked() => Holding(
+        "stairs-blocked",
+        durationSeconds: 3.0,
+        TestWorldGenerator.Features.StairsBlockedStart,
+        TestWorldGenerator.Features.StairsBlockedYaw,
+        Buttons.Forward);
+
+    /// <summary>
+    /// <c>slope-limit</c>: one character at rest at <see cref="TestWorldFeatures.SlopeLimitStart"/>, 3 m
+    /// before the foot of the 30° ramp, holding Forward up it, across the plateau and on into the 50° ramp
+    /// for 6 s (US1.4).
+    /// </summary>
+    private static ScenarioDefinition SlopeLimit() => Holding(
+        "slope-limit",
+        durationSeconds: 6.0,
+        TestWorldGenerator.Features.SlopeLimitStart,
+        TestWorldGenerator.Features.SlopeLimitYaw,
+        Buttons.Forward);
+
+    /// <summary>
+    /// <c>jump-land</c>: one character at rest, Grounded, at <see cref="TestWorldFeatures.JumpLandStart"/> on
+    /// the flat run area, facing <see cref="TestWorldFeatures.FlatRunYaw"/>, holding Jump for the first step
+    /// and no buttons after it, for 2 s: 40, 60 and 120 steps at 20, 30 and 60 Hz (US1.5).
+    /// </summary>
+    private static ScenarioDefinition JumpLand() => new(
+        "jump-land",
+        DefaultStepRateHz,
+        durationSeconds: 2.0,
+        [
+            new ScenarioCharacter(
+                1,
+                TestWorldGenerator.Features.JumpLandStart,
+                TestWorldGenerator.Features.FlatRunYaw,
+                static time => time.Entry == 0 ? Buttons.Jump : 0),
+        ]);
+
+    /// <summary>
+    /// <c>crouch-under-ledge</c>: one character at rest, Grounded and Standing, at
+    /// <see cref="TestWorldFeatures.CrouchUnderLedgeStart"/>, 2 m before the near edge of the 4 m deep ledge
+    /// whose underside is 1.5 m above the floor, facing across it at
+    /// <see cref="TestWorldFeatures.CrouchUnderLedgeYaw"/>: Crouch and Forward over [0, 1.5 s), Forward only
+    /// over [1.5 s, 4.5 s). That is 90, 135 and 270 steps at 20, 30 and 60 Hz, with the release at entries
+    /// 30, 45 and 90 (US1.6).
+    /// </summary>
+    private static ScenarioDefinition CrouchUnderLedge() => new(
+        "crouch-under-ledge",
+        DefaultStepRateHz,
+        durationSeconds: 4.5,
+        [
+            new ScenarioCharacter(
+                1,
+                TestWorldGenerator.Features.CrouchUnderLedgeStart,
+                TestWorldGenerator.Features.CrouchUnderLedgeYaw,
+                static time => time.Before(1.5) ? Buttons.Crouch | Buttons.Forward : Buttons.Forward),
+        ]);
+
+    /// <summary>
+    /// <c>corner-wedge</c>: one character at rest at <see cref="TestWorldFeatures.CornerWedgeStart"/>,
+    /// holding Forward at <see cref="TestWorldFeatures.CornerWedgeYaw"/>, diagonally into the concave corner
+    /// at <see cref="TestWorldFeatures.Corner"/> at 45° to both walls, for 4 s (edge case: concave corner).
+    /// </summary>
+    private static ScenarioDefinition CornerWedge() => Holding(
+        "corner-wedge",
+        durationSeconds: 4.0,
+        TestWorldGenerator.Features.CornerWedgeStart,
+        TestWorldGenerator.Features.CornerWedgeYaw,
+        Buttons.Forward);
+
+    /// <summary>
+    /// <c>thin-wall-fast</c>: one character at rest at <see cref="TestWorldFeatures.ThinWallFastStart"/>,
+    /// holding Forward at <see cref="TestWorldFeatures.ThinWallFastYaw"/>, square into the zero-thickness
+    /// quad <see cref="TestWorldFeatures.ThinWallMeshId"/> names, for 2 s, with <c>movement.runSpeed</c> 20,
+    /// <c>movement.groundAccel</c> 1000, <c>movement.capsuleRadius</c> 0.25 and <c>movement.maxSubMoves</c> 16,
+    /// so a step at full speed moves more than the capsule radius at every rate (20 / 60 &gt; 0.25 m) and is
+    /// subdivided. R09 accepts it: ((20 / cos 45°) + 50) · 0.05 = 3.914 ≤ 16 · 0.25 (edge case: subdivided
+    /// step).
+    /// </summary>
+    private static ScenarioDefinition ThinWallFast() => Holding(
+        "thin-wall-fast",
+        durationSeconds: 2.0,
+        TestWorldGenerator.Features.ThinWallFastStart,
+        TestWorldGenerator.Features.ThinWallFastYaw,
+        Buttons.Forward,
+        static config =>
+        {
+            var movement = config.Movement ?? throw new ArgumentException("The configuration has no movement section.", nameof(config));
+            movement.RunSpeed = 20f;
+            movement.GroundAccel = 1000f;
+            movement.CapsuleRadius = 0.25f;
+            movement.MaxSubMoves = 16;
+        });
+
+    /// <summary>
+    /// A scenario at the default 30 Hz with one character, ID 1, at rest, Grounded and Standing at
+    /// <paramref name="start"/>, holding <paramref name="buttons"/> at <paramref name="yaw"/> at every entry.
+    /// </summary>
+    private static ScenarioDefinition Holding(
+        string name,
+        double durationSeconds,
+        Vec3 start,
+        ushort yaw,
+        Buttons buttons,
+        Action<SimConfig>? configure = null) => new(
+        name,
+        DefaultStepRateHz,
+        durationSeconds,
+        [new ScenarioCharacter(1, start, yaw, _ => buttons)],
+        configure);
 
     private static ScenarioDefinition[] Sorted(ScenarioDefinition[] definitions)
     {

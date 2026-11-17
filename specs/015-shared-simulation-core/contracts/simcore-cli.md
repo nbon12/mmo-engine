@@ -54,7 +54,10 @@ ordinal name order, before they run any stream. They load them only through
 
 When a content file is refused, the command prints `<command>: content <file name>: <message>` on
 stderr (for example `streams verify: content big.mmcd: collision fileLength at offset 8: …`), runs
-no stream, writes nothing and exits 2.
+no stream, writes nothing and exits 2. The `CoreFormatException` does not carry the file name, so the
+commands call `LoadAll` through `ContentFiles.TryLoadAll`, which uses `LoadAll`'s internal overload
+that names each file before it opens it, and prints the refusal with that name. A `--content` folder
+that does not exist is refused the same way, naming the folder.
 
 ## `content generate`
 
@@ -149,7 +152,8 @@ streams record: 19 streams, 1 changed, 1 added, 0 removed, 17 unchanged
 
 The file hash is the stream file's XxHash64 trailer and the final state hash is the expected hash of
 the last step, both as 16 lowercase hex digits. "First changed step" is the first step whose expected
-hash differs from the old file's.
+hash differs from the old file's, or `none` when every expected hash is the same (a change outside the
+hashes, such as the rules revision). The total counts every line above it, removed streams included.
 
 ### `REGENERATIONS.md`
 
@@ -198,7 +202,7 @@ prints it:
 | Match | `<name>: match, <steps> steps, final <hash>` |
 | Diverged | the divergence report against the expected hashes, which starts `DIVERGED stream <name>, build server, first divergent step <n>, against the expected hashes` and gives both hashes |
 | NotComparable | `NOT COMPARABLE stream <name>: ` and both values, for example `rules revision 1 in the stream; this core implements rules revision 2`, or `unsupported version 2; this reader supports version 1` |
-| Refused | `REFUSED stream <name>: ` and the error's message, for example `stream collisionChecksum at offset 36: collision data 9224e3fa3b3fca9c was not supplied` when the named collision file is not in `--content` |
+| Refused | `REFUSED stream <name>: ` and the error's message, for example `stream collisionChecksum at offset 36: collision data 9224e3fa3b3fca9c was not supplied` when the named collision file is not in `--content`; for an invalid configuration, `REFUSED stream <name>: the configuration is invalid` followed by one `  <path>: <message>` line per error, indented two spaces |
 
 The last line is `streams verify: <n> streams, <m> match, <d> diverged, <c> not comparable, <r> refused`.
 

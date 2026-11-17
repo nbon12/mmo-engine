@@ -707,6 +707,16 @@ The design documents settled these points, which the spec leaves open. They are 
   2 re-measures only the hits. The step-up's last sweep, which data-model.md left unsized, goes down by
   the rise plus 2·contactSkin, so it finds ground at the starting height. data-model.md#movement-step,
   research R7 and T097 now say so.
+- **The content loader names the refused file through an internal overload (T107).** The commands
+  print `<command>: content <file name>: <message>` for a refused content file, but
+  `ContentFiles.LoadAll(string)` throws the decoder's `CoreFormatException`, which carries no file
+  name, and T092 requires that exact exception type. `LoadAll` therefore has an internal overload that
+  calls back with each file's name before it opens it (the public one passes no callback), and
+  `ContentFiles.TryLoadAll` uses it to print the refusal and to pair each world with its file name,
+  which `streams record` needs to find the collision file a scenario names. Content still loads only
+  through `LoadAll`. The `--all` removal goes through the stream writer too
+  (`StreamFiles.RemoveCommitted`), so every change under the streams folder stays in one class.
+  contracts/simcore-cli.md#content-files now says so.
 
 ## Delivery
 

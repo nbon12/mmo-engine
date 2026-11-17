@@ -1,5 +1,7 @@
 using System.CommandLine;
+using MmoEngine.SimCore.Batch;
 using MmoEngine.SimCore.Cli.Commands;
+using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Server;
 
 namespace MmoEngine.SimCore.Cli;
@@ -20,15 +22,30 @@ public static class Program
 
     /// <summary>
     /// Runs the CLI with <paramref name="environmentName"/> standing in for <c>DOTNET_ENVIRONMENT</c>
-    /// (null: unset), so a test can check the environment without touching the process environment. An
-    /// unknown name writes <c>DOTNET_ENVIRONMENT: &lt;message&gt;</c> to stderr and exits 2 before any
-    /// command runs; a parse error is logged and exits 2.
+    /// (null: unset), so a test can check the environment without touching the process environment, and
+    /// with the server build's <see cref="StreamRunner"/> as <c>streams record</c>'s stream runner.
     /// </summary>
-    internal static int Run(string[] args, TextWriter stdout, TextWriter stderr, string? environmentName)
+    internal static int Run(string[] args, TextWriter stdout, TextWriter stderr, string? environmentName) =>
+        Run(args, stdout, stderr, environmentName, static (stream, worlds) => StreamRunner.Run(stream.Span, worlds));
+
+    /// <summary>
+    /// Runs the CLI with <paramref name="environmentName"/> standing in for <c>DOTNET_ENVIRONMENT</c> and
+    /// <paramref name="runStream"/> as the runner <c>streams record</c> runs every built stream through
+    /// (contracts/simcore-cli.md#streams-record step 3), so a test can inject a step fault without the CLI
+    /// calling core internals. An unknown environment name writes <c>DOTNET_ENVIRONMENT: &lt;message&gt;</c>
+    /// to stderr and exits 2 before any command runs; a parse error is logged and exits 2.
+    /// </summary>
+    internal static int Run(
+        string[] args,
+        TextWriter stdout,
+        TextWriter stderr,
+        string? environmentName,
+        Func<ReadOnlyMemory<byte>, IReadOnlyList<CollisionWorld>, byte[]> runStream)
     {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(stdout);
         ArgumentNullException.ThrowIfNull(stderr);
+        ArgumentNullException.ThrowIfNull(runStream);
         var (_, environmentError) = SimEnvironment.Resolve(environmentName);
         if (environmentError is not null)
         {
@@ -40,6 +57,8 @@ public static class Program
         var root = new RootCommand("simcore: the shared simulation core's tools (specs/015-shared-simulation-core/contracts/simcore-cli.md).")
         {
             ConfigCommand.Create(stdout, stderr, logger),
+            ContentCommand.Create(stdout, stderr, logger),
+            StreamsCommand.Create(stdout, stderr, logger, runStream),
         };
 
         var parse = root.Parse(args);
