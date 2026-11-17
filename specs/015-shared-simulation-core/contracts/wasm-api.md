@@ -222,12 +222,56 @@ position as listed. The
 whole input is about 1.2 MB, and one evaluation in the interpreter takes tens of milliseconds
 [estimate].
 
+Within a function the rows come in this order, which `CrossBuildTablesTests.InputsArePinned` checks:
+
+1. The listed special values, in the list's order. ± lists + first. "The smallest and largest
+   subnormal" and "the smallest normal" are positive: `0x00000001`, `0x007FFFFF` and `0x00800000`. A
+   value's two neighbours are written in bit order: bits − 1, the value, then bits + 1. For Asin and
+   Acos, ±1 keep only the neighbour inside the domain: `0x3F7FFFFF` and `0x3F800000`, then
+   `0xBF7FFFFF` and `0xBF800000`. Atan's ±∞ rows follow its ±`float.MaxValue` rows. Atan2's 16
+   combinations of {+0, −0, +∞, −∞} take a as the outer loop and run in that order, followed by the
+   four axis directions as listed.
+2. The drawn rows. For Sin, Cos, SinCos and Tan, the 3,072 with |x| ≤ 12867 come before the 1,024
+   above it.
+3. The non-finite and out-of-domain rows:
+   - Sin, Cos, SinCos and Tan: NaN, then +∞ and −∞.
+   - Asin and Acos: NaN, `0x3F800001`, `0xBF800001`, +2 and −2.
+   - Atan: NaN.
+   - Atan2: one row with a or b NaN.
+   - Sqrt: NaN, then one finite negative argument.
+
+SinCosBinaryAngle's a is the angle itself, 0 to 65,535 ascending, with its upper 16 bits zero. Every
+function but Atan2 has b 0. That gives these row counts, so M = 99,480 and the input is 1,292,848
+bytes:
+
+| Function IDs | Rows each |
+| --- | --- |
+| 1–4 (Sin, Cos, Tan, SinCos) | 4,112 |
+| 5–6 (Asin, Acos) | 4,115 |
+| 7 (Atan) | 4,117 |
+| 8 (Atan2) | 4,117 |
+| 9 (SinCosBinaryAngle) | 65,536 |
+| 10 (Sqrt) | 1,032 |
+
+The 1,032 yaws are every 64th angle plus `0xFFFF`, `0x0001`, `0x3FFF`, `0x4001`, `0x7FFF`, `0x8001`,
+`0xBFFF` and `0xC001`. The Crouched, yaw `0x4000`, (4096.25, 37.5, −7000.125) row is therefore pose
+row 3,871.
+
 **`Evaluate(inputs, configBlock)`** compiles the config block (its hitbox layout), then evaluates
 every row in order with the same `SimMath` functions and `HitboxBuilder` the step uses. It allocates
 its result; it is not tick-path code. A malformed table throws `CoreFormatException`
 (`tables <field> at offset <n>: <detail>`, for a wrong magic or version, a length that does not match
 the counts, or an unknown function ID or stance), and an invalid block throws
-`ConfigValidationException`.
+`ConfigValidationException`. The block is checked first. The refusals that
+`CrossBuildTablesTests.RefusesMalformedTables` pins are:
+
+| Input | Code | Offset | Field | Detail |
+| --- | --- | --- | --- | --- |
+| magic `MMXX` | `UnknownMagic` | 0 | `magic` | `the magic is 4d4d5858, not 4d4d5854 (MMXT)`, the core's wording for a wrong magic, as for `MMCD` and `MMRS` |
+| version 2 | `UnsupportedVersion` | 4 | `version` | `unsupported version 2; this reader supports version 1` |
+| one byte short | `Inconsistent` | 8 | `length` | `<n> bytes, the counts need <m>` |
+| function ID 11 in math row *i* | `OutOfRange` | 16 + 12·*i* | `mathRows[i].function` | `unknown function ID 11` |
+| stance 2 in pose row *j* | `OutOfRange` | 16 + 12·*M* + 16·*j* | `poseRows[j].stance` | `unknown stance 2` |
 
 Inputs, `MMXT` version 1, little-endian:
 

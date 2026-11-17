@@ -901,13 +901,13 @@ Conventions for this phase (they hold for every task below):
     - a larger one allocates a bigger buffer;
     - for capacity 1, the default gives 92,732.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~BatchStepperTests"` and confirm it fails.
-- [ ] T115 [P] [US2] Write failing test `BatchAllocationTests.StepQueuedAllocatesNothingAfterWarmUp(int batchSize, int hz)` in `tests/MmoEngine.SimCore.Tests/Allocation/BatchAllocationTests.cs` (FR-032, US7.3, SC-005), `[Collection(ZeroAllocationCollection.Name)]` (T013). Rows: batch sizes {1, 16} crossed with {20, 30, 60}.
-  - Setup: a `BatchStepper` loaded with the encoded test world, the config block of `TestConfigs.At(hz)` and the initial state of the `flat-run-<hz>hz` definition. Commands are encoded into `CommandBuffer` with `InputCodec.TryEncode`.
+- [X] T115 [P] [US2] Write failing test `BatchAllocationTests.StepQueuedAllocatesNothingAfterWarmUp(int batchSize, int hz)` in `tests/MmoEngine.SimCore.Tests/Allocation/BatchAllocationTests.cs` (FR-032, US7.3, SC-005), `[Collection(ZeroAllocationCollection.Name)]` (T013). Rows: batch sizes {1, 16} crossed with {20, 30, 60}.
+  - Setup: a `BatchStepper` loaded with the encoded test world, the config block of `TestConfigs.At(hz)` and the initial state of the `flat-run-<hz>hz` definition. Commands are encoded into the stepper's `CommandSegment` (wasm-api.md#core-api) with `InputCodec.TryEncode`.
   - Warm-up: two batches.
   - Measured: three windows, T036's rule. In each, `StepQueued(batchSize)` calls run until 1,000 steps have run, each returning `batchSize`. When the definition's commands run out, `Reset` is called with the counter paused.
   - Assert: the smallest window allocated exactly 0 bytes. The failure message names the batch size, the hz and every window's byte count.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~BatchAllocationTests"` and confirm it fails: it does not compile until `BatchStepper` exists.
-- [ ] T116 [P] [US2] Write failing tests for the server half of the cross-build tables in `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.cs` (they support US3.8, US5.5 and SC-004; the cross-build halves are Phase 11's; wasm-api.md#cross-build-tables):
+- [X] T116 [P] [US2] Write failing tests for the server half of the cross-build tables in `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.cs` (they support US3.8, US5.5 and SC-004; the cross-build halves are Phase 11's; wasm-api.md#cross-build-tables):
   - `InputsArePinned`:
     - two `BuildInputs()` calls return identical bytes;
     - the header is magic `MMXT`, version 1, reserved 0, math row count M and pose row count P == 6,192;
@@ -920,14 +920,14 @@ Conventions for this phase (they hold for every task below):
     - every pose row's 25 floats equal `HitboxBuilder` for that stance's `HitboxLayout`, yaw and position (head, torso and legs A, B and radius, then the sphere centre and radius), bit for bit;
     - the results header is `MMXR` v1 with the same counts.
   - `RefusesMalformedTables(string caseName)` Theory. Assert the `CoreFormatException` code, offset, field and exact message `tables <field> at offset <n>: <detail>`:
-    - magic: `UnknownMagic` at 0, field `magic`;
+    - magic `MMXX`: `UnknownMagic` at 0, field `magic`, `the magic is 4d4d5858, not 4d4d5854 (MMXT)` (the core's wrong-magic wording);
     - version 2: `UnsupportedVersion` at 4, `unsupported version 2; this reader supports version 1`;
     - one byte short: `Inconsistent` at 8, field `length`, `<n> bytes, the counts need <m>`;
     - function ID 11 in math row 0: `OutOfRange` at 16, field `mathRows[0].function`, `unknown function ID 11`;
     - stance 2 in pose row 0: `OutOfRange` at 16 + 12M, field `poseRows[0].stance`, `unknown stance 2`.
   - Also `EvaluateRefusesAnInvalidConfigBlock`: a `movement.gravity` NaN block gives `ConfigValidationException` with [`movement.gravity: must be finite`].
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CrossBuildTablesTests"` and confirm it fails.
-- [ ] T117 [P] [US2] Write failing tests `TablesComparisonTests.ReportsTheFirstDifferingRow(string caseName, string expectedLine)` and `TablesComparisonTests.AnyNaNMatchesANaNRow` in `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.cs` (wasm-api.md#cross-build-tables, comparing).
+- [X] T117 [P] [US2] Write failing tests `TablesComparisonTests.ReportsTheFirstDifferingRow(string caseName, string expectedLine)` and `TablesComparisonTests.AnyNaNMatchesANaNRow(uint buildBits)` in `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.cs` (wasm-api.md#cross-build-tables, comparing).
   - Given `inputs = CrossBuildTables.BuildInputs()` and `server = Evaluate(inputs, default block)`, copy the server results as the build's results and mutate them. Assert `TablesComparison.Compare("node-interp", inputs, server, build)` returns `TablesStatus.Diverged` with `FirstMismatch` exactly equal to the row's line:
     - the low bit of r0 flipped in the first Atan2 row with a = 0x00000000, b = 0xBF800000 (the (+0, −1) axis direction): `tables: build node-interp, first mismatch at math row <i>: Atan2(a 0x00000000, b 0xBF800000) r0 server 0x40490FDB build 0x40490FDA` (T016 pins Atan2(+0, −1) to `0x40490FDB`; flipping its low bit gives `0x40490FDA`);
     - r1 flipped in a SinCos row: `... SinCos(a 0x<bits>) r1 server ... build ...`;
@@ -937,7 +937,7 @@ Conventions for this phase (they hold for every task below):
     - the build's header with M - 1: `tables: build node-interp, results header differs from the server's`;
     - when two rows differ, only the first is reported.
   - Identical results give `Match` and a null `FirstMismatch`.
-  - `AnyNaNMatchesANaNRow`: server NaN `0x7FC00000` against build `0xFFC00001` and `0x7F800001` gives `Match`.
+  - `AnyNaNMatchesANaNRow(uint buildBits)` Theory: server NaN `0x7FC00000` against build `0xFFC00001` and `0x7F800001` gives `Match`; each row also checks that a finite build value `0x00000000` in the same row gives `Diverged`.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~TablesComparisonTests"` and confirm it fails.
 - [ ] T118 [US2] Write failing test `DivergenceReportTests.PerturbedRecordsReportTheFirstStepAndField` in `tests/MmoEngine.SimCore.Tests/Agreement/DivergenceReportTests.cs` (US2.4, state-serialization.md#divergence-report, simcore-cli.md#divergence-report).
   - Given the server records `StreamRunner.Run(flat-run-30hz, test-world)` and the build records `StreamRunner.Run(flat-run-30hz, test-world, perturbStep: 15)`, with the stream's expected hashes.

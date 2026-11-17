@@ -787,6 +787,15 @@ The design documents settled these points, which the spec leaves open. They are 
   first; only the writes can fail after a stream is replaced. An old file that no longer decodes is
   replaced as changed with its final state shown as `unreadable`, which contracts/simcore-cli.md now
   states.
+- **T116 settles the cross-build table's row order and its wrong-magic text (T116, T129).**
+  wasm-api.md's row list said "ordered by function ID, then as listed" but left some things open. It
+  did not give the order inside a value and its neighbours, the sign of "the smallest and largest
+  subnormal", where the non-finite rows go, or how Atan2's ±0/±∞ combinations are ordered. It also
+  gave no detail text for a wrong magic. `InputsArePinned` checks every function's rows in a fixed
+  order, and `RefusesMalformedTables` uses the core's existing `FrameText.WrongMagic` wording. The
+  contract now states both, along with the per-function counts (M = 99,480), so T129 builds to the
+  test. Leaving the order to the implementation was not chosen, because the task asks the test to
+  check that the rows come "as listed", and that check needs one defined order.
 
 ## Delivery
 
