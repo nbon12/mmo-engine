@@ -1212,18 +1212,21 @@ Conventions for this phase (they hold for every task below):
   - Otherwise exit 1 if any build is `Diverged`, else 0. Unknown folders are ignored.
   - A build's error file takes the place of its records or table results, without its trailing line breaks. A build with neither `tables.bin` nor `tables.error.txt` is `Missing` with `<build>/tables.bin was not written`. A tables-only divergence's first report is the first-mismatch line, or `tables: build <b>, results missing: <message>`; `tables.txt` is written for `Missing` too.
   - `agreement.json`'s `outcome` is `Match`, `Diverged` or `CannotRun` (a required build did not run). The report files and the summary are written whenever the builds were compared, and not for a NotComparable or unreadable work directory.
-- [ ] T137 [US2] Run the phase's coverage check:
+- [X] T137 [US2] Run the phase's coverage check:
   - `dotnet test tests/MmoEngine.SimCore.Tests --collect:"XPlat Code Coverage" --results-directory <unique temp>/coverage`;
   - then `python3 tools/coverage_gate.py --base origin/main --coverage-dir <unique temp>/coverage`.
   - Every file this phase adds or changes must be at or above 95% line coverage and appear in the report: `src/MmoEngine.SimCore/Hashing/SplitMix64.cs`, `Batch/BatchStepper.cs`, `Batch/LoadResult.cs`, `Batch/StepError.cs`, `Batch/StreamRunner.cs`, `Batch/CrossBuildTables.cs` and `World/SimWorld.cs`; `src/MmoEngine.SimCore.Server/StateFieldReader.cs`, `StreamComparison.cs`, `DivergenceReport.cs`, `TablesComparison.cs`, `StreamGenerator.cs` and `ScenarioCatalog.cs`; and `src/MmoEngine.SimCore.Cli/Agreement/*.cs`, `Commands/AgreementCommand.cs`, `Commands/StreamsCommand.cs` and `Program.cs`.
   - Add a Theory row or a Fact to the owning test class above for any uncovered branch, never a test that only proves "does not throw".
+  - `src/MmoEngine.SimCore.Cli/Commands/ContentFiles.cs` and `src/MmoEngine.SimCore/Batch/StepFaultException.cs`, which this phase also changed, are held to the same 95%.
+  - The rows and Facts added: `AgreementCommandTests` (six prepare refusals: missing content or config, no flat-run-30hz, no test world, a generated stream refused at 20 Hz, a work directory below a file; six compare cannot-run rows), `StreamsCommandTests` (record refusals at the scenario's rate and for an unreadable or unwritable stream, `RecordComparesADecodableOldStreamStepByStep`, `VerifyRefusesAnInvalidConfigurationOrAnUnreadableFile`), `DivergenceReportTests` (two more `DifferentCountsListAbsentElements` rows, `StateFieldReaderStopsAtTheFirstFieldItCannotHold`, `WeaponPastTheEighthSlotIsNamedByItsSlot`), `TablesComparisonTests` (two pose rows, `RefusesInputsAndServerResultsThatAreNotOneTable`), `CrossBuildTablesTests` (four frame rows), `Scenarios/ScenarioDefinitionTests`, `CanonicalisationTests` (`InjectedBitsReachTheNamedField`, `InjectionRefusesAFieldItCannotWrite`), `SimWorldTests.ACommandForAnIndexAlreadyMergedIsSkipped` and `StreamRunnerTests.StepFaultExceptionNamesEveryCode`.
+  - The gate itself exits 0 only in Phase 10 (T260): it also lists the files earlier phases changed, and those still under 95% that this phase does not touch are the slice-wide top-up's. This task passes when every file above is at or above 95% in the gate's table.
 
 **Checkpoint**: These checks are green:
 - `dotnet build MmoEngine.sln -warnaserror` and `dotnet format MmoEngine.sln --verify-no-changes` exit 0.
 - The Independent Test filter passes, and so does `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Allocation"`, including T115's `BatchAllocationTests`.
 - `dotnet run --project src/MmoEngine.SimCore.Cli -- streams verify` exits 0 with every committed stream `match`.
 - `git diff --exit-code simcore/` is clean: no stream was re-recorded, and `SimCoreVersion.RulesRevision` is still 1.
-- The coverage gate from the last task exits 0.
+- The coverage gate from the last task lists every file of T137 at or above 95%.
 
 ---
 

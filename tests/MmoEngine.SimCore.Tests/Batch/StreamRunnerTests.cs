@@ -400,6 +400,31 @@ public sealed class StreamRunnerTests
     }
 
     /// <summary>
+    /// data-model.md#reason-and-outcome-codes: Given a <see cref="StepFault"/> with code
+    /// <paramref name="code"/> at <c>characters[0].velocity.y</c>, When it is wrapped as
+    /// <c>new StepFaultException(3, fault)</c>, Then the message is <paramref name="expected"/>: each code by its
+    /// name, <c>None</c> with the empty path a committed step has, and a value no code has by its number.
+    /// </summary>
+    [Theory]
+    [InlineData((byte)StepFaultCode.None, "step 3 faulted: None at ")]
+    [InlineData((byte)StepFaultCode.NonFinite, "step 3 faulted: NonFinite at characters[0].velocity.y")]
+    [InlineData((byte)StepFaultCode.QueryCapacityExceeded, "step 3 faulted: QueryCapacityExceeded at characters[0].velocity.y")]
+    [InlineData((byte)200, "step 3 faulted: 200 at characters[0].velocity.y")]
+    public void StepFaultExceptionNamesEveryCode(byte code, string expected)
+    {
+        Assert.True(
+            StateSerializer.TryFindField(VelocityYPath, out var ordinal, out var index),
+            $"StateSerializer.TryFindField does not know {VelocityYPath}");
+        var fault = new StepFault((StepFaultCode)code, ordinal, index);
+
+        var exception = new StepFaultException(3, fault);
+
+        Assert.Equal(3u, exception.Step);
+        Assert.Equal(fault, exception.Fault);
+        Assert.Equal(expected, exception.Message);
+    }
+
+    /// <summary>
     /// Splits packed step records (<c>u32 step | u32 stateLength | state | u64 hash</c>) with
     /// <see cref="BinaryPrimitives"/> at the contract's offsets, requiring them to fill the output exactly.
     /// </summary>
