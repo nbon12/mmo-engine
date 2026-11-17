@@ -211,7 +211,7 @@ version. A stream the server build refuses fails `agreement prepare` instead
 | Match | every step's record equals the server build's and its hash equals the expected hash |
 | Diverged | some step differs: the report names the stream, the first divergent step, the build and every differing field ([divergence report](state-serialization.md#divergence-report)) |
 | NotComparable | the stream's format version or rules revision differs from the core's; the report names both values |
-| Refused | any other refusal while decoding or opening (a format error, `CollisionDataMissing`, an invalid configuration, an initial state the world refuses) |
+| Refused | any other refusal while decoding or opening (a format error, `CollisionDataMissing`, an invalid configuration, an initial state the world refuses), or a step that faults while running (`StepFaultException`) |
 
 Only Match passes. The exit codes are in [simcore-cli.md](simcore-cli.md).
 

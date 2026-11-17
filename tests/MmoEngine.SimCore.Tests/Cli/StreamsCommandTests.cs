@@ -58,6 +58,12 @@ public sealed class StreamsCommandTests
     /// <summary>A collision checksum no content file has.</summary>
     private const ulong AbsentChecksum = 0x0011223344556677UL;
 
+    /// <summary>The index of the step entry the <c>renumbered-step</c> copy renumbers.</summary>
+    private const int RenumberedIndex = 3;
+
+    /// <summary>How far the <c>renumbered-step</c> copy raises that entry's step number.</summary>
+    private const uint Renumbering = 100;
+
     /// <summary>The field the fault test makes non-finite.</summary>
     private const string VelocityYPath = "characters[0].velocity.y";
 
@@ -74,6 +80,9 @@ public sealed class StreamsCommandTests
     public static TheoryData<string> RefusedInputCases => ["invalid-config", "empty-content", "oversized-content"];
 
     public static TheoryData<string> EmptyDirectoryCases => ["empty", "missing"];
+
+    /// <summary>The undecodable copies of <c>flat-run-30hz.mmrs</c> <see cref="Undecodable"/> makes.</summary>
+    public static TheoryData<string> UndecodableStreamCases => ["zero-steps", "renumbered-step"];
 
     /// <summary>
     /// Rows <c>(command, option, value)</c>: every path option of <c>streams record</c> and
@@ -484,6 +493,62 @@ public sealed class StreamsCommandTests
     }
 
     /// <summary>
+    /// contracts/simcore-cli.md#streams-record (an old file that no longer decodes; added in the Phase 3
+    /// review): Given copies of the committed streams, content and configuration whose
+    /// <c>flat-run-30hz.mmrs</c> is replaced by an undecodable copy (<c>zero-steps</c>: no step entries,
+    /// with a consistent frame; <c>renumbered-step</c>: <c>steps[3].step</c> raised by 100, trailer fixed),
+    /// When <c>streams record --scenario flat-run-30hz --reason "Test regeneration"</c> runs, Then it exits
+    /// 0; the stream is rewritten byte-identical to the committed one; stdout is exactly
+    /// <c>flat-run-30hz: changed; file &lt;old trailer&gt; -&gt; &lt;new trailer&gt;; final state unreadable -&gt; &lt;new final&gt;; first changed step &lt;first step&gt;</c>
+    /// and the total line; and the regeneration log gains one entry whose row is
+    /// <c>| flat-run-30hz | &lt;old&gt; -&gt; &lt;new&gt; | unreadable -&gt; &lt;new final&gt; | &lt;first step&gt; |</c>. Only the
+    /// stream and the log change, so the stream and its log entry are written together.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UndecodableStreamCases))]
+    public void RecordReplacesAnOldStreamThatNoLongerDecodesAndLogsIt(string caseName)
+    {
+        using var sandbox = Sandbox.Create($"streams-record-{caseName}");
+        var streamPath = sandbox.Stream(FlatRun30);
+        var committed = File.ReadAllBytes(streamPath);
+        var (undecodable, _) = Undecodable(caseName, committed);
+        File.WriteAllBytes(streamPath, undecodable);
+        var oldFile = StreamBytes.Trailer(undecodable);
+        var oldLog = File.ReadAllText(sandbox.LogPath);
+        var before = Snapshot(sandbox.Root);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(sandbox.RecordArgs("--scenario", FlatRun30, "--reason", "Test regeneration"));
+
+        Assert.True(exit == 0, $"{caseName}: simcore streams record --scenario {FlatRun30} exited {exit}; stdout: {stdout}; stderr: {stderr}");
+        var newBytes = File.ReadAllBytes(streamPath);
+        Assert.True(
+            newBytes.AsSpan().SequenceEqual(committed),
+            $"{caseName}: the re-recorded {FlatRun30} ({newBytes.Length} bytes, trailer {StreamBytes.Trailer(newBytes):x16}) differs from the committed one ({committed.Length} bytes, trailer {StreamBytes.Trailer(committed):x16})");
+        var recorded = RecordedStream.Decode(newBytes);
+        var newFile = StreamBytes.Trailer(newBytes);
+        var newFinal = recorded.Steps[^1].ExpectedHash;
+        var firstStep = recorded.Steps[0].Step;
+        Assert.Equal(
+            $"{FlatRun30}: changed; file {oldFile:x16} -> {newFile:x16}; final state unreadable -> {newFinal:x16}; first changed step {firstStep}\n" +
+            "streams record: 1 streams, 1 changed, 0 added, 0 removed, 0 unchanged\n",
+            stdout);
+
+        var entry = AppendedEntry(oldLog, File.ReadAllText(sandbox.LogPath), caseName);
+        Assert.True(entry.Length > 0 && Regex.IsMatch(entry[0], EntryHeadingPattern), $"{caseName}: the appended entry starts with \"{entry.FirstOrDefault()}\", not a ## <UTC> heading");
+        Assert.Equal(
+            [
+                "- Reason: Test regeneration",
+                $"- Command: `simcore streams record --scenario {FlatRun30}`",
+                $"- Rules revision: {SimCoreVersion.RulesRevision}",
+                TableHeader,
+                TableRule,
+                $"| {FlatRun30} | {oldFile:x16} -> {newFile:x16} | unreadable -> {newFinal:x16} | {firstStep} |",
+            ],
+            entry[1..]);
+        Assert.Equal([$"changed streams/{RegenerationLog}", $"changed streams/{FlatRun30}.mmrs"], Differences(before, Snapshot(sandbox.Root)));
+    }
+
+    /// <summary>
     /// contracts/simcore-cli.md#streams-verify: Given copies of the committed streams and content with
     /// <c>jump-land.mmrs</c> rewritten by <c>StreamBytes.WithExpectedHash(bytes, 11, 0x0123456789abcdef)</c>
     /// (step 12), When <c>streams verify</c> runs on the copies, Then it exits 1, prints
@@ -562,6 +627,42 @@ public sealed class StreamsCommandTests
             $"REFUSED stream other-world: stream collisionChecksum at offset 36: collision data {AbsentChecksum:x16} was not supplied",
             lines);
         Assert.Equal("streams verify: 2 streams, 0 match, 1 diverged, 0 not comparable, 1 refused", lines[^1]);
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-verify and contracts/recorded-stream-format.md#decoding checks 5 and
+    /// 12 (added in the Phase 3 review): Given a <c>--dir</c> holding an undecodable
+    /// <c>flat-run-30hz.mmrs</c> (<c>zero-steps</c> or <c>renumbered-step</c>, as in
+    /// <see cref="RecordReplacesAnOldStreamThatNoLongerDecodesAndLogsIt"/>) and an intact copy of
+    /// <c>jump-land.mmrs</c>, with the copied content, When <c>streams verify</c> runs, Then it exits 2 and
+    /// stdout is exactly <c>REFUSED stream flat-run-30hz: </c> and the decoder's message
+    /// (<c>stream stepCount at offset 16: 0 is below 1</c>, or
+    /// <c>stream steps[3].step at offset &lt;o&gt;: &lt;n + 100&gt; is not &lt;n&gt;, the initial state's step &lt;S₀&gt; plus 4</c>),
+    /// then <c>jump-land: match, &lt;steps&gt; steps, final &lt;x16&gt;</c>, then
+    /// <c>streams verify: 2 streams, 1 match, 0 diverged, 0 not comparable, 1 refused</c>: the refused
+    /// stream neither crashes the command nor stops it verifying the next one.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UndecodableStreamCases))]
+    public void VerifyRefusesAStreamThatNoLongerDecodesAndVerifiesTheRest(string caseName)
+    {
+        using var directory = TempDirectories.Create($"streams-verify-{caseName}");
+        var streams = Directory.CreateDirectory(directory.Combine("streams")).FullName;
+        var content = Directory.CreateDirectory(directory.Combine("content")).FullName;
+        CopyCommitted(content, "content", "test-world.mmcd");
+        CopyCommitted(streams, "streams", "jump-land.mmrs");
+        var (undecodable, refusal) = Undecodable(caseName, RepoPaths.ReadAllBytes("simcore", "streams", $"{FlatRun30}.mmrs"));
+        File.WriteAllBytes(Path.Combine(streams, $"{FlatRun30}.mmrs"), undecodable);
+        var jumpLand = RecordedStream.Decode(RepoPaths.ReadAllBytes("simcore", "streams", "jump-land.mmrs"));
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("streams", "verify", "--dir", streams, "--content", content);
+
+        Assert.True(exit == 2, $"{caseName}: simcore streams verify exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        Assert.Equal(
+            $"REFUSED stream {FlatRun30}: {refusal}\n" +
+            $"jump-land: match, {jumpLand.Steps.Count} steps, final {jumpLand.Steps[^1].ExpectedHash:x16}\n" +
+            "streams verify: 2 streams, 1 match, 0 diverged, 0 not comparable, 1 refused\n",
+            stdout);
     }
 
     /// <summary>
@@ -681,6 +782,39 @@ public sealed class StreamsCommandTests
         Assert.True(realHash != WrongHash, $"jump-land's step 12 already expects {WrongHash:x16}");
         File.WriteAllBytes(path, StreamBytes.WithExpectedHash(bytes, DivergentIndex, WrongHash));
         return realHash;
+    }
+
+    /// <summary>
+    /// An undecodable copy of the committed <c>flat-run-30hz.mmrs</c> and the message the decoder refuses it
+    /// with (contracts/recorded-stream-format.md#decoding): <c>zero-steps</c>, the stream with no step
+    /// entries (<see cref="StreamBytes.WithoutSteps"/>), refused by check 5 at <c>stepCount</c>; or
+    /// <c>renumbered-step</c>, entry <see cref="RenumberedIndex"/>'s step number raised by
+    /// <see cref="Renumbering"/> (<see cref="StreamBytes.WithStepNumber"/>), refused by check 12 at that
+    /// entry's <c>steps[i].step</c>, whose number must be S₀ + i + 1 with S₀ the initial state's
+    /// <c>step</c>, its first u32 (contracts/state-serialization.md). Both copies keep a valid trailer.
+    /// </summary>
+    private static (byte[] Bytes, string Refusal) Undecodable(string caseName, byte[] committed)
+    {
+        switch (caseName)
+        {
+            case "zero-steps":
+                return (StreamBytes.WithoutSteps(committed), "stream stepCount at offset 16: 0 is below 1");
+            case "renumbered-step":
+                var stream = RecordedStream.Decode(committed);
+                Assert.True(stream.Steps.Count > RenumberedIndex, $"{FlatRun30} has {stream.Steps.Count} steps, too few to renumber steps[{RenumberedIndex}]");
+                var initialStep = BinaryPrimitives.ReadUInt32LittleEndian(stream.InitialState.Span);
+                var step = stream.Steps[RenumberedIndex].Step;
+                Assert.True(
+                    step == initialStep + RenumberedIndex + 1u,
+                    $"{FlatRun30}'s steps[{RenumberedIndex}] is step {step}, not the initial state's step {initialStep} plus {RenumberedIndex + 1}");
+                var renumbered = step + Renumbering;
+                var offset = StreamBytes.StepOffset(committed, RenumberedIndex);
+                return (
+                    StreamBytes.WithStepNumber(committed, RenumberedIndex, renumbered),
+                    $"stream steps[{RenumberedIndex}].step at offset {offset}: {renumbered} is not {step}, the initial state's step {initialStep} plus {RenumberedIndex + 1}");
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
+        }
     }
 
     /// <summary>

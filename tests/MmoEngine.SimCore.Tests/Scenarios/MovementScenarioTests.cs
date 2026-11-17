@@ -544,7 +544,7 @@ public sealed class MovementScenarioTests
     /// no step ends with the capsule axis nearer either wall than capsuleRadius − contactTolerance, the
     /// per-step positions (the start included) contain no A, B, A, B alternation with A ≠ B, the last 10
     /// steps' positions are bit-identical, and every step's <c>Counters.Sweeps</c> ≤
-    /// <c>Counters.SubMoves</c> · (2 · maxSlideIterations + 4) + 1. The run must end wedged, its axis touching
+    /// <c>Counters.SubMoves</c> · (2 · maxSlideIterations + 3) + 1. The run must end wedged, its axis touching
     /// both walls, and some step must sweep, so neither clause passes vacuously.
     /// </summary>
     /// <remarks>
@@ -581,7 +581,7 @@ public sealed class MovementScenarioTests
         Assert.True(run.Steps.Count >= SettledSteps, $"{label}: the run has {run.Steps.Count} steps, fewer than the {SettledSteps} that must end bit-identical");
 
         var nearest = (double)config.CapsuleRadius - config.ContactTolerance;
-        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
+        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 3;
         var positions = new List<Vec3>(run.Steps.Count + 1) { start.Position };
         for (var k = 0; k < run.Steps.Count; k++)
         {
@@ -597,7 +597,7 @@ public sealed class MovementScenarioTests
 
             Assert.True(
                 step.Counters.Sweeps <= (step.Counters.SubMoves * sweepsPerSubMove) + 1,
-                $"{label}: step {step.Step} ran {step.Counters.Sweeps} sweeps over {step.Counters.SubMoves} sub-moves, more than SubMoves · (2 · maxSlideIterations + 4) + 1 = {(step.Counters.SubMoves * sweepsPerSubMove) + 1}");
+                $"{label}: step {step.Step} ran {step.Counters.Sweeps} sweeps over {step.Counters.SubMoves} sub-moves, more than SubMoves · (2 · maxSlideIterations + 3) + 1 = {(step.Counters.SubMoves * sweepsPerSubMove) + 1}");
             positions.Add(character.Position);
         }
 

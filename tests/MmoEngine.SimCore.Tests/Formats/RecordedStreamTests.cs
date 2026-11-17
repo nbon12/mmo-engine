@@ -10,7 +10,8 @@ namespace MmoEngine.SimCore.Tests.Formats;
 /// <summary>
 /// The recorded stream frame <c>MMRS</c> version 1 (FR-022, contracts/recorded-stream-format.md): the
 /// layout of the <c>two-steps</c> stream, the round trip, the frame checks 1–4 and 7 in contract order,
-/// and the errors of the embedded config block, initial state and input commands, reported with format
+/// check 5's <c>stepCount</c> limit and check 12's step numbers, and the errors of the embedded config
+/// block, initial state and input commands, reported with format
 /// <c>stream</c>, file offsets and the field prefixed by its place in the stream. Every test builds the
 /// stream itself: 30 Hz, the placeholder configuration, the worked example state, and two steps.
 /// </summary>
@@ -72,6 +73,14 @@ public sealed class RecordedStreamTests
     [
         "command-bad-version",
         "command-unknown-magic",
+    ];
+
+    public static TheoryData<string> StepCountAndNumberCases =>
+    [
+        "zero-steps",
+        "step-count-too-many",
+        "first-step-number",
+        "step-number-gap",
     ];
 
     /// <summary>Sequence 1, client step 100, Forward and Fire, yaw 16384, pitch −1024, slot 0.</summary>
@@ -270,6 +279,52 @@ public sealed class RecordedStreamTests
                 FormatErrorCode.UnknownMagic,
                 904,
                 "steps[0].commands[0].input.formatId"),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+
+        AssertRefused(refusal);
+    }
+
+    /// <summary>
+    /// Check 5's <c>stepCount</c> limit and check 12's step numbers (brought forward from T236 in the
+    /// Phase 3 review): <c>stepCount</c> 0 is <c>OutOfRange</c> and 1,048,577 is <c>Oversized</c>, both at 16
+    /// and before the checksum (check 7), so those rows keep the stale trailer; a step entry whose number is
+    /// not the initial state's step (0 in <c>two-steps</c>) + i + 1 is <c>Inconsistent</c> at that entry's
+    /// <c>steps[i].step</c>, with the trailer fixed so the decoder reaches it. The rows match the golden
+    /// <c>zero-steps</c> and <c>step-number-gap</c> cases and T228's <c>step-count-too-many</c> and
+    /// <c>first-step-number</c> rows.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(StepCountAndNumberCases))]
+    public void StepCountAndStepNumbersAreRefusedAtTheirField(string caseName)
+    {
+        var bytes = TwoSteps(TestConfigs.At(30), 0, TwoStepsSalt).Encode();
+        var refusal = caseName switch
+        {
+            "zero-steps" => new Refusal(
+                Write(bytes, 16, "00000000"),
+                FormatErrorCode.OutOfRange,
+                16,
+                "stepCount",
+                Message: "stream stepCount at offset 16: 0 is below 1"),
+            "step-count-too-many" => new Refusal(
+                Write(bytes, 16, "01001000"),
+                FormatErrorCode.Oversized,
+                16,
+                "stepCount",
+                Message: "stream stepCount at offset 16: 1048577 is above 1048576"),
+            "first-step-number" => new Refusal(
+                FixChecksum(Write(bytes, StepsStart, "02000000")),
+                FormatErrorCode.Inconsistent,
+                StepsStart,
+                "steps[0].step",
+                Message: "stream steps[0].step at offset 898: 2 is not 1, the initial state's step 0 plus 1"),
+            "step-number-gap" => new Refusal(
+                FixChecksum(Write(bytes, Step2Start, "03000000")),
+                FormatErrorCode.Inconsistent,
+                Step2Start,
+                "steps[1].step",
+                Message: "stream steps[1].step at offset 929: 3 is not 2, the initial state's step 0 plus 2"),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
         };
 

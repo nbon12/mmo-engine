@@ -224,11 +224,11 @@ public sealed class MovementPropertyTests
     /// FR-005: <c>StepReport.Counters</c> is the sum over the step's characters (T099), so with
     /// characterCount the sample's characters every step has <c>Counters.SubMoves</c> ≤
     /// characterCount · maxSubMoves and <c>Counters.Sweeps</c> ≤ <c>Counters.SubMoves</c> ·
-    /// (2 · maxSlideIterations + 4) + characterCount. The per-character bound is also asserted directly:
+    /// (2 · maxSlideIterations + 3) + characterCount. The per-character bound is also asserted directly:
     /// <c>MovementStep.Step</c> on a copy of each character's pre-step state, with the step's command, the
     /// sample's <see cref="CollisionWorld"/> and a candidate buffer
     /// <c>int[collision.MaxQueryCandidates((3f * capsuleRadius) + (2f * contactSkin))]</c>, returns
-    /// <c>SubMoves</c> ≤ maxSubMoves and <c>Sweeps</c> ≤ <c>SubMoves</c> · (2 · maxSlideIterations + 4) + 1.
+    /// <c>SubMoves</c> ≤ maxSubMoves and <c>Sweeps</c> ≤ <c>SubMoves</c> · (2 · maxSlideIterations + 3) + 1.
     /// Some step must sweep, so the bounds are exercised.
     /// </summary>
     [Theory]
@@ -244,7 +244,7 @@ public sealed class MovementPropertyTests
             RunSteps(sample, config, context, view =>
             {
                 var characterCount = view.After.Length;
-                var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
+                var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 3;
                 var counters = view.Counters;
                 if (counters.SubMoves > characterCount * config.MaxSubMoves)
                 {

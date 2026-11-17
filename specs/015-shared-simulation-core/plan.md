@@ -758,9 +758,35 @@ The design documents settled these points, which the spec leaves open. They are 
   Phase 3 review).** `CornerTests.StartsOnATriangleEdgeOrVertexNeverTunnelOrOscillate` covered the edge
   case's "never tunnels" and "never oscillates" clauses but not "the slide loop stops within its
   iteration limit", and it would have passed for a character stuck on its start. Each step now checks
-  `SubMoves` ≤ maxSubMoves and `Sweeps` ≤ SubMoves · (2 · maxSlideIterations + 4) + 1, and every
+  `SubMoves` ≤ maxSubMoves and `Sweeps` ≤ SubMoves · (2 · maxSlideIterations + 3) + 1, and every
   direction (not just some direction) must sweep and end away from its start, which holds today at
   every row and rate. Test-only: the code was unchanged.
+- **The step-up runs 3 fixed sweeps, and the sweep bound is 2·maxSlideIterations + 3 per sub-move
+  (T073, T075, T084, Phase 3 review).** data-model.md#movement-step's loop-bound line gave the step-up
+  4 sweeps, while its own step-up description, `MovementStep` and `MovementResult.Sweeps` run 3: the
+  2·contactSkin ground-contact down-sweep, the up-sweep and the landing down-sweep, plus the walls-only
+  slide. The line now says 3, and the tests' per-sub-move bound was tightened from
+  2·maxSlideIterations + 4 to + 3, so the bound they check is the documented one and an extra sweep
+  would fail them instead of hiding in a spare. It holds at every row, seed and rate. The code was
+  unchanged.
+- **`RecordedStream.Decode` checks `stepCount` and the step numbers from Phase 3 (T092, T236, Phase 3
+  review).** Two parts of the decoding contract were left to T236: check 5's `stepCount` in [1, 2²⁰],
+  and check 12's `steps[i].step` = S₀ + i + 1. Without them a zero-step stream decoded, so
+  `streams record` crashed (exit 1, an index exception) computing the old final hash after it had
+  already replaced the stream, leaving no `REGENERATIONS.md` entry; and a checksum-valid stream with a
+  misnumbered step reached `StreamRunner`, so `streams verify` threw instead of refusing it, printed no
+  total line and skipped the streams after it. Both checks now run in contract order (the `stepCount`
+  limit after check 4 and before the checksum; each step number before its entry's commands), the CLI's
+  existing `CoreFormatException` path prints `REFUSED stream <name>: …` and goes on, and the agreement
+  runners will share the refusal. Patching the CLI alone was not chosen: the decoder would still accept
+  streams the contract refuses. T236 keeps both checks and adds the rest of checks 5 and 12 around them.
+- **`streams record` builds the regeneration entry and its output before it writes (T107, Phase 3
+  review).** It used to replace the stream files and only then format the log entry, so anything that
+  threw while formatting left rewritten streams with no entry, against FR-028's "every change to an
+  expected hash is a visible commit with its reason". The entry and every output line are now built
+  first; only the writes can fail after a stream is replaced. An old file that no longer decodes is
+  replaced as changed with its final state shown as `unreadable`, which contracts/simcore-cli.md now
+  states.
 
 ## Delivery
 

@@ -104,8 +104,10 @@ internal static class StreamsCommand
     /// <c>streams record</c>, steps 1 to 6 of contracts/simcore-cli.md#streams-record: refuse the arguments,
     /// the configuration or the content (exit 2); build and run every selected scenario, in name order,
     /// through <paramref name="runStream"/> (a step fault exits 1, a refusal 2); then, with nothing refused,
-    /// write the added and changed streams, remove those that left the catalog (with <c>--all</c>), print
-    /// one line per stream and the total, and append the regeneration entry when anything changed.
+    /// build the regeneration entry and the output lines, and only then write the added and changed streams,
+    /// remove those that left the catalog (with <c>--all</c>), append the entry when anything changed, and
+    /// print one line per stream and the total. An old file that no longer decodes shows its final state as
+    /// <c>unreadable</c>.
     /// </summary>
     internal static int Record(
         RecordOptions options,
@@ -204,9 +206,14 @@ internal static class StreamsCommand
             return CliExitCodes.Usage;
         }
 
-        // Write, remove and append; each stream file is replaced atomically.
+        // The regeneration entry and the output lines are built before the first write, so nothing that
+        // runs after a stream file is replaced can fail except the writes themselves.
         var command = options.All ? "simcore streams record --all" : $"simcore streams record --scenario {options.Scenario}";
         var regenerated = changes.Where(change => change.Kind != ChangeKind.Unchanged).ToList();
+        var entry = regenerated.Count > 0 ? Entry(DateTime.UtcNow, options.Reason!, command, regenerated) : null;
+        var lines = changes.Select(change => change.Line()).ToList();
+
+        // Write, remove and append; each stream file is replaced atomically.
         try
         {
             foreach (var change in regenerated)
@@ -221,9 +228,9 @@ internal static class StreamsCommand
                 }
             }
 
-            if (regenerated.Count > 0)
+            if (entry is not null)
             {
-                StreamFiles.AppendRegenerations(options.Out, Entry(DateTime.UtcNow, options.Reason!, command, regenerated));
+                StreamFiles.AppendRegenerations(options.Out, entry);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -232,9 +239,9 @@ internal static class StreamsCommand
             return CliExitCodes.Usage;
         }
 
-        foreach (var change in changes)
+        foreach (var line in lines)
         {
-            stdout.Write(change.Line());
+            stdout.Write(line);
             stdout.Write('\n');
         }
 
@@ -351,6 +358,9 @@ internal static class StreamsCommand
             return Outcome.Refused;
         }
 
+        // Decode refuses a step entry whose number is not the initial state's step + i + 1, and the runner
+        // writes one record per entry numbered by the world's step, so a missing or misnumbered record is a
+        // runner bug, not a stream to refuse.
         var offset = 0;
         var last = 0UL;
         foreach (var entry in stream.Steps)

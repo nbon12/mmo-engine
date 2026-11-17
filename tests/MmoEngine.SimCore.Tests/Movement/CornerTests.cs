@@ -67,7 +67,7 @@ public sealed class CornerTests
     /// reference distance, <see cref="CapsuleClearanceReference"/>), no step faults, the per-step
     /// positions, the start included, never contain an A, B, A, B alternation of bit-identical positions
     /// with A ≠ B, and the slide loop stops within its iteration limit: every step runs at most
-    /// maxSubMoves sub-moves and at most SubMoves · (2 · maxSlideIterations + 4) + 1 sweeps (the bound of
+    /// maxSubMoves sub-moves and at most SubMoves · (2 · maxSlideIterations + 3) + 1 sweeps (the bound of
     /// data-model.md#movement-step). So that no clause passes for a character that never leaves its
     /// start, every direction must sweep at some step and end away from the start. Every failing direction
     /// is reported.
@@ -90,7 +90,7 @@ public sealed class CornerTests
             startDistance == radius,
             $"{start}: the start's axis is {startDistance:R} m from the nearest triangle; on the feature it is exactly capsuleRadius {radius:R}");
 
-        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
+        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 3;
         var failures = new List<string>();
         foreach (var (name, buttons) in Directions)
         {
@@ -124,7 +124,7 @@ public sealed class CornerTests
                 {
                     failures.Add(
                         $"{name}: step {k} ran {result.SubMoves} sub-moves (at most maxSubMoves {config.MaxSubMoves}) and {result.Sweeps} sweeps " +
-                        $"(at most SubMoves · (2 · maxSlideIterations + 4) + 1 = {sweepBound}), past the slide loop's limit; before {before}, after {character}");
+                        $"(at most SubMoves · (2 · maxSlideIterations + 3) + 1 = {sweepBound}), past the slide loop's limit; before {before}, after {character}");
                     break;
                 }
 

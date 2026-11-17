@@ -39,6 +39,9 @@ public sealed class RecordedStream
     /// <summary>The largest stream, 64 MiB, trailer included.</summary>
     public const long MaxFileLength = 64L * 1024 * 1024;
 
+    /// <summary>The most step entries a stream holds, 2²⁰.</summary>
+    private const uint MaxStepCount = 1u << 20;
+
     private const string Format = "stream";
     private const int TrailerLength = 8;
     private const int MagicLength = 4;
@@ -140,21 +143,27 @@ public sealed class RecordedStream
     public IReadOnlyList<RecordedStep> Steps { get; }
 
     /// <summary>
-    /// Decodes a stream. It runs checks 1 to 4 and 7 of contracts/recorded-stream-format.md#decoding in
-    /// order (magic, version, header length, file length, checksum); then check 9, the config block, with
-    /// format <c>stream</c>, base 64 and the prefix <c>config.</c>; then the byte-only half of check 11, the
-    /// initial state, with base <c>64 + configLength</c> and the prefix <c>initialState.</c>; then the step
-    /// entries, each command through <see cref="InputCodec.TryDecode"/>, whose refusal is re-reported with
-    /// format <c>stream</c>, its file offset and the field <c>steps[i].commands[c].input.&lt;field&gt;</c>.
-    /// It throws at the first failure and never returns a partial stream.
+    /// Decodes a stream. It runs checks 1 to 4 of contracts/recorded-stream-format.md#decoding in order
+    /// (magic, version, header length, file length), then check 5's <c>stepCount</c> limit (in [1, 2²⁰]:
+    /// <see cref="FormatErrorCode.OutOfRange"/> at 0, <see cref="FormatErrorCode.Oversized"/> above), then
+    /// check 7, the checksum; then check 9, the config block, with format <c>stream</c>, base 64 and the
+    /// prefix <c>config.</c>; then the byte-only half of check 11, the initial state, with base
+    /// <c>64 + configLength</c> and the prefix <c>initialState.</c>; then the step entries, each step number
+    /// against the initial state's step S₀ (<c>steps[i].step</c> must be S₀ + i + 1, else
+    /// <see cref="FormatErrorCode.Inconsistent"/> at that field) and each command through
+    /// <see cref="InputCodec.TryDecode"/>, whose refusal is re-reported with format <c>stream</c>, its file
+    /// offset and the field <c>steps[i].commands[c].input.&lt;field&gt;</c>. It throws at the first failure
+    /// and never returns a partial stream.
     /// </summary>
     /// <remarks>
-    /// The header limits, the block lengths against <c>fileLength</c>, <c>stepHz</c>, the header's character
-    /// count against the state's, and the rest of the step checks (checks 5, 6, 8, 10, the second half of
-    /// 11, and 12's step numbers, command counts, character indices and block fill) are added by Phase 8
-    /// (T236). Until then a block that runs past the content is refused as
+    /// The other header limits, the block lengths against <c>fileLength</c>, <c>stepHz</c>, the header's
+    /// character count against the state's, and the rest of the step checks (the rest of check 5, checks 6,
+    /// 8, 10, the second half of 11, and 12's command counts, character indices and block fill) are added by
+    /// Phase 8 (T236). Until then a block that runs past the content is refused as
     /// <see cref="FormatErrorCode.Inconsistent"/> at <c>fileLength</c>, and a step entry that runs past the
-    /// steps block as <see cref="FormatErrorCode.Inconsistent"/> at the field being read.
+    /// steps block as <see cref="FormatErrorCode.Inconsistent"/> at the field being read. The
+    /// <c>stepCount</c> limit and the step numbers came forward from T236 in the Phase 3 review: without them
+    /// a zero-step stream decoded and a checksum-valid stream with a wrong step number reached the runner.
     /// </remarks>
     /// <exception cref="CoreFormatException">The stream is refused.</exception>
     public static RecordedStream Decode(ReadOnlySpan<byte> bytes)
@@ -182,12 +191,12 @@ public sealed class RecordedStream
         // 11, byte-only half: the initial state.
         var stateStart = configStart + configLength;
         var stateBytes = Block(content, stateStart, initialStateLength, blocksNeed, fileLength);
-        StateSerializer.ReadLoaded(stateBytes, StateErrorContext.StreamInitialState((long)stateStart));
+        var initialState = StateSerializer.ReadLoaded(stateBytes, StateErrorContext.StreamInitialState((long)stateStart));
 
-        // 12: the step entries, each command through the input codec.
+        // 12: the step entries, each step number against the initial state's, each command through the input codec.
         var stepsStart = stateStart + initialStateLength;
         var stepsBlock = Block(content, stepsStart, stepsLength, blocksNeed, fileLength);
-        var steps = ParseSteps(stepsBlock, (long)stepsStart, stepCount);
+        var steps = ParseSteps(stepsBlock, (long)stepsStart, stepCount, initialState.Step);
 
         return new RecordedStream(rulesRevision, stepHz, seed, matchSalt, collisionChecksum, config, stateBytes.ToArray(), steps);
     }
@@ -270,8 +279,9 @@ public sealed class RecordedStream
     }
 
     /// <summary>
-    /// Checks 1 to 4 and 7 of #decoding: the magic, the version (before any length), the header length, the
-    /// actual length against <c>fileLength</c>, and the trailer.
+    /// Checks 1 to 4, check 5's <c>stepCount</c> limit, and check 7 of #decoding: the magic, the version
+    /// (before any length), the header length, the actual length against <c>fileLength</c>, the step count,
+    /// and the trailer.
     /// </summary>
     private static void CheckFrame(ReadOnlySpan<byte> bytes)
     {
@@ -329,6 +339,23 @@ public sealed class RecordedStream
             throw Error(FormatErrorCode.Oversized, (long)fileLength, "fileLength", FormatDetail.DeclaredLength, fileLength, length);
         }
 
+        // 5, stepCount only: in [1, 2²⁰]. The rest of check 5 is T236's.
+        var stepCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes[StepCountOffset..]);
+        if (stepCount == 0)
+        {
+            throw new CoreFormatException(new FormatError(Format, FormatErrorCode.OutOfRange, StepCountOffset, "stepCount", "0 is below 1"));
+        }
+
+        if (stepCount > MaxStepCount)
+        {
+            throw new CoreFormatException(new FormatError(
+                Format,
+                FormatErrorCode.Oversized,
+                StepCountOffset,
+                "stepCount",
+                string.Create(CultureInfo.InvariantCulture, $"{stepCount} is above {MaxStepCount}")));
+        }
+
         // 7: the trailer. fileLength equals the length, which is at least the 64-byte header.
         var trailerOffset = bytes.Length - TrailerLength;
         var trailer = BinaryPrimitives.ReadUInt64LittleEndian(bytes[trailerOffset..]);
@@ -356,10 +383,13 @@ public sealed class RecordedStream
     }
 
     /// <summary>
-    /// Reads <paramref name="stepCount"/> step entries from the steps block. The list grows with the entries
-    /// actually present, so a large <c>stepCount</c> cannot force a large allocation.
+    /// Reads <paramref name="stepCount"/> step entries from the steps block. Entry i's step number must be
+    /// <paramref name="initialStep"/> + i + 1, compared in <c>u64</c> so no sum wraps, else it is refused as
+    /// <see cref="FormatErrorCode.Inconsistent"/> at <c>steps[i].step</c> before its commands are read. The
+    /// list grows with the entries actually present, so a large <c>stepCount</c> cannot force a large
+    /// allocation.
     /// </summary>
-    private static List<RecordedStep> ParseSteps(ReadOnlySpan<byte> block, long blockOffset, uint stepCount)
+    private static List<RecordedStep> ParseSteps(ReadOnlySpan<byte> block, long blockOffset, uint stepCount, uint initialStep)
     {
         var steps = new List<RecordedStep>();
         var position = 0;
@@ -368,6 +398,17 @@ public sealed class RecordedStream
             var path = string.Create(CultureInfo.InvariantCulture, $"steps[{i}].");
             Need(block, position, 4, blockOffset, path + "step");
             var step = BinaryPrimitives.ReadUInt32LittleEndian(block[position..]);
+            var expectedStep = (ulong)initialStep + i + 1UL;
+            if (step != expectedStep)
+            {
+                throw new CoreFormatException(new FormatError(
+                    Format,
+                    FormatErrorCode.Inconsistent,
+                    blockOffset + position,
+                    path + "step",
+                    string.Create(CultureInfo.InvariantCulture, $"{step} is not {expectedStep}, the initial state's step {initialStep} plus {i + 1UL}")));
+            }
+
             position += 4;
             Need(block, position, 1, blockOffset, path + "commandCount");
             var commandCount = block[position];

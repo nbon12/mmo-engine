@@ -358,8 +358,10 @@ a support triangle the capsule would reach only later in the sweep cannot ground
 ends a step overlapping terrain or a mesh by more than `contactTolerance` (FR-003).
 
 Loop bounds per step (FR-005): `maxSubMoves` sub-moves; per sub-move 4 push-outs, `maxSlideIterations`
-slide sweeps and one step-up of 4 sweeps plus `maxSlideIterations` slide sweeps; one probe; 8
-iterations per triangle sweep; the candidate buffer's capacity per query.
+slide sweeps and one step-up of 3 sweeps (the 2·`contactSkin` ground-contact down-sweep, the up-sweep
+and the landing down-sweep) plus `maxSlideIterations` slide sweeps, so at most
+2·`maxSlideIterations` + 3 capsule sweeps per sub-move; one probe; 8 iterations per triangle sweep; the
+candidate buffer's capacity per query.
 
 ## Weapon configuration and state
 
