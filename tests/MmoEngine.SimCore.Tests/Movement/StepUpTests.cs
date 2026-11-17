@@ -24,7 +24,9 @@ public sealed class StepUpTests
     /// Position past the front edge by more than capsuleRadius, and no single step raises Position.y by
     /// more than stepHeight + contactSkin. Blocking rows: at every step Position.y stays at rest height on
     /// the floor, the feet stay before the front face, and the capsule axis never comes nearer the
-    /// stair's front face than capsuleRadius − contactTolerance.
+    /// stair's front face than capsuleRadius − contactTolerance; so the block cannot pass for a character
+    /// that never reached the step, the axis comes within capsuleRadius + contactSkin + contactTolerance
+    /// of the face at some step.
     /// </summary>
     [Theory]
     [MemberData(nameof(Rises))]
@@ -59,6 +61,8 @@ public sealed class StepUpTests
         }
 
         var nearest = (double)config.CapsuleRadius - config.ContactTolerance;
+        var touching = (double)config.CapsuleRadius + config.ContactSkin + config.ContactTolerance;
+        var closest = double.PositiveInfinity;
         for (var k = 0; k < steps.Length; k++)
         {
             var after = steps[k].After;
@@ -69,7 +73,11 @@ public sealed class StepUpTests
             var distance = AxisToFrontFace(after, world, config, rise);
             Assert.True(distance >= nearest,
                 $"rise {rise:R} at {hz} Hz: step {k + 1} left the axis {distance:R} m from the stair face, nearer than capsuleRadius − contactTolerance {nearest:R}; position {after.Position}");
+            closest = System.Math.Min(closest, distance);
         }
+
+        Assert.True(closest <= touching,
+            $"rise {rise:R} at {hz} Hz: the axis came no nearer the stair face than {closest:R} m, so the character never reached it (touching is within capsuleRadius + contactSkin + contactTolerance {touching:R}); it ended at {steps[^1].After.Position}");
     }
 
     /// <summary>

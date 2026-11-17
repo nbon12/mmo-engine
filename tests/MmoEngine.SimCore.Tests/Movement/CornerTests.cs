@@ -82,12 +82,13 @@ public sealed class CornerTests
         var limit = radius - config.ContactTolerance;
         var candidates = new int[world.MaxQueryCandidates((3f * config.CapsuleRadius) + (2f * config.ContactSkin))];
 
-        // The start itself touches the feature without overlapping it, or the row would test nothing.
+        // The start itself touches the feature without overlapping it, or the row would test nothing: the
+        // feet lie exactly on the feature, so the axis is exactly capsuleRadius from the nearest triangle.
         var (startBottom, startTop) = CapsuleClearanceReference.Axis(feet, radius, config.StandHeight);
         var startDistance = CapsuleClearanceReference.NearestTriangleDistance(world, startBottom, startTop, radius, out _);
         Assert.True(
-            System.Math.Abs(startDistance - radius) <= 1e-5,
-            $"{start}: the start's axis is {startDistance:R} m from the nearest triangle; on the feature it is capsuleRadius {radius:R}");
+            startDistance == radius,
+            $"{start}: the start's axis is {startDistance:R} m from the nearest triangle; on the feature it is exactly capsuleRadius {radius:R}");
 
         var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
         var failures = new List<string>();
@@ -179,8 +180,8 @@ public sealed class CornerTests
     /// (32, 32), shared by six triangles: one ridge edge runs level from it and every other edge
     /// descends.</item>
     /// <item><c>mesh-edge</c>: <see cref="MovementWorlds.Corner"/>; the midpoint of the −X wall's top edge,
-    /// from its far top vertex to the shared top vertex, rounded to float (within half an ulp of the
-    /// edge).</item>
+    /// from its far top vertex to the shared top vertex, computed in double and stored as float; for this
+    /// edge every coordinate of the midpoint is exact in float, so the feet lie exactly on it.</item>
     /// <item><c>mesh-vertex</c>: <see cref="MovementWorlds.Corner"/>; the walls' shared top vertex
     /// (0, <see cref="MovementWorlds.WallHeight"/>, <see cref="MovementWorlds.FeatureZ"/>).</item>
     /// </list>

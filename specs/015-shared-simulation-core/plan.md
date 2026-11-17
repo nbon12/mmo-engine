@@ -714,7 +714,7 @@ The design documents settled these points, which the spec leaves open. They are 
   calls back with each file's name before it opens it (the public one passes no callback), and
   `ContentFiles.TryLoadAll` uses it to print the refusal and to pair each world with its file name,
   which `streams record` needs to find the collision file a scenario names. Content still loads only
-  through `LoadAll`; contracts/simcore-cli.md#content-files now says so. The `--all` removal goes
+  through `LoadAll`; contracts/simcore-cli.md#content-files and tasks.md T107 and T108 now say so. The `--all` removal goes
   through the stream writer too (`StreamFiles.RemoveCommitted`), so every change under the streams
   folder stays in one class: contracts/recorded-stream-format.md#regeneration names the writer's three
   entry points, and T093's architecture test and T107 cover all three (Phase 3 review).

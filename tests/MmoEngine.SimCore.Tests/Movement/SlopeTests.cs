@@ -24,7 +24,12 @@ public sealed class SlopeTests
     /// top edge by more than capsuleRadius) at rest height on it. Refused rows: whenever it is Grounded
     /// its GroundNormal.y is at least <c>CosSlopeLimit</c>, Position.y never exceeds the foot height
     /// plus stepHeight, and every step that ends with the feet at rest height on the flat before the foot
-    /// is Grounded there, so the steep face it is refused by never hides the walkable ground under it.
+    /// is Grounded there, so the steep face it is refused by never hides the walkable ground under it. So
+    /// the refusal cannot pass for a character that never reached the ramp, at some step the terrain
+    /// 2 · capsuleRadius ahead of the feet along the heading is more than stepHeight above the foot (as
+    /// <c>MovementScenarioTests.SlopeBelowTheLimitIsClimbedAndAboveItIsRefused</c> checks; a capsule
+    /// against a steep ramp touches it while its feet are still before the foot line, so the feet crossing
+    /// that line is not required).
     /// </summary>
     [Theory]
     [MemberData(nameof(Slopes))]
@@ -57,9 +62,16 @@ public sealed class SlopeTests
         }
 
         var ceiling = (double)world.FootPoint.Y + config.StepHeight;
+        var angle = world.Yaw * 2.0 * System.Math.PI / 65536.0;
+        var (forwardX, forwardZ) = (System.Math.Sin(angle), System.Math.Cos(angle));
+        var lookAhead = 2.0 * config.CapsuleRadius;
+        var atSteepSlope = false;
         for (var k = 0; k < steps.Length; k++)
         {
             var after = steps[k].After;
+            var feet = after.Position;
+            var ahead = world.World.HeightAt((float)(feet.X + (lookAhead * forwardX)), (float)(feet.Z + (lookAhead * forwardZ)));
+            atSteepSlope |= ahead > ceiling;
             if (MovementStepTests.IsGrounded(after))
             {
                 Assert.True(after.GroundNormal.Y >= config.CosSlopeLimit,
@@ -74,5 +86,8 @@ public sealed class SlopeTests
                     $"{degrees:R}° at {hz} Hz: step {k + 1} left the character airborne at rest height on the flat before the foot; position {after.Position}, velocity {after.Velocity}");
             }
         }
+
+        Assert.True(atSteepSlope,
+            $"{degrees:R}° at {hz} Hz: the terrain {lookAhead:R} m ahead of the feet never rose more than stepHeight above the foot, so the character never reached the steep slope; it ended at {steps[^1].After.Position}");
     }
 }
