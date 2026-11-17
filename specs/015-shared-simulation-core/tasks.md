@@ -1009,9 +1009,9 @@ Conventions for this phase (they hold for every task below):
     - `StreamRunner.Run` completes with no fault.
   - The `.mmrs` file is not written here; Phase 7 records it.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~FuzzAllButtonsDefinitionTests"` and confirm it fails.
-- [ ] T123 [US2] Write test support `tests/MmoEngine.SimCore.Tests/Support/WorkDirectories.cs`, then the failing `agreement prepare` tests in `tests/MmoEngine.SimCore.Tests/Cli/AgreementCommandTests.cs` (FR-026 server half, simcore-cli.md#agreement-prepare and #agreement-work-directory).
+- [X] T123 [US2] Write test support `tests/MmoEngine.SimCore.Tests/Support/WorkDirectories.cs`, then the failing `agreement prepare` tests in `tests/MmoEngine.SimCore.Tests/Cli/AgreementCommandTests.cs` (FR-026 server half, simcore-cli.md#agreement-prepare and #agreement-work-directory).
   - Support:
-    - `WorkDirectories.Prepare(string seeds = "1-2")` runs `SimcoreCli.Run("agreement", "prepare", "--work", <new path under a unique temp dir>, "--seeds", seeds, "--streams", <root>/simcore/streams, "--content", <root>/simcore/content, "--config", <root>/simcore/config/default.json)`, asserts exit 0 and returns the path;
+    - `WorkDirectories.Prepare(string seeds = "1-2")` runs `SimcoreCli.Run("agreement", "prepare", "--work", <new path under a unique temp dir>, "--seeds", seeds, "--streams", <root>/simcore/streams, "--content", <root>/simcore/content, "--config", <root>/simcore/config/default.json)`, asserts exit 0 and returns a `PreparedWork`: its `Path` is the work directory, `Combine` and `Beside` give paths in and next to it, and `Dispose` deletes the unique temp directory. `WorkDirectories.PrepareArgs(work, seeds, streams?, content?, config?)` gives those arguments to the prepare tests, which run the command themselves;
     - `WorkDirectories.WriteBuild(string work, string build, string? perturbStream = null, uint perturbStep = 0)` copies every `server/<stream>.records` to `<work>/<build>/` (or writes `StreamRunner.Run(stream, collision, perturbStep)` for `perturbStream`) and copies `server/tables.bin` to `<build>/tables.bin`.
   - `PrepareWritesEveryArtifactAndTheManifestLast`, with `--seeds 1-50`:
     - exit 0, and stdout is exactly `prepared <work>: <n> streams (<c> named, 50 generated), <steps> steps, rules revision 1`. Here c is the number of `*.mmrs` in `simcore/streams` (19 once Phase 7 has recorded every named stream), n = c + 50 (69 by then), and steps is the sum of the streams' step counts;
@@ -1041,7 +1041,7 @@ Conventions for this phase (they hold for every task below):
     - Each row asserts exit 2, that stdout contains exactly that line and no line starting with `DIVERGED`, and that `<work>/manifest.json` does not exist.
   - `PrepareNeverWritesUnderSimcore`. The XxHash64 of every file under `simcore/` is the same before and after a prepare.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~AgreementCommandTests"` and confirm it fails.
-- [ ] T124 [US2] Write failing `agreement compare` tests in `tests/MmoEngine.SimCore.Tests/Cli/AgreementCommandTests.cs` (US2.4, US2.5 and FR-026 server half, simcore-cli.md#agreement-compare). Each runs on `WorkDirectories.Prepare()` plus `WriteBuild` folders.
+- [X] T124 [US2] Write failing `agreement compare` tests in `tests/MmoEngine.SimCore.Tests/Cli/AgreementCommandTests.cs` (US2.4, US2.5 and FR-026 server half, simcore-cli.md#agreement-compare). Each runs on `WorkDirectories.Prepare()` plus `WriteBuild` folders.
   - `CompareExitsOneOnADivergedBuildAndWritesItsReport` (supports US2.4). node-interp is written with `perturbStream: "flat-run-30hz", perturbStep: 15`; node-interp-nojit and chromium-worker are unperturbed.
     - Exit 1, and stdout has `node-interp: diverged in 1 of <n> streams; first: flat-run-30hz at step 15; tables match`, then the first divergence report.
     - The last line is `agreement: diverged`.
@@ -1069,7 +1069,7 @@ Conventions for this phase (they hold for every task below):
   - `CompareCannotRunWithoutItsInputs(string caseName)` Theory. Exit 2 with `agreement: cannot run: <reason>` for each row: no manifest, a manifest that is not valid JSON, a missing `server/<stream>.records`, a missing `server/tables.bin`, and `--require node-interp,unknown-build` (which names `unknown-build`).
   - `UnknownFoldersAreIgnored`. A `<work>/other-build/` folder changes no output line.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~AgreementCommandTests"` and confirm the compare tests fail.
-- [ ] T125 [P] [US2] Extend `tests/MmoEngine.SimCore.Tests/Architecture/StreamWriterTests.cs` with failing test `OnlyRecordAndAgreementPrepareEncodeStreamFiles` (recorded-stream-format.md#regeneration). Using the source scan Phase 3's `OnlyTheRecordCommandWritesStreamFiles` uses, assert:
+- [X] T125 [P] [US2] Extend `tests/MmoEngine.SimCore.Tests/Architecture/StreamWriterTests.cs` with failing test `OnlyRecordAndAgreementPrepareEncodeStreamFiles` (recorded-stream-format.md#regeneration). Using the source scan Phase 3's `OnlyTheRecordCommandWritesStreamFiles` uses, assert:
   - the only `src/` files that call `RecordedStream.Encode` and write a `.mmrs` file are `src/MmoEngine.SimCore.Cli/Commands/StreamsCommand.cs` (the record handler, under `--out`) and `src/MmoEngine.SimCore.Cli/Agreement/WorkDirectory.cs` (under `--work` only);
   - `WorkDirectory.cs` writes no path built from `simcore/`.
   - Keep Phase 3's test passing.

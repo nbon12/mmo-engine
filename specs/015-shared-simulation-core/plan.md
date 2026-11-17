@@ -805,6 +805,13 @@ The design documents settled these points, which the spec leaves open. They are 
   says "accepted commands reach" the pitch limits, which is what the test asserts. Counting rejected
   commands toward pitch coverage was not chosen, because it would pass with no pitch limit ever
   reaching the world.
+- **`WorkDirectories.Prepare` returns a disposable `PreparedWork`, not a bare path (T123).** T123
+  said it returns the path. A path alone would leave its unique temp directory behind after every
+  compare test, holding the streams, records and cross-build tables that one prepare writes, which
+  breaks the test support's rule that each test's temp directory is deleted when the test ends
+  (`TempDirectories`). `PreparedWork.Path` is the work directory and `Dispose` deletes it, so each
+  test holds it in a `using`. T123's task text now says so. Returning the path and leaving cleanup
+  to the operating system was not chosen, because reruns would keep piling up work directories.
 
 ## Delivery
 
