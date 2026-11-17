@@ -796,6 +796,15 @@ The design documents settled these points, which the spec leaves open. They are 
   contract now states both, along with the per-function counts (M = 99,480), so T129 builds to the
   test. Leaving the order to the implementation was not chosen, because the task asks the test to
   check that the rows come "as listed", and that check needs one defined order.
+- **The generator's pinned pitch-limit commands are always valid (T121, T122, T132).** T132 pins
+  character 0's pitch to −16384 at step 0 and 16384 at step 1, but its `draw % 64 == 0` path could
+  still make either command invalid. T121 and T122 count pitch coverage over accepted commands only,
+  since a rejected command never reaches the world, and `fuzz-all-buttons` has one fixed seed, so a
+  pinned command made invalid there would fail T122 at every rate. T132 now says both commands stay
+  valid: their invalid draw is still taken, so the counter order is unchanged. T122's task text now
+  says "accepted commands reach" the pitch limits, which is what the test asserts. Counting rejected
+  commands toward pitch coverage was not chosen, because it would pass with no pitch limit ever
+  reaching the world.
 
 ## Delivery
 

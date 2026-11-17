@@ -970,7 +970,7 @@ Conventions for this phase (they hold for every task below):
   - `NotComparableLineNamesBothValues`. `DivergenceReport.NotComparable("jump-land", error)` gives `NOT COMPARABLE stream jump-land: unsupported version 2; this reader supports version 1` for a version error, and `NOT COMPARABLE stream jump-land: rules revision 2 in the stream; this core implements rules revision 1` for a revision error.
   - Equal records give `StreamOutcome.Match` and an empty report.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~DivergenceReportTests"` and confirm the new tests fail.
-- [ ] T120 [P] [US2] Write failing test `NotComparableTests.AnotherFormatVersionOrRulesRevisionIsNotComparableNotDiverged(string caseName, string expectedLine)` in `tests/MmoEngine.SimCore.Tests/Agreement/NotComparableTests.cs` (US2.5, simcore-cli.md#streams-verify).
+- [X] T120 [P] [US2] Write failing test `NotComparableTests.AnotherFormatVersionOrRulesRevisionIsNotComparableNotDiverged(string caseName, string expectedLine)` in `tests/MmoEngine.SimCore.Tests/Agreement/NotComparableTests.cs` (US2.5, simcore-cli.md#streams-verify).
   - Given a unique temp directory from `Support/TempDirectories` holding one modified copy of `simcore/streams/flat-run-30hz.mmrs`. The rows are:
     - `unsupported-version`: the u16 at offset 4 = 2;
     - `rules-revision`: the u32 at offset 8 = 2, with the trailer rewritten.
@@ -981,7 +981,7 @@ Conventions for this phase (they hold for every task below):
     - no stdout line starts with `DIVERGED` or `REFUSED`.
   - Add `NotComparableTests.EmbeddedCommandVersionIsRefusedNotNotComparable`. The copy has the u8 at offset 905 (`steps[0].commands[0].input.version`) = 2, with the XxHash64 trailer rewritten, so the decode reaches the embedded command. Assert exit 2, the exact stdout line `REFUSED stream flat-run-30hz: stream steps[0].commands[0].input.version at offset 905: unsupported version 2; this reader supports version 1`, the last line `streams verify: 1 streams, 0 match, 0 diverged, 0 not comparable, 1 refused`, and no stdout line starting with `NOT COMPARABLE`.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~NotComparableTests"` and confirm it fails.
-- [ ] T121 [P] [US2] Write failing tests in `tests/MmoEngine.SimCore.Tests/Agreement/StreamGeneratorTests.cs` (FR-026 server half, simcore-cli.md#generated-streams):
+- [X] T121 [P] [US2] Write failing tests in `tests/MmoEngine.SimCore.Tests/Agreement/StreamGeneratorTests.cs` (FR-026 server half, simcore-cli.md#generated-streams):
   - `GeneratedStreamsCoverEveryButtonAndTheAimRange`. Given `StreamGenerator.Build(seed, default.json SimConfig, test world)` for seeds 1-50, replay each stream's commands through `InputValidator.Validate` while tracking each character's `lastSequence` as the world does. Assert that together the seeds include:
     - accepted commands setting each button bit 0-8;
     - accepted commands with pitch -16384 and with pitch 16384;
@@ -998,12 +998,12 @@ Conventions for this phase (they hold for every task below):
     - `StreamRunner.Run` runs it with no refusal and no fault.
   - `SameSeedGivesTheSameStreamBytes`: two builds of seed 17, encoded, are byte-identical, and seed 18 differs.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~StreamGeneratorTests"` and confirm it fails.
-- [ ] T122 [P] [US2] Write failing test `FuzzAllButtonsDefinitionTests.DefinitionCoversEveryButtonTheAimRangeAndEveryRejection(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/FuzzAllButtonsDefinitionTests.cs` (the fuzz-all-buttons row of simcore-cli.md#named-scenario-streams; Theory over `TestRates.All`).
+- [X] T122 [P] [US2] Write failing test `FuzzAllButtonsDefinitionTests.DefinitionCoversEveryButtonTheAimRangeAndEveryRejection(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/FuzzAllButtonsDefinitionTests.cs` (the fuzz-all-buttons row of simcore-cli.md#named-scenario-streams; Theory over `TestRates.All`).
   - Given `ScenarioCatalog.Get("fuzz-all-buttons").Build(TestConfigs.Default(), test world, hz)`, assert:
     - `ScenarioCatalog.Names` contains `fuzz-all-buttons` in ordinal order;
     - 4 characters, 300 steps and header `Seed == 1000`;
     - its commands, replayed through `InputValidator.Validate`, set every button bit 0-8 in an accepted command and a reserved bit (`0xFE00`) in a rejected one;
-    - they reach pitch -16384 and 16384 and every 1/16 turn of yaw;
+    - accepted commands reach pitch -16384 and 16384 and every 1/16 turn of yaw;
     - they include all four rejection reasons;
     - two builds encode to identical bytes;
     - `StreamRunner.Run` completes with no fault.
@@ -1151,7 +1151,7 @@ Conventions for this phase (they hold for every task below):
   - Both return an unrecorded `RecordedStream` (expected hashes 0) with header seed = seed, a match salt from the first draw, and the world's checksum.
   - All draws are `SplitMix64.At(seed, counter)` with the counter advancing in one fixed order: the header, then the initial state, then per step, per character ascending.
   - **Initial state**: step 0; character IDs 1..n placed 4 m apart in the flat spawn area that `TestWorldGenerator` names for the scenarios (Phase 3), airborne 0.5 m above `HeightAt`, with velocity 0, `groundNormal` (0, 1, 0), aim 0, Standing, `lastSequence` 0, `activeSlot` 0 and new-weapon state; no projectiles; `nextProjectileId` 1.
-  - **Commands**: every step carries one command per character, in ascending index. Valid commands use sequence `lastSequence + 1`, and buttons, yaw, pitch and slot uniform over their valid ranges. At step 0 and step 1, character 0 takes pitch -16384 and 16384.
+  - **Commands**: every step carries one command per character, in ascending index. Valid commands use sequence `lastSequence + 1`, and buttons, yaw, pitch and slot uniform over their valid ranges. At step 0 and step 1, character 0 takes pitch -16384 and 16384. Both of those commands are valid: their invalid draw is still taken, so the counter order is unchanged, but it does not make them invalid, so accepted commands always reach both pitch limits (T121, T122).
   - **Invalid commands**: a draw with `draw % 64 == 0` makes the command invalid, cycling `SequenceNotIncreasing` (sequence = `lastSequence`), `UnknownButtons` (a bit of `0xFE00`), `PitchOutOfRange` (+-(16385 + draw % 16383)) and `UnknownWeaponSlot` (>= `input.weaponSlots`).
   - **Rules**: no `System.Random`; every loop is bounded.
 - [ ] T133 [US2] Add the `fuzz-all-buttons` definition to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs` per simcore-cli.md#named-scenario-streams, after T132. Makes T122 pass.
