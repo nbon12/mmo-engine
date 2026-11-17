@@ -22,7 +22,7 @@ before finishing keeps `_incomplete`.
   "formatVersion": 1,
   "runId": "baseline-s16-r24-seed3-<configHash8>",
   "kind": "simulator",
-  "gitSha": "<40 hex or 'unknown'>",
+  "gitSha": "<40 hex, else MMO_GIT_SHA, else 'unknown'>",
   "configHash": "<16 hex, XxHash64 of the canonical effective config>",
   "scenario": "Baseline",
   "seed": 3,
@@ -50,6 +50,13 @@ Amended 2026-11-16 (documentation catch-up, no format change): the `environment`
 the first merged simulator (PR #47, research D16), so every version-1 folder has them, but this
 contract omitted them. They are not optional: the harness loader (`RunFolderReader`) requires the
 `absorptions` column.
+
+Amended 2026-11-17 by PR #64: `gitSha` is `git rev-parse HEAD` in the working directory. When no
+repository answers (the sweep container image has no repository and no git), it is the `MMO_GIT_SHA`
+environment variable, trimmed, unless that is unset or blank; only then is it 'unknown'. The image sets
+`MMO_GIT_SHA` from its `GIT_SHA` build argument, which `infra/sweeps/k8s-sweep.sh` fills with
+`git rev-parse HEAD` (otherwise it is 'unknown'). The field's type is unchanged, so the format version
+stays 1.
 
 ## ticks.csv
 
