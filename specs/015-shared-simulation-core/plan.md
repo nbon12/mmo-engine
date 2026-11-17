@@ -833,6 +833,31 @@ The design documents settled these points, which the spec leaves open. They are 
   is one draw's two halves. The contract now states this, and the inputs' XxHash64,
   `0x22B4C43A2ACFD77E`, is pinned in `InputsArePinned`. Mapping each draw by remainder alone was not
   chosen, because it is not uniform over the range.
+- **The divergence report covers three cases the contract left open (T130).** A build record whose
+  step number differs from the server's (the state may still match) gets a
+  `  record step  server <n>  <build> <m>` line after the hash line, so a report that otherwise shows
+  `0 fields differ` still says what diverged. Records a build writes past the server's last diverge at the first of them,
+  with `  hash  server absent  <build> <x16>`, as the mirror of a missing build record. A state with
+  bytes left after its last event list is listed with `unreadable from offset <n>` at the first of
+  them, since the layout cannot read it to its end. state-serialization.md#divergence-report and
+  T130 now say so, and `DivergenceReportTests` has a test for each. Ignoring extra records or
+  trailing bytes was not chosen, because a build that writes them does not agree with the server.
+- **`TablesComparison` reports a results length that differs under an equal header (T131).** A build
+  that writes the 16-byte header but stops before the last row has equal headers and fewer bytes; the
+  contract named only the header refusal, and reading past the end would throw. It is Diverged with
+  `tables: build <b>, results are <n> bytes; the server's are <m>`, which wasm-api.md#cross-build-tables
+  and T131 now give, and `TablesComparisonTests` has a `results-length` row.
+- **`StreamGenerator`'s draws are fixed in the contract, and `fuzz-all-buttons` is a generated
+  definition (T132, T133).** The contract gave the draw order (header, initial state, per step, per
+  character) but not which draw feeds which field. Counter 0 is the match salt and counter 1 the
+  character count (the overload given a count leaves it unused, so both overloads keep the same
+  order); the initial state takes none; each command takes five (validity, buttons, yaw, pitch,
+  slot), and the four invalid kinds cycle per stream. simcore-cli.md#generated-streams now states
+  this. The spawn row holds at most 8 characters, 4 m apart on the flat ground in front of the firing
+  lane. `ScenarioDefinition.Generated` gives the catalog a definition whose stream comes from a
+  generator, with no characters of its own, so `fuzz-all-buttons` builds the generator's stream at
+  any rate. The character-schedule definition was not stretched to fit, because the fuzz stream's
+  commands are drawn, not held.
 
 ## Delivery
 

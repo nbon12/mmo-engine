@@ -1117,7 +1117,7 @@ Conventions for this phase (they hold for every task below):
     - a `poseRows[j].stance` above 1.
   - It evaluates each math row with the `SimMath` function it names. Each pose row goes through `HitboxBuilder` with that stance's `HitboxLayout`. It writes `MMXR` v1: 8 bytes per math row (r0, r1) and 25 floats per pose row (head, torso, legs, each A, B and radius; then the sphere centre and radius).
   - The results are allocated (not tick path); the function uses no LINQ, lambdas or hash-ordered collections.
-- [ ] T130 [P] [US2] Implement the between-builds divergence report per state-serialization.md#divergence-report and simcore-cli.md#divergence-report. Makes T118 and T119 pass (US2.4, FR-026).
+- [X] T130 [P] [US2] Implement the between-builds divergence report per state-serialization.md#divergence-report and simcore-cli.md#divergence-report. Makes T118 and T119 pass (US2.4, FR-026).
   - Add `src/MmoEngine.SimCore.Server/StateFieldReader.cs`:
     - it walks a state's bytes in layout order (header; characters, with each record's `weaponCount` weapons; projectiles; the six event lists) with no value checks;
     - it returns each field's path, kind and bits zero-extended to 32, and the offset of the first field that cannot be read whole;
@@ -1134,16 +1134,17 @@ Conventions for this phase (they hold for every task below):
     - `  hash  server <x16>  <b> <x16|absent>`;
     - `  1 field differs` or `  <k> fields differ`;
     - each field as `  <path>  server 0x%08X <decimal>  <b> 0x%08X <decimal>`, where an element present on one side only shows `absent` on the other, and an unreadable state ends with `  unreadable from offset <n>`;
-    - `  error  <message>` for a build error.
+    - `  error  <message>` for a build error;
+    - `  record step  server <n>  <b> <m>` after the hash line when the two records' step numbers differ; records the build has past the server's last diverge at the first of them with `  hash  server absent  <b> <x16|absent>`; and bytes left after the last event list are `unreadable from offset <n>` too (plan.md, Decisions made during implementation).
   - Decimals: unsigned or signed by type; floats as `ToString("R", CultureInfo.InvariantCulture)`.
-- [ ] T131 [US2] Implement `TablesComparison` in `src/MmoEngine.SimCore.Server/TablesComparison.cs` per wasm-api.md#cross-build-tables (comparing), after T129 (it reads the `MMXT`/`MMXR` constants). It has `TablesStatus` {Match, Diverged, Missing}, `TablesResult(TablesStatus Status, string? FirstMismatch)` with `TablesResult.Missing(string message)`, and `Compare(string build, ReadOnlySpan<byte> inputs, ReadOnlySpan<byte> serverResults, ReadOnlySpan<byte> buildResults)`. Makes T117 pass.
-  - The headers must be equal, else `tables: build <b>, results header differs from the server's`.
+- [X] T131 [US2] Implement `TablesComparison` in `src/MmoEngine.SimCore.Server/TablesComparison.cs` per wasm-api.md#cross-build-tables (comparing), after T129 (it reads the `MMXT`/`MMXR` constants). It has `TablesStatus` {Match, Diverged, Missing}, `TablesResult(TablesStatus Status, string? FirstMismatch)` with `TablesResult.Missing(string message)`, and `Compare(string build, ReadOnlySpan<byte> inputs, ReadOnlySpan<byte> serverResults, ReadOnlySpan<byte> buildResults)`. Makes T117 pass.
+  - The headers must be equal, else `tables: build <b>, results header differs from the server's`. Equal headers with unequal lengths are `tables: build <b>, results are <n> bytes; the server's are <m>` (plan.md, Decisions made during implementation).
   - A math row matches when r0 and r1 are bit-identical, or the server value is NaN and the build value is any NaN. Pose rows compare bit for bit.
   - The first mismatch is formatted exactly as the contract's two lines:
     - functions are named by ID; Atan2 shows `(a 0x%08X, b 0x%08X)` and the others `(a 0x%08X)`;
     - then `r0` or `r1`, `server 0x%08X build 0x%08X`;
     - pose rows show `<Standing|Crouched> yaw 0x%04X at (<x>, <y>, <z>)` in "R" decimals, then `<head|torso|legs> <A|B>.<x|y|z>`, `<part> radius`, `sphere centre.<x|y|z>` or `sphere radius`.
-- [ ] T132 [US2] Implement `StreamGenerator` in `src/MmoEngine.SimCore.Server/StreamGenerator.cs` per simcore-cli.md#generated-streams, after T126. Makes T121 pass (FR-026 server half).
+- [X] T132 [US2] Implement `StreamGenerator` in `src/MmoEngine.SimCore.Server/StreamGenerator.cs` per simcore-cli.md#generated-streams, after T126. Makes T121 pass (FR-026 server half).
   - **API**:
     - `NameFor(int seed)` gives `seed-<nnn>`;
     - `Build(int seed, SimConfig baseConfig, CollisionWorld world)` uses rate `{20, 30, 60}[seed % 3]`, 300 steps and 2 + (draw % 3) characters;
@@ -1154,11 +1155,11 @@ Conventions for this phase (they hold for every task below):
   - **Commands**: every step carries one command per character, in ascending index. Valid commands use sequence `lastSequence + 1`, and buttons, yaw, pitch and slot uniform over their valid ranges. At step 0 and step 1, character 0 takes pitch -16384 and 16384. Both of those commands are valid: their invalid draw is still taken, so the counter order is unchanged, but it does not make them invalid, so accepted commands always reach both pitch limits (T121, T122).
   - **Invalid commands**: a draw with `draw % 64 == 0` makes the command invalid, cycling `SequenceNotIncreasing` (sequence = `lastSequence`), `UnknownButtons` (a bit of `0xFE00`), `PitchOutOfRange` (+-(16385 + draw % 16383)) and `UnknownWeaponSlot` (>= `input.weaponSlots`).
   - **Rules**: no `System.Random`; every loop is bounded.
-- [ ] T133 [US2] Add the `fuzz-all-buttons` definition to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs` per simcore-cli.md#named-scenario-streams, after T132. Makes T122 pass.
+- [X] T133 [US2] Add the `fuzz-all-buttons` definition to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs` per simcore-cli.md#named-scenario-streams, after T132. Makes T122 pass.
   - It has four characters and builds `StreamGenerator.Build(1000UL, baseConfig, world, stepRateHz ?? 30, 4, 300)`; header seed 1000.
   - Its `.mmrs` file is recorded in Phase 7, because it presses Fire. Do not run `streams record` for it, and never run `--all` here.
   - Not [P]: edits `ScenarioCatalog.cs`.
-- [ ] T134 [US2] Report NotComparable outcomes in `simcore streams verify` per simcore-cli.md#streams-verify and recorded-stream-format.md#outcomes, after T128. Makes T120 pass (US2.5).
+- [X] T134 [US2] Report NotComparable outcomes in `simcore streams verify` per simcore-cli.md#streams-verify and recorded-stream-format.md#outcomes, after T128. Makes T120 pass (US2.5).
   - In `src/MmoEngine.SimCore.Cli/Commands/StreamsCommand.cs`, the verify handler maps two refusals to `DivergenceReport.NotComparable(name, error)` (`NOT COMPARABLE stream <name>: <detail>`) and counts them as not comparable:
     - a `CoreFormatException` with `UnsupportedVersion` on the stream's own `version` field (offset 4);
     - `RulesRevisionMismatch`.

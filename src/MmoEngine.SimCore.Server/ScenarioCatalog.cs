@@ -23,6 +23,15 @@ public static class ScenarioCatalog
     /// <summary>The rate a scenario is recorded at when its row names no other.</summary>
     private const int DefaultStepRateHz = 30;
 
+    /// <summary><c>fuzz-all-buttons</c>'s fixed seed, which its header carries.</summary>
+    private const ulong FuzzSeed = 1000UL;
+
+    /// <summary><c>fuzz-all-buttons</c>'s characters.</summary>
+    private const int FuzzCharacterCount = 4;
+
+    /// <summary><c>fuzz-all-buttons</c>'s steps, at every rate.</summary>
+    private const int FuzzStepCount = 300;
+
     private static readonly ScenarioDefinition[] Definitions = Sorted(
     [
         FlatRun(20),
@@ -36,6 +45,7 @@ public static class ScenarioCatalog
         CrouchUnderLedge(),
         CornerWedge(),
         ThinWallFast(),
+        FuzzAllButtons(),
     ]);
 
     /// <summary>Every scenario's name, in ordinal order.</summary>
@@ -193,6 +203,19 @@ public static class ScenarioCatalog
         });
 
     /// <summary>
+    /// <c>fuzz-all-buttons</c> (US1.9, US2.3): one seeded fuzz stream of four characters and 300 steps at
+    /// every rate, <see cref="StreamGenerator"/>'s stream of the fixed seed 1000 (its header seed), recorded
+    /// at 30 Hz. Its commands set every button, reach both pitch limits, cover the whole yaw range and
+    /// include all four rejection reasons. It presses Fire, so its <c>.mmrs</c> file is recorded once the
+    /// weapon and projectile steps are in place.
+    /// </summary>
+    private static ScenarioDefinition FuzzAllButtons() => ScenarioDefinition.Generated(
+        "fuzz-all-buttons",
+        DefaultStepRateHz,
+        FuzzStepCount,
+        static (config, world, rate) => StreamGenerator.Build(FuzzSeed, config, world, rate, FuzzCharacterCount, FuzzStepCount));
+
+    /// <summary>
     /// A scenario at the default 30 Hz with one character, ID 1, at rest, Grounded and Standing at
     /// <paramref name="start"/>, holding <paramref name="buttons"/> at <paramref name="yaw"/> at every entry.
     /// </summary>
@@ -260,7 +283,8 @@ public sealed record ScenarioCharacter(uint Id, Vec3 Position, ushort AimYaw, Fu
 /// it runs on, its own step rate, the configuration overrides it applies to a copy of the base
 /// configuration, its characters and its length in simulated seconds. <see cref="Build"/> makes the
 /// unrecorded stream at any rate, and <see cref="Record"/> runs it through <see cref="StreamRunner"/> for its
-/// expected hashes.
+/// expected hashes. A <see cref="Generated"/> definition, such as <c>fuzz-all-buttons</c>, takes its stream
+/// from a generator instead of a character schedule.
 /// </summary>
 public sealed class ScenarioDefinition
 {
@@ -272,6 +296,7 @@ public sealed class ScenarioDefinition
 
     private readonly ScenarioCharacter[] _characters;
     private readonly Action<SimConfig>? _configure;
+    private readonly Func<SimConfig, CollisionWorld, int, RecordedStream>? _generate;
 
     /// <summary>A definition; the characters are sorted by ID.</summary>
     /// <exception cref="ArgumentNullException">The name or the characters are null.</exception>
@@ -306,6 +331,32 @@ public sealed class ScenarioDefinition
         _configure = configure;
     }
 
+    private ScenarioDefinition(string name, int stepRateHz, double durationSeconds, Func<SimConfig, CollisionWorld, int, RecordedStream> generate)
+    {
+        _characters = [];
+        Name = name;
+        StepRateHz = stepRateHz;
+        DurationSeconds = durationSeconds;
+        _generate = generate;
+    }
+
+    /// <summary>
+    /// A generated definition: <see cref="Build"/> returns <paramref name="generate"/>(base configuration,
+    /// world, rate), which places its own characters, so <see cref="Characters"/> is empty, and builds
+    /// <paramref name="stepCount"/> steps at every rate; <see cref="DurationSeconds"/> is that count at
+    /// <paramref name="stepRateHz"/>.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">The name or the generator is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The step rate or the step count is not positive.</exception>
+    public static ScenarioDefinition Generated(string name, int stepRateHz, int stepCount, Func<SimConfig, CollisionWorld, int, RecordedStream> generate)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(generate);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepRateHz);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepCount);
+        return new ScenarioDefinition(name, stepRateHz, (double)stepCount / stepRateHz, generate);
+    }
+
     /// <summary>The stream's name, and its file name without <c>.mmrs</c>.</summary>
     public string Name { get; }
 
@@ -315,10 +366,13 @@ public sealed class ScenarioDefinition
     /// <summary>The rate the committed stream is recorded at.</summary>
     public int StepRateHz { get; }
 
-    /// <summary>The whole run's simulated seconds: a whole number of steps at 20, 30 and 60 Hz.</summary>
+    /// <summary>
+    /// The whole run's simulated seconds: a whole number of steps at 20, 30 and 60 Hz. A generated
+    /// definition builds the same number of steps at every rate; this is that count at its own rate.
+    /// </summary>
     public double DurationSeconds { get; }
 
-    /// <summary>The characters, in ascending ID.</summary>
+    /// <summary>The characters, in ascending ID; empty for a generated definition, which places its own.</summary>
     public IReadOnlyList<ScenarioCharacter> Characters => _characters;
 
     /// <summary>
@@ -327,7 +381,7 @@ public sealed class ScenarioDefinition
     /// <c>stepRateHz</c> set; an initial state at step 0 holding the characters at rest with full weapons;
     /// and <see cref="DurationSeconds"/> × the rate entries, each with one command per character (sequence
     /// numbers from 1, <c>ClientStep</c> equal to the step), every expected hash 0, seed 0 and
-    /// <see cref="MatchSalt"/>.
+    /// <see cref="MatchSalt"/>. A generated definition returns its generator's stream at the rate instead.
     /// </summary>
     /// <exception cref="ArgumentNullException">The configuration or the world is null.</exception>
     /// <exception cref="ArgumentException">The duration is not a whole number of steps at the rate.</exception>
@@ -336,6 +390,11 @@ public sealed class ScenarioDefinition
         ArgumentNullException.ThrowIfNull(baseConfig);
         ArgumentNullException.ThrowIfNull(world);
         var rate = stepRateHz ?? StepRateHz;
+        if (_generate is not null)
+        {
+            return _generate(baseConfig, world, rate);
+        }
+
         var config = baseConfig.Clone();
         _configure?.Invoke(config);
         config.StepRateHz = rate;
@@ -357,7 +416,7 @@ public sealed class ScenarioDefinition
             steps[k] = new RecordedStep(step, commands, 0UL);
         }
 
-        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, MatchSalt, world.Checksum, config, InitialState(config), steps);
+        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, MatchSalt, world.Checksum, config, InitialState(Name, config, _characters), steps);
     }
 
     /// <summary>
@@ -428,12 +487,15 @@ public sealed class ScenarioDefinition
     }
 
     /// <summary>
-    /// The canonical initial state: step 0, <c>nextProjectileId</c> 1, the characters in ascending ID at
-    /// rest (velocity 0, ground normal (0, 1, 0), Standing, aim pitch 0, <c>lastSequence</c> 0, slot 0) with
-    /// <c>input.weaponSlots</c> weapons, each new (<see cref="WeaponState.New"/>) from its slot's
-    /// configuration, no projectiles and no events.
+    /// The canonical initial state of <paramref name="characters"/>, in ascending ID, for the stream
+    /// <paramref name="name"/>: step 0, <c>nextProjectileId</c> 1, the characters at rest (velocity 0,
+    /// ground normal (0, 1, 0), Grounded or airborne as each says, Standing, aim pitch 0,
+    /// <c>lastSequence</c> 0, slot 0) with <c>input.weaponSlots</c> weapons, each new
+    /// (<see cref="WeaponState.New"/>) from its slot's configuration, no projectiles and no events.
+    /// <see cref="StreamGenerator"/> builds its initial states here too.
     /// </summary>
-    private byte[] InitialState(SimConfig config)
+    /// <exception cref="ArgumentException">The configuration has no weapons or input section, or too few weapons for its slots.</exception>
+    internal static byte[] InitialState(string name, SimConfig config, IReadOnlyList<ScenarioCharacter> characters)
     {
         var weaponConfigs = config.Weapons ?? throw new ArgumentException("The configuration has no weapons.", nameof(config));
         var weaponSlots = config.Input?.WeaponSlots ?? throw new ArgumentException("The configuration has no input section.", nameof(config));
@@ -442,12 +504,12 @@ public sealed class ScenarioDefinition
             throw new ArgumentException($"input.weaponSlots {weaponSlots} does not name 1 to {weaponConfigs.Count} weapons.", nameof(config));
         }
 
-        var characters = new CharacterState[_characters.Length];
-        var weapons = new WeaponState[_characters.Length * weaponSlots];
-        for (var c = 0; c < _characters.Length; c++)
+        var states = new CharacterState[characters.Count];
+        var weapons = new WeaponState[characters.Count * weaponSlots];
+        for (var c = 0; c < characters.Count; c++)
         {
-            var character = _characters[c];
-            characters[c] = new CharacterState
+            var character = characters[c];
+            states[c] = new CharacterState
             {
                 Id = character.Id,
                 Position = character.Position,
@@ -468,13 +530,13 @@ public sealed class ScenarioDefinition
             }
         }
 
-        var length = StateSerializer.Length(characters.Length, weaponSlots, 0, 0, 0, 0, 0, 0, 0);
+        var length = StateSerializer.Length(states.Length, weaponSlots, 0, 0, 0, 0, 0, 0, 0);
         var state = new byte[length];
         var fault = StateSerializer.Write(
             InitialStep,
             1,
             weaponSlots,
-            characters,
+            states,
             weapons,
             Span<Projectile>.Empty,
             Span<ShotEvent>.Empty,
@@ -487,7 +549,7 @@ public sealed class ScenarioDefinition
             out var written);
         if (fault.Code != StepFaultCode.None || written != state.Length)
         {
-            throw new InvalidOperationException($"{Name}'s initial state does not serialise: {fault.Code} at {fault.Path}.");
+            throw new InvalidOperationException($"{name}'s initial state does not serialise: {fault.Code} at {fault.Path}.");
         }
 
         return state;

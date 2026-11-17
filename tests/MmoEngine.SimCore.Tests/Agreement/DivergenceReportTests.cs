@@ -458,6 +458,89 @@ public sealed class DivergenceReportTests
     }
 
     /// <summary>
+    /// contracts/state-serialization.md#divergence-report (a record's own step number): Given a server record
+    /// of a state at step 4 and a build record of the same state and hash numbered step 5, When they are
+    /// compared, Then the outcome is <c>Diverged</c> at the server's step 4 with both (equal) hashes and no
+    /// differing field, and the report is exactly the header, the hash line,
+    /// <c>  record step  server 4  node-interp 5</c> and <c>  0 fields differ</c>.
+    /// </summary>
+    [Fact]
+    public void DifferentRecordStepNumbersAreListed()
+    {
+        var state = TestStates.Build(StatesStep, [TestStates.StandingCharacter(1, 0.5f, 0.5f)]);
+        var hash = StateHash.Compute(state);
+
+        var comparison = DivergenceReport.CompareBuild(StatesStream, BuildName, Record(StatesStep, state), Record(StatesStep + 1, state), new[] { hash });
+
+        Assert.Equal(StreamOutcome.Diverged, comparison.Outcome);
+        Assert.Equal((uint?)StatesStep, comparison.FirstDivergentStep);
+        Assert.Equal((ulong?)hash, comparison.ServerHash);
+        Assert.Equal((ulong?)hash, comparison.BuildHash);
+        Assert.Equal(0, comparison.DifferingFields);
+        Assert.Equal(
+            new[]
+            {
+                $"DIVERGED stream {StatesStream}, build {BuildName}, first divergent step {StatesStep}",
+                $"  hash  server {hash:x16}  {BuildName} {hash:x16}",
+                $"  record step  server {StatesStep}  {BuildName} {StatesStep + 1}",
+                "  0 fields differ",
+            },
+            Lines(comparison.Report));
+    }
+
+    /// <summary>
+    /// contracts/state-serialization.md#divergence-report (one side has no record): Given the server records
+    /// of flat-run-30hz and build records that are the same followed by one more record, numbered the last
+    /// step + 1, When they are compared, Then the first divergent step is that extra step, the server hash is
+    /// null and the build hash is the extra record's, and the report is exactly
+    /// <c>DIVERGED stream flat-run-30hz, build node-interp, first divergent step &lt;n&gt;</c> and
+    /// <c>  hash  server absent  node-interp &lt;x16&gt;</c>.
+    /// </summary>
+    [Fact]
+    public void ExtraBuildRecordIsTheFirstDivergentStep()
+    {
+        const string name = "flat-run-30hz";
+        var stream = ReadStream(name);
+        var server = StreamRunner.Run(stream, TestWorldFile());
+        var last = ReadRecords(server, $"{name} server")[^1];
+        var extraStep = last.Step + 1;
+        var build = server.Concat(Record(extraStep, last.State)).ToArray();
+
+        var comparison = DivergenceReport.CompareBuild(name, BuildName, server, build, ExpectedHashes(stream));
+
+        Assert.Equal(StreamOutcome.Diverged, comparison.Outcome);
+        Assert.Equal((uint?)extraStep, comparison.FirstDivergentStep);
+        Assert.Null(comparison.ServerHash);
+        Assert.Equal((ulong?)last.Hash, comparison.BuildHash);
+        Assert.Equal(
+            new[]
+            {
+                $"DIVERGED stream {name}, build {BuildName}, first divergent step {extraStep}",
+                $"  hash  server absent  {BuildName} {last.Hash:x16}",
+            },
+            Lines(comparison.Report));
+    }
+
+    /// <summary>
+    /// contracts/state-serialization.md#divergence-report (a state that cannot be read to its end): Given a
+    /// server state of one character at step 4 and a build state that is the same followed by three more
+    /// bytes, When they are compared, Then every field of the layout matches, so the report is the header,
+    /// the hash line, <c>  0 fields differ</c> and <c>  unreadable from offset &lt;server length&gt;</c>, where
+    /// the bytes left after the last event list start.
+    /// </summary>
+    [Fact]
+    public void BytesAfterTheLastEventListAreUnreadable()
+    {
+        var server = TestStates.Build(StatesStep, [TestStates.StandingCharacter(1, 0.5f, 0.5f)]);
+        var build = server.Concat(new byte[] { 0xAA, 0xBB, 0xCC }).ToArray();
+
+        var comparison = CompareStates(server, build);
+
+        AssertStatesReport(comparison, server, build, "  0 fields differ", [], unreadableLine: $"  unreadable from offset {server.Length}");
+        Assert.Equal(0, comparison.DifferingFields);
+    }
+
+    /// <summary>
     /// Compares one server record and one build record, each <c>(state's step, state length, state,
     /// StateHash.Compute(state))</c>, with the server's hash as the one expected hash.
     /// </summary>

@@ -371,9 +371,16 @@ codes.
 
 - The reference is the server build's record for the same stream and step. Each other build is
   compared with it.
-- Step by step, a step diverges when the two records' hashes differ, their state bytes differ, or
-  one side has no record for it (a build that stopped early). Only the first divergent step of each
+- Step by step, a step diverges when the two records' hashes differ, their state bytes differ, their
+  step numbers differ, or one side has no record for it (a build that stopped early, wrote a record
+  that is not whole, or wrote records past the server's last). Only the first divergent step of each
   (stream, build) pair is reported: later steps follow from it.
+- A step the build has no whole record for is reported at the server's step number as the header and
+  `  hash  server <x16>  <build> absent`, with no fields. Records past the server's last are reported
+  at the first of them as `  hash  server absent  <build> <x16>` (`absent` too when that record is
+  not whole, at the server's last step + 1).
+- When the two records' step numbers differ, the line `  record step  server <n>  <build> <m>`
+  follows the hash line, and the states are diffed as below.
 - Every build's hashes, the server's included, are also compared with the stream's committed
   expected hashes. A stream stores hashes, not states, so that report names the step and both hashes
   but no fields.
@@ -385,7 +392,10 @@ state from a buggy build can still be read.
 - List elements are matched by index. When two counts differ, the count is listed, and each element
   that exists on one side only is listed with `absent` on the other.
 - A state that cannot be read to its end is listed up to that point, followed by
-  `unreadable from offset <n>`.
+  `unreadable from offset <n>`: the offset of the first field that is not there whole, or, when every
+  field of the layout was read and bytes are left over, the offset of the first of them. Fields at or
+  past the place where either state stops are not compared. The offset is the build state's, or the
+  server's when only the server state is unreadable.
 - The `1 field differs` or `<k> fields differ` line, after the hash line, counts the field lines
   listed. The `unreadable` line is not a field, so a state cut where every readable field still
   matches shows `0 fields differ`.

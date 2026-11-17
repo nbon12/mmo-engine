@@ -308,7 +308,10 @@ Results, `MMXR` version 1, the same header with magic `MMXR`, then:
 | 16 + 8·*M* | 100·*P* | per pose row, 25 `f32`: the head, torso and legs capsules, each A (x, y, z), B (x, y, z) and radius, then the bounding sphere's centre (x, y, z) and radius |
 
 **Comparing** (`TablesComparison` in `src/MmoEngine.SimCore.Server/`, and `compareTables` in
-`tools/agreement/lib/tables.mjs` for the runners): the headers must be equal. A math row matches when
+`tools/agreement/lib/tables.mjs` for the runners): the headers must be equal
+(`tables: build <b>, results header differs from the server's`), and so must the lengths
+(`tables: build <b>, results are <n> bytes; the server's are <m>`, for a build that wrote a whole
+header but not every row). A math row matches when
 r0 and r1 are bit-identical, or, where the server's value is NaN, when the build's value is any NaN
 (research R4: NaN bits are not portable). Every in-domain row has a finite result, so the table's
 in-domain rows compare bit for bit. Pose rows compare bit for bit. The first row that does not match

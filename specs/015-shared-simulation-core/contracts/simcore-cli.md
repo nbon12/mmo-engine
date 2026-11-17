@@ -547,6 +547,19 @@ every run (US2 scenario 3). They are generated at test time and never committed.
   so the rejection path runs in every build too (US1 scenario 9).
 - `GeneratedStreamsCoverEveryButtonAndTheAimRange` asserts that seeds 1–50 together set every button
   bit, reach both pitch limits, cover every 1/16 turn of yaw, and include every rejection reason.
+- Every draw is `SplitMix64.At(seed, counter)`. Counter 0 is the header's match salt and counter 1
+  the character count (2 + draw % 3; the overload that is given a count leaves it unused). The
+  initial state takes no draw: character IDs 1 to n stand 4 m apart along +X from the flat-run start,
+  airborne 0.5 m above the terrain, at rest, aim 0, Standing, with new weapons. Each command then
+  takes five draws from counter 2 on, per step and per character in ascending index: validity,
+  buttons (`draw % 512`), yaw (`draw % 65536`), pitch (`draw % 32769 − 16384`) and slot
+  (`draw % input.weaponSlots`). Character 0's first two commands are always valid, with pitch −16384
+  and then 16384. Any other command whose validity draw v has `v % 64 == 0` is invalid, the kinds
+  cycling per stream: sequence = `lastSequence`; button bit `0x0200 << ((v / 64) % 7)` added; pitch
+  ±(16385 + v % 16383), negative when v's top bit is set; or slot `input.weaponSlots +
+  v % (256 − input.weaponSlots)`.
+- `fuzz-all-buttons` is the generator's stream of seed 1000 with four characters and 300 steps at any
+  rate ([named scenario streams](#named-scenario-streams)).
 
 ## Named scenario streams
 

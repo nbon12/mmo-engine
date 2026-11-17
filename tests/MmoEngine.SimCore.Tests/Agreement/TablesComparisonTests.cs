@@ -55,8 +55,9 @@ public sealed class TablesComparisonTests
 
     /// <summary>
     /// Rows <c>(caseName, expectedLine)</c>. The line is the exact <c>FirstMismatch</c>, with <c>{row}</c>
-    /// replaced by the changed row's index and <c>{server}</c> and <c>{build}</c> by its server and build
-    /// bits as eight uppercase hex digits.
+    /// replaced by the changed row's index, <c>{server}</c> and <c>{build}</c> by its server and build bits
+    /// as eight uppercase hex digits, and <c>{buildLength}</c> and <c>{serverLength}</c> by the two results'
+    /// lengths in bytes.
     /// </summary>
     public static TheoryData<string, string> Cases => new()
     {
@@ -85,6 +86,10 @@ public sealed class TablesComparisonTests
             "tables: build node-interp, results header differs from the server's"
         },
         {
+            "results-length",
+            "tables: build node-interp, results are {buildLength} bytes; the server's are {serverLength}"
+        },
+        {
             "two-rows",
             "tables: build node-interp, first mismatch at math row {row}: Atan2(a 0x00000000, b 0xBF800000) r0 server 0x40490FDB build 0x40490FDA"
         },
@@ -101,7 +106,8 @@ public sealed class TablesComparisonTests
     /// (4096.25, 37.5, −7000.125) row; <c>pose-sphere-radius</c>, the low bit of the sphere radius flipped in
     /// the Crouched, yaw 0xFFFF, (−8191.5, −200, 8191.5) row; <c>finite-against-nan</c>, the finite r0 of the
     /// Sin row with a = +0 against the build's NaN 0x7FC00000; <c>results-header</c>, the build's header
-    /// with M − 1; and <c>two-rows</c>, the torso A.x change of <c>pose-torso-a-x</c> together with the
+    /// with M − 1; <c>results-length</c>, the build's results one byte short with the header unchanged,
+    /// reported with both lengths; and <c>two-rows</c>, the torso A.x change of <c>pose-torso-a-x</c> together with the
     /// Atan2 change of <c>atan2-axis-r0</c>, of which only the first row, the Atan2 one, is reported.
     /// </summary>
     [Theory]
@@ -148,6 +154,9 @@ public sealed class TablesComparisonTests
             case "results-header":
                 BinaryPrimitives.WriteUInt32LittleEndian(build.AsSpan(MathRowCountOffset), (uint)(tables.MathRows - 1));
                 break;
+            case "results-length":
+                build = build[..^1];
+                break;
             case "two-rows":
                 var poseRow = PoseRowOf(tables, Crouched, 0x4000, 4096.25f, 37.5f, -7000.125f);
                 _ = Change(server, build, PoseResult(tables, poseRow, TorsoAX), bits => bits + 1u);
@@ -161,7 +170,9 @@ public sealed class TablesComparisonTests
         var line = expectedLine
             .Replace("{row}", row.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{server}", serverBits.ToString("X8", CultureInfo.InvariantCulture), StringComparison.Ordinal)
-            .Replace("{build}", buildBits.ToString("X8", CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            .Replace("{build}", buildBits.ToString("X8", CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("{buildLength}", build.Length.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("{serverLength}", server.Length.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
         Assert.DoesNotContain("{", line, StringComparison.Ordinal);
 
         var result = TablesComparison.Compare(BuildName, inputs, server, build);

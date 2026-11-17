@@ -20,7 +20,7 @@ namespace MmoEngine.SimCore.Cli.Commands;
 /// catalog, and appends one entry with the reason to the streams folder's regeneration log; every refusal
 /// exits 2 (a step fault exits 1) before anything is written. <c>streams verify</c> runs every stream in a
 /// folder through <see cref="StreamRunner"/> and compares each step's hash with the stream's expected
-/// hash, writing nothing. An empty or whitespace-only path option of either command is refused when the
+/// hash, writing nothing; a stream in another format version or rules revision is not comparable. An empty or whitespace-only path option of either command is refused when the
 /// command line is parsed (<see cref="PathOptions"/>), exit 2.
 /// </summary>
 internal static class StreamsCommand
@@ -43,6 +43,13 @@ internal static class StreamsCommand
 
     /// <summary>The trailer's length: the XxHash64 of everything before it.</summary>
     private const int TrailerLength = 8;
+
+    /// <summary>A stream's own <c>u16 version</c>: its offset, its field and its format's name in a refusal.</summary>
+    private const int StreamVersionOffset = 4;
+
+    private const string StreamVersionField = "version";
+
+    private const string StreamFormat = "stream";
 
     /// <summary>The <c>streams</c> command with its <c>record</c> and <c>verify</c> subcommands.</summary>
     /// <param name="runStream">
@@ -266,8 +273,10 @@ internal static class StreamsCommand
     /// <c>streams verify</c> (contracts/simcore-cli.md#streams-verify): loads the content through
     /// <see cref="ContentFiles"/> (a refused file exits 2 before any stream runs), runs every
     /// <c>&lt;dir&gt;/*.mmrs</c> in ordinal order through <see cref="StreamRunner"/>, prints each stream's
-    /// outcome (match, the divergence report against the expected hashes, or <c>REFUSED</c>) and the total,
-    /// and exits 1 when any diverged, else 2 when any was refused or the folder holds no stream, else 0.
+    /// outcome (match, the divergence report against the expected hashes, <c>NOT COMPARABLE</c> for a
+    /// stream in another format version or rules revision, or <c>REFUSED</c>) and the total, and exits 1
+    /// when any diverged, else 2 when any was not comparable or refused or the folder holds no stream, else
+    /// 0.
     /// </summary>
     internal static int Verify(string directory, string content, TextWriter stdout, TextWriter stderr, ILogger logger)
     {
@@ -293,7 +302,7 @@ internal static class StreamsCommand
             return CliExitCodes.Usage;
         }
 
-        var (matched, diverged, refused) = (0, 0, 0);
+        var (matched, diverged, notComparable, refused) = (0, 0, 0, 0);
         foreach (var path in paths)
         {
             var name = Path.GetFileNameWithoutExtension(path);
@@ -305,6 +314,9 @@ internal static class StreamsCommand
                 case Outcome.Diverged:
                     diverged++;
                     break;
+                case Outcome.NotComparable:
+                    notComparable++;
+                    break;
                 default:
                     refused++;
                     break;
@@ -313,21 +325,35 @@ internal static class StreamsCommand
 
         stdout.Write(string.Create(
             CultureInfo.InvariantCulture,
-            $"{VerifyName}: {paths.Length} streams, {matched} match, {diverged} diverged, 0 not comparable, {refused} refused\n"));
+            $"{VerifyName}: {paths.Length} streams, {matched} match, {diverged} diverged, {notComparable} not comparable, {refused} refused\n"));
         logger.Information(
-            "Verified {Count} streams in {Directory}: {Matched} match, {Diverged} diverged, {Refused} refused",
+            "Verified {Count} streams in {Directory}: {Matched} match, {Diverged} diverged, {NotComparable} not comparable, {Refused} refused",
             paths.Length,
             directory,
             matched,
             diverged,
+            notComparable,
             refused);
         if (diverged > 0)
         {
             return CliExitCodes.Failed;
         }
 
-        return refused > 0 || paths.Length == 0 ? CliExitCodes.Usage : CliExitCodes.Success;
+        return notComparable > 0 || refused > 0 || paths.Length == 0 ? CliExitCodes.Usage : CliExitCodes.Success;
     }
+
+    /// <summary>
+    /// Whether a refusal means the stream is not comparable (contracts/recorded-stream-format.md#outcomes):
+    /// the stream's own format version (<c>UnsupportedVersion</c> on its <c>version</c> field at offset 4),
+    /// or another rules revision (<c>RulesRevisionMismatch</c>). Every other refusal, an embedded input
+    /// command's version among them, is an ordinary refusal. <c>agreement prepare</c> applies the same rule.
+    /// </summary>
+    internal static bool IsNotComparable(FormatError error) =>
+        error.Code == FormatErrorCode.RulesRevisionMismatch
+        || (error.Code == FormatErrorCode.UnsupportedVersion
+            && error.Offset == StreamVersionOffset
+            && string.Equals(error.Format, StreamFormat, StringComparison.Ordinal)
+            && string.Equals(error.Field, StreamVersionField, StringComparison.Ordinal));
 
     /// <summary>Runs one stream file and prints its outcome.</summary>
     private static Outcome VerifyOne(string name, string path, IReadOnlyList<CollisionWorld> worlds, TextWriter stdout)
@@ -345,6 +371,12 @@ internal static class StreamsCommand
         {
             stdout.Write($"REFUSED stream {name}: the file cannot be read ({ex.Message})\n");
             return Outcome.Refused;
+        }
+        catch (CoreFormatException ex) when (IsNotComparable(ex.Error))
+        {
+            stdout.Write(DivergenceReport.NotComparable(name, ex.Error));
+            stdout.Write('\n');
+            return Outcome.NotComparable;
         }
         catch (Exception ex) when (ex is CoreFormatException or StepFaultException)
         {
@@ -587,6 +619,7 @@ internal static class StreamsCommand
     {
         Match,
         Diverged,
+        NotComparable,
         Refused,
     }
 
