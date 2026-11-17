@@ -287,8 +287,10 @@ public sealed class MovementScenarioTests
     /// slope), Then every step up to the one that reaches the plateau, which covers the walkable slope, is
     /// Grounded, and the character does reach the plateau at rest height on
     /// <see cref="TestWorldFeatures.PlateauHeight"/>; afterwards it is never Grounded with
-    /// GroundNormal.y &lt; <c>CosSlopeLimit</c>, and Position.y never exceeds the plateau height +
-    /// stepHeight (0.35 m). The run reaches the 50° slope, so the refusal cannot pass vacuously: at some
+    /// GroundNormal.y &lt; <c>CosSlopeLimit</c>, every step that ends with the feet at rest height on the
+    /// plateau is Grounded there (the refused 50° face never hides the walkable plateau under the feet),
+    /// and Position.y never exceeds the plateau height + stepHeight (0.35 m). The run reaches the 50°
+    /// slope, so the refusal cannot pass vacuously: at some
     /// step after the plateau the terrain 2 · capsuleRadius ahead of the feet along the heading is more than
     /// stepHeight above the plateau.
     /// </summary>
@@ -331,6 +333,12 @@ public sealed class MovementScenarioTests
                 Assert.True(
                     character.GroundNormal.Y >= config.CosSlopeLimit,
                     $"{label}: step {run.Steps[k].Step} left the character Grounded on normal {character.GroundNormal}, steeper than CosSlopeLimit {config.CosSlopeLimit:R}; position {feet}");
+            }
+            else
+            {
+                Assert.False(
+                    MovementStepTests.AtRestOn(feet.Y, plateau, config),
+                    $"{label}: step {run.Steps[k].Step} left the character airborne at rest height on the plateau {plateau:R}; position {feet}, velocity {character.Velocity}");
             }
 
             Assert.True(

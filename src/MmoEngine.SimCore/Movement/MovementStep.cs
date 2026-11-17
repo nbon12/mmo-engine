@@ -174,15 +174,17 @@ public static class MovementStep
             mover.Outcome |= MovementOutcome.ClampedToBounds;
         }
 
-        // 8. The ground probe: snapDistance when grounded at the start and not jumped, else 2·contactSkin
-        // while not rising.
-        var probe = groundedAtStart && !jumped ? config.SnapDistance : (velocity.Y <= 0f ? 2f * config.ContactSkin : 0f);
+        // 8. The ground probe: max(snapDistance, 2·contactSkin) when grounded at the start and not jumped,
+        // so a grounded probe always reaches the contact band, else 2·contactSkin while not rising. Its
+        // contact is the nearest touching support contact, else the nearest contact.
+        var contactBand = 2f * config.ContactSkin;
+        var probe = groundedAtStart && !jumped ? SimMath.Max(config.SnapDistance, contactBand) : (velocity.Y <= 0f ? contactBand : 0f);
         var groundNormal = Up;
         grounded = false;
         if (probe > 0f)
         {
             var down = new Vec3(0f, 0f - probe, 0f);
-            var hit = mover.Sweep(position, down);
+            var hit = mover.GroundSweep(position, down);
             if (mover.Faulted)
             {
                 return mover.Fault();
@@ -315,42 +317,31 @@ public static class MovementStep
         }
 
         /// <summary>The capsule at <paramref name="feet"/> swept by <paramref name="displacement"/>, counted.</summary>
-        public SweepHit Sweep(Vec3 feet, Vec3 displacement)
-        {
-            Sweeps++;
-            var bottom = new Vec3(feet.X, feet.Y + _config.CapsuleRadius, feet.Z);
-            var top = new Vec3(feet.X, feet.Y + AxisTop, feet.Z);
-            var hit = CapsuleSweep.Sweep(_world, bottom, top, _config.CapsuleRadius, _config.ContactSkin, displacement, _candidates, out var queryCount);
-            if (queryCount < 0)
-            {
-                Faulted = true;
-                return default;
-            }
-
-            return hit;
-        }
+        public SweepHit Sweep(Vec3 feet, Vec3 displacement) => Sweep(feet, displacement, preferSupport: false);
 
         /// <summary>
-        /// The support rule: a contact normal with y ≥ CosSlopeLimit (the support normal is then the contact
-        /// normal), or an edge or vertex contact on a face whose normal has y ≥ CosSlopeLimit with the
-        /// contact normal's y ≥ <c>ledgeSupportMinNormalY</c> (the support normal is then the face normal).
+        /// A sweep that looks for ground, counted: <see cref="CapsuleSweep.SweepPreferringSupport"/>, whose
+        /// contact is the nearest support contact touching the capsule at the sweep's time, else the nearest
+        /// contact. The ground probe and the step-up's two down-sweeps use it.
+        /// </summary>
+        public SweepHit GroundSweep(Vec3 feet, Vec3 displacement) => Sweep(feet, displacement, preferSupport: true);
+
+        /// <summary>
+        /// The support rule (<see cref="CapsuleSweep.IsSupport"/>): a contact normal with y ≥ CosSlopeLimit
+        /// (the support normal is then the contact normal), or an edge or vertex contact on a face whose
+        /// normal has y ≥ CosSlopeLimit with the contact normal's y ≥ <c>ledgeSupportMinNormalY</c> (the
+        /// support normal is then the face normal).
         /// </summary>
         public readonly bool IsSupport(in SweepHit hit, out Vec3 supportNormal)
         {
-            if (hit.Normal.Y >= _config.CosSlopeLimit)
+            if (!CapsuleSweep.IsSupport(hit.Normal, hit.FaceNormal, hit.IsFaceContact, _config.CosSlopeLimit, _config.LedgeSupportMinNormalY))
             {
-                supportNormal = hit.Normal;
-                return true;
+                supportNormal = Up;
+                return false;
             }
 
-            if (!hit.IsFaceContact && hit.FaceNormal.Y >= _config.CosSlopeLimit && hit.Normal.Y >= _config.LedgeSupportMinNormalY)
-            {
-                supportNormal = hit.FaceNormal;
-                return true;
-            }
-
-            supportNormal = Up;
-            return false;
+            supportNormal = hit.Normal.Y >= _config.CosSlopeLimit ? hit.Normal : hit.FaceNormal;
+            return true;
         }
 
         /// <summary>
@@ -540,13 +531,14 @@ public static class MovementStep
         /// up-sweep by stepHeight (refused if it rises no more than the skin), a walls-only slide with the
         /// horizontal velocity, and a down-sweep by the rise plus 2·contactSkin. Accepted only when it lands
         /// on support, the landing contact is at most stepHeight above the starting one, and it ends further
-        /// along the horizontal velocity than the plain slide.
+        /// along the horizontal velocity than the plain slide. Both down-sweeps are ground sweeps
+        /// (<see cref="GroundSweep"/>), so their contact is support whenever a support contact touches.
         /// </summary>
         private bool TryStepUp(Vec3 start, Vec3 startVelocity, float subDt, ref Vec3 position, ref Vec3 velocity, out MovementOutcome outcome)
         {
             outcome = MovementOutcome.None;
             var skin = _config.ContactSkin;
-            var ground = Sweep(start, new Vec3(0f, 0f - (2f * skin), 0f));
+            var ground = GroundSweep(start, new Vec3(0f, 0f - (2f * skin), 0f));
             if (Faulted || !ground.Hit)
             {
                 return false;
@@ -576,7 +568,7 @@ public static class MovementStep
             }
 
             var drop = 0f - (rise + (2f * skin));
-            var land = Sweep(moved, new Vec3(0f, drop, 0f));
+            var land = GroundSweep(moved, new Vec3(0f, drop, 0f));
             if (Faulted || !land.Hit || !IsSupport(land, out _) || land.ContactPoint.Y - ground.ContactPoint.Y > stepHeight)
             {
                 return false;
@@ -592,6 +584,27 @@ public static class MovementStep
             velocity = movedVelocity;
             outcome = slide.Outcome;
             return true;
+        }
+
+        /// <summary>The counted sweep behind <see cref="Sweep(Vec3, Vec3)"/> and <see cref="GroundSweep"/>; a query overflow faults the step.</summary>
+        private SweepHit Sweep(Vec3 feet, Vec3 displacement, bool preferSupport)
+        {
+            Sweeps++;
+            var bottom = new Vec3(feet.X, feet.Y + _config.CapsuleRadius, feet.Z);
+            var top = new Vec3(feet.X, feet.Y + AxisTop, feet.Z);
+            var radius = _config.CapsuleRadius;
+            var skin = _config.ContactSkin;
+            int queryCount;
+            var hit = preferSupport
+                ? CapsuleSweep.SweepPreferringSupport(_world, bottom, top, radius, skin, displacement, _config.CosSlopeLimit, _config.LedgeSupportMinNormalY, _candidates, out queryCount)
+                : CapsuleSweep.Sweep(_world, bottom, top, radius, skin, displacement, _candidates, out queryCount);
+            if (queryCount < 0)
+            {
+                Faulted = true;
+                return default;
+            }
+
+            return hit;
         }
 
         /// <summary>

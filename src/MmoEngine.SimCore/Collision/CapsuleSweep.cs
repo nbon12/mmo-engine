@@ -47,7 +47,46 @@ public static class CapsuleSweep
     /// </summary>
     /// <param name="queryCount">The box query's count, or −1 when it overflowed <paramref name="candidates"/>; the sweep is then a miss and the caller refuses the step.</param>
     public static SweepHit Sweep(
-        CollisionWorld world, Vec3 axisBottom, Vec3 axisTop, float radius, float skin, Vec3 displacement, Span<int> candidates, out int queryCount)
+        CollisionWorld world, Vec3 axisBottom, Vec3 axisTop, float radius, float skin, Vec3 displacement, Span<int> candidates, out int queryCount) =>
+        Run(world, axisBottom, axisTop, radius, skin, displacement, preferSupport: false, 0f, 0f, candidates, out queryCount);
+
+    /// <summary>
+    /// <see cref="Sweep"/> for a sweep that looks for ground: the movement step's ground probe and the
+    /// step-up's two down-sweeps (data-model.md#movement-step). The stop time is the same, and a boundary
+    /// plane that stops at exactly that time is still the contact; otherwise the contact is the nearest
+    /// support contact touching the capsule at that time (its distance then at most r + skin + 0.1·skin,
+    /// the stop band) under <see cref="IsSupport"/> with <paramref name="cosSlopeLimit"/> and
+    /// <paramref name="ledgeSupportMinNormalY"/>, ties to the lower ID, and the nearest contact, as in
+    /// <see cref="Sweep"/>, only when no touching contact is support. So a steep face marginally nearer
+    /// than the walkable ground under the feet cannot hide that ground. Only contacts within the stop band
+    /// count: a support triangle that would touch only later in the sweep is not touching at its time.
+    /// </summary>
+    /// <param name="queryCount">The box query's count, or −1 when it overflowed <paramref name="candidates"/>; the sweep is then a miss and the caller refuses the step.</param>
+    internal static SweepHit SweepPreferringSupport(
+        CollisionWorld world, Vec3 axisBottom, Vec3 axisTop, float radius, float skin, Vec3 displacement, float cosSlopeLimit, float ledgeSupportMinNormalY, Span<int> candidates, out int queryCount) =>
+        Run(world, axisBottom, axisTop, radius, skin, displacement, preferSupport: true, cosSlopeLimit, ledgeSupportMinNormalY, candidates, out queryCount);
+
+    /// <summary>
+    /// The support rule (data-model.md#grounded-and-airborne): a contact normal with y ≥
+    /// <paramref name="cosSlopeLimit"/>, or an edge or vertex contact on a face whose normal has y ≥
+    /// <paramref name="cosSlopeLimit"/> with the contact normal's y ≥ <paramref name="ledgeSupportMinNormalY"/>.
+    /// </summary>
+    internal static bool IsSupport(Vec3 normal, Vec3 faceNormal, bool isFaceContact, float cosSlopeLimit, float ledgeSupportMinNormalY) =>
+        normal.Y >= cosSlopeLimit || (!isFaceContact && faceNormal.Y >= cosSlopeLimit && normal.Y >= ledgeSupportMinNormalY);
+
+    /// <summary><see cref="Sweep"/>, and with <paramref name="preferSupport"/> <see cref="SweepPreferringSupport"/>.</summary>
+    private static SweepHit Run(
+        CollisionWorld world,
+        Vec3 axisBottom,
+        Vec3 axisTop,
+        float radius,
+        float skin,
+        Vec3 displacement,
+        bool preferSupport,
+        float cosSlopeLimit,
+        float ledgeSupportMinNormalY,
+        Span<int> candidates,
+        out int queryCount)
     {
         ArgumentNullException.ThrowIfNull(world);
         var target = radius + skin;
@@ -123,8 +162,12 @@ public static class CapsuleSweep
         }
 
         // Pass 2: the nearest, at the sweep's time, of the planes and triangles that hit; ties to the lower ID.
+        // Preferring support, also the nearest support contact within the stop band then, which wins.
         var best = default(SweepHit);
         var bestDistance = float.PositiveInfinity;
+        var support = default(SweepHit);
+        var supportDistance = float.PositiveInfinity;
+        var touching = target + tolerance;
         for (var i = 0; i < BoundaryPlaneCount; i++)
         {
             if (planeStops[i] <= 1f)
@@ -133,6 +176,12 @@ public static class CapsuleSweep
                 if (distance < bestDistance)
                 {
                     (best, bestDistance) = (hit, distance);
+                }
+
+                if (preferSupport && distance < supportDistance && distance <= touching
+                    && IsSupport(hit.Normal, hit.FaceNormal, hit.IsFaceContact, cosSlopeLimit, ledgeSupportMinNormalY))
+                {
+                    (support, supportDistance) = (hit, distance);
                 }
             }
         }
@@ -155,9 +204,16 @@ public static class CapsuleSweep
                 best = new SweepHit(bestT, id, contact.Normal, contact.FaceNormal, contact.IsFace, contact.Point + origin);
                 bestDistance = distance;
             }
+
+            if (preferSupport && distance < supportDistance && distance <= touching
+                && IsSupport(contact.Normal, contact.FaceNormal, contact.IsFace, cosSlopeLimit, ledgeSupportMinNormalY))
+            {
+                support = new SweepHit(bestT, id, contact.Normal, contact.FaceNormal, contact.IsFace, contact.Point + origin);
+                supportDistance = distance;
+            }
         }
 
-        return best;
+        return support.Hit ? support : best;
     }
 
     /// <summary>

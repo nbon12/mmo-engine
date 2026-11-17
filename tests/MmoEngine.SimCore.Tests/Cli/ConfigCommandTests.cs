@@ -8,7 +8,8 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// with <c>SimConfigJson</c>, validates it with <c>SimConfigValidator</c> and prints one
 /// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
 /// valid. It exits 0 when valid, 1 when invalid, and 2 on a usage error or a refused input: a missing
-/// file or one longer than 1 MiB, named on stderr.
+/// file or one longer than 1 MiB, named on stderr, or an empty or whitespace-only file argument, refused
+/// as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
 /// </summary>
 public sealed class ConfigCommandTests
 {
@@ -20,7 +21,8 @@ public sealed class ConfigCommandTests
     /// <summary>The largest configuration file <c>config check</c> reads, 1 MiB.</summary>
     private const long MaxFileLength = 1024 * 1024;
 
-    public static TheoryData<string> Cases => ["valid", "invalid", "missing-file", "oversized-file", "no-file-argument"];
+    public static TheoryData<string> Cases =>
+        ["valid", "invalid", "missing-file", "oversized-file", "no-file-argument", "empty-file-argument", "whitespace-file-argument"];
 
     [Theory]
     [MemberData(nameof(Cases))]
@@ -75,6 +77,14 @@ public sealed class ConfigCommandTests
 
             case "no-file-argument":
                 return new(["config", "check"], Exit: 2);
+
+            // An empty or whitespace-only path is a usage error when the command line is parsed, so no
+            // file API sees it and nothing reaches stdout.
+            case "empty-file-argument":
+                return new(["config", "check", string.Empty], Exit: 2, Stdout: string.Empty, StderrContains: "<file>: the path must not be empty or whitespace");
+
+            case "whitespace-file-argument":
+                return new(["config", "check", "   "], Exit: 2, Stdout: string.Empty, StderrContains: "<file>: the path must not be empty or whitespace");
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case.");

@@ -20,7 +20,8 @@ namespace MmoEngine.SimCore.Cli.Commands;
 /// catalog, and appends one entry with the reason to the streams folder's regeneration log; every refusal
 /// exits 2 (a step fault exits 1) before anything is written. <c>streams verify</c> runs every stream in a
 /// folder through <see cref="StreamRunner"/> and compares each step's hash with the stream's expected
-/// hash, writing nothing.
+/// hash, writing nothing. An empty or whitespace-only path option of either command is refused when the
+/// command line is parsed (<see cref="PathOptions"/>), exit 2.
 /// </summary>
 internal static class StreamsCommand
 {
@@ -62,9 +63,9 @@ internal static class StreamsCommand
         var scenario = new Option<string?>("--scenario") { Description = "The scenario to record, by name." };
         var all = new Option<bool>("--all") { Description = "Record every scenario in the catalog and remove streams no longer in it." };
         var reason = new Option<string?>("--reason") { Description = "Why the expected hashes change: one line of at most 500 characters." };
-        var output = new Option<string>("--out") { Description = "The streams folder.", DefaultValueFactory = _ => DefaultStreams };
-        var recordContent = new Option<string>("--content") { Description = "The folder of collision files.", DefaultValueFactory = _ => DefaultContent };
-        var config = new Option<string>("--config") { Description = "The base configuration.", DefaultValueFactory = _ => DefaultConfig };
+        var output = PathOptions.RequireNonEmpty(new Option<string>("--out") { Description = "The streams folder.", DefaultValueFactory = _ => DefaultStreams });
+        var recordContent = PathOptions.RequireNonEmpty(new Option<string>("--content") { Description = "The folder of collision files.", DefaultValueFactory = _ => DefaultContent });
+        var config = PathOptions.RequireNonEmpty(new Option<string>("--config") { Description = "The base configuration.", DefaultValueFactory = _ => DefaultConfig });
         var record = new Command("record", "Regenerates committed streams and their expected hashes.")
         {
             scenario,
@@ -87,8 +88,8 @@ internal static class StreamsCommand
             logger,
             runStream));
 
-        var directory = new Option<string>("--dir") { Description = "The streams folder.", DefaultValueFactory = _ => DefaultStreams };
-        var verifyContent = new Option<string>("--content") { Description = "The folder of collision files.", DefaultValueFactory = _ => DefaultContent };
+        var directory = PathOptions.RequireNonEmpty(new Option<string>("--dir") { Description = "The streams folder.", DefaultValueFactory = _ => DefaultStreams });
+        var verifyContent = PathOptions.RequireNonEmpty(new Option<string>("--content") { Description = "The folder of collision files.", DefaultValueFactory = _ => DefaultContent });
         var verify = new Command("verify", "Runs every stream through the server build and checks every expected hash.")
         {
             directory,

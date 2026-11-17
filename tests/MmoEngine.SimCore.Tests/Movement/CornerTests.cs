@@ -16,7 +16,7 @@ namespace MmoEngine.SimCore.Tests.Movement;
 /// a 0.25 m bump, or a top edge or the shared top vertex of <see cref="MovementWorlds.Corner"/>'s two
 /// walls. Each feature is convex and level where the feet touch it, so the capsule starts touching it at
 /// exactly capsuleRadius without overlapping. Each of the eight movement directions is then held for 60
-/// steps from that start.
+/// steps from that start. The concave corner is <c>MovementScenarioTests.CornerWedgeNeverTunnelsOrOscillates</c>.
 /// </summary>
 public sealed class CornerTests
 {
@@ -64,9 +64,13 @@ public sealed class CornerTests
     /// touches the feature from above, so the contact normal is (0, 1, 0)), facing yaw 0, When each of the
     /// eight movement directions is held for 60 steps from that start (one sub-case per direction), Then no
     /// step ends with the capsule axis nearer any triangle than capsuleRadius − contactTolerance (double
-    /// reference distance, <see cref="CapsuleClearanceReference"/>), no step faults, and the per-step
+    /// reference distance, <see cref="CapsuleClearanceReference"/>), no step faults, the per-step
     /// positions, the start included, never contain an A, B, A, B alternation of bit-identical positions
-    /// with A ≠ B. Every failing direction is reported.
+    /// with A ≠ B, and the slide loop stops within its iteration limit: every step runs at most
+    /// maxSubMoves sub-moves and at most SubMoves · (2 · maxSlideIterations + 4) + 1 sweeps (the bound of
+    /// data-model.md#movement-step). So that no clause passes for a character that never leaves its
+    /// start, every direction must sweep at some step and end away from the start. Every failing direction
+    /// is reported.
     /// </summary>
     [Theory]
     [MemberData(nameof(Starts))]
@@ -85,6 +89,7 @@ public sealed class CornerTests
             System.Math.Abs(startDistance - radius) <= 1e-5,
             $"{start}: the start's axis is {startDistance:R} m from the nearest triangle; on the feature it is capsuleRadius {radius:R}");
 
+        var sweepsPerSubMove = (2 * config.MaxSlideIterations) + 4;
         var failures = new List<string>();
         foreach (var (name, buttons) in Directions)
         {
@@ -101,6 +106,7 @@ public sealed class CornerTests
                 WeaponCount = (byte)TestStates.PlaceholderWeapons.Count,
             };
             var positions = new List<Vec3>(Steps + 1) { feet };
+            var swept = false;
             for (var k = 1; k <= Steps; k++)
             {
                 var input = new InputCommand((uint)k, (uint)k, buttons, 0, 0, 0);
@@ -111,6 +117,17 @@ public sealed class CornerTests
                     failures.Add($"{name}: step {k} faulted with {result.Fault}; the character was {before}");
                     break;
                 }
+
+                var sweepBound = (result.SubMoves * sweepsPerSubMove) + 1;
+                if (result.SubMoves > config.MaxSubMoves || result.Sweeps > sweepBound)
+                {
+                    failures.Add(
+                        $"{name}: step {k} ran {result.SubMoves} sub-moves (at most maxSubMoves {config.MaxSubMoves}) and {result.Sweeps} sweeps " +
+                        $"(at most SubMoves · (2 · maxSlideIterations + 4) + 1 = {sweepBound}), past the slide loop's limit; before {before}, after {character}");
+                    break;
+                }
+
+                swept |= result.Sweeps > 0;
 
                 var height = character.Stance == Stance.Standing ? config.StandHeight : config.CrouchHeight;
                 var (bottom, top) = CapsuleClearanceReference.Axis(character.Position, radius, height);
@@ -124,6 +141,16 @@ public sealed class CornerTests
                 }
 
                 positions.Add(character.Position);
+            }
+
+            if (!swept)
+            {
+                failures.Add($"{name}: no step ran a sweep, so the slide loop's limit was never exercised");
+            }
+
+            if (character.Position.Equals(feet))
+            {
+                failures.Add($"{name}: the character ended where it started, {feet}, so it never left the feature");
             }
 
             for (var i = 0; i + 3 < positions.Count; i++)

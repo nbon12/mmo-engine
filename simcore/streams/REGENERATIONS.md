@@ -111,3 +111,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | wall-slide-45 | added: c9cdeeb976a4c0b7 | added: b9be152f8d0d1450 | |
+
+## 2026-11-17T01:16:12Z
+
+- Reason: The ground probe and the step-up's down-sweeps now take the nearest support contact touching the capsule, so the 50-degree face no longer leaves the character airborne on the plateau (spec 015 Phase 3 review).
+- Command: `simcore streams record --scenario slope-limit`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| slope-limit | cdb5b29fb3f3e5f8 -> ef6eb3374da84868 | c295a0957a79ae2d -> cf23db61b372bf66 | 86 |

@@ -20,6 +20,11 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- <command> [options]
 - Logs are Serilog compact JSON on stderr, with the property `Tool` = `simcore`.
 - Results are plain text lines on stdout, in the shapes given below. Report files are written where
   each command says.
+- A path option or argument given as an empty or whitespace-only string (for example
+  `--content ""` or `config check "   "`) is a usage error. It is refused when the command line is
+  parsed, before the command runs, and logged as `Invalid arguments: <option>: the path must not be
+  empty or whitespace` (`<file>` for `config check`'s argument). The command exits 2 and writes
+  nothing.
 - Every file the CLI creates or replaces is written to a temporary file in the same directory and then
   renamed, so an interrupted run never leaves a half-written file. The two appends (to
   `REGENERATIONS.md` and to the `--summary` file) are single writes at the end of a command.
@@ -137,7 +142,8 @@ writes under `simcore/streams/`; the tests open stream files read-only.
 4. Write `<out>/<name>.mmrs` with `rulesRevision` = `SimCoreVersion.RulesRevision`
    ([recorded-stream-format.md](recorded-stream-format.md)). An unchanged stream is not rewritten.
 5. With `--all`, a `.mmrs` file in `<out>` whose scenario is no longer in the catalog is deleted and
-   listed as removed.
+   listed as removed. The deletion goes through the stream writer's `RemoveCommitted`
+   ([recorded-stream-format.md](recorded-stream-format.md#regeneration)).
 6. When at least one stream was added, changed or removed, append an entry to
    `<out>/REGENERATIONS.md`. When nothing changed, the file is not touched and the command exits 0.
 

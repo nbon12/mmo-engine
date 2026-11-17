@@ -65,4 +65,23 @@ public sealed class ContentCommandTests
             $"the temp directory should hold only {blocker}, but holds: {string.Join(", ", entries)}");
         Assert.Equal(blockerBytes, File.ReadAllBytes(blocker));
     }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#settings-output-and-exit-codes: Given <c>--out</c> given as
+    /// <paramref name="value"/> (empty, or whitespace only), When <c>simcore content generate</c> runs, Then
+    /// it exits 2, a usage error refused when the command line is parsed: stderr has
+    /// <c>--out: the path must not be empty or whitespace</c> and no exception, and stdout has no result line.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ContentGenerateRefusesAnEmptyOrWhitespaceOutPath(string value)
+    {
+        var (exit, stdout, stderr) = SimcoreCli.Run("content", "generate", "--out", value);
+
+        Assert.True(exit == 2, $"simcore content generate --out \"{value}\" exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        Assert.Contains("--out: the path must not be empty or whitespace", stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Exception", stderr, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, stdout);
+    }
 }

@@ -330,23 +330,32 @@ the movement per step is passed through (edge cases). Each sub-move runs, in ord
    SlideCapReached; a boundary plane hit reports ClampedToBounds.
 3. **Step-up**, only when grounded and the slide hit a wall: find the starting ground contact with a
    2·`contactSkin` down-sweep, sweep up by `stepHeight` (rejected if it rises no more than the skin),
-   slide horizontally in walls-only mode, sweep down by the rise plus 2·`contactSkin`. Accepted only if
-   it lands on support, the landing contact is at most `stepHeight` above the starting ground contact,
-   and it moves further along the horizontal velocity than the plain slide (US1 scenario 3).
+   slide horizontally in walls-only mode, sweep down by the rise plus 2·`contactSkin`. Both down-sweeps
+   are ground sweeps (below). Accepted only if it lands on support, the landing contact is at most
+   `stepHeight` above the starting ground contact, and it moves further along the horizontal velocity
+   than the plain slide (US1 scenario 3).
 
 After the sub-moves a safety clamp keeps Position inside the playable area and reports
 ClampedToBounds if it had to move it.
 
-Sub-step 8 sweeps down `snapDistance` when the character was grounded at the start of the step and
-did not jump, otherwise 2·`contactSkin` when Velocity.y ≤ 0. Support found: move to it, set Grounded,
-GroundNormal and Velocity.y = 0. Otherwise the character is airborne and GroundNormal = (0, 1, 0).
+Sub-step 8 sweeps down max(`snapDistance`, 2·`contactSkin`) when the character was grounded at the
+start of the step and did not jump, so a grounded probe always reaches the contact band even with
+`snapDistance` 0, otherwise 2·`contactSkin` when Velocity.y ≤ 0. The probe is a ground sweep: its
+contact is the nearest touching support contact at the sweep's time, else the nearest contact.
+Support found: move to it, set Grounded, GroundNormal and Velocity.y = 0. Otherwise the character is
+airborne and GroundNormal = (0, 1, 0).
 
 Each capsule sweep uses conservative advancement against each candidate triangle (at most 8
 iterations, never past the true time of impact) and keeps the minimum time of impact. Its contact is a
 boundary plane that stops at exactly that time, so boundary planes win ties; otherwise the nearest,
 measured at that time, of the planes and triangles that hit, with ties to the lower ID, so the edge
-two coplanar triangles share cannot tilt a flat wall's normal. The capsule never ends a step
-overlapping terrain or a mesh by more than `contactTolerance` (FR-003).
+two coplanar triangles share cannot tilt a flat wall's normal. A ground sweep (the probe and the
+step-up's two down-sweeps) keeps the same time and the same boundary-plane rule, but its contact is
+the nearest support contact whose distance at that time is within the stop band (r + `contactSkin` +
+0.1·`contactSkin`), ties to the lower ID, and the nearest contact only when no touching contact is
+support. So a steep face marginally nearer than the walkable ground under the feet cannot hide it, and
+a support triangle the capsule would reach only later in the sweep cannot ground it. The capsule never
+ends a step overlapping terrain or a mesh by more than `contactTolerance` (FR-003).
 
 Loop bounds per step (FR-005): `maxSubMoves` sub-moves; per sub-move 4 push-outs, `maxSlideIterations`
 slide sweeps and one step-up of 4 sweeps plus `maxSlideIterations` slide sweeps; one probe; 8

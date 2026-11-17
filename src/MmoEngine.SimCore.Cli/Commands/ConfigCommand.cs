@@ -13,7 +13,8 @@ namespace MmoEngine.SimCore.Cli.Commands;
 /// validation error on stdout, in rule-table order, and nothing when the file is valid. It exits 0 when
 /// valid and 1 when invalid. A file it cannot check (one that does not exist, is longer than
 /// <see cref="SimConfigJson.MaxFileLength"/> or cannot be read) is a refused input: one
-/// <c>&lt;path&gt;: …</c> line on stderr and exit 2, as the CLI's exit-code table gives it.
+/// <c>&lt;path&gt;: …</c> line on stderr and exit 2, as the CLI's exit-code table gives it; an empty or
+/// whitespace-only path is refused when the command line is parsed (<see cref="PathOptions"/>), also exit 2.
 /// </summary>
 internal static class ConfigCommand
 {
@@ -23,7 +24,7 @@ internal static class ConfigCommand
         ArgumentNullException.ThrowIfNull(stdout);
         ArgumentNullException.ThrowIfNull(stderr);
         ArgumentNullException.ThrowIfNull(logger);
-        var file = new Argument<string>("file") { Description = "The configuration file to check, for example simcore/config/default.json." };
+        var file = PathOptions.RequireNonEmpty(new Argument<string>("file") { Description = "The configuration file to check, for example simcore/config/default.json." });
         var check = new Command("check", "Validates a configuration file against the core's rule table.") { file };
         check.SetAction(parse => Check(parse.GetValue(file)!, stdout, stderr, logger));
         return new Command("config", "Simulation configuration files.") { check };

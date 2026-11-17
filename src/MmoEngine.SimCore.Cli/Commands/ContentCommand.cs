@@ -26,11 +26,11 @@ internal static class ContentCommand
         ArgumentNullException.ThrowIfNull(stdout);
         ArgumentNullException.ThrowIfNull(stderr);
         ArgumentNullException.ThrowIfNull(logger);
-        var output = new Option<string>("--out")
+        var output = PathOptions.RequireNonEmpty(new Option<string>("--out")
         {
             Description = "The collision file to write.",
             DefaultValueFactory = _ => DefaultOut,
-        };
+        });
         var generate = new Command("generate", "Writes the deterministic test world.") { output };
         generate.SetAction(parse => Generate(parse.GetValue(output)!, stdout, stderr, logger));
         return new Command("content", "Collision content.") { generate };

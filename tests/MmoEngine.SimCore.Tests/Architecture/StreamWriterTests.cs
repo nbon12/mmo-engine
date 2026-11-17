@@ -4,8 +4,9 @@ namespace MmoEngine.SimCore.Tests.Architecture;
 
 /// <summary>
 /// FR-028, contracts/recorded-stream-format.md#regeneration: committed expected hashes change only
-/// through <c>simcore streams record</c>. The stream file writer's two entry points are called from the
-/// record command's handler and nowhere else, only the writer knows the regeneration log's file name, and
+/// through <c>simcore streams record</c>. The stream file writer's three entry points (write a stream,
+/// remove a stream, append to the regeneration log) are called from the record command's handler and
+/// nowhere else, only the writer knows the regeneration log's file name, and
 /// no test reaches the writer. The check reads the sources as text: every <c>*.cs</c> under
 /// <c>src/</c> and <c>tests/</c>, outside <c>bin</c> and <c>obj</c>, through <see cref="RepoPaths"/>,
 /// read-only.
@@ -22,12 +23,14 @@ public sealed class StreamWriterTests
 
     private const string WriterPrefix = "StreamFiles.";
 
-    private static readonly string[] WriterCalls = [WriterPrefix + "WriteCommitted(", WriterPrefix + "AppendRegenerations("];
+    private static readonly string[] WriterCalls =
+        [WriterPrefix + "WriteCommitted(", WriterPrefix + "RemoveCommitted(", WriterPrefix + "AppendRegenerations("];
 
     /// <summary>
     /// Given every <c>src/**/*.cs</c> and <c>tests/**/*.cs</c> outside <c>bin</c> and <c>obj</c>, Then the
-    /// text <c>StreamFiles.WriteCommitted(</c> and the text <c>StreamFiles.AppendRegenerations(</c> each
-    /// occur exactly once in <c>src/</c>, both in <c>src/MmoEngine.SimCore.Cli/Commands/StreamsCommand.cs</c>;
+    /// texts <c>StreamFiles.WriteCommitted(</c>, <c>StreamFiles.RemoveCommitted(</c> and
+    /// <c>StreamFiles.AppendRegenerations(</c> each occur exactly once in <c>src/</c>, all three in
+    /// <c>src/MmoEngine.SimCore.Cli/Commands/StreamsCommand.cs</c>;
     /// the text <c>REGENERATIONS.md</c> occurs in no <c>src/</c> file other than
     /// <c>src/MmoEngine.SimCore.Cli/Commands/StreamFiles.cs</c>; and no test file other than this one
     /// contains <c>StreamFiles.</c>.

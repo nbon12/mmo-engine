@@ -714,9 +714,53 @@ The design documents settled these points, which the spec leaves open. They are 
   calls back with each file's name before it opens it (the public one passes no callback), and
   `ContentFiles.TryLoadAll` uses it to print the refusal and to pair each world with its file name,
   which `streams record` needs to find the collision file a scenario names. Content still loads only
-  through `LoadAll`. The `--all` removal goes through the stream writer too
-  (`StreamFiles.RemoveCommitted`), so every change under the streams folder stays in one class.
-  contracts/simcore-cli.md#content-files now says so.
+  through `LoadAll`; contracts/simcore-cli.md#content-files now says so. The `--all` removal goes
+  through the stream writer too (`StreamFiles.RemoveCommitted`), so every change under the streams
+  folder stays in one class: contracts/recorded-stream-format.md#regeneration names the writer's three
+  entry points, and T093's architecture test and T107 cover all three (Phase 3 review).
+- **Ground sweeps prefer a touching support contact (T097, T098, Phase 3 review).** The ground probe
+  took the single nearest contact at the sweep's time. Where a steep face touches the capsule a little
+  nearer than the walkable ground under the feet, that contact was the face, which is not support, so
+  a character standing still at the foot of `slope-limit`'s 50° face was airborne from then on (95 of
+  180 steps at 30 Hz, at exact rest height on the plateau) and could not jump, and walking into the
+  slope lane's steep side at 60 Hz flickered between grounded and airborne. The probe and the step-up's
+  two down-sweeps now use `CapsuleSweep.SweepPreferringSupport`: the same stop time and boundary-plane
+  rule, but the contact is the nearest support contact whose distance at that time is within the stop
+  band (r + skin + 0.1·skin), ties to the lower ID, else the nearest contact. Only touching contacts
+  count, because the snap uses the one stop time: a support triangle the capsule would reach later in
+  the sweep must not ground it. The starting-ground sweep of the step-up is included, since it too
+  looks for the ground the rise is measured from. Positions are unchanged; only Grounded and
+  GroundNormal change. The support rule now lives once, in `CapsuleSweep.IsSupport`. Of the 11
+  committed movement streams only `slope-limit` changed (first changed step 86); it was recorded again
+  with the reason, and `streams verify` matches the other 10 unchanged. data-model.md#movement-step,
+  research R7 and R8, T097 and T098 now say so, and T069, T071 and T081 assert it.
+- **The grounded probe is at least the contact band (T098, Phase 3 review).** With `snapDistance` 0,
+  which the rule table and R06 allow, a grounded character's probe had zero length and never hit, so a
+  character resting on flat ground alternated between grounded and airborne every step, switching Jump
+  and the ground and air acceleration on and off. The grounded probe is now max(snapDistance,
+  2·contactSkin), the band the airborne probe already uses, so snapDistance keeps its meaning as the
+  extra reach. Raising snapDistance's minimum with a new relation was not chosen: it would change the
+  configuration contract and its error codes for what is a step rule. No committed stream changes
+  (the placeholder is 0.35 m).
+- **An empty or whitespace-only path option is a usage error at parse time (T106 to T108, Phase 3
+  review).** `streams verify --content ""`, `streams record --out ""` or `--config ""` and
+  `config check ""` reached a file API that throws `ArgumentException`, which System.CommandLine turned
+  into an unhandled-exception exit 1, the code the contract keeps for a divergence or a validation
+  failure; and `content generate --out "   "` wrote a file named by three spaces into the working
+  directory. Every path option and argument of the CLI now carries `PathOptions.RequireNonEmpty`, so
+  such a value fails the parse, is logged as `Invalid arguments: <option>: the path must not be empty
+  or whitespace`, and exits 2 before any command runs. A broad `catch (ArgumentException)` around the
+  loaders was not chosen: it would also turn real programming errors into exit 2. The library
+  guards (`ContentFiles.LoadAll`, `StreamFiles`) keep throwing for direct callers.
+  contracts/simcore-cli.md#settings-output-and-exit-codes now says so; `agreement prepare` (Phase 4)
+  takes the same validator.
+- **The edge and vertex starts check the slide loop's bound and that the character moves (T073,
+  Phase 3 review).** `CornerTests.StartsOnATriangleEdgeOrVertexNeverTunnelOrOscillate` covered the edge
+  case's "never tunnels" and "never oscillates" clauses but not "the slide loop stops within its
+  iteration limit", and it would have passed for a character stuck on its start. Each step now checks
+  `SubMoves` ≤ maxSubMoves and `Sweeps` ≤ SubMoves · (2 · maxSlideIterations + 4) + 1, and every
+  direction (not just some direction) must sweep and end away from its start, which holds today at
+  every row and rate. Test-only: the code was unchanged.
 
 ## Delivery
 

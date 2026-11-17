@@ -429,7 +429,9 @@ including by parallel movement workers.
   - The minimum t wins, with ties going to the lower ID.
   - The four boundary planes use IDs −4 to −1, so they win ties.
   - The contact reported at that t is the nearest there of the planes and triangles that hit, unless a
-    boundary plane stops at exactly that t (T097; plan.md, Decisions made during implementation).
+    boundary plane stops at exactly that t (T097; plan.md, Decisions made during implementation). A
+    ground sweep (R8 step 8) takes the nearest support contact touching at that t instead, when there
+    is one.
   - Triangles are double-sided.
 - **Closest points** follow Ericson §5.1.5, §5.1.9 and §5.1.10, in a fixed candidate order with a
   strict `<`, with the float refinements plan.md records under Decisions made during implementation
@@ -493,8 +495,11 @@ In order:
        reports `SlideCapReached`;
    - **(c) step-up**: up, forward against walls only, then down. It is accepted only if the landing
      **contact point** rises at most StepHeight above the starting contact.
-8. **Ground probe** with snap. Support is a walkable normal, **or** an edge or vertex contact on a
-   walkable face whose contact normal's y is at least `ledgeSupportMinNormalY`.
+8. **Ground probe** with snap, of at least 2·skin when grounded. Support is a walkable normal, **or**
+   an edge or vertex contact on a walkable face whose contact normal's y is at least
+   `ledgeSupportMinNormalY`. The probe's contact (and the step-up's down-sweeps') is the nearest
+   touching support contact at the sweep's time, else the nearest contact, so a steep face touching the
+   capsule does not hide the ground (Phase 3 review; plan.md, Decisions made during implementation).
 9. **Bounds** are four vertical planes inside the sweep, reporting `ClampedToBounds`.
 10. **Commit**: the finite check and −0 canonicalisation (R13).
 

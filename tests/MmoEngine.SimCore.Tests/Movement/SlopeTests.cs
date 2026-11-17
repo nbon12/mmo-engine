@@ -22,8 +22,9 @@ public sealed class SlopeTests
     /// <summary>
     /// Climbing rows: the character is Grounded at every step and ends on the top flat (past the ramp's
     /// top edge by more than capsuleRadius) at rest height on it. Refused rows: whenever it is Grounded
-    /// its GroundNormal.y is at least <c>CosSlopeLimit</c>, and Position.y never exceeds the foot height
-    /// plus stepHeight.
+    /// its GroundNormal.y is at least <c>CosSlopeLimit</c>, Position.y never exceeds the foot height
+    /// plus stepHeight, and every step that ends with the feet at rest height on the flat before the foot
+    /// is Grounded there, so the steep face it is refused by never hides the walkable ground under it.
     /// </summary>
     [Theory]
     [MemberData(nameof(Slopes))]
@@ -67,6 +68,11 @@ public sealed class SlopeTests
 
             Assert.True(after.Position.Y <= ceiling,
                 $"{degrees:R}° at {hz} Hz: step {k + 1} put Position.y at {after.Position.Y:R}, above the foot height + stepHeight {ceiling:R}; position {after.Position}");
+            if (after.Position.Z < world.FrontEdge && MovementStepTests.AtRestOn(after.Position.Y, world.FootPoint.Y, config))
+            {
+                Assert.True(MovementStepTests.IsGrounded(after),
+                    $"{degrees:R}° at {hz} Hz: step {k + 1} left the character airborne at rest height on the flat before the foot; position {after.Position}, velocity {after.Velocity}");
+            }
         }
     }
 }

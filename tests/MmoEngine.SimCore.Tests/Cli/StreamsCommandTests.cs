@@ -76,6 +76,27 @@ public sealed class StreamsCommandTests
     public static TheoryData<string> EmptyDirectoryCases => ["empty", "missing"];
 
     /// <summary>
+    /// Rows <c>(command, option, value)</c>: every path option of <c>streams record</c> and
+    /// <c>streams verify</c>, each given as an empty string and as whitespace only.
+    /// </summary>
+    public static TheoryData<string, string, string> EmptyPathCases
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            (string Command, string Option)[] options =
+                [("record", "--out"), ("record", "--content"), ("record", "--config"), ("verify", "--dir"), ("verify", "--content")];
+            foreach (var (command, option) in options)
+            {
+                data.Add(command, option, string.Empty);
+                data.Add(command, option, "   ");
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
     /// US1.7 (and, with <c>MovementScenarioTests</c>' US1.2 to US1.6 outcomes, the US1 Independent Test):
     /// Given the committed <c>simcore/streams/*.mmrs</c> (n files) and <c>simcore/content/</c>, When
     /// <c>simcore streams verify --dir &lt;root&gt;/simcore/streams --content &lt;root&gt;/simcore/content</c>
@@ -580,6 +601,42 @@ public sealed class StreamsCommandTests
         {
             Assert.Contains(streams, stderr, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#settings-output-and-exit-codes: Given copies of the committed streams,
+    /// content and configuration, and <c>streams record --scenario flat-run-30hz --reason "Test
+    /// regeneration"</c> or <c>streams verify</c> on them with one path option given as
+    /// <paramref name="value"/> (empty, or whitespace only), When the command runs, Then it exits 2, a usage
+    /// error rather than an unhandled exception; stderr names the option as
+    /// <c>&lt;option&gt;: the path must not be empty or whitespace</c> and has no exception; stdout is empty,
+    /// so no stream ran; and every file in the temp directory keeps its bytes and last-write time, with none
+    /// added or removed.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EmptyPathCases))]
+    public void StreamsRefuseAnEmptyOrWhitespacePathOption(string command, string option, string value)
+    {
+        using var sandbox = Sandbox.Create($"streams-{command}-empty-path");
+        string[] args = command switch
+        {
+            "record" => sandbox.RecordArgs("--scenario", FlatRun30, "--reason", "Test regeneration"),
+            "verify" => ["streams", "verify", "--dir", sandbox.Streams, "--content", sandbox.Content],
+            _ => throw new ArgumentOutOfRangeException(nameof(command), command, "Unknown row."),
+        };
+        var at = Array.IndexOf(args, option);
+        Assert.True(at >= 0 && at + 1 < args.Length, $"streams {command} has no {option} to replace in {string.Join(' ', args)}");
+        args[at + 1] = value;
+        var label = $"streams {command} {option} \"{value}\"";
+        var before = Snapshot(sandbox.Root);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(args);
+
+        Assert.True(exit == 2, $"{label}: exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        Assert.Contains($"{option}: the path must not be empty or whitespace", stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Exception", stderr, StringComparison.Ordinal);
+        Assert.True(stdout.Length == 0, $"{label}: printed results although the path was refused; stdout: {stdout}");
+        AssertNothingWritten(before, sandbox.Root, label);
     }
 
     /// <summary>

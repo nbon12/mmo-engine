@@ -225,10 +225,16 @@ Expected hashes change only through a committed regeneration that states why (FR
   core's current `SimCoreVersion.RulesRevision` into every stream it records, prints each stream's
   old and new hash, and appends the reason to `simcore/streams/REGENERATIONS.md`. Without `--reason`
   it exits 2 and writes nothing ([simcore-cli.md](simcore-cli.md)).
+  The writer is `StreamFiles` in `src/MmoEngine.SimCore.Cli/Commands/StreamFiles.cs`, and its three
+  entry points are the only code that changes the streams folder: `WriteCommitted` (a stream, written
+  atomically), `RemoveCommitted` (a stream whose scenario left the catalog, with `--all` only) and
+  `AppendRegenerations` (one entry appended to the log).
 - **Tests never write.** Tests and `simcore streams verify` open stream files read-only
   (`FileAccess.Read`). `simcore agreement prepare` copies the committed streams into its work
-  directory and writes the generated ones there. An architecture test checks that only the
-  `streams record` command handler calls the stream file writer.
+  directory and writes the generated ones there. An architecture test
+  (`StreamWriterTests.OnlyTheRecordCommandWritesStreamFiles`) checks that each of the writer's three
+  entry points is called exactly once in `src/`, from the `streams record` command handler, and that
+  no test calls the writer.
 - **A rules change.** The commit that changes the rules bumps `SimCoreVersion.RulesRevision`. Until
   the streams are recorded again, `streams verify` reports every stream NotComparable and fails, so
   the regeneration and its reason land in the same pull request.

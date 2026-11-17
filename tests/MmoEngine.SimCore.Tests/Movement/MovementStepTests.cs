@@ -11,9 +11,11 @@ namespace MmoEngine.SimCore.Tests.Movement;
 /// <summary>
 /// The movement step's sub-steps one at a time (FR-002, data-model.md#movement-step): the wish velocity
 /// the buttons and stance give (sub-step 3), the horizontal approach toward it by at most rate·dt
-/// (sub-step 4), the sub-move count (sub-step 7), and the ground projection that keeps horizontal speed
-/// on a slope (sub-step 6). Every step here calls <see cref="MovementStep.Step"/> directly, on a
-/// <see cref="MovementWorlds"/> world, with a candidate buffer the size a <c>SimWorld</c> uses. The
+/// (sub-step 4), the sub-move count (sub-step 7), the ground projection that keeps horizontal speed
+/// on a slope (sub-step 6), and the ground probe (sub-step 8): it always reaches the contact band, and a
+/// steep face touching the capsule never hides the walkable ground under it. Every step here calls
+/// <see cref="MovementStep.Step"/> directly, on a <see cref="MovementWorlds"/> world (the side-face test on
+/// the generated test world), with a candidate buffer the size a <c>SimWorld</c> uses. The
 /// helpers at the end (a character held at an input for a number of steps, rest height, horizontal
 /// speed) are shared with <see cref="StepUpTests"/>, <see cref="SlopeTests"/> and
 /// <see cref="SlideTests"/>: their "grounded character" is a world's <see cref="MovementWorld.StartCharacter"/>,
@@ -32,6 +34,12 @@ public sealed class MovementStepTests
 
     /// <summary>The placeholder <c>movement.crouchSpeed</c>, m/s.</summary>
     private const float CrouchSpeed = 2f;
+
+    /// <summary>
+    /// The side-face start on the generated test world: flat ground at rest height, 4 m south of the slope
+    /// lane's first row (z −106), beside its 30° ramp, which is 2.89 m high there.
+    /// </summary>
+    private static readonly Vec3 SideFaceStart = new(-95f, 0.01f, -110f);
 
     /// <summary>
     /// Every combination of Forward, Back, Left, Right and Walk (32), crossed with Standing and Crouched:
@@ -214,6 +222,134 @@ public sealed class MovementStepTests
             && BitConverter.SingleToUInt32Bits(velocity.Z) == BitConverter.SingleToUInt32Bits(target.Z),
             $"At {hz} Hz Velocity.x and Velocity.z must keep the target's bits: velocity {velocity}, target {target}");
         Assert.True(IsGrounded(step.After), $"At {hz} Hz the character must end Grounded on the slope; flags {step.After.Flags}");
+    }
+
+    /// <summary>
+    /// Sub-step 8 with <c>movement.snapDistance</c> 0, the rule table's minimum (R06 allows it): Given a
+    /// character at rest, Grounded, at <see cref="MovementWorlds.Flat"/>'s start, When it is stepped 60
+    /// times with the neutral input, Then every step leaves it Grounded with GroundNormal (0, 1, 0),
+    /// Velocity (0, 0, 0) and Position bit-identical to the start. The grounded probe sweeps
+    /// max(snapDistance, 2·contactSkin), so a zero snap distance never skips it and the character never
+    /// alternates between grounded and airborne.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void ZeroSnapDistanceKeepsARestingCharacterGrounded(int hz)
+    {
+        var world = MovementWorlds.Flat();
+        var config = CompiledConfig.Create(TestConfigs.With(c =>
+        {
+            c.StepRateHz = hz;
+            c.Movement!.SnapDistance = 0f;
+        }));
+        Assert.True(config.SnapDistance == 0f, $"The configuration must have snapDistance 0, not {config.SnapDistance:R}");
+        var start = world.StartCharacter();
+        Assert.True(IsGrounded(start) && AtRestOn(start.Position.Y, world.FootPoint.Y, config), $"The start must be Grounded at rest on the floor, not {start}");
+
+        var steps = Idle(world, start, 60, config);
+
+        for (var k = 0; k < steps.Length; k++)
+        {
+            var after = steps[k].After;
+            Assert.True(
+                IsGrounded(after) && after.GroundNormal.X == 0f && after.GroundNormal.Y == 1f && after.GroundNormal.Z == 0f,
+                $"snapDistance 0 at {hz} Hz: step {k + 1} left the character {(IsGrounded(after) ? "Grounded" : "airborne")} with ground normal {after.GroundNormal}; position {after.Position}");
+            Assert.True(
+                after.Velocity.X == 0f && after.Velocity.Y == 0f && after.Velocity.Z == 0f && after.Position.Equals(start.Position),
+                $"snapDistance 0 at {hz} Hz: step {k + 1} moved the resting character: position {after.Position} (start {start.Position}), velocity {after.Velocity}");
+        }
+    }
+
+    /// <summary>
+    /// US1.5 against a steep face (sub-step 8): Given a character that holds Forward from
+    /// <see cref="MovementWorlds.Slope"/>(50)'s start for 3 simulated seconds, so that it ends Grounded at
+    /// rest height on the flat before the foot, pressed against the 50° face it cannot climb (its bottom
+    /// sphere's centre within capsuleRadius + contactSkin + contactTolerance of the face's plane), When
+    /// Forward and Jump are held for one step, Then that step clears Grounded, its Velocity.y bits equal
+    /// jumpSpeed − <c>GravityPerStep</c> as <see cref="CompiledConfig"/> computes them, and Position.y
+    /// rises. The steep face touching the capsule does not hide the ground under the feet, so the character
+    /// is Grounded and can jump.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void JumpAtTheFootOfASteepFaceLeavesTheGround(int hz)
+    {
+        const float degrees = 50f;
+        var world = MovementWorlds.Slope(degrees);
+        var config = TestConfigs.Compiled(hz);
+        Assert.True(config.CosSlopeLimit > world.Plane.Normal.Y, $"The {degrees:R}° face must be steeper than the slope limit: normal {world.Plane.Normal}, CosSlopeLimit {config.CosSlopeLimit:R}");
+        var held = Hold(world, world.StartCharacter(), Buttons.Forward, world.Yaw, 3 * hz, config);
+        var resting = held[^1].After;
+        Assert.True(
+            IsGrounded(resting) && resting.Position.Z < world.FrontEdge && AtRestOn(resting.Position.Y, world.FootPoint.Y, config),
+            $"{degrees:R}° at {hz} Hz: after holding Forward the character must be Grounded at rest on the flat before the foot (z {world.FrontEdge:R}), not {resting}");
+        var bottom = resting.Position + new Vec3(0f, config.CapsuleRadius, 0f);
+        var gap = world.Plane.SignedDistance(bottom);
+        var touching = (double)config.CapsuleRadius + config.ContactSkin + config.ContactTolerance;
+        Assert.True(gap <= touching, $"{degrees:R}° at {hz} Hz: the bottom sphere's centre is {gap:R} m from the face's plane, so it is not pressed against the face (touching is within {touching:R} m)");
+
+        var jump = Step(world, resting, Command(held[^1].After.LastSequence + 1, Buttons.Forward | Buttons.Jump, world.Yaw), config);
+
+        var expected = config.JumpSpeed - config.GravityPerStep;
+        Assert.False(IsGrounded(jump.After), $"{degrees:R}° at {hz} Hz: the jump step left the character Grounded; position {jump.After.Position}, velocity {jump.After.Velocity}");
+        Assert.True(
+            BitConverter.SingleToUInt32Bits(jump.After.Velocity.Y) == BitConverter.SingleToUInt32Bits(expected),
+            $"{degrees:R}° at {hz} Hz: the jump step's Velocity.y is {jump.After.Velocity.Y:R}, not jumpSpeed − GravityPerStep {expected:R} bit for bit");
+        Assert.True(
+            jump.After.Position.Y > resting.Position.Y,
+            $"{degrees:R}° at {hz} Hz: the jump step did not rise: Position.y {resting.Position.Y:R} -> {jump.After.Position.Y:R}");
+    }
+
+    /// <summary>
+    /// Sub-step 8 against a steep side face: Given a character at rest, Grounded, on the generated test
+    /// world's flat ground at <see cref="SideFaceStart"/>, facing +Z (yaw 0) toward the slope lane's side,
+    /// where the terrain rises from the ground to the 30° ramp within one cell, steeper than the slope
+    /// limit, When Forward is held for 2 simulated seconds, Then every step leaves it Grounded at rest
+    /// height on the flat (HeightAt under the feet 0), with GroundNormal.y at least <c>CosSlopeLimit</c>.
+    /// The run must reach the face, so the clause cannot pass vacuously: at some step the terrain
+    /// 2 · capsuleRadius ahead of the feet is more than stepHeight above the flat.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void WalkingIntoASteepSideFaceStaysGrounded(int hz)
+    {
+        var world = TestWorlds.TestWorld;
+        var config = TestConfigs.Compiled(hz);
+        Assert.True(world.HeightAt(SideFaceStart.X, SideFaceStart.Z) == 0f, $"The start {SideFaceStart} must be on flat ground at height 0");
+        var candidates = Candidates(world, config);
+        var character = new CharacterState
+        {
+            Id = 1,
+            Position = SideFaceStart,
+            Velocity = new Vec3(0f, 0f, 0f),
+            GroundNormal = new Vec3(0f, 1f, 0f),
+            AimYaw = 0,
+            Stance = Stance.Standing,
+            Flags = CharacterFlags.Grounded,
+            ActiveSlot = 0,
+            WeaponCount = (byte)TestStates.PlaceholderWeapons.Count,
+        };
+
+        var lookAhead = 2f * config.CapsuleRadius;
+        var reached = false;
+        for (var k = 0; k < 2 * hz; k++)
+        {
+            var input = Command((uint)(k + 1), Buttons.Forward, 0);
+            var before = character;
+            var result = MovementStep.Step(ref character, in input, config, world, candidates);
+            Assert.True(result.Fault == StepFaultCode.None, $"Side face at {hz} Hz: step {k + 1} faulted with {result.Fault}; the character was {before}");
+            var feet = character.Position;
+            var ground = world.HeightAt(feet.X, feet.Z);
+            Assert.True(
+                IsGrounded(character) && character.GroundNormal.Y >= config.CosSlopeLimit,
+                $"Side face at {hz} Hz: step {k + 1} left the character {(IsGrounded(character) ? "Grounded" : "airborne")} with ground normal {character.GroundNormal}; position {feet}, velocity {character.Velocity}");
+            Assert.True(
+                ground == 0f && AtRestOn(feet.Y, ground, config),
+                $"Side face at {hz} Hz: step {k + 1} left the feet at {feet}, not at rest height on the flat (HeightAt {ground:R})");
+            reached |= world.HeightAt(feet.X, feet.Z + lookAhead) > config.StepHeight;
+        }
+
+        Assert.True(reached, $"Side face at {hz} Hz: the terrain {lookAhead:R} m ahead never rose more than stepHeight, so the run never reached the side face; it ended at {character.Position}");
     }
 
     /// <summary>One <see cref="MovementStep.Step"/> call: the character before and after it, and its result.</summary>
