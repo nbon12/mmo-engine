@@ -241,6 +241,12 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare -
 - `--seeds` is `<first>-<last>` or one number, with 1 ≤ first ≤ last ≤ 999. CI passes `1-50`
   (FR-026, SC-001).
 - A refused `--content` file exits 2 before anything is written ([content files](#content-files)).
+- Every committed stream's name, its file name without `.mmrs`, must be a manifest stream name
+  ([`manifest.json`](#manifestjson): `^[a-z0-9-]+$`, not `tables`) and must not be the name of a stream
+  `--seeds` generates (`seed-<nnn>` for a seed in the range). Before any stream runs, each name that is
+  not prints one stderr line and the command exits 2:
+  `agreement prepare: --streams <dir>: <file>: the stream name <name> is not lowercase letters, digits and hyphens, other than tables`
+  or `agreement prepare: --streams <dir>: <file>: the stream name <name> is also the name of a stream --seeds <seeds> generates`.
 
 It writes the [work directory](#agreement-work-directory):
 
@@ -303,10 +309,15 @@ streams cannot give.
 | `NotRun` | no folder; an error only when the build is required |
 
 Exit 2 when the manifest is missing or unreadable, a server records file or `server/tables.bin` is
-missing, a required build
+missing, a server records file does not hold one whole record per expected hash of its stream, the
+table inputs and `server/tables.bin` are not one whole table, a required build
 is `NotRun`, or the manifest's rules revision or format versions differ from the core's
-(NotComparable, naming both values). Otherwise exit 1 when any build is `Diverged`, else 0. A
-Firefox or WebKit build that Playwright could not install is reported `NotRun`, never as a pass.
+(NotComparable, naming both values). The server's files are checked before any build folder is read,
+so a bad one is refused even when no build ran, with
+`agreement: cannot run: server/<stream>.records: <n> whole records and <m> more bytes; the stream has <k> expected hashes`
+or `agreement: cannot run: server/tables.bin (<n> bytes) and tables/inputs.bin (<m> bytes) do not hold the same whole table`.
+Otherwise exit 1 when any build is `Diverged`, else 0. A Firefox or WebKit build that Playwright
+could not install is reported `NotRun`, never as a pass.
 
 The NotComparable check reads only `formatVersion`, `rulesRevision` and `formats`, before the rest of
 the manifest, and prints one `NOT COMPARABLE work <work>: <detail>` line per difference, in this order:

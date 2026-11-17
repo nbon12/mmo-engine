@@ -1,3 +1,5 @@
+using System.Globalization;
+using MmoEngine.SimCore.Batch;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Server;
 
@@ -43,14 +45,17 @@ internal sealed record AgreementResult(int Streams, long Steps, IReadOnlyList<Bu
 internal static class AgreementComparison
 {
     /// <summary>
-    /// Compares every known build in <paramref name="work"/> under <paramref name="manifest"/>.
+    /// Compares every known build in <paramref name="work"/> under <paramref name="manifest"/>. The server's
+    /// files are checked first, before any build folder is read, so a bad one is refused even when no build
+    /// ran.
     /// </summary>
     /// <exception cref="InvalidDataException">
     /// The comparison cannot run: a stream file, a server records file, the table inputs or
-    /// <c>server/tables.bin</c> is missing, a stream file is refused, or a manifest path leaves the work
-    /// directory. The message is the reason.
+    /// <c>server/tables.bin</c> is missing; a stream file is refused; a server records file does not hold
+    /// one whole record per expected hash of its stream; the table inputs and <c>server/tables.bin</c> are
+    /// not one whole table; or a manifest path leaves the work directory. The message is the reason, naming
+    /// the file by its work-directory path.
     /// </exception>
-    /// <exception cref="ArgumentException">The server's records or table results are inconsistent with the streams or the inputs.</exception>
     public static AgreementResult Compare(WorkDirectory work, AgreementManifest manifest, IReadOnlyCollection<string> required)
     {
         ArgumentNullException.ThrowIfNull(work);
@@ -69,11 +74,34 @@ internal static class AgreementComparison
                 throw new InvalidDataException($"{entry.File}: {ex.Message}", ex);
             }
 
-            server.Add(new ServerStream(entry.Name, stream.Steps[0].Step, [.. stream.Steps.Select(step => step.ExpectedHash)], ReadRequired(work, entry.ServerRecords)));
+            var records = ReadRequired(work, entry.ServerRecords);
+            var (count, remaining) = CountRecords(records);
+            if (remaining != 0 || count != stream.Steps.Count)
+            {
+                throw new InvalidDataException(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{entry.ServerRecords}: {count} whole records and {remaining} more bytes; the stream has {stream.Steps.Count} expected hashes"));
+            }
+
+            server.Add(new ServerStream(entry.Name, stream.Steps[0].Step, [.. stream.Steps.Select(step => step.ExpectedHash)], records));
         }
 
         var inputs = ReadRequired(work, manifest.Tables.Inputs);
         var serverTables = ReadRequired(work, manifest.Tables.ServerResults);
+        try
+        {
+            // The server's results against themselves: this refuses inputs and results that are not one whole table.
+            _ = TablesComparison.Compare(BuildNames.Server, inputs, serverTables, serverTables);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new InvalidDataException(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{manifest.Tables.ServerResults} ({serverTables.Length} bytes) and {manifest.Tables.Inputs} ({inputs.Length} bytes) do not hold the same whole table"),
+                ex);
+        }
+
         var builds = new List<BuildComparison>(BuildNames.Known.Count);
         foreach (var build in BuildNames.Known)
         {
@@ -117,6 +145,18 @@ internal static class AgreementComparison
 
         var status = diverged.Count == 0 && tables.Status == TablesStatus.Match ? BuildStatus.Match : BuildStatus.Diverged;
         return new BuildComparison(build, required, status, diverged, tables);
+    }
+
+    /// <summary>The whole step records back to back at the start of <paramref name="records"/>, and the bytes left after them.</summary>
+    private static (int Count, int Remaining) CountRecords(byte[] records)
+    {
+        var (count, offset) = (0, 0);
+        while (StepRecord.TryRead(records.AsSpan(offset), out _, out _, out _, out var length))
+        {
+            (count, offset) = (count + 1, offset + length);
+        }
+
+        return (count, records.Length - offset);
     }
 
     /// <summary>A file the comparison needs: missing is a reason it cannot run.</summary>

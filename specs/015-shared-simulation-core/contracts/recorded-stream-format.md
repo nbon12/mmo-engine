@@ -359,7 +359,8 @@ configuration error (US6 scenarios 2, 3 and 5). The golden `unsupported-version`
 `rules-revision` cases are checked there only as refusals: their code, offset and field, and for
 `rules-revision` its `Detail` (`GoldenRefusalTests.OtherOpenRefusalsHappenBeforeStepZero`). The
 NotComparable outcome, with both values named and not Diverged (US2 scenario 5), is asserted on
-modified copies of `simcore/streams/flat-run-30hz.mmrs` with the same case names, not on these
-fixtures, because the golden fixtures are authored with US6, after US2's tests:
+modified copies of `simcore/streams/flat-run-30hz.mmrs` with the same case names, each also expecting
+a wrong hash at step 12 so that it would diverge if it were run, not on these fixtures, because the
+golden fixtures are authored with US6, after US2's tests:
 `NotComparableTests.AnotherFormatVersionOrRulesRevisionIsNotComparableNotDiverged` in
 `tests/MmoEngine.SimCore.Tests/Agreement/`, and the `refusals/` of the agreement work directory.

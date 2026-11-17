@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Tests.Support;
 
 namespace MmoEngine.SimCore.Tests.Agreement;
@@ -32,6 +33,12 @@ public sealed class NotComparableTests
     /// <summary>The format version and the rules revision the modified copies carry.</summary>
     private const int OtherValue = 2;
 
+    /// <summary>The expected hash the modified copies carry at step 12, so that each would diverge if it were run.</summary>
+    private const ulong WrongHash = 0x0123456789abcdefUL;
+
+    /// <summary>The index of the step whose expected hash is altered: step 12.</summary>
+    private const int DivergentIndex = 11;
+
     /// <summary>
     /// The file offset of <c>steps[0].commands[0].input.version</c> in the committed flat-run-30hz:
     /// the steps block starts at 64 + 698 + 136 = 898, then the entry's <c>u32 step</c> and
@@ -52,9 +59,10 @@ public sealed class NotComparableTests
 
     /// <summary>
     /// US2 scenario 5 and contracts/simcore-cli.md#streams-verify: Given a unique temp directory holding one
-    /// copy of <c>flat-run-30hz.mmrs</c> recorded under another format version (<c>unsupported-version</c>:
-    /// the <c>u16</c> at offset 4 set to 2) or another rules revision (<c>rules-revision</c>: the <c>u32</c>
-    /// at offset 8 set to 2, with the XxHash64 trailer rewritten), When
+    /// copy of <c>flat-run-30hz.mmrs</c> whose expected hash at step 12 is <c>0123456789abcdef</c>, not the
+    /// committed one, so that it would diverge if it were run, recorded under another format version
+    /// (<c>unsupported-version</c>: the <c>u16</c> at offset 4 set to 2) or another rules revision
+    /// (<c>rules-revision</c>: the <c>u32</c> at offset 8 set to 2, with the XxHash64 trailer rewritten), When
     /// <c>simcore streams verify --dir &lt;temp&gt; --content &lt;root&gt;/simcore/content</c> runs, Then it
     /// exits 2, stdout holds exactly the line <paramref name="expectedLine"/> naming both values, the last
     /// line is <c>streams verify: 1 streams, 0 match, 0 diverged, 1 not comparable, 0 refused</c>, and no
@@ -66,10 +74,15 @@ public sealed class NotComparableTests
     public void AnotherFormatVersionOrRulesRevisionIsNotComparableNotDiverged(string caseName, string expectedLine)
     {
         var committed = RepoPaths.ReadAllBytes("simcore", "streams", $"{FlatRun30}.mmrs");
+        var committedHash = RecordedStream.Decode(committed).Steps[DivergentIndex].ExpectedHash;
+        Assert.True(
+            committedHash != WrongHash,
+            $"simcore/streams/{FlatRun30}.mmrs already expects {WrongHash:x16} at step 12, so the copy would not diverge");
+        var diverging = StreamBytes.WithExpectedHash(committed, DivergentIndex, WrongHash);
         var modified = caseName switch
         {
-            "unsupported-version" => WithVersion(committed, OtherValue),
-            "rules-revision" => WithRulesRevision(committed, OtherValue),
+            "unsupported-version" => WithVersion(diverging, OtherValue),
+            "rules-revision" => WithRulesRevision(diverging, OtherValue),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row."),
         };
         using var directory = TempDirectories.Create($"not-comparable-{caseName}");

@@ -630,7 +630,7 @@ type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scen
 | `BatchStepperTests.ReportHeaderMatchesTheRecords` | the report layout |
 | `tests/MmoEngine.SimCore.Tests/Allocation/BatchAllocationTests.StepQueuedAllocatesNothingAfterWarmUp` | FR-032 |
 | `tests/MmoEngine.SimCore.Tests/Batch/StreamRunnerTests.RecordsCarryTheExpectedHashes` | the record format |
-| `StreamRunnerTests.PerturbationDivergesAtExactlyThatStep` | SC-002 |
+| `StreamRunnerTests.PerturbationDivergesAtExactlyThatStep` | the one-ulp perturbation SC-002 is checked with; the report at its first divergent step is asserted by `DivergenceReportTests.PerturbedRecordsReportTheFirstStepAndField` and `AgreementCommandTests.CompareExitsOneOnADivergedBuildAndWritesItsReport` |
 | `StreamRunnerTests.RefusesBeforeStepZero` (Theory: `UnsupportedVersion`, `CollisionDataMissing`, `RulesRevisionMismatch`, an invalid config block) | US2.5, US6.5 |
 | `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.InputsArePinned` | `BuildInputs()` returns the same bytes on every call, with the row counts and the XxHash64 the test pins, so a change to the table is a visible edit |
 | `CrossBuildTablesTests.EachRowEqualsTheDirectCall` | every math row's result equals the `SimMath` call it names, and every pose row's equals `HitboxBuilder` for that pose, bit for bit |

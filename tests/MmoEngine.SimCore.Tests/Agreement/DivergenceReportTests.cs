@@ -655,6 +655,45 @@ public sealed class DivergenceReportTests
             Lines(comparison.Report));
     }
 
+    /// <summary>Rows of <see cref="RefusesServerRecordsThatAreNotOnePerExpectedHash"/>.</summary>
+    public static TheoryData<string> InconsistentServerRecordCases => ["server-cut", "one-hash-more"];
+
+    /// <summary>
+    /// Given the server records of flat-run-30hz and the stream's 30 expected hashes, changed per row
+    /// (<c>server-cut</c>: the records 3 bytes short; <c>one-hash-more</c>: a 31st expected hash), When a build
+    /// equal to the unchanged server records is compared, Then <c>CompareBuild</c> throws an
+    /// <see cref="ArgumentException"/> for <c>serverRecords</c> whose message is exactly
+    /// <c>The server records of flat-run-30hz hold &lt;n&gt; whole records and &lt;m&gt; more bytes; the stream has &lt;k&gt; expected hashes.</c>,
+    /// instead of comparing a build against them.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InconsistentServerRecordCases))]
+    public void RefusesServerRecordsThatAreNotOnePerExpectedHash(string caseName)
+    {
+        const string name = "flat-run-30hz";
+        var stream = ReadStream(name);
+        var records = StreamRunner.Run(stream, TestWorldFile());
+        var lastLength = RecordOverhead + ReadRecords(records, $"{name} server")[^1].State.Length;
+        var (server, hashes, whole, remaining) = caseName switch
+        {
+            "server-cut" => (records[..^3], ExpectedHashes(stream), FlatRun30StepCount - 1, lastLength - 3),
+            "one-hash-more" => (records, [.. ExpectedHashes(stream), 0UL], FlatRun30StepCount, 0),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of RefusesServerRecordsThatAreNotOnePerExpectedHash."),
+        };
+
+        StreamComparison? comparison = null;
+        var thrown = Assert.Throws<ArgumentException>(() => comparison = DivergenceReport.CompareBuild(name, BuildName, server, records, hashes));
+
+        Assert.Null(comparison);
+        Assert.Equal("serverRecords", thrown.ParamName);
+        Assert.StartsWith(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"The server records of {name} hold {whole} whole records and {remaining} more bytes; the stream has {hashes.Length} expected hashes."),
+            thrown.Message,
+            StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// contracts/state-serialization.md#divergence-report (a state that cannot be read to its end): Given a
     /// server state of one character at step 4 and a build state that is the same followed by three more

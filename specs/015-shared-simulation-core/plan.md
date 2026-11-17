@@ -889,6 +889,37 @@ The design documents settled these points, which the spec leaves open. They are 
   this phase changed; every one of them is between 95.8% and 100%, through the Theory rows and Facts T137
   names. Topping up the earlier phases' files here was not chosen, because none of them changed in this
   phase and Phase 10 covers them in one pass.
+- **`agreement compare` checks the server's files before any build, and names them by path (Phase 4
+  review).** A server records file that was not one whole record per expected hash, or table inputs
+  and `server/tables.bin` that were not one table, were refused only deep in the comparison, by the
+  `ArgumentException` of `DivergenceReport.CompareBuild` or `TablesComparison.Compare`. That refusal
+  needed a build folder to exist, and its message named no file (and carried .NET's
+  `(Parameter '…')` suffix), against the contract's "the missing or refused file by its
+  work-directory path". `AgreementComparison` now counts each server records file against its
+  stream's steps, and compares the server's table results against themselves, before reading any
+  build folder; it throws `InvalidDataException` with `server/<stream>.records: …` or
+  `server/tables.bin (…) and tables/inputs.bin (…) do not hold the same whole table`, and the command
+  no longer turns an `ArgumentException` into exit 2, so a real bug is not reported as a bad work
+  directory. `DivergenceReportTests.RefusesServerRecordsThatAreNotOnePerExpectedHash` now covers
+  `CompareBuild`'s own refusal, which the CLI no longer reaches. simcore-cli.md#agreement-compare,
+  T124, T136 and T137 now say so. A new public check on
+  `TablesComparison` was not added, because its documented refusal already is that check and the CLI
+  is its only caller.
+- **`agreement prepare` enforces the manifest's stream-name rule when it writes (Phase 4 review).**
+  Only `agreement compare` checked that names match `^[a-z0-9-]+$`, are unique and are not `tables`,
+  so a committed `tables.mmrs` or `Flat_Run.mmrs` prepared a manifest compare then refused, and a
+  committed `seed-001.mmrs` was overwritten by the generated stream of seed 1. Prepare now refuses,
+  before any stream runs, a committed name that `AgreementManifest.IsStreamName` rejects or that
+  `--seeds` also generates, one stderr line per file and exit 2. A committed `seed-<nnn>` outside the
+  `--seeds` range stays legal, since nothing else claims that name. simcore-cli.md#agreement-prepare,
+  T123 and T135 now say so. Renaming or skipping the clashing stream was not chosen, because a
+  silently changed stream set is worse than a refusal.
+- **The NotComparable tests carry a real divergence (Phase 4 review).** US2.5 says the refusal comes
+  "instead of reporting a divergence", but the work-directory test compared builds equal to the
+  server and the stream test's copies still matched, so neither could tell a refusal from a
+  comparison that found nothing. `WorkDirectoryFromAnotherRulesRevisionIsNotComparable` now runs on
+  the perturbed work directory and asserts the exact two stdout lines and no `report/`, and each copy
+  in `NotComparableTests` also expects a wrong hash at step 12. T120 and T124 now say so.
 
 ## Delivery
 

@@ -100,6 +100,7 @@ public sealed class AgreementCommandTests
     [
         "non-empty-work", "work-is-a-file", "seeds-0-5", "seeds-5-3", "seeds-1-1000", "seeds-abc", "missing-streams", "oversized-content",
         "missing-content", "missing-config", "no-flat-run-30hz", "no-test-world", "generated-stream-refused", "work-under-a-file",
+        "stream-name-uppercase", "stream-name-tables", "stream-name-generated",
     ];
 
     /// <summary>Rows (case, the exact line a refused or NotComparable committed stream prints).</summary>
@@ -122,7 +123,7 @@ public sealed class AgreementCommandTests
     [
         "no-manifest", "invalid-manifest", "missing-server-records", "missing-server-tables", "unknown-required-build",
         "truncated-server-records", "corrupt-work-stream", "path-outside-work", "missing-manifest-member", "invalid-stream-name",
-        "unwritable-summary",
+        "unwritable-summary", "truncated-server-records-no-builds", "truncated-server-tables",
     ];
 
     /// <summary>
@@ -204,13 +205,20 @@ public sealed class AgreementCommandTests
     /// <c>--content</c> or <c>--config</c> that does not exist, a <c>--streams</c> holding only
     /// <c>flat-run-20hz.mmrs</c> (no <c>flat-run-30hz</c>), a <c>--content</c> holding the test world as
     /// <c>world.mmcd</c> (no <c>test-world.mmcd</c>), <c>--seeds 3</c> with a <c>--config</c> whose rifle fires
-    /// 1500 rounds a minute (valid at its 30 Hz, refused by rule R11 at seed 3's 20 Hz), or a <c>--work</c>
-    /// below a file, which cannot be created once every stream has run; When <c>agreement prepare</c> runs,
-    /// Then it exits 2, stderr has an <c>agreement prepare: </c> line naming the refused input (for the
-    /// oversized file exactly
-    /// <c>agreement prepare: content big.mmcd: collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456</c>),
-    /// nothing is prepared, and every file and directory in the temp directory is unchanged, with none added:
-    /// a refused work directory keeps its one file, and a work directory that did not exist still does not.
+    /// 1500 rounds a minute (valid at its 30 Hz, refused by rule R11 at seed 3's 20 Hz), a <c>--work</c>
+    /// below a file, which cannot be created once every stream has run, or a <c>--streams</c> holding
+    /// <c>flat-run-30hz.mmrs</c> and a committed stream under a name the manifest cannot hold
+    /// (<c>Flat_Run.mmrs</c>, <c>tables.mmrs</c>) or under the name of a stream <c>--seeds 1-2</c> generates
+    /// (<c>seed-001.mmrs</c>, a copy of <c>jump-land.mmrs</c>); When <c>agreement prepare</c> runs, Then it
+    /// exits 2, stderr has an <c>agreement prepare: </c> line naming the refused input (for the oversized file
+    /// exactly
+    /// <c>agreement prepare: content big.mmcd: collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456</c>,
+    /// and for a stream name exactly
+    /// <c>agreement prepare: --streams &lt;dir&gt;: &lt;file&gt;: the stream name &lt;name&gt; is not lowercase letters, digits and hyphens, other than tables</c>
+    /// or <c>... the stream name seed-001 is also the name of a stream --seeds 1-2 generates</c>, as the only
+    /// <c>agreement prepare: </c> line), nothing is prepared, and every file and directory in the temp
+    /// directory is unchanged, with none added: a refused work directory keeps its one file, and a work
+    /// directory that did not exist still does not.
     /// </summary>
     [Theory]
     [MemberData(nameof(RefusedPrepareCases))]
@@ -225,6 +233,7 @@ public sealed class AgreementCommandTests
         string? config = null;
         var workExisted = false;
         string named;
+        string? exactLine = null;
         switch (caseName)
         {
             case "non-empty-work":
@@ -295,6 +304,22 @@ public sealed class AgreementCommandTests
                 work = Path.Combine(directory.Combine("blocker"), "work");
                 named = work;
                 break;
+            case "stream-name-uppercase":
+            case "stream-name-tables":
+                streams = Directory.CreateDirectory(directory.Combine("streams")).FullName;
+                CopyCommitted(streams, "streams", $"{FlatRun30}.mmrs");
+                var badName = caseName == "stream-name-uppercase" ? "Flat_Run" : "tables";
+                File.WriteAllBytes(Path.Combine(streams, $"{badName}.mmrs"), RepoPaths.ReadAllBytes("simcore", "streams", $"{FlatRun30}.mmrs"));
+                named = $"{badName}.mmrs";
+                exactLine = $"agreement prepare: --streams {streams}: {badName}.mmrs: the stream name {badName} is not lowercase letters, digits and hyphens, other than tables";
+                break;
+            case "stream-name-generated":
+                streams = Directory.CreateDirectory(directory.Combine("streams")).FullName;
+                CopyCommitted(streams, "streams", $"{FlatRun30}.mmrs");
+                File.WriteAllBytes(Path.Combine(streams, "seed-001.mmrs"), RepoPaths.ReadAllBytes("simcore", "streams", "jump-land.mmrs"));
+                named = "seed-001.mmrs";
+                exactLine = $"agreement prepare: --streams {streams}: seed-001.mmrs: the stream name seed-001 is also the name of a stream --seeds {seeds} generates";
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
         }
@@ -308,6 +333,10 @@ public sealed class AgreementCommandTests
         if (caseName == "oversized-content")
         {
             Assert.Contains(OversizedRefusal, errors);
+        }
+        else if (exactLine is not null)
+        {
+            Assert.Equal([exactLine], errors.Where(line => line.StartsWith("agreement prepare: ", StringComparison.Ordinal)));
         }
         else
         {
@@ -423,7 +452,7 @@ public sealed class AgreementCommandTests
     }
 
     /// <summary>
-    /// US2 scenario 4 and FR-026: Given a prepared work directory where <c>node-interp</c>'s
+    /// US2 scenario 4, SC-002 and FR-026: Given a prepared work directory where <c>node-interp</c>'s
     /// <c>flat-run-30hz.records</c> is the run perturbed by one ulp at step 15 and <c>node-interp-nojit</c> and
     /// <c>chromium-worker</c> equal the server, When <c>agreement compare</c> runs, Then it exits 1 and prints
     /// exactly <c>node-interp: diverged in 1 of &lt;n&gt; streams; first: flat-run-30hz at step 15; tables match</c>,
@@ -755,18 +784,21 @@ public sealed class AgreementCommandTests
     }
 
     /// <summary>
-    /// US2 scenario 5 and contracts/simcore-cli.md#agreement-compare: Given a prepared work directory with the
-    /// three required builds equal to the server, whose <c>manifest.json</c> has (<c>rules-revision</c>)
+    /// US2 scenario 5 and contracts/simcore-cli.md#agreement-compare: Given a prepared work directory whose
+    /// node-interp build diverges on flat-run-30hz (one ulp at step 15) and whose node-interp-nojit and
+    /// chromium-worker builds equal the server, and whose <c>manifest.json</c> has (<c>rules-revision</c>)
     /// <c>rulesRevision</c> 2 or (<c>recorded-stream-format</c>) <c>formats.recordedStream</c> 2, When
-    /// <c>agreement compare</c> runs, Then it exits 2, stdout has the line <paramref name="expectedLine"/> naming
-    /// the work directory and both values and no line starting with <c>DIVERGED</c>, and its last line is
-    /// <c>agreement: not comparable</c>: a work directory from other rules is not compared at all.
+    /// <c>agreement compare</c> runs, Then it exits 2, stdout is exactly the line
+    /// <paramref name="expectedLine"/>, naming the work directory and both values, and
+    /// <c>agreement: not comparable</c>, with no build line and no <c>DIVERGED</c> report, and no
+    /// <c>report/</c> is written: a work directory from other rules is refused instead of reporting the
+    /// divergence it holds, and nothing is compared or written.
     /// </summary>
     [Theory]
     [MemberData(nameof(NotComparableWorkCases))]
     public void WorkDirectoryFromAnotherRulesRevisionIsNotComparable(string caseName, string expectedLine)
     {
-        using var work = PrepareWithBuilds(RequiredBuilds);
+        using var work = PreparePerturbed();
         var manifestPath = work.Combine(ManifestFile);
         var manifest = ReadJson(manifestPath);
         switch (caseName)
@@ -787,10 +819,9 @@ public sealed class AgreementCommandTests
         var (exit, stdout, stderr) = SimcoreCli.Run("agreement", "compare", "--work", work.Path);
 
         Assert.True(exit == 2, $"{caseName}: simcore agreement compare exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
-        var lines = Lines(stdout);
-        Assert.Contains(line, lines);
-        Assert.DoesNotContain(lines, output => output.StartsWith("DIVERGED", StringComparison.Ordinal));
-        Assert.Equal("agreement: not comparable", lines.LastOrDefault());
+        Assert.Equal([line, "agreement: not comparable"], Lines(stdout));
+        var report = work.Combine("report");
+        Assert.False(Directory.Exists(report), $"{caseName}: agreement compare wrote {report} for a work directory that is not comparable");
     }
 
     /// <summary>
@@ -803,10 +834,16 @@ public sealed class AgreementCommandTests
     /// (<c>corrupt-work-stream</c>) a <c>streams/flat-run-30hz.mmrs</c> holding 64 zero bytes,
     /// (<c>path-outside-work</c>) a manifest whose first stream's <c>file</c> is <c>../outside.mmrs</c>,
     /// (<c>missing-manifest-member</c>) a manifest without <c>tables</c>, (<c>invalid-stream-name</c>) a
-    /// manifest whose first stream is named <c>Tables</c>, or (<c>unwritable-summary</c>) a <c>--summary</c>
-    /// that is a directory, When <c>agreement compare</c> runs, Then it exits 2 and its last line is
+    /// manifest whose first stream is named <c>Tables</c>, (<c>unwritable-summary</c>) a <c>--summary</c>
+    /// that is a directory, (<c>truncated-server-records-no-builds</c>) the records cut 3 bytes short with no
+    /// build folder at all, or (<c>truncated-server-tables</c>) a <c>server/tables.bin</c> cut 1 byte short,
+    /// When <c>agreement compare</c> runs, Then it exits 2 and its last line is
     /// <c>agreement: cannot run: &lt;reason&gt;</c>, the reason naming the manifest, the missing, short or
-    /// refused file, <c>unknown-build</c>, the manifest member, or the report that cannot be written.
+    /// refused file by its work-directory path, <c>unknown-build</c>, the manifest member, or the report that
+    /// cannot be written. A cut records file is exactly
+    /// <c>server/flat-run-30hz.records: 29 whole records and &lt;last record's length − 3&gt; more bytes; the stream has 30 expected hashes</c>,
+    /// with or without builds, and a cut tables file exactly
+    /// <c>server/tables.bin (&lt;n − 1&gt; bytes) and tables/inputs.bin (&lt;m&gt; bytes) do not hold the same whole table</c>.
     /// </summary>
     [Theory]
     [MemberData(nameof(CannotRunCases))]
@@ -838,9 +875,30 @@ public sealed class AgreementCommandTests
                 named = "unknown-build";
                 break;
             case "truncated-server-records":
+            case "truncated-server-records-no-builds":
+                if (caseName == "truncated-server-records-no-builds")
+                {
+                    foreach (var build in RequiredBuilds)
+                    {
+                        Directory.Delete(work.Combine(build), recursive: true);
+                    }
+                }
+
                 var serverRecords = work.Combine(WorkDirectories.ServerFolder, $"{FlatRun30}.records");
-                File.WriteAllBytes(serverRecords, File.ReadAllBytes(serverRecords)[..^3]);
-                named = $"The server records of {FlatRun30} hold";
+                var whole = File.ReadAllBytes(serverRecords);
+                var records = ReadRecords(whole, $"server/{FlatRun30}");
+                Assert.True(records.Count == 30, $"server/{FlatRun30}.records holds {records.Count} records, not 30");
+                File.WriteAllBytes(serverRecords, whole[..^3]);
+                // A record is u32 step, u32 stateLength, the state and u64 hash: 16 bytes besides the state.
+                var lastLength = 16 + records[^1].State.Length;
+                named = $"server/{FlatRun30}.records: 29 whole records and {lastLength - 3} more bytes; the stream has 30 expected hashes";
+                break;
+            case "truncated-server-tables":
+                var serverTables = work.Combine(WorkDirectories.ServerFolder, WorkDirectories.TablesFile);
+                var tables = File.ReadAllBytes(serverTables);
+                File.WriteAllBytes(serverTables, tables[..^1]);
+                var inputsLength = new FileInfo(work.Combine("tables", "inputs.bin")).Length;
+                named = $"server/tables.bin ({tables.Length - 1} bytes) and tables/inputs.bin ({inputsLength} bytes) do not hold the same whole table";
                 break;
             case "corrupt-work-stream":
                 File.WriteAllBytes(work.Combine("streams", $"{FlatRun30}.mmrs"), new byte[64]);
@@ -874,6 +932,10 @@ public sealed class AgreementCommandTests
         var last = lines[^1].Replace('\\', '/');
         Assert.StartsWith("agreement: cannot run: ", last);
         Assert.Contains(named, last, StringComparison.Ordinal);
+        if (caseName.StartsWith("truncated-server-", StringComparison.Ordinal))
+        {
+            Assert.Equal($"agreement: cannot run: {named}", last);
+        }
     }
 
     /// <summary>

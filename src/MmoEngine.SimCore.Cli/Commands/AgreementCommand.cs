@@ -86,11 +86,13 @@ internal static class AgreementCommand
     /// <summary>
     /// <c>agreement prepare</c> (contracts/simcore-cli.md#agreement-prepare). It refuses, before anything is
     /// written and with exit 2: a <c>--work</c> that is a file or a non-empty directory, a bad
-    /// <c>--seeds</c>, a missing <c>--streams</c> folder, a refused <c>--content</c>, and an invalid
-    /// <c>--config</c>. It then runs every committed stream as <c>streams verify</c> does (a divergence prints
-    /// its report and exits 1; a refusal or NotComparable prints its line and exits 2), generates and runs
-    /// the seeds, and only then writes, in the contract's order: the streams, the collision files, the server
-    /// records, the batch inputs, the refusals, the tables and, last, <c>manifest.json</c>.
+    /// <c>--seeds</c>, a missing <c>--streams</c> folder, a refused <c>--content</c>, an invalid
+    /// <c>--config</c>, and a committed stream whose name breaks the manifest's name rule or is the name of a
+    /// stream <c>--seeds</c> generates. It then runs every committed stream as <c>streams verify</c> does (a
+    /// divergence prints its report and exits 1; a refusal or NotComparable prints its line and exits 2),
+    /// generates and runs the seeds, and only then writes, in the contract's order: the streams, the
+    /// collision files, the server records, the batch inputs, the refusals, the tables and, last,
+    /// <c>manifest.json</c>.
     /// </summary>
     internal static int Prepare(PrepareOptions options, TextWriter stdout, TextWriter stderr, ILogger logger)
     {
@@ -143,8 +145,9 @@ internal static class AgreementCommand
 
     /// <summary>
     /// <c>agreement compare</c> (contracts/simcore-cli.md#agreement-compare): refuses an unknown
-    /// <c>--require</c> build, a missing or unreadable manifest, and a manifest from another rules revision or
-    /// format version (NotComparable), all with exit 2; compares every known build; prints one line per build,
+    /// <c>--require</c> build, a missing or unreadable manifest, a missing or refused file of the server's
+    /// (named by its work-directory path), and a manifest from another rules revision or format version
+    /// (NotComparable), all with exit 2; compares every known build; prints one line per build,
     /// each diverged build's first report and the outcome; writes <c>report/</c> and the summary. Exit 2 when
     /// a required build did not run, else 1 when any build diverged, else 0.
     /// </summary>
@@ -188,7 +191,7 @@ internal static class AgreementCommand
         {
             return CannotRun(stdout, ex.Message);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return CannotRun(stdout, ex.Message);
         }
@@ -239,7 +242,8 @@ internal static class AgreementCommand
 
     /// <summary>
     /// Steps 1 to 8 of contracts/simcore-cli.md#agreement-prepare, once the arguments, the content and the
-    /// configuration are accepted. Nothing is written until every stream has run.
+    /// configuration are accepted, after the committed streams' names. Nothing is written until every stream
+    /// has run.
     /// </summary>
     private static int Prepare(
         PrepareOptions options,
@@ -253,10 +257,37 @@ internal static class AgreementCommand
         TextWriter stderr,
         ILogger logger)
     {
+        // Every committed stream's name, before any stream runs: the manifest's name rule, and no generated stream's name.
+        var paths = StreamsCommand.StreamPaths(options.Streams);
+        var generatedNames = new HashSet<string>(StringComparer.Ordinal);
+        for (var seed = firstSeed; seed <= lastSeed; seed++)
+        {
+            generatedNames.Add(StreamGenerator.NameFor(seed));
+        }
+
+        var badNames = 0;
+        foreach (var path in paths)
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            var problem = !AgreementManifest.IsStreamName(name)
+                ? $"the stream name {name} is not lowercase letters, digits and hyphens, other than tables"
+                : generatedNames.Contains(name) ? $"the stream name {name} is also the name of a stream --seeds {options.Seeds} generates" : null;
+            if (problem is not null)
+            {
+                stderr.Write($"{PrepareName}: --streams {options.Streams}: {Path.GetFileName(path)}: {problem}\n");
+                badNames++;
+            }
+        }
+
+        if (badNames > 0)
+        {
+            return CliExitCodes.Usage;
+        }
+
         // 1: every committed stream, run and checked as streams verify does.
         var committed = new List<StreamsCommand.VerifiedStream>();
         var (diverged, refused) = (0, 0);
-        foreach (var path in StreamsCommand.StreamPaths(options.Streams))
+        foreach (var path in paths)
         {
             var verified = StreamsCommand.VerifyStream(Path.GetFileNameWithoutExtension(path), path, worlds);
             if (verified.Outcome == StreamsCommand.VerifyOutcome.Match)
