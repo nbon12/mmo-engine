@@ -1077,13 +1077,13 @@ Conventions for this phase (they hold for every task below):
 
 ### Implementation
 
-- [ ] T126 [P] [US2] Implement `public static class SplitMix64` in `src/MmoEngine.SimCore/Hashing/SplitMix64.cs`:
+- [X] T126 [P] [US2] Implement `public static class SplitMix64` in `src/MmoEngine.SimCore/Hashing/SplitMix64.cs`:
   - `public const ulong Gamma = 0x9E3779B97F4A7C15`;
   - `Mix(ulong z)`, the data-model.md finaliser;
   - `Next(ref ulong state)`, which does `state += Gamma` (unchecked) and returns `Mix(state)`;
   - `At(ulong seed, ulong counter) => Mix(unchecked(seed + (counter + 1) * Gamma))`.
   - Use explicit usings and no allocation. Makes T110 pass.
-- [ ] T127 [P] [US2] Implement the batch stepper per wasm-api.md#core-api, #batchstepper, #report-buffer-layouts and #return-codes, and config-rules.md#browser-guard. Write `LoadResult` in `src/MmoEngine.SimCore/Batch/LoadResult.cs` (byte: Ok 0, FormatRefused 1, ConfigInvalid 2, NotReady 3), `StepError` in `src/MmoEngine.SimCore/Batch/StepError.cs` (int: NotReady -1, CountOutOfRange -2, CommandRefused -3, StepFault -4) and `BatchStepper` in `src/MmoEngine.SimCore/Batch/BatchStepper.cs`. Makes T113, T114 and T115 pass (US2.6, FR-025, FR-029 browser guard, FR-032).
+- [X] T127 [P] [US2] Implement the batch stepper per wasm-api.md#core-api, #batchstepper, #report-buffer-layouts and #return-codes, and config-rules.md#browser-guard. Write `LoadResult` in `src/MmoEngine.SimCore/Batch/LoadResult.cs` (byte: Ok 0, FormatRefused 1, ConfigInvalid 2, NotReady 3), `StepError` in `src/MmoEngine.SimCore/Batch/StepError.cs` (int: NotReady -1, CountOutOfRange -2, CommandRefused -3, StepFault -4) and `BatchStepper` in `src/MmoEngine.SimCore/Batch/BatchStepper.cs`. Makes T113, T114 and T115 pass (US2.6, FR-025, FR-029 browser guard, FR-032).
   - **Constructor**: 1 <= capacity <= 256, else `ArgumentOutOfRangeException`. It allocates:
     - a `CommandCapacity x InputCommand.EncodedSize` (17) command buffer, never reallocated;
     - a 65,536-byte report buffer;
@@ -1091,7 +1091,7 @@ Conventions for this phase (they hold for every task below):
   - **`LoadCollision`**: decodes with `CollisionFile.Decode`.
   - **`LoadConfig`**: `ConfigBlock` decode (standalone `config` form), then `ConfigGuard.Check` (each error as a `path: message` line, joined by `\n`), then `CompiledConfig.Create`. The report buffer grows to `max(65,536, 8 + CommandCapacity x MaxStepRecordLength + 12 + 1,024)` only when that is larger than the current buffer.
   - **Load-call rules**: every load call discards the world. A failed load unloads what it was loading, and writes the u32 text length and the UTF-8 text (the format error's message, or the guard's lines). An `Ok` load writes text length 0.
-  - **`Reset`**: `NotReady` unless both are loaded. Otherwise it constructs a `SimWorld(config, collision)` and calls `Reset(state, salt)`. A `CoreFormatException` gives `FormatRefused` with its message, and no world.
+  - **`Reset`**: `NotReady` unless both are loaded. Otherwise it calls `Reset(state, salt)` on the `SimWorld(config, collision)` that the first `Reset` after the load calls constructs and later ones reuse; every load call drops it, so a `Reset` after the first allocates none of the world's buffers. A `CoreFormatException` gives `FormatRefused` with its message, and no world.
   - **`StepQueued(count)`**:
     - It checks the count range first (-2), then the world (-1). A negative return writes a zero header.
     - It decodes each command with `InputCodec.TryDecode`; a decode error stops with -3 and the format error's message. It steps `SimWorld.Step` with the command for character index 0, and every other character gets the neutral input.
@@ -1099,14 +1099,14 @@ Conventions for this phase (they hold for every task below):
     - Each committed step's record is written through `StepRecord` after the 8-byte header. The stop entry is i32 code, u32 the uncommitted step number, u32 text length (<= 1,024), then the text.
     - It returns n. The committed path throws nothing and allocates nothing; only the stop path formats text.
   - **Fault seam**: `internal int StepQueuedWithInjectedBits(int count, int commandIndex, int fieldOrdinal, int elementIndex, uint bits)` shares the same private loop and calls `SimWorld.StepWithInjectedBits` for command `commandIndex`. It is not a delegate field.
-- [ ] T128 [US2] Add the rules-revision refusal and the one-ulp perturbation per wasm-api.md#streamrunner and recorded-stream-format.md#opening-a-stream-to-run. Makes T112 and T111 pass (SC-002, US2.5 support).
+- [X] T128 [US2] Add the rules-revision refusal and the one-ulp perturbation per wasm-api.md#streamrunner and recorded-stream-format.md#opening-a-stream-to-run. Makes T112 and T111 pass (SC-002, US2.5 support).
   - In `src/MmoEngine.SimCore/Batch/StreamRunner.cs`:
     - add open step 2, between decode and the collision lookup: a `rulesRevision` other than `SimCoreVersion.RulesRevision` throws `CoreFormatException` with `RulesRevisionMismatch`, offset 8, field `rulesRevision`, and detail `rules revision <s> in the stream; this core implements rules revision <c>`;
     - after open step 5 and before step 0, a `perturbStep` other than -1 that is not one of the stream's step numbers throws `ArgumentOutOfRangeException(nameof(perturbStep))`;
     - after the step numbered `perturbStep` commits, append the record of the report from `world.PerturbFirstCharacterPositionX()` in place of that step's record.
   - In `src/MmoEngine.SimCore/World/SimWorld.cs`, add `internal StepReport PerturbFirstCharacterPositionX()`. It applies `MathF.BitIncrement` to character index 0's committed `Position.X`, re-runs stage 6 (canonicalise, finite check, serialise with the committed step's events, hash) and recommits. Later steps continue from the perturbed state.
   - Not [P]: edits `SimWorld.cs`.
-- [ ] T129 [US2] Implement `public static class CrossBuildTables` in `src/MmoEngine.SimCore/Batch/CrossBuildTables.cs` per wasm-api.md#cross-build-tables, after T126. Makes T116 pass (server half of US3.8, US5.5 and SC-004). Then pin the `XxHash64` constant in `InputsArePinned`.
+- [X] T129 [US2] Implement `public static class CrossBuildTables` in `src/MmoEngine.SimCore/Batch/CrossBuildTables.cs` per wasm-api.md#cross-build-tables, after T126. Makes T116 pass (server half of US3.8, US5.5 and SC-004). Then pin the `XxHash64` constant in `InputsArePinned`.
   - **`BuildInputs()`** writes `MMXT` v1: the math rows (function IDs 1-10, 12 bytes each), then the 6,192 pose rows (16 bytes each), in the contract's order.
     - Each function's listed special values come first, then its drawn bit patterns from `SplitMix64.At(0x5EED0000 + functionId, i)`. Patterns are mapped uniformly into the stated range, rejecting out-of-range draws in draw order with a fixed bound on attempts per row, so the sequence is the same in every build.
     - The non-finite and out-of-domain rows come last.

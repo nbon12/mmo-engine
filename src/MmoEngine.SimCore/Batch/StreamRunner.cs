@@ -16,17 +16,24 @@ namespace MmoEngine.SimCore.Batch;
 /// specs/015-shared-simulation-core/contracts/wasm-api.md#streamrunner,
 /// contracts/state-serialization.md#step-record). It opens the stream in the order of
 /// contracts/recorded-stream-format.md#opening-a-stream-to-run, so every refusal happens before the first
-/// step: decode the stream (1), find the collision world it names by checksum (3), compile its
-/// configuration (4) and reset a world from its initial state and match salt (5). Then each entry runs as
-/// one <see cref="SimWorld.Step"/> with its commands; the other characters get the neutral input. Expected
-/// hashes are not checked here; comparing is the caller's job.
+/// step: decode the stream (1), refuse another rules revision (2), find the collision world it names by
+/// checksum (3), compile its configuration (4) and reset a world from its initial state and match salt (5).
+/// Then each entry runs as one <see cref="SimWorld.Step"/> with its commands; the other characters get the
+/// neutral input. Expected hashes are not checked here; comparing is the caller's job.
 /// </summary>
 /// <remarks>
+/// <para>
 /// This is not tick-path code, so errors are exceptions and it may allocate: a
 /// <see cref="CoreFormatException"/> for a format refusal, a <see cref="ConfigValidationException"/> for
-/// an invalid configuration, and a <see cref="StepFaultException"/> when a step faults. The rules-revision
-/// check (open step 2) and the one-ulp perturbation are Phase 4's; until then any <c>perturbStep</c> other
-/// than −1 is refused.
+/// an invalid configuration, and a <see cref="StepFaultException"/> when a step faults.
+/// </para>
+/// <para>
+/// The one-ulp perturbation (SC-002): with <c>perturbStep</c> a step number of the stream, the step of
+/// that number commits, the first character's <c>position.x</c> gets <see cref="MathF.BitIncrement"/>,
+/// and that step's record is written from the perturbed, re-serialised and re-hashed state; later steps
+/// continue from it. The first divergent step is then exactly <c>perturbStep</c>, naming
+/// <c>characters[0].position.x</c>. It is a runtime parameter, never a patched build.
+/// </para>
 /// </remarks>
 public static class StreamRunner
 {
@@ -36,18 +43,25 @@ public static class StreamRunner
     /// <summary>The stream header's <c>configLength</c> offset; the initial state starts at 64 + configLength.</summary>
     private const int ConfigLengthOffset = 44;
 
+    /// <summary>The stream header's <c>rulesRevision</c> offset.</summary>
+    private const int RulesRevisionOffset = 8;
+
+    /// <summary>The <c>perturbStep</c> that applies no perturbation.</summary>
+    private const int NoPerturbation = -1;
+
     /// <summary>
     /// Runs <paramref name="stream"/> over the collision world <paramref name="collisionFile"/> decodes to.
-    /// The stream is decoded first, then the collision file, then the stream's checksum is matched against
-    /// the file's.
+    /// The stream is decoded and its rules revision checked first, then the collision file is decoded, then
+    /// the stream's checksum is matched against the file's.
     /// </summary>
     /// <exception cref="CoreFormatException">The stream or the collision file is refused, or the file is not the collision data the stream names.</exception>
     /// <exception cref="ConfigValidationException">The stream's configuration is invalid.</exception>
     /// <exception cref="StepFaultException">A step faulted.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="perturbStep"/> is not −1.</exception>
-    public static byte[] Run(ReadOnlySpan<byte> stream, ReadOnlySpan<byte> collisionFile, int perturbStep = -1)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="perturbStep"/> is neither −1 nor one of the stream's step numbers.</exception>
+    public static byte[] Run(ReadOnlySpan<byte> stream, ReadOnlySpan<byte> collisionFile, int perturbStep = NoPerturbation)
     {
         var recorded = RecordedStream.Decode(stream);
+        CheckRulesRevision(recorded);
         var collision = CollisionFile.Decode(collisionFile);
         return Open(recorded, InitialStateOffset(stream), [collision], perturbStep);
     }
@@ -61,11 +75,12 @@ public static class StreamRunner
     /// <exception cref="CoreFormatException">The stream is refused, or no supplied world is the collision data it names.</exception>
     /// <exception cref="ConfigValidationException">The stream's configuration is invalid.</exception>
     /// <exception cref="StepFaultException">A step faulted.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="perturbStep"/> is not −1.</exception>
-    public static byte[] Run(ReadOnlySpan<byte> stream, IReadOnlyList<CollisionWorld> collisionWorlds, int perturbStep = -1)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="perturbStep"/> is neither −1 nor one of the stream's step numbers.</exception>
+    public static byte[] Run(ReadOnlySpan<byte> stream, IReadOnlyList<CollisionWorld> collisionWorlds, int perturbStep = NoPerturbation)
     {
         ArgumentNullException.ThrowIfNull(collisionWorlds);
         var recorded = RecordedStream.Decode(stream);
+        CheckRulesRevision(recorded);
         return Open(recorded, InitialStateOffset(stream), collisionWorlds, perturbStep);
     }
 
@@ -73,7 +88,25 @@ public static class StreamRunner
     private static long InitialStateOffset(ReadOnlySpan<byte> stream) =>
         RecordedStream.HeaderLength + (long)BinaryPrimitives.ReadUInt32LittleEndian(stream[ConfigLengthOffset..]);
 
-    /// <summary>Open steps 3 to 5, then every step.</summary>
+    /// <summary>
+    /// Open step 2: a stream recorded under another rules revision is refused with
+    /// <see cref="FormatErrorCode.RulesRevisionMismatch"/> at offset 8, naming both revisions, so its
+    /// expected hashes are never compared against these rules (reported as NotComparable).
+    /// </summary>
+    private static void CheckRulesRevision(RecordedStream stream)
+    {
+        if (stream.RulesRevision != SimCoreVersion.RulesRevision)
+        {
+            throw new CoreFormatException(new FormatError(
+                "stream",
+                FormatErrorCode.RulesRevisionMismatch,
+                RulesRevisionOffset,
+                "rulesRevision",
+                string.Create(CultureInfo.InvariantCulture, $"rules revision {stream.RulesRevision} in the stream; this core implements rules revision {SimCoreVersion.RulesRevision}")));
+        }
+    }
+
+    /// <summary>Open steps 3 to 5, the perturbation check, then every step.</summary>
     private static byte[] Open(RecordedStream stream, long initialStateOffset, IReadOnlyList<CollisionWorld> collisionWorlds, int perturbStep)
     {
         // 3: the collision world the stream names, matched by checksum, never by name.
@@ -86,12 +119,34 @@ public static class StreamRunner
         var world = new SimWorld(config, collision);
         world.Reset(stream.InitialState.Span, stream.MatchSalt, StateErrorContext.StreamInitialState(initialStateOffset));
 
-        if (perturbStep != -1)
+        var perturbIndex = PerturbIndex(stream, perturbStep);
+        return RunSteps(world, stream, perturbIndex);
+    }
+
+    /// <summary>
+    /// The index of the entry whose step number is <paramref name="perturbStep"/>, or −1 for no perturbation.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="perturbStep"/> is neither −1 nor one of the stream's step numbers.</exception>
+    private static int PerturbIndex(RecordedStream stream, int perturbStep)
+    {
+        if (perturbStep == NoPerturbation)
         {
-            throw new ArgumentOutOfRangeException(nameof(perturbStep), perturbStep, "This runner applies no perturbation, so perturbStep must be -1.");
+            return -1;
         }
 
-        return RunSteps(world, stream);
+        if (perturbStep >= 0)
+        {
+            var steps = stream.Steps;
+            for (var i = 0; i < steps.Count; i++)
+            {
+                if (steps[i].Step == (uint)perturbStep)
+                {
+                    return i;
+                }
+            }
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(perturbStep), perturbStep, "perturbStep must be -1 or one of the stream's step numbers.");
     }
 
     private static CollisionWorld Find(IReadOnlyList<CollisionWorld> collisionWorlds, ulong checksum)
@@ -113,8 +168,12 @@ public static class StreamRunner
             string.Create(CultureInfo.InvariantCulture, $"collision data {checksum:x16} was not supplied")));
     }
 
-    /// <summary>One <see cref="SimWorld.Step"/> per entry, each record appended through <see cref="StepRecord"/>.</summary>
-    private static byte[] RunSteps(SimWorld world, RecordedStream stream)
+    /// <summary>
+    /// One <see cref="SimWorld.Step"/> per entry, each record appended through <see cref="StepRecord"/>; at
+    /// entry <paramref name="perturbIndex"/> the record is the perturbed state's
+    /// (<see cref="SimWorld.PerturbFirstCharacterPositionX"/>).
+    /// </summary>
+    private static byte[] RunSteps(SimWorld world, RecordedStream stream, int perturbIndex)
     {
         var steps = stream.Steps;
         var widest = 0;
@@ -137,6 +196,17 @@ public static class StreamRunner
             if (report.Fault.Code != StepFaultCode.None)
             {
                 throw new StepFaultException(unchecked(report.Step + 1u), report.Fault);
+            }
+
+            if (i == perturbIndex)
+            {
+                // The step committed; its record is written from the perturbed state instead. A refusal here
+                // reports the committed step itself, the one whose perturbed state did not commit.
+                report = world.PerturbFirstCharacterPositionX();
+                if (report.Fault.Code != StepFaultCode.None)
+                {
+                    throw new StepFaultException(report.Step, report.Fault);
+                }
             }
 
             var state = report.State;

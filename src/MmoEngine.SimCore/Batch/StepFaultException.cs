@@ -15,7 +15,7 @@ public sealed class StepFaultException : Exception
 {
     /// <summary>An exception for <paramref name="fault"/> at step <paramref name="step"/>.</summary>
     public StepFaultException(uint step, StepFault fault)
-        : base(string.Create(CultureInfo.InvariantCulture, $"step {step} faulted: {CodeName(fault.Code)} at {fault.Path}"))
+        : base(string.Create(CultureInfo.InvariantCulture, $"step {step} faulted: {Describe(fault)}"))
     {
         Step = step;
         Fault = fault;
@@ -26,6 +26,13 @@ public sealed class StepFaultException : Exception
 
     /// <summary>Why the step was refused, and the field it names.</summary>
     public StepFault Fault { get; }
+
+    /// <summary>
+    /// The fault's code and field path, <c>&lt;code&gt; at &lt;path&gt;</c>, for example
+    /// <c>NonFinite at characters[0].velocity.y</c>: this message's tail, and the text of
+    /// <see cref="BatchStepper"/>'s <c>StepFault</c> stop entry.
+    /// </summary>
+    internal static string Describe(StepFault fault) => string.Concat(CodeName(fault.Code), " at ", fault.Path);
 
     /// <summary>The code's name as data-model.md#reason-and-outcome-codes gives it; an unknown value prints as its number.</summary>
     private static string CodeName(StepFaultCode code) => code switch

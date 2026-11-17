@@ -242,7 +242,7 @@ public sealed class SimWorld
     public StepReport Step(ReadOnlySpan<CharacterCommand> commands)
     {
         var fault = RunStagesOneToFive(commands);
-        return fault.Code == StepFaultCode.None ? SerialiseAndCommit() : Refused(fault);
+        return fault.Code == StepFaultCode.None ? SerialiseAndCommit(unchecked(_step + 1u)) : Refused(fault);
     }
 
     /// <summary>
@@ -262,7 +262,35 @@ public sealed class SimWorld
         }
 
         Inject(fieldOrdinal, elementIndex, bits);
-        return SerialiseAndCommit();
+        return SerialiseAndCommit(unchecked(_step + 1u));
+    }
+
+    /// <summary>
+    /// The one-ulp perturbation of SC-002 (contracts/wasm-api.md#streamrunner): applies
+    /// <see cref="MathF.BitIncrement"/> to the committed <c>position.x</c> of character index 0, then re-runs
+    /// stage 6 on that state with the committed step's events (canonicalise, finite check, serialise, hash)
+    /// and recommits it under the same step number. Later steps continue from the perturbed state. A fault
+    /// (a position that becomes non-finite) commits nothing and reports hash 0 with the committed step.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The world has no character.</exception>
+    internal StepReport PerturbFirstCharacterPositionX()
+    {
+        if (_characterCount == 0)
+        {
+            throw new InvalidOperationException("The world has no character to perturb.");
+        }
+
+        // The committed state becomes the next state, unchanged but for the one field; the event buffers
+        // still hold the committed step's events, because only the next step's BeginStep empties them.
+        _characters.AsSpan(0, _characterCount).CopyTo(_nextCharacters);
+        _weapons.AsSpan(0, _characterCount * _weaponSlots).CopyTo(_nextWeapons);
+        _projectiles.AsSpan(0, _projectileCount).CopyTo(_nextProjectiles);
+        _nextProjectileCount = _projectileCount;
+        _nextNextProjectileId = _nextProjectileId;
+        ref var first = ref _nextCharacters[0];
+        var position = first.Position;
+        first.Position = new Vec3(MathF.BitIncrement(position.X), position.Y, position.Z);
+        return SerialiseAndCommit(_step);
     }
 
     private static int WidestBoxCandidates(CompiledConfig config, CollisionWorld collision)
@@ -428,11 +456,12 @@ public sealed class SimWorld
 
     /// <summary>
     /// Stage 6 canonicalises, checks and serialises the next state with its events, and hashes it; stage 7
-    /// swaps the next state in and sets the step. A non-finite float stops at stage 6 and commits nothing.
+    /// swaps the next state in and sets the step to <paramref name="step"/>: the step after the committed
+    /// one, or the committed one itself when <see cref="PerturbFirstCharacterPositionX"/> recommits it. A
+    /// non-finite float stops at stage 6 and commits nothing.
     /// </summary>
-    private StepReport SerialiseAndCommit()
+    private StepReport SerialiseAndCommit(uint step)
     {
-        var step = unchecked(_step + 1u);
         var fault = StateSerializer.Write(
             step,
             _nextNextProjectileId,

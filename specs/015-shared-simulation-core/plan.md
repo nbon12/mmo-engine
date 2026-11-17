@@ -812,6 +812,27 @@ The design documents settled these points, which the spec leaves open. They are 
   (`TempDirectories`). `PreparedWork.Path` is the work directory and `Dispose` deletes it, so each
   test holds it in a `using`. T123's task text now says so. Returning the path and leaving cleanup
   to the operating system was not chosen, because reruns would keep piling up work directories.
+- **`BatchStepper.Reset` reuses one world per pair of loads (T127, T115).** T127 said every `Reset`
+  constructs a new `SimWorld`. Built that way, T115's 20 Hz and 30 Hz rows failed although
+  `StepQueued` allocates nothing: their frequent Resets each allocated a world's buffers (the state
+  buffer alone is 91,672 bytes at the placeholders, on the large object heap), which set off gen-2
+  collections, and a few steps after each one the stepping thread's counter showed 6 to 7 KB, in
+  every counted window (for example [6984, 13968, 13968] bytes for batches of 16 at 30 Hz). The
+  first `Reset` after the load calls now constructs the world and later ones reuse it, since
+  `SimWorld.Reset` loads the whole state; every load call drops it. Every window then counts 0 bytes,
+  and the browser client, which resets on each resynchronisation, does not allocate a world each
+  time. T127 and wasm-api.md#batchstepper now say so. Forcing collections or widening the count in
+  the test was not chosen, because the allocations came from the stepper's own Resets.
+- **The cross-build table's draws are fixed in the contract (T129).** wasm-api.md said the drawn
+  patterns are uniform over the stated range from `SplitMix64.At(0x5EED0000 + function ID, i)`, and
+  T129 said out-of-range draws are rejected in draw order with a bound per row, but neither said how
+  a draw becomes a bit pattern. `BuildInputs` takes the upper 32 bits, keeps the sign (cleared for
+  Sqrt), masks the magnitude to the smallest all-ones mask covering the range, and rejects a
+  magnitude outside it. Each function has one counter, and after 64 rejections the magnitude is
+  mapped in by remainder; no row reaches that bound, and the worst row takes 17 draws. An Atan2 pair
+  is one draw's two halves. The contract now states this, and the inputs' XxHash64,
+  `0x22B4C43A2ACFD77E`, is pinned in `InputsArePinned`. Mapping each draw by remainder alone was not
+  chosen, because it is not uniform over the range.
 
 ## Delivery
 

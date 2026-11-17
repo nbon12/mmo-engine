@@ -42,11 +42,10 @@ public sealed class CrossBuildTablesTests
     private const int PoseYawCount = 1_032;
 
     /// <summary>
-    /// The <c>XxHash64</c> (seed 0) of <c>BuildInputs()</c>. T129 pins it when the table lands; from then on
-    /// any change to the table is a visible edit of this constant. Until then it is 0, which the failure
-    /// message shows next to the table's actual hash.
+    /// The <c>XxHash64</c> (seed 0) of <c>BuildInputs()</c>, pinned by T129 when the table landed. Any change
+    /// to the table is a visible edit of this constant.
     /// </summary>
-    private const ulong PinnedInputsXxHash64 = 0x0000000000000000UL;
+    private const ulong PinnedInputsXxHash64 = 0x22B4C43A2ACFD77EUL;
 
     private const uint PlusZero = 0x00000000u;
     private const uint MinusZero = 0x80000000u;

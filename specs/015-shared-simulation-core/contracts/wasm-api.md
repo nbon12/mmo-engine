@@ -70,7 +70,7 @@ load calls, `StepQueued` allocates nothing (FR-032).
 | --- | --- |
 | `LoadCollision(file)` | Decodes an `MMCD` file and builds the collision world. Returns `Ok`, or `FormatRefused` with the format error's message in the report buffer. |
 | `LoadConfig(block)` | Decodes the binary config block, runs `ConfigGuard`, compiles it ([config-rules.md](config-rules.md#browser-guard)). Returns `Ok`, `FormatRefused` (malformed block) or `ConfigInvalid` (every guard error, one `path: message` line each). On `Ok` it sizes the report buffer for the configured maxima (below). |
-| `Reset(state, salt)` | Requires a loaded collision world and configuration, else `NotReady`. Decodes the canonical state with zero events and creates the world at that state's step, with the match salt. A malformed state, or one that does not fit the configuration (more characters than `world.maxCharacters`, a weapon count other than `input.weaponSlots`), returns `FormatRefused`. |
+| `Reset(state, salt)` | Requires a loaded collision world and configuration, else `NotReady`. Decodes the canonical state with zero events and creates the world at that state's step, with the match salt. A malformed state, or one that does not fit the configuration (more characters than `world.maxCharacters`, a weapon count other than `input.weaponSlots`), returns `FormatRefused`. The `SimWorld` object is constructed by the first `Reset` after the load calls and reused by later ones, because a reset loads the whole state; a `Reset` after the first allocates none of the world's buffers. |
 | `StepQueued(count)` | Steps one world step per queued command, in order (below). |
 
 Every load call discards the world, so `StepQueued` returns `NotReady` until the next `Reset` returns
@@ -214,7 +214,16 @@ so there is one table, not two. For each function:
   ±0/±∞ rows above are in domain and have finite results.
 
 The drawn bit patterns come from the core's SplitMix64 with seed `0x5EED0000 + function ID`, uniform
-over the bit patterns in the stated range, in draw order. The pose rows are both stances × every
+over the bit patterns in the stated range, in draw order. Each function has one draw counter, starting
+at 0 and shared by its drawn groups (Sin's 3,072 rows, then its 1,024), and every draw advances it. A
+single-argument row's candidate is the upper 32 bits of `SplitMix64.At(seed, counter)`: its sign bit is
+kept (cleared for Sqrt, whose range is positive), and its magnitude is masked to the smallest all-ones
+mask that covers the range's largest magnitude. A candidate whose magnitude is outside the range is
+rejected, and the next draw is taken. After 64 rejected draws the last candidate's magnitude is mapped
+into the range by remainder, so the sequence is fixed in every build (no row of the table reaches that
+bound). An Atan2 pair is one draw: a is its upper 32 bits and b its lower 32, and a draw with a
+non-finite half is rejected. Atan2's NaN row is (NaN, 1), and Sqrt's negative argument is −1.
+`CrossBuildTablesTests.InputsArePinned` pins the bytes' XxHash64, `0x22B4C43A2ACFD77E`. The pose rows are both stances × every
 64th binary angle plus each quadrant boundary's two neighbours (1,032 yaws) × three positions:
 (0, 0, 0), (4096.25, 37.5, −7000.125) and (−8191.5, −200, 8191.5). That is 6,192 pose rows. Math
 rows are ordered by function ID, then as listed; pose rows by stance, then yaw ascending, then
@@ -263,7 +272,9 @@ its result; it is not tick-path code. A malformed table throws `CoreFormatExcept
 (`tables <field> at offset <n>: <detail>`, for a wrong magic or version, a length that does not match
 the counts, or an unknown function ID or stance), and an invalid block throws
 `ConfigValidationException`. The block is checked first. The refusals that
-`CrossBuildTablesTests.RefusesMalformedTables` pins are:
+`CrossBuildTablesTests.RefusesMalformedTables` pins are below. An input shorter than the field being
+read is `Truncated` at its length (fields `magic`, `version`, then `header` for the 16 bytes), and a
+reserved `u16` other than 0 is `Inconsistent` at 6, field `reserved`. The pinned refusals are:
 
 | Input | Code | Offset | Field | Detail |
 | --- | --- | --- | --- | --- |
