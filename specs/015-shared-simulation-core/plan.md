@@ -975,6 +975,17 @@ The design documents settled these points, which the spec leaves open. They are 
   `manifest-format-reshaped` and `manifest-format-and-rules` rows. Reporting only the format version
   line for another manifest version was not chosen, because a readable rules revision that also
   differs is still worth naming.
+- **Every branch of the wiring checks has a mutated row (T151).** T151 asks that the checks cannot
+  pass vacuously, but its listed rows left some branches with no defect to find: `Directory.Build.props`,
+  `RunAnalyzersDuringBuild` and `WarningsNotAsErrors` in the core check, the malformed `sdk.version`
+  in the pin check, and every case of `OnlyTheCoreAttachesTheAnalyzer`, which the task listed with
+  no rows although the repo's rule is that data variations are Theories. So
+  `CoreProjectAttachesTheAnalyzerPrivately` also has `run-analyzers-during-build-false` and
+  `props-warnings-not-as-errors`, `RoslynPinMatchesTheSdkBand` has a `("10.0", ...)` row, and
+  `OnlyTheCoreAttachesTheAnalyzer(caseName)` is a Theory with `real`, `analyzer-tests-attach` and
+  `analyzer-item`. The attachment check also reports an `<Analyzer Include="…MmoEngine.SimCore.Analyzers.dll" />`
+  item, the route `BuildTests` uses, because that attaches the analyzer just as an
+  `OutputItemType="Analyzer"` reference does. T151 and analyzer-rules.md#tests now say so.
 
 ## Delivery
 
