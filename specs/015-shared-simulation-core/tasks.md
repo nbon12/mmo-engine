@@ -1257,7 +1257,7 @@ Conventions for this phase (they hold for every task below):
 
 ### Tests (write first, confirm red)
 
-- [ ] T138 [US3] Create the analyzer test harness `tests/MmoEngine.SimCore.Analyzers.Tests/Support/AnalyzerHarness.cs` (namespace `MmoEngine.SimCore.Analyzers.Tests`, `internal static class AnalyzerHarness`), per contracts/analyzer-rules.md#tests "Harness". Every later test task in this phase except DescriptorTests, WiringTests, BuildTests and the Math tests uses it. It provides:
+- [X] T138 [US3] Create the analyzer test harness `tests/MmoEngine.SimCore.Analyzers.Tests/Support/AnalyzerHarness.cs` (namespace `MmoEngine.SimCore.Analyzers.Tests`, `internal static class AnalyzerHarness`), per contracts/analyzer-rules.md#tests "Harness". Every later test task in this phase except DescriptorTests, WiringTests, BuildTests and the Math tests uses it. It provides:
   - `RepoRoot`: the directory holding `MmoEngine.sln`, found by walking up from `AppContext.BaseDirectory`. `ReadRepoText(string relativePath)` opens files with `FileAccess.Read` only.
   - `References`: `Basic.Reference.Assemblies.Net100.References.All`. `CoreReferences`: those plus `MetadataReference.CreateFromFile(typeof(System.IO.Hashing.XxHash64).Assembly.Location)`.
   - `SampleOptions`: `CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable, allowUnsafe: true)`. `CoreOptions`: the same with `allowUnsafe: false`, which is the core's setting. Both are parsed with `CSharpParseOptions(LanguageVersion.Latest)`.
@@ -1266,7 +1266,7 @@ Conventions for this phase (they hold for every task below):
   - Both run `compilation.WithAnalyzers([new DeterminismAnalyzer()], new CompilationWithAnalyzersOptions(new AnalyzerOptions([]), null, concurrentAnalysis: true, logAnalyzerExecutionTime: false, reportSuppressedDiagnostics: true))` and `GetAnalyzerDiagnosticsAsync(TestContext.Current.CancellationToken)`.
   - Results: compiler errors (`Severity == Error` from `compilation.GetDiagnostics()`) and analyzer diagnostics ordered by (file path, span start, ID). `Describe(Diagnostic)` formats `path(line,col): ID message [suppressed]` for failure messages.
   - `CoreSourceTrees()`: every `src/MmoEngine.SimCore/**/*.cs` under `RepoRoot` that has no `bin` or `obj` path segment, read with `FileAccess.Read`, ordinal path order, parsed with its repo-relative path.
-- [ ] T139 [US3] Write failing test `RuleTests.EachSampleProducesExactlyItsRule(string ruleId, int count, string member)` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.1), per contracts/analyzer-rules.md#tests.
+- [X] T139 [US3] Write failing test `RuleTests.EachSampleProducesExactlyItsRule(string ruleId, int count, string member)` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.1), per contracts/analyzer-rules.md#tests.
   - The Theory takes one `[MemberData]` per rule. This task creates the body and `VectorRows` (`TheoryData<string, int, string>`). Each row asserts, in order: (1) `CompilerErrors` is empty; (2) the diagnostics' IDs equal `Enumerable.Repeat(ruleId, count)` exactly (an allowed row has `""`, 0 and no diagnostics); (3) every diagnostic's `Severity == DiagnosticSeverity.Error`; (4) every diagnostic's `Location.SourceSpan` lies inside the member span.
   - MMO1001 rows, count 1 unless stated:
     - `public static float M(float x) => Vector3.Dot(new Vector3(x), Vector3.UnitX);` (one, not three)
@@ -1287,7 +1287,7 @@ Conventions for this phase (they hold for every task below):
     - `public static Vector128<float> M(Vector128<float> a, Vector128<float> b) => Vector128.Add(a, b) * b - Vector128.Create(1f);`
     - `public static float M(float x, float y) => x * y + 1f;`
   - Run `dotnet test tests/MmoEngine.SimCore.Analyzers.Tests --filter "FullyQualifiedName~RuleTests.EachSampleProducesExactlyItsRule"` and confirm the violating rows fail, because the skeleton reports nothing.
-- [ ] T140 [US3] Add `PlatformMathRows` (MMO1002) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.PlatformMathMessageNamesTheReplacement(string member, string replacement)` (US3.2).
+- [X] T140 [US3] Add `PlatformMathRows` (MMO1002) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.PlatformMathMessageNamesTheReplacement(string member, string replacement)` (US3.2).
   - Rows, count 1 each:
     - `public static float M(float x) => MathF.Sin(x);`
     - `public static float M(float x) => float.Atan2(x, 1f);`
@@ -1320,7 +1320,7 @@ Conventions for this phase (they hold for every task below):
     - `float.DegreesToRadians` and `float.RadiansToDegrees` give `a multiplication by a float constant`.
     - `MathF.Pow` and `x % 2f` give the fallback `scalar float arithmetic, or add a core function with a documented error bound`.
   - Run `dotnet test tests/MmoEngine.SimCore.Analyzers.Tests --filter "FullyQualifiedName~RuleTests"` and confirm both fail.
-- [ ] T141 [US3] Add `FusedRows` (MMO1003) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.FusedCallsReportOnlyTheFmaRule(string member)` (US3.3).
+- [X] T141 [US3] Add `FusedRows` (MMO1003) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.FusedCallsReportOnlyTheFmaRule(string member)` (US3.3).
   - Rows, count 1:
     - `public static float M(float a, float b, float c) => MathF.FusedMultiplyAdd(a, b, c);`
     - `public static float M(float a) => float.MultiplyAddEstimate(a, a, a);`
@@ -1328,7 +1328,7 @@ Conventions for this phase (they hold for every task below):
     - `public static Vector128<float> M(Vector128<float> a) => System.Runtime.Intrinsics.X86.Fma.MultiplyAdd(a, a, a);` (MMO1003, not MMO1001)
   - Allowed row: `public static float M(float a, float b, float c) => a * b + c;`.
   - The Theory has the same four calls plus `public static double M(double d) => Math.FusedMultiplyAdd(d, d, d);`. Assert that the diagnostics whose `SourceSpan` equals the invocation's span are exactly `[MMO1003]`, and that every other diagnostic is MMO1007 located on a `double` declaration (the parameter `d` and the return type), never on the call. Run with `--filter "FullyQualifiedName~RuleTests"` and confirm it fails.
-- [ ] T142 [US3] Add `HashOrderRows` (MMO1004) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.HashOrderMessagesNameTheOperationAndTheCollection(string member, string message)` (US3.4).
+- [X] T142 [US3] Add `HashOrderRows` (MMO1004) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing test `RuleTests.HashOrderMessagesNameTheOperationAndTheCollection(string member, string message)` (US3.4).
   - Rows, count 1:
     - `public static int M(Dictionary<int, int> d) { var s = 0; foreach (var kv in d) s += kv.Value; return s; }`
     - `public static int M(HashSet<int> s) => s.First();`
