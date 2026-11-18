@@ -85,7 +85,11 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         context.ReportDiagnostic(finding.ToDiagnostic());
     }
 
-    /// <summary>The member declarations' types: fields (not constants), properties, events, return types and parameters.</summary>
+    /// <summary>
+    /// The member declarations: the types of fields (not constants), properties, events, return types
+    /// and parameters, and a method's <c>[Conditional]</c> and <c>[UnsafeAccessor]</c> attributes and
+    /// <c>Synchronized</c> flag.
+    /// </summary>
     private static void AnalyzeSymbol(SymbolAnalysisContext context)
     {
         var symbol = context.Symbol;

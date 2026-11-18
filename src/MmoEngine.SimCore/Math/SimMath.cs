@@ -42,6 +42,10 @@ public static class SimMath
     private static readonly ulong HalfPiQ62 = Q62(HalfPiPart1) + Q62(HalfPiPart2) + Q62(HalfPiPart3) + Q62(HalfPiPart4);
 
     /// <summary>The sine of <paramref name="x"/> radians. NaN for a non-finite input.</summary>
+    /// <remarks>
+    /// Maximum error: <see cref="SimMathBounds.SinCosMaxUlp"/> ulp for |x| ≤ <see cref="SimMathBounds.ReductionLimit"/>,
+    /// and <see cref="SimMathBounds.SinCosLargeMaxUlp"/> ulp for larger finite |x|.
+    /// </remarks>
     public static float Sin(float x)
     {
         if (!float.IsFinite(x))
@@ -69,6 +73,10 @@ public static class SimMath
     }
 
     /// <summary>The cosine of <paramref name="x"/> radians. NaN for a non-finite input.</summary>
+    /// <remarks>
+    /// Maximum error: <see cref="SimMathBounds.SinCosMaxUlp"/> ulp for |x| ≤ <see cref="SimMathBounds.ReductionLimit"/>,
+    /// and <see cref="SimMathBounds.SinCosLargeMaxUlp"/> ulp for larger finite |x|.
+    /// </remarks>
     public static float Cos(float x)
     {
         if (!float.IsFinite(x))
@@ -91,6 +99,10 @@ public static class SimMath
     /// The sine and cosine of <paramref name="x"/> radians from one reduction, bit for bit equal to
     /// <see cref="Sin"/> and <see cref="Cos"/>. Both are NaN for a non-finite input.
     /// </summary>
+    /// <remarks>
+    /// Maximum error: <see cref="SimMathBounds.SinCosMaxUlp"/> ulp for |x| ≤ <see cref="SimMathBounds.ReductionLimit"/>,
+    /// and <see cref="SimMathBounds.SinCosLargeMaxUlp"/> ulp for larger finite |x|.
+    /// </remarks>
     public static void SinCos(float x, out float sin, out float cos)
     {
         if (!float.IsFinite(x))
@@ -140,6 +152,10 @@ public static class SimMath
     }
 
     /// <summary>The tangent of <paramref name="x"/> radians. NaN for a non-finite input.</summary>
+    /// <remarks>
+    /// Maximum error: <see cref="SimMathBounds.TanMaxUlp"/> ulp for |x| ≤ <see cref="SimMathBounds.ReductionLimit"/>,
+    /// and <see cref="SimMathBounds.TanLargeMaxUlp"/> ulp for larger finite |x|.
+    /// </remarks>
     public static float Tan(float x)
     {
         if (!float.IsFinite(x))
@@ -163,6 +179,7 @@ public static class SimMath
     }
 
     /// <summary>The arcsine of <paramref name="x"/> in [−π/2, π/2]. NaN outside [−1, 1] and for NaN.</summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.AsinAcosMaxUlp"/> ulp on [−1, 1].</remarks>
     public static float Asin(float x)
     {
         var ax = float.Abs(x);
@@ -201,6 +218,7 @@ public static class SimMath
     }
 
     /// <summary>The arccosine of <paramref name="x"/> in [0, π]. NaN outside [−1, 1] and for NaN.</summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.AsinAcosMaxUlp"/> ulp on [−1, 1].</remarks>
     public static float Acos(float x)
     {
         var ax = float.Abs(x);
@@ -239,6 +257,7 @@ public static class SimMath
     }
 
     /// <summary>The arctangent of <paramref name="x"/> in [−π/2, π/2]; Atan(±∞) is ±π/2. NaN for NaN.</summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.AtanMaxUlp"/> ulp on every float.</remarks>
     public static float Atan(float x)
     {
         if (float.IsNaN(x))
@@ -301,6 +320,7 @@ public static class SimMath
     /// Annex F: signed zeros and infinities give the annex's exact results, and NaN in either argument
     /// gives NaN.
     /// </summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.Atan2MaxUlp"/> ulp.</remarks>
     public static float Atan2(float y, float x)
     {
         if (float.IsNaN(x) || float.IsNaN(y))
@@ -388,6 +408,7 @@ public static class SimMath
     /// quadrant is <c>(angle + 0x2000) &gt;&gt; 14</c> and the rest is reduced in integers, so the four
     /// quadrant angles are exact and adding 16384 gives exactly (cos, −sin). All aim maths uses it.
     /// </summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.SinCosBinaryAngleMaxUlp"/> ulp on every angle.</remarks>
     public static void SinCosBinaryAngle(ushort angle, out float sin, out float cos)
     {
         var quadrant = (angle + 0x2000) >> 14;
@@ -423,6 +444,7 @@ public static class SimMath
     }
 
     /// <summary>The correctly rounded square root. NaN below −0; Sqrt(−0) is −0.</summary>
+    /// <remarks>Maximum error: <see cref="SimMathBounds.SqrtMaxUlp"/> ulp.</remarks>
     public static float Sqrt(float x) => System.MathF.Sqrt(x);
 
     /// <summary><c>a &lt; b ? a : b</c>: the same bits in every build for signed zeros and NaNs.</summary>
