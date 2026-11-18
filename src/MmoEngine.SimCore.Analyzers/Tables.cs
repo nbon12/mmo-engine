@@ -237,6 +237,188 @@ internal static class Tables
     /// <summary>The views of a hash-ordered collection, reported only when their own type is not hash-ordered.</summary>
     public static readonly ImmutableHashSet<string> EnumeratingProperties = Set("Keys", "Values");
 
+    // ---- MMO1005: ambient time, randomness and hash seeds -------------------------------------
+
+    /// <summary>
+    /// The clocks, timers, random sources and per-process hash seeds every member and constructor of
+    /// which is MMO1005 (contracts/analyzer-rules.md#ambient-time-randomness-and-hash-seeds-mmo1005).
+    /// A class derived from one counts too.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> AmbientTypes = Set(
+        "System.Diagnostics.Stopwatch",
+        "System.TimeProvider",
+        "System.Random",
+        "System.Security.Cryptography.RandomNumberGenerator",
+        "System.HashCode",
+        "System.Threading.Timer",
+        "System.Threading.PeriodicTimer",
+        "System.Timers.Timer");
+
+    /// <summary>
+    /// The single members that read a clock, draw a random value or hash with a per-process seed.
+    /// <c>object.GetHashCode</c> and <c>ValueType.GetHashCode</c> are here because Roslyn binds a
+    /// <c>GetHashCode</c> call to the receiver type's own override when it has one, so a call that still
+    /// targets one of these two is on a type that does not override it.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> AmbientMembers = Set(
+        "System.DateTime.Now",
+        "System.DateTime.UtcNow",
+        "System.DateTime.Today",
+        "System.DateTimeOffset.Now",
+        "System.DateTimeOffset.UtcNow",
+        "System.Environment.TickCount",
+        "System.Environment.TickCount64",
+        "System.Guid.NewGuid",
+        "System.Guid.CreateVersion7",
+        "System.String.GetHashCode",
+        "System.Object.GetHashCode",
+        "System.ValueType.GetHashCode",
+        "System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode",
+        "System.Threading.Tasks.Task.Delay");
+
+    // ---- MMO1006: locks and blocking ----------------------------------------------------------
+
+    /// <summary>
+    /// The locks, wait handles, spin primitives and blocking collections every use and declaration of
+    /// which is MMO1006 (contracts/analyzer-rules.md#locks-and-blocking-mmo1006). A class derived from
+    /// one counts too.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> BlockingTypes = Set(
+        "System.Threading.Monitor",
+        "System.Threading.Lock",
+        "System.Threading.Mutex",
+        "System.Threading.Semaphore",
+        "System.Threading.SemaphoreSlim",
+        "System.Threading.ReaderWriterLock",
+        "System.Threading.ReaderWriterLockSlim",
+        "System.Threading.SpinLock",
+        "System.Threading.SpinWait",
+        "System.Threading.ManualResetEvent",
+        "System.Threading.ManualResetEventSlim",
+        "System.Threading.AutoResetEvent",
+        "System.Threading.EventWaitHandle",
+        "System.Threading.WaitHandle",
+        "System.Threading.CountdownEvent",
+        "System.Threading.Barrier",
+        "System.Collections.Concurrent.BlockingCollection`1",
+        "System.Threading.Tasks.Parallel");
+
+    /// <summary>The single members that block: thread sleeps and joins, task waits and results, and every awaiter's <c>GetResult</c>.</summary>
+    public static readonly ImmutableHashSet<string> BlockingMembers = Set(
+        "System.Threading.Thread.Sleep",
+        "System.Threading.Thread.Join",
+        "System.Threading.Thread.SpinWait",
+        "System.Threading.Thread.Yield",
+        "System.Threading.Tasks.Task.Wait",
+        "System.Threading.Tasks.Task.WaitAll",
+        "System.Threading.Tasks.Task.WaitAny",
+        "System.Threading.Tasks.Task.RunSynchronously",
+        "System.Threading.Tasks.Task`1.Result",
+        "System.Threading.Tasks.ValueTask`1.Result",
+        "System.Runtime.CompilerServices.TaskAwaiter.GetResult",
+        "System.Runtime.CompilerServices.TaskAwaiter`1.GetResult",
+        "System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult",
+        "System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult",
+        "System.Runtime.CompilerServices.ConfiguredTaskAwaitable+ConfiguredTaskAwaiter.GetResult",
+        "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter.GetResult",
+        "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable+ConfiguredValueTaskAwaiter.GetResult",
+        "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter.GetResult");
+
+    // ---- MMO1007: numeric types ---------------------------------------------------------------
+
+    /// <summary>
+    /// The numeric types the core may not declare or compute in, besides <c>double</c>, <c>nint</c>
+    /// and <c>nuint</c>, which are matched by their special type
+    /// (contracts/analyzer-rules.md#numeric-types-mmo1007).
+    /// </summary>
+    public static readonly ImmutableHashSet<string> BannedNumericTypes = Set(
+        "System.Half",
+        "System.Runtime.InteropServices.NFloat");
+
+    // ---- MMO1008: platform queries, conditional compilation and reflection --------------------
+
+    /// <summary>
+    /// The types every member of which is MMO1008: <c>Debug</c> and <c>Trace</c>, the platform and
+    /// runtime queries, <c>Environment</c> (except its two clocks, which are MMO1005),
+    /// <c>System.Type</c> and <c>Activator</c>.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> PlatformPathTypes = Set(
+        "System.Diagnostics.Debug",
+        "System.Diagnostics.Trace",
+        "System.OperatingSystem",
+        "System.Runtime.InteropServices.RuntimeInformation",
+        "System.Runtime.CompilerServices.RuntimeFeature",
+        "System.Environment",
+        "System.Type",
+        "System.Activator");
+
+    /// <summary>The prefix of every type in System.Reflection and its sub-namespaces, every member of which is MMO1008.</summary>
+    public const string ReflectionPrefix = "System.Reflection.";
+
+    /// <summary>The single members that ask which platform the build runs on.</summary>
+    public static readonly ImmutableHashSet<string> PlatformPathMembers = Set(
+        "System.IntPtr.Size",
+        "System.UIntPtr.Size",
+        "System.BitConverter.IsLittleEndian");
+
+    /// <summary>The <see cref="PlatformPathTypes"/> members that are clocks, which MMO1005 reports instead.</summary>
+    public static readonly ImmutableHashSet<string> PlatformPathExemptions = Set(
+        "System.Environment.TickCount",
+        "System.Environment.TickCount64");
+
+    /// <summary>The attributes whose declarations are MMO1008: a call that some builds drop, and an accessor that reaches private members.</summary>
+    public static readonly ImmutableHashSet<string> PlatformPathAttributes = Set(
+        "System.Diagnostics.ConditionalAttribute",
+        "System.Runtime.CompilerServices.UnsafeAccessorAttribute");
+
+    // ---- MMO1009: float-to-integer and ulong-to-float conversions -----------------------------
+
+    /// <summary>The <c>MmoEngine.SimCore.Math.SimMath</c> methods in whose bodies a float-to-integer conversion is allowed: they saturate first.</summary>
+    public static readonly ImmutableHashSet<string> SimMathIntegerHelpers = Set("FloorToInt", "RoundToInt", "TruncateToInt");
+
+    /// <summary><c>System.Convert</c>, every member of which is MMO1009.</summary>
+    public const string ConvertType = "System.Convert";
+
+    /// <summary>The 128-bit integer types, which a float conversion reaches through a user-defined operator.</summary>
+    public static readonly ImmutableHashSet<string> WideIntegerTypes = Set("System.Int128", "System.UInt128");
+
+    /// <summary>
+    /// The <c>Create*</c> methods of the integer types, MMO1009 when their <c>TOther</c> is one of
+    /// <see cref="FloatingPointTypes"/>: CoreLib implements them with the raw conversion.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> IntegerCreateMethods = Members(
+        [
+            "System.SByte",
+            "System.Byte",
+            "System.Int16",
+            "System.UInt16",
+            "System.Int32",
+            "System.UInt32",
+            "System.Int64",
+            "System.UInt64",
+            "System.Char",
+            "System.Int128",
+            "System.UInt128",
+        ],
+        "CreateTruncating",
+        "CreateSaturating",
+        "CreateChecked");
+
+    /// <summary>The floating-point types an integer <c>Create*</c> may not convert from.</summary>
+    public static readonly ImmutableHashSet<string> FloatingPointTypes = Set(
+        "System.Single",
+        "System.Double",
+        "System.Half",
+        "System.Runtime.InteropServices.NFloat");
+
+    /// <summary>MMO1009's <c>{1}</c> for a float-to-integer or float-to-enum conversion, an integer <c>Create*</c> from a float, or <c>System.Convert</c>.</summary>
+    public const string FloatToIntegerReason =
+        "converts a floating-point value to an integer, which gives different results between builds for NaN and out-of-range values; use 'SimMath.FloorToInt', 'SimMath.RoundToInt' or 'SimMath.TruncateToInt', which saturate first";
+
+    /// <summary>MMO1009's <c>{1}</c> for a <c>ulong</c>-to-<c>float</c> conversion.</summary>
+    public const string UlongToFloatReason =
+        "converts a 'ulong' to 'float', which the WebAssembly build rounds through 'double' and so can differ by one ulp; narrow it to 'uint' or 'long' first";
+
     // ---- Matching -----------------------------------------------------------------------------
 
     /// <summary>

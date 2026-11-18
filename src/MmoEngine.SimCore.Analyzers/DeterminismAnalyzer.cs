@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Immutable;
+using System.Reflection;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -105,15 +107,38 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 ReportDeclaration(context, @event.Type, @event);
                 break;
             case IMethodSymbol method when !IsAccessor(method):
-                ReportDeclaration(context, method.ReturnType, method);
+                if (MethodDeclaration(method) is { } finding)
+                {
+                    context.ReportDiagnostic(finding.ToDiagnostic());
+                }
+
                 ReportParameters(context, method.Parameters);
                 break;
         }
     }
 
-    /// <summary>The preprocessor directives of one tree. No rule reports from here yet; the <c>#if</c> and <c>#elif</c> rule (MMO1008) does.</summary>
+    /// <summary>MMO1008 on every <c>#if</c> and <c>#elif</c> directive of one tree, active or not, at the directive line.</summary>
     private static void AnalyzeSyntaxTree(SyntaxTreeAnalysisContext context)
     {
+        var root = context.Tree.GetRoot(context.CancellationToken);
+        if (!root.ContainsDirectives)
+        {
+            return;
+        }
+
+        foreach (var trivia in root.DescendantTrivia())
+        {
+            var keyword = trivia.Kind() switch
+            {
+                SyntaxKind.IfDirectiveTrivia => "#if",
+                SyntaxKind.ElifDirectiveTrivia => "#elif",
+                _ => null,
+            };
+            if (keyword is not null)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(Descriptors.Mmo1008, trivia.GetLocation(), keyword));
+            }
+        }
     }
 
     private static void ReportParameters(SymbolAnalysisContext context, ImmutableArray<IParameterSymbol> parameters)
@@ -200,13 +225,57 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         return FusedMultiplyAdd(operation)
             ?? VectorOrIntrinsic(operation)
             ?? PlatformMath(operation)
-            ?? HashOrderedEnumeration(operation);
+            ?? PlatformPath(operation)
+            ?? Ambient(operation)
+            ?? Blocking(operation)
+            ?? HashOrderedEnumeration(operation)
+            ?? FloatConversion(operation)
+            ?? NumericExpression(operation);
     }
 
     /// <summary>The first rule a declaration of type <paramref name="type"/> matches, reported at the declared identifier.</summary>
     private static Finding? Declaration(ITypeSymbol type, string name, Location location) =>
-        FindType(type, IsBannedVectorType) is { } vector
-            ? new Finding(Descriptors.Mmo1001, location, name, vector.ToDisplayString())
+        TypeFinding(type, IsBannedVectorType, Descriptors.Mmo1001, name, location)
+        ?? TypeFinding(type, IsBlockingType, Descriptors.Mmo1006, name, location)
+        ?? TypeFinding(type, IsBannedNumericType, Descriptors.Mmo1007, name, location);
+
+    /// <summary>
+    /// The one rule a method declaration reports at its identifier, the first in precedence order: a
+    /// vector return type (MMO1001), a <c>[Conditional]</c> or <c>[UnsafeAccessor]</c> attribute
+    /// (MMO1008), the synchronized implementation flag (MMO1006), then the rest of the return type's
+    /// rules. Its parameters report on their own identifiers.
+    /// </summary>
+    private static Finding? MethodDeclaration(IMethodSymbol method)
+    {
+        var location = DeclaredLocation(method);
+        return TypeFinding(method.ReturnType, IsBannedVectorType, Descriptors.Mmo1001, method.Name, location)
+            ?? (HasPlatformPathAttribute(method)
+                ? new Finding(Descriptors.Mmo1008, location, method.Name)
+                : (Finding?)null)
+            ?? ((method.MethodImplementationFlags & MethodImplAttributes.Synchronized) != 0
+                ? new Finding(Descriptors.Mmo1006, location, method.Name)
+                : (Finding?)null)
+            ?? Declaration(method.ReturnType, method.Name, location);
+    }
+
+    /// <summary>True when <paramref name="method"/> carries <c>[Conditional]</c> or <c>[UnsafeAccessor]</c>.</summary>
+    private static bool HasPlatformPathAttribute(IMethodSymbol method)
+    {
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (attribute.AttributeClass is { } type && Tables.PlatformPathAttributes.Contains(Tables.FullName(type)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary><paramref name="descriptor"/> at <paramref name="location"/> when <paramref name="type"/> is or contains a type <paramref name="isBanned"/> accepts; <c>{1}</c> is that type.</summary>
+    private static Finding? TypeFinding(ITypeSymbol type, Func<INamedTypeSymbol, bool> isBanned, DiagnosticDescriptor descriptor, string name, Location location) =>
+        FindType(type, isBanned) is { } found
+            ? new Finding(descriptor, location, name, found.ToDisplayString())
             : null;
 
     /// <summary>
@@ -382,6 +451,38 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
+    /// MMO1005: a member or constructor of a clock, timer, random source or hash-seed type, or one of
+    /// the ambient members. A <c>GetHashCode</c> call reports only when it still targets
+    /// <c>object</c>'s or <c>ValueType</c>'s, which Roslyn binds only when the receiver's type does not
+    /// override it, and <c>string</c>'s, whose seed is per process.
+    /// </summary>
+    private static Finding? Ambient(IOperation operation) =>
+        ReferencedMember(operation) is { ContainingType: { } type } member
+        && (IsListedOrDerived(type, Tables.AmbientTypes) || Tables.AmbientMembers.Contains(Tables.MemberKey(member)))
+            ? new Finding(Descriptors.Mmo1005, operation.Syntax.GetLocation(), Display(member))
+            : null;
+
+    /// <summary>
+    /// MMO1006: every <c>lock</c> statement, at its keyword, and a member or constructor of a lock,
+    /// wait handle, spin primitive or blocking collection type, or one of the blocking members.
+    /// </summary>
+    private static Finding? Blocking(IOperation operation)
+    {
+        if (operation is ILockOperation)
+        {
+            return new Finding(Descriptors.Mmo1006, ((LockStatementSyntax)operation.Syntax).LockKeyword.GetLocation(), "lock");
+        }
+
+        return ReferencedMember(operation) is { ContainingType: { } type } member
+            && (IsListedOrDerived(type, Tables.BlockingTypes) || Tables.BlockingMembers.Contains(Tables.MemberKey(member)))
+                ? new Finding(Descriptors.Mmo1006, operation.Syntax.GetLocation(), Display(member))
+                : null;
+    }
+
+    /// <summary>A lock, wait handle, spin primitive or blocking collection type, or a class derived from one.</summary>
+    private static bool IsBlockingType(INamedTypeSymbol type) => IsListedOrDerived(type, Tables.BlockingTypes);
+
+    /// <summary>
     /// MMO1004: enumerating a hash-ordered collection by <c>foreach</c>, a <c>..</c> spread, an
     /// enumerating member (<c>GetEnumerator</c>, <c>CopyTo</c>, <c>ToArray</c>, or <c>Keys</c> and
     /// <c>Values</c> whose result is not hash-ordered), or a conversion to a type that is not
@@ -429,16 +530,15 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// True for a hash-ordered collection type (<see cref="Tables.HashOrderedTypes"/>) or a class
     /// derived from one. Interfaces count only as themselves.
     /// </summary>
-    private static bool IsHashOrdered(ITypeSymbol? type)
-    {
-        if (type is null || type.TypeKind is not (TypeKind.Class or TypeKind.Interface))
-        {
-            return false;
-        }
+    private static bool IsHashOrdered(ITypeSymbol? type) =>
+        type is INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Interface } named && IsListedOrDerived(named, Tables.HashOrderedTypes);
 
-        for (var named = type as INamedTypeSymbol; named is not null; named = named.BaseType)
+    /// <summary>True when <paramref name="type"/> or one of its base classes is in <paramref name="listed"/>.</summary>
+    private static bool IsListedOrDerived(INamedTypeSymbol? type, ImmutableHashSet<string> listed)
+    {
+        for (var named = type; named is not null; named = named.BaseType)
         {
-            if (Tables.HashOrderedTypes.Contains(Tables.FullName(named)))
+            if (listed.Contains(Tables.FullName(named)))
             {
                 return true;
             }
@@ -446,6 +546,109 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
         return false;
     }
+
+    /// <summary>
+    /// MMO1008: every <c>dynamic</c> operation, and a member, constructor or operator of a platform
+    /// query, <c>Debug</c>, <c>Trace</c>, <c>Environment</c> (but its clocks), <c>System.Type</c>,
+    /// <c>Activator</c> or a System.Reflection type, or one of the platform-size members.
+    /// </summary>
+    private static Finding? PlatformPath(IOperation operation)
+    {
+        if (operation is IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IDynamicObjectCreationOperation)
+        {
+            return new Finding(Descriptors.Mmo1008, operation.Syntax.GetLocation(), operation.Syntax.ToString());
+        }
+
+        if ((ReferencedMember(operation) ?? OperatorMethod(operation)) is not { ContainingType: { } type } member)
+        {
+            return null;
+        }
+
+        var key = Tables.MemberKey(member);
+        var name = Tables.FullName(type);
+        var banned = Tables.PlatformPathMembers.Contains(key)
+            || ((Tables.PlatformPathTypes.Contains(name) || name.StartsWith(Tables.ReflectionPrefix, StringComparison.Ordinal))
+                && !Tables.PlatformPathExemptions.Contains(key));
+        return banned ? new Finding(Descriptors.Mmo1008, operation.Syntax.GetLocation(), Display(member)) : null;
+    }
+
+    /// <summary>
+    /// MMO1009: a non-constant conversion from <c>float</c> or <c>double</c> to an integer or enum type
+    /// outside the bodies of SimMath's three saturating helpers; a non-constant <c>ulong</c>-to-<c>float</c>
+    /// conversion anywhere; every <c>System.Convert</c> member; and an integer type's <c>Create*</c>
+    /// from a floating-point <c>TOther</c>.
+    /// </summary>
+    private static Finding? FloatConversion(IOperation operation)
+    {
+        if (operation is IConversionOperation conversion)
+        {
+            if (conversion.ConstantValue.HasValue || conversion.Operand.Type is not { } source)
+            {
+                return null;
+            }
+
+            var target = conversion.Type;
+            if (IsFloatOrDouble(source) && IsIntegerOrEnum(target) && !IsInsideSimMathIntegerHelper(operation))
+            {
+                return new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), operation.Syntax.ToString(), Tables.FloatToIntegerReason);
+            }
+
+            return Underlying(source).SpecialType == SpecialType.System_UInt64 && IsSingle(target)
+                ? new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), operation.Syntax.ToString(), Tables.UlongToFloatReason)
+                : null;
+        }
+
+        if (ReferencedMember(operation) is not { ContainingType: { } type } member)
+        {
+            return null;
+        }
+
+        var banned = string.Equals(Tables.FullName(type), Tables.ConvertType, StringComparison.Ordinal)
+            || (member is IMethodSymbol { TypeArguments.Length: 1 } method
+                && method.TypeArguments[0] is INamedTypeSymbol other
+                && Tables.IntegerCreateMethods.Contains(Tables.MemberKey(method))
+                && Tables.FloatingPointTypes.Contains(Tables.FullName(other)));
+        return banned ? new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), Display(member), Tables.FloatToIntegerReason) : null;
+    }
+
+    /// <summary>True when the method whose body holds <paramref name="operation"/> is one of <c>SimMath.FloorToInt</c>, <c>RoundToInt</c> and <c>TruncateToInt</c>.</summary>
+    private static bool IsInsideSimMathIntegerHelper(IOperation operation) =>
+        operation.SemanticModel?.GetEnclosingSymbol(operation.Syntax.SpanStart) is IMethodSymbol { ContainingType: { } type } method
+        && Tables.SimMathIntegerHelpers.Contains(method.Name)
+        && string.Equals(Tables.FullName(type), Tables.SimMathType, StringComparison.Ordinal);
+
+    /// <summary>
+    /// MMO1007: a non-constant expression whose type is, or contains as a type argument, array element
+    /// or pointer target, <c>double</c>, <c>Half</c>, <c>NFloat</c>, <c>nint</c> or <c>nuint</c>. Only
+    /// the expression kinds the analyzer registers count, so a parent that is never reported cannot
+    /// hide a child.
+    /// </summary>
+    private static Finding? NumericExpression(IOperation operation)
+    {
+        var expression = operation is IInvocationOperation
+            or IPropertyReferenceOperation
+            or IFieldReferenceOperation
+            or IMethodReferenceOperation
+            or IEventReferenceOperation
+            or IObjectCreationOperation
+            or IConversionOperation
+            or IBinaryOperation
+            or ICompoundAssignmentOperation
+            or IUnaryOperation
+            or IDefaultValueOperation;
+        if (!expression || operation.ConstantValue.HasValue || FindType(operation.Type, IsBannedNumericType) is not { } found)
+        {
+            return null;
+        }
+
+        var text = ReferencedMember(operation) is { } member ? Display(member) : operation.Syntax.ToString();
+        return new Finding(Descriptors.Mmo1007, operation.Syntax.GetLocation(), text, found.ToDisplayString());
+    }
+
+    /// <summary><c>double</c>, <c>nint</c>, <c>nuint</c>, <c>Half</c> or <c>NFloat</c>.</summary>
+    private static bool IsBannedNumericType(INamedTypeSymbol type) =>
+        type.SpecialType is SpecialType.System_Double or SpecialType.System_IntPtr or SpecialType.System_UIntPtr
+        || Tables.BannedNumericTypes.Contains(Tables.FullName(type));
 
     // ---- Helpers ------------------------------------------------------------------------------
 
@@ -529,15 +732,43 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         return operation;
     }
 
+    /// <summary>The type under <c>Nullable&lt;T&gt;</c>, or <paramref name="type"/> itself.</summary>
+    private static ITypeSymbol Underlying(ITypeSymbol type) =>
+        type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable ? nullable.TypeArguments[0] : type;
+
     /// <summary>True for <c>float</c> and <c>float?</c>.</summary>
-    private static bool IsSingle(ITypeSymbol? type)
+    private static bool IsSingle(ITypeSymbol? type) => type is not null && Underlying(type).SpecialType == SpecialType.System_Single;
+
+    /// <summary>True for <c>float</c> and <c>double</c>, nullable or not.</summary>
+    private static bool IsFloatOrDouble(ITypeSymbol type) => Underlying(type).SpecialType is SpecialType.System_Single or SpecialType.System_Double;
+
+    /// <summary>
+    /// True for the targets of MMO1009's float conversions, nullable or not: the fixed-size integer
+    /// types, <c>char</c>, <c>Int128</c>, <c>UInt128</c>, and an enum, by its underlying type.
+    /// </summary>
+    private static bool IsIntegerOrEnum(ITypeSymbol? type)
     {
-        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        if (type is null)
         {
-            type = nullable.TypeArguments[0];
+            return false;
         }
 
-        return type?.SpecialType == SpecialType.System_Single;
+        var underlying = Underlying(type);
+        if (underlying is INamedTypeSymbol { EnumUnderlyingType: { } enumUnderlying })
+        {
+            underlying = enumUnderlying;
+        }
+
+        return underlying.SpecialType is SpecialType.System_SByte
+                or SpecialType.System_Byte
+                or SpecialType.System_Int16
+                or SpecialType.System_UInt16
+                or SpecialType.System_Int32
+                or SpecialType.System_UInt32
+                or SpecialType.System_Int64
+                or SpecialType.System_UInt64
+                or SpecialType.System_Char
+            || (underlying is INamedTypeSymbol named && Tables.WideIntegerTypes.Contains(Tables.FullName(named)));
     }
 
     /// <summary>True for the built-in integer types, <c>nint</c> and <c>nuint</c> included.</summary>

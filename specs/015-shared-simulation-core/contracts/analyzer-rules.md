@@ -22,7 +22,7 @@ Every rule is severity Error, enabled by default, category `Determinism`, and ca
 | MMO1005 | Ambient time, randomness or a per-process hash seed | The [ambient list](#ambient-time-randomness-and-hash-seeds-mmo1005): wall-clock and monotonic clocks, every timer, all of `System.Random` (seeded too), `Guid.NewGuid`, `RandomNumberGenerator`, and hashing seeded per process (`HashCode`, `string.GetHashCode`, a `GetHashCode` that is not overridden, `RuntimeHelpers.GetHashCode`). | The step number and step length passed in by the caller. The core's seeded spread hash (SplitMix64). `int.GetHashCode()` and other overrides that return the value's bits. |
 | MMO1006 | Lock or blocking synchronization | Every `lock` statement, including on `System.Threading.Lock`. The [blocking list](#locks-and-blocking-mmo1006): `Monitor`, `Mutex`, the semaphores, reader-writer locks, spin primitives, wait handles, `Barrier`, `BlockingCollection`, `Parallel`, `Thread.Sleep`/`Join`/`SpinWait`/`Yield`, `Task.Wait`/`WaitAll`/`WaitAny`/`RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`, `GetResult` on every awaiter, and `[MethodImpl(MethodImplOptions.Synchronized)]`. | `await`, `Interlocked` and `Volatile`; none of them blocks. |
 | MMO1007 | Non-float floating point or platform-sized number | Declarations of `double`, `Half`, `NFloat`, `nint` or `nuint` (fields, properties, events, parameters, return types, locals, type arguments, array elements), and any non-constant expression of those types. An untyped literal in a float expression (`x * 0.5`) is one. | `const double` fields and constant-folded expressions such as `(float)(Math.PI / 180.0)`. `int` and `long` for fixed point and counters. `decimal` is not checked. |
-| MMO1008 | Platform query, conditional compilation or reflection | `#if` and `#elif` directives. `[Conditional]` declarations and calls to `System.Diagnostics.Debug` and `Trace`. `OperatingSystem`, `RuntimeInformation`, `RuntimeFeature`. Every member of `System.Environment` except the two clocks (MMO1005). `IntPtr.Size`, `UIntPtr.Size`, `BitConverter.IsLittleEndian`. Members of `System.Type`, every type in `System.Reflection`, `Activator`. Every `dynamic` operation. `[UnsafeAccessor]` declarations. | One code path for every build. `typeof(T)` and `nameof` without member access. |
+| MMO1008 | Platform query, conditional compilation or reflection | `#if` and `#elif` directives, active or not. `[Conditional]` declarations and every member of `System.Diagnostics.Debug` and `Trace`. `OperatingSystem`, `RuntimeInformation`, `RuntimeFeature`. Every member of `System.Environment` except the two clocks (MMO1005). `IntPtr.Size`, `UIntPtr.Size`, `BitConverter.IsLittleEndian`. Members of `System.Type`, operators included, every type in `System.Reflection` and its sub-namespaces, `Activator`. Every `dynamic` operation. `[UnsafeAccessor]` declarations. | One code path for every build. `typeof(T)` and `nameof` without member access. |
 | MMO1009 | Float-to-integer or ulong-to-float conversion outside the SimMath helpers | A non-constant conversion, explicit or implicit, `checked` or not, from `float` or `double` to any integer type (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `char`, `Int128`, `UInt128`) or to any enum type (matched by its underlying integer type, so `(Buttons)x` counts), outside the bodies of the three `MmoEngine.SimCore.Math.SimMath` helpers. Every member of `System.Convert`. An invocation of `CreateTruncating`, `CreateSaturating` or `CreateChecked` declared on one of those integer types (`int.CreateSaturating(x)`, `long.CreateTruncating(x)`) whose type argument `TOther` is `float`, `double`, `Half` or `NFloat`. A non-constant conversion from `ulong` to `float`, anywhere in the core, `SimMath` included. | `SimMath.FloorToInt`, `SimMath.RoundToInt` and `SimMath.TruncateToInt`, which saturate before the cast (NaN → 0, ≥ 2^31 → `int.MaxValue`, < −2^31 → `int.MinValue`). Constant casts such as `(int)2.5f`. Integer-to-float conversions from `int`, `uint`, `long`, `short` and `byte`, which round correctly in every build. |
 
 US3 scenario 1 lists `Vector128.Sum` and `Vector128.Dot` as its horizontal samples. A fused
@@ -80,7 +80,8 @@ MMO1009's reason text:
 | `ulong` to `float` | `converts a 'ulong' to 'float', which the WebAssembly build rounds through 'double' and so can differ by one ulp; narrow it to 'uint' or 'long' first` |
 
 The exemption is per method, not per type: the three helpers are the only places a float-to-integer
-cast is allowed ([research.md](../research.md) R3 and R4). The trigonometric range reduction
+cast is allowed ([research.md](../research.md) R3 and R4). It covers the helpers' own bodies, not a
+lambda or local function inside them, which can run without the helper's range checks. The trigonometric range reduction
 converts its in-range quadrant count with `SimMath.RoundToInt`, not with a raw cast. The spread hash
 converts its 24-bit `ulong` value as `(float)(uint)(h >> 40)`.
 
@@ -114,6 +115,9 @@ spreads; the declared identifier for a declaration; the directive line for `#if`
   and MMO1007 for the implicit conversion of `x` to `double`.
 - **Declarations report separately** from the operations inside them. `double M(float x) => x` gives
   two MMO1007: the return type and the conversion.
+- **A method's identifier reports one rule**, the first in the precedence order among its return
+  type, its `[Conditional]` or `[UnsafeAccessor]` attribute (MMO1008) and its `Synchronized` flag
+  (MMO1006). Its parameters report on their own identifiers.
 
 ## Allowlists and tables
 
@@ -213,6 +217,13 @@ interface counts only as the expression's own type, so `SortedDictionary`, which
   `DateTimeOffset.UtcNow`, `Environment.TickCount`, `Environment.TickCount64`, `Guid.NewGuid`,
   `Guid.CreateVersion7`, `string.GetHashCode`, `object.GetHashCode` and `ValueType.GetHashCode` when
   the receiver's type does not override them, `RuntimeHelpers.GetHashCode`, `Task.Delay`.
+- A whole type reports on every use: any member, constructor or method group of it, or of a class
+  derived from it. Declaring a field, parameter or local of one of these types does not report by
+  itself; its first use does.
+- Roslyn binds a `GetHashCode()` call to the receiver type's own override when it has one, so a call
+  that still targets `object.GetHashCode` or `ValueType.GetHashCode` is on a type that does not
+  override it (a struct without an override, `object`, an interface or a type parameter).
+  `int.GetHashCode()` binds to `Int32`'s override and is allowed.
 
 ### Locks and blocking (MMO1006)
 
@@ -225,6 +236,9 @@ interface counts only as the expression's own type, so `SortedDictionary`, which
   and `GetResult` on `TaskAwaiter`, `TaskAwaiter<T>`, `ValueTaskAwaiter`, `ValueTaskAwaiter<T>` and the
   four configured awaiters.
 - Every `lock` statement, and every method whose implementation flags include `Synchronized`.
+- A whole type reports on every use (any member, constructor or method group, of it or of a class
+  derived from it) and on every declaration whose type is or contains it: a field, property, event,
+  parameter, return type or local, so `static readonly Lock L = new();` reports once, at `L`.
 
 ### Numeric types (MMO1007)
 
@@ -232,6 +246,12 @@ interface counts only as the expression's own type, so `SortedDictionary`, which
 (`UIntPtr`). `nint` and `NFloat` are 4 bytes on wasm32 and 8 bytes on x64 [measured]. `double` is
 deterministic for `+ − × ÷ √`, but FR-012 keeps it out: untyped literals silently create doubles,
 they bring in the `Math.*(double)` surface, and the state hash assumes float32 fields.
+
+A declaration or an expression reports when its type is one of these or contains one as a type
+argument, array element or pointer target (`List<double>`, `nint*`). The expressions are the
+operation kinds the analyzer registers (invocations, member references, method groups, object
+creations, conversions, unary, binary and compound operators, `default`) with no constant value. A
+parameter or local reference is not one of them; its declaration reports instead.
 
 ### Generated code
 

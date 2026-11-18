@@ -1030,6 +1030,19 @@ The design documents settled these points, which the spec leaves open. They are 
   operation whose syntax is a statement, so each statement in a `foreach` body reports on its own,
   even when the loop reports the same rule. analyzer-rules.md#precedence-and-deduplication and T159
   now say so.
+- **Where the contract was silent, T162 and T163 chose the stricter reading.** A class derived from
+  one of MMO1005's or MMO1006's whole types counts as that type, as MMO1004 already does. MMO1006's
+  whole types report on declarations (T162 says so), MMO1005's only on use, because declaring a
+  `Random` does nothing until a member runs. MMO1007 reports any declaration or non-constant
+  registered expression whose type contains a banned type (`List<double>`), not only one that is it,
+  matching the declaration list's type arguments and array elements. A method's identifier reports
+  one rule, the first in precedence among its return type, `[Conditional]`/`[UnsafeAccessor]` and
+  `Synchronized`, so one identifier never carries two diagnostics. MMO1008 counts `System.Type`'s
+  operators and System.Reflection's sub-namespaces as members, and every `Debug` and `Trace` member,
+  not only calls. MMO1009's SimMath exemption covers the helpers' own bodies, not a lambda or local
+  function inside them, which can run without the range checks. A `GetHashCode` call is "not
+  overridden" when Roslyn still binds it to `object`'s or `ValueType`'s, since it binds to the
+  receiver type's override when there is one. analyzer-rules.md now says each of these.
 
 ## Delivery
 
