@@ -986,6 +986,17 @@ The design documents settled these points, which the spec leaves open. They are 
   `analyzer-item`. The attachment check also reports an `<Analyzer Include="…MmoEngine.SimCore.Analyzers.dll" />`
   item, the route `BuildTests` uses, because that attaches the analyzer just as an
   `OutputItemType="Analyzer"` reference does. T151 and analyzer-rules.md#tests now say so.
+- **`BuildTests` writes `<Project />`, not empty files, as the throwaway build's `Directory.Build.props`
+  and `Directory.Build.targets` (T153).** T153 asked for empty files, but MSBuild refuses an empty
+  project file because it has no root element, so the build would fail for the wrong reason. A file
+  holding only `<Project />` still stops the upward search and imports nothing. T153 now says so.
+- **`TableTests` also pins the ISA classes and the two fused `Vector128` members (T154).** T154 says
+  its rows are transcribed one per contract entry, but its list left out entries the contract names:
+  the MMO1001 rule's X86, Arm and Wasm ISA classes, and the Vector128 table's "every `*Estimate`" and
+  "`FusedMultiplyAdd` is MMO1003". So the Vector128 exclusions have `Sse.IsSupported`,
+  `AdvSimd.IsSupported` and `PackedSimd.IsSupported` (MMO1001), and `Vector128.FusedMultiplyAdd` and
+  `Vector128.MultiplyAddEstimate`, which report MMO1003 by precedence. T154 now lists them, and T159
+  and T160 say that those two rows pass with T160, not T159.
 
 ## Delivery
 
