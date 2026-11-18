@@ -1349,7 +1349,7 @@ Conventions for this phase (they hold for every task below):
     - `[.. s]` gives `'..' enumerates 'System.Collections.Generic.HashSet<int>', whose order is not defined; ...`;
     - `s.First()` gives `'s' enumerates 'System.Collections.Generic.HashSet<int>', whose order is not defined; ...`.
   - Run with `--filter "FullyQualifiedName~RuleTests.EachSampleProducesExactlyItsRule|FullyQualifiedName~RuleTests.HashOrderMessages"` and confirm the MMO1004 rows and the message Theory fail.
-- [ ] T143 [US3] Add `AmbientRows` (MMO1005) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.5).
+- [X] T143 [US3] Add `AmbientRows` (MMO1005) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.5).
   - Rows, count 1:
     - `public static long M() => DateTime.Now.Ticks;`
     - `public static long M() => DateTime.UtcNow.Ticks;`
@@ -1365,7 +1365,7 @@ Conventions for this phase (they hold for every task below):
     - `public static int M(int a) => a.GetHashCode() ^ 17;`
     - `public static long M(long step, long stepTicks) => step * stepTicks;`
   - Confirm the MMO1005 rows fail.
-- [ ] T144 [US3] Add `BlockingRows` (MMO1006) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.6).
+- [X] T144 [US3] Add `BlockingRows` (MMO1006) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.6).
   - Rows, count 1 unless stated:
     - `private static readonly object Gate = new(); public static void M() { lock (Gate) { } }`
     - `private static readonly Lock L = new();`
@@ -1381,7 +1381,7 @@ Conventions for this phase (they hold for every task below):
     - `public static async Task<int> M(Task<int> t) => await t;`
     - `public static int M(ref int x) => Interlocked.Increment(ref x);`
   - Confirm the MMO1006 rows fail.
-- [ ] T145 [US3] Add `NumericTypeRows` (MMO1007) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.7).
+- [X] T145 [US3] Add `NumericTypeRows` (MMO1007) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.7).
   - Rows:
     - `public static float M(float x) => (float)(x * 0.5);` (1)
     - `public static double M(float x) => x;` (2: the return type and the conversion)
@@ -1397,7 +1397,7 @@ Conventions for this phase (they hold for every task below):
     - `private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;`
     - `public static float M(float x) => x * (float)(Math.PI / 180.0);`
   - Confirm the MMO1007 rows fail.
-- [ ] T146 [US3] Add `PlatformPathRows` (MMO1008) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.7).
+- [X] T146 [US3] Add `PlatformPathRows` (MMO1008) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` (US3.7).
   - Rows, count 1:
     - `public static bool M() => OperatingSystem.IsBrowser();`
     - `public static int M() => IntPtr.Size;` (MMO1008, not MMO1007)
@@ -1409,7 +1409,7 @@ Conventions for this phase (they hold for every task below):
     - `[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = "M")] public static extern void Call(object o);`
   - Allowed row: `public static object M() => typeof(int);`.
   - Confirm the MMO1008 rows fail.
-- [ ] T147 [US3] Add `ConversionRows` (MMO1009) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing tests `RuleTests.SimMathMayClampAndCastFloats` and `RuleTests.ConversionMessagesGiveTheirReason(string member, string reason)` (US3.7).
+- [X] T147 [US3] Add `ConversionRows` (MMO1009) to `RuleTests.EachSampleProducesExactlyItsRule` in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, and write failing tests `RuleTests.SimMathMayClampAndCastFloats` and `RuleTests.ConversionMessagesGiveTheirReason(string member, string reason)` (US3.7).
   - Rows, count 1:
     - `public static int M(float x) => (int)x;`
     - `public static byte M(float x) => (byte)(x * 2f);`

@@ -18,6 +18,59 @@ public sealed class RuleTests
     private const string HashOrderAlternative =
         ", whose order is not defined; iterate a sorted array or List<T> kept alongside it, or a SortedDictionary or SortedSet";
 
+    /// <summary>MMO1009's reason for a float-to-integer or float-to-enum conversion (contracts/analyzer-rules.md#messages).</summary>
+    private const string FloatToIntegerReason =
+        "converts a floating-point value to an integer, which gives different results between builds for NaN and out-of-range values; use 'SimMath.FloorToInt', 'SimMath.RoundToInt' or 'SimMath.TruncateToInt', which saturate first";
+
+    /// <summary>MMO1009's reason for a <c>ulong</c>-to-<c>float</c> conversion (contracts/analyzer-rules.md#messages).</summary>
+    private const string UlongToFloatReason =
+        "converts a 'ulong' to 'float', which the WebAssembly build rounds through 'double' and so can differ by one ulp; narrow it to 'uint' or 'long' first";
+
+    /// <summary>The path <see cref="SimMathMayClampAndCastFloats"/> compiles its stand-in SimMath under.</summary>
+    private const string SimMathPath = "Math/SimMath.cs";
+
+    /// <summary>The path <see cref="SimMathMayClampAndCastFloats"/> compiles its other type under.</summary>
+    private const string OtherTypePath = "Sample/D.cs";
+
+    /// <summary>
+    /// A stand-in <c>MmoEngine.SimCore.Math.SimMath</c>: <c>Clamp</c> through <c>System.Math.Clamp</c>,
+    /// the three saturating helpers casting behind a NaN and range check, another method with the same
+    /// raw cast, and a <c>ulong</c>-to-<c>float</c> cast, which no SimMath method may make.
+    /// </summary>
+    private const string SimMathSource = """
+        namespace MmoEngine.SimCore.Math
+        {
+            public static class SimMath
+            {
+                public static float Clamp(float x, float lo, float hi) => System.Math.Clamp(x, lo, hi);
+
+                public static int FloorToInt(float x) =>
+                    float.IsNaN(x) ? 0 : x >= 2147483648f ? int.MaxValue : x < -2147483648f ? int.MinValue : (int)System.MathF.Floor(x);
+
+                public static int RoundToInt(float x) =>
+                    float.IsNaN(x) ? 0 : x >= 2147483648f ? int.MaxValue : x < -2147483648f ? int.MinValue : (int)System.MathF.Round(x);
+
+                public static int TruncateToInt(float x) =>
+                    float.IsNaN(x) ? 0 : x >= 2147483648f ? int.MaxValue : x < -2147483648f ? int.MinValue : (int)x;
+
+                public static int Other(float x) => (int)x;
+
+                public static float FromBits(ulong u) => (float)u;
+            }
+        }
+        """;
+
+    /// <summary>The same clamp and cast as SimMath's helpers, in a type that is not SimMath.</summary>
+    private const string OtherTypeSource = """
+        namespace Sample
+        {
+            public static class D
+            {
+                public static int M(float x) => (int)System.Math.Clamp(x, 0f, 1f);
+            }
+        }
+        """;
+
     /// <summary>
     /// MMO1001 (US3.1): System.Numerics vector, quaternion, matrix and plane types, <c>Vector&lt;T&gt;</c>,
     /// the horizontal and hardware-query <c>Vector128</c> members, ISA classes and non-float
@@ -112,6 +165,120 @@ public sealed class RuleTests
     };
 
     /// <summary>
+    /// MMO1005 (US3.5): wall-clock and monotonic clocks, <c>Environment.TickCount</c> (MMO1005, not
+    /// MMO1008), all of <c>System.Random</c> (seeded too), <c>Guid.NewGuid</c>, per-process hash seeds
+    /// and <c>TimeProvider</c>; an <c>int</c>'s value-bits <c>GetHashCode</c> and the caller's step
+    /// arithmetic are allowed.
+    /// </summary>
+    public static TheoryData<string, int, string> AmbientRows => new()
+    {
+        { "MMO1005", 1, "public static long M() => DateTime.Now.Ticks;" },
+        { "MMO1005", 1, "public static long M() => DateTime.UtcNow.Ticks;" },
+        { "MMO1005", 1, "public static long M() => Stopwatch.GetTimestamp();" },
+        { "MMO1005", 1, "public static int M() => Environment.TickCount;" },
+        { "MMO1005", 1, "public static int M() => new Random(42).Next();" },
+        { "MMO1005", 1, "public static int M() => Random.Shared.Next();" },
+        { "MMO1005", 1, "public static Guid M() => Guid.NewGuid();" },
+        { "MMO1005", 1, "public static int M(string s) => s.GetHashCode();" },
+        { "MMO1005", 1, "public static int M(int a, int b) => HashCode.Combine(a, b);" },
+        { "MMO1005", 1, "public static DateTimeOffset M() => TimeProvider.System.GetUtcNow();" },
+
+        { "", 0, "public static int M(int a) => a.GetHashCode() ^ 17;" },
+        { "", 0, "public static long M(long step, long stepTicks) => step * stepTicks;" },
+    };
+
+    /// <summary>
+    /// MMO1006 (US3.6): every <c>lock</c> statement, a <c>System.Threading.Lock</c> declaration, task
+    /// waits and results, an awaiter's <c>GetResult</c>, <c>Thread.Sleep</c>, <c>Monitor</c>, a
+    /// synchronized method and <c>Parallel</c>; <c>await</c> and <c>Interlocked</c> are allowed.
+    /// </summary>
+    public static TheoryData<string, int, string> BlockingRows => new()
+    {
+        { "MMO1006", 1, "private static readonly object Gate = new(); public static void M() { lock (Gate) { } }" },
+        { "MMO1006", 1, "private static readonly Lock L = new();" },
+        { "MMO1006", 2, "public static void M(Lock l) { lock (l) { } }" },
+        { "MMO1006", 1, "public static void M(Task t) => t.Wait();" },
+        { "MMO1006", 1, "public static int M(Task<int> t) => t.Result;" },
+        { "MMO1006", 1, "public static int M(Task<int> t) => t.GetAwaiter().GetResult();" },
+        { "MMO1006", 1, "public static void M() => Thread.Sleep(1);" },
+        { "MMO1006", 1, "public static void M() => Monitor.Enter(typeof(C));" },
+        { "MMO1006", 1, "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)] public static void M() { }" },
+        { "MMO1006", 1, "public static void M(int[] a) => Parallel.For(0, a.Length, i => a[i]++);" },
+
+        { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
+        { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
+    };
+
+    /// <summary>
+    /// MMO1007 (US3.7): <c>double</c>, <c>Half</c>, <c>nint</c>, <c>nuint</c> and <c>NFloat</c> as an
+    /// untyped literal, a conversion, a return type, a field, a property, an event's type argument, a
+    /// pointer target and a parameter; a <c>const double</c> and a constant-folded <c>double</c>
+    /// expression are allowed.
+    /// </summary>
+    public static TheoryData<string, int, string> NumericTypeRows => new()
+    {
+        { "MMO1007", 1, "public static float M(float x) => (float)(x * 0.5);" },
+        { "MMO1007", 2, "public static double M(float x) => x;" },
+        { "MMO1007", 1, "public static int M(int a) => (int)(nint)a;" },
+        { "MMO1007", 1, "public static void M() { var h = (Half)1; }" },
+
+        // Branch rows: a field with its initializer counted as its declaration, a property, an event's
+        // type argument, a pointer target and a parameter.
+        { "MMO1007", 1, "public static double F = 1.0;" },
+        { "MMO1007", 1, "public static Half P { get; }" },
+        { "MMO1007", 1, "public static event Func<nint>? E;" },
+        { "MMO1007", 1, "public static unsafe void M(nuint* p) { }" },
+        { "MMO1007", 1, "public static void M(System.Runtime.InteropServices.NFloat n) { }" },
+
+        { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
+        { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
+    };
+
+    /// <summary>
+    /// MMO1008 (US3.7): <c>OperatingSystem</c>, <c>IntPtr.Size</c> (MMO1008, not MMO1007),
+    /// <c>Environment</c>, reflection, a <c>dynamic</c> operation, an <c>#if</c> block (one
+    /// diagnostic, on the <c>#if</c> line, none for <c>#else</c>), <c>Debug</c> and an
+    /// <c>[UnsafeAccessor]</c> declaration; <c>typeof</c> without member access is allowed.
+    /// </summary>
+    public static TheoryData<string, int, string> PlatformPathRows => new()
+    {
+        { "MMO1008", 1, "public static bool M() => OperatingSystem.IsBrowser();" },
+        { "MMO1008", 1, "public static int M() => IntPtr.Size;" },
+        { "MMO1008", 1, "public static int M() => Environment.ProcessorCount;" },
+        { "MMO1008", 1, "public static object? M() => typeof(MathF).GetMethod(\"Sin\");" },
+        { "MMO1008", 1, "public static object M(dynamic d) => d.Foo();" },
+        { "MMO1008", 1, "public static int M()\n    {\n#if DEBUG\n        return 1;\n#else\n        return 0;\n#endif\n    }" },
+        { "MMO1008", 1, "public static void M(bool b) => Debug.Assert(b);" },
+        { "MMO1008", 1, "[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] public static extern void Call(object o);" },
+
+        { "", 0, "public static object M() => typeof(int);" },
+    };
+
+    /// <summary>
+    /// MMO1009 (US3.7): non-constant float-to-integer and float-to-enum conversions, <c>System.Convert</c>,
+    /// an integer type's <c>Create*</c> from a float, and <c>ulong</c> to <c>float</c>; a constant cast,
+    /// integer-to-float, a <c>ulong</c> narrowed to <c>uint</c> first, <c>Create*</c> from a
+    /// <c>long</c> and an <c>int</c>-to-enum cast are allowed.
+    /// </summary>
+    public static TheoryData<string, int, string> ConversionRows => new()
+    {
+        { "MMO1009", 1, "public static int M(float x) => (int)x;" },
+        { "MMO1009", 1, "public static byte M(float x) => (byte)(x * 2f);" },
+        { "MMO1009", 1, "public static float M(ulong u) => u;" },
+        { "MMO1009", 1, "public static int M(float x) => Convert.ToInt32(x);" },
+        { "MMO1009", 1, "public static int M(float x) => int.CreateSaturating(x);" },
+        { "MMO1009", 1, "public static long M(float x) => long.CreateTruncating(x);" },
+        { "MMO1009", 1, "public static DayOfWeek M(float x) => (DayOfWeek)x;" },
+        { "MMO1009", 1, "public static UInt128 M(float x) => (UInt128)x;" },
+
+        { "", 0, "public static int M() => (int)2.5f;" },
+        { "", 0, "public static float M(int i) => i * 0.5f;" },
+        { "", 0, "public static float M(ulong h) => (float)(uint)(h >> 40);" },
+        { "", 0, "public static int M(long l) => int.CreateSaturating(l);" },
+        { "", 0, "public static DayOfWeek M(int i) => (DayOfWeek)i;" },
+    };
+
+    /// <summary>
     /// Every row of contracts/analyzer-rules.md#replacement-map-mmo1002-messages: the banned call (or
     /// float <c>%</c>) and the replacement its MMO1002 message must end with.
     /// </summary>
@@ -181,6 +348,20 @@ public sealed class RuleTests
     };
 
     /// <summary>
+    /// MMO1009's two reasons (contracts/analyzer-rules.md#messages): the float-to-integer reason for a
+    /// cast, <c>System.Convert</c>, an integer type's <c>CreateSaturating</c> and a cast to an enum, and
+    /// the <c>ulong</c>-to-<c>float</c> reason for an implicit widening.
+    /// </summary>
+    public static TheoryData<string, string> ConversionMessageRows => new()
+    {
+        { "public static int M(float x) => (int)x;", FloatToIntegerReason },
+        { "public static int M(float x) => Convert.ToInt32(x);", FloatToIntegerReason },
+        { "public static int M(float x) => int.CreateSaturating(x);", FloatToIntegerReason },
+        { "public static DayOfWeek M(float x) => (DayOfWeek)x;", FloatToIntegerReason },
+        { "public static float M(ulong u) => u;", UlongToFloatReason },
+    };
+
+    /// <summary>
     /// A violating sample reports exactly its rule, <paramref name="count"/> times, at Error, inside the
     /// sample member; an allowed sample (rule <c>""</c>, count 0) reports nothing. The sample must
     /// compile, so a typo cannot make an allowed row pass vacuously.
@@ -190,6 +371,11 @@ public sealed class RuleTests
     [MemberData(nameof(PlatformMathRows))]
     [MemberData(nameof(FusedRows))]
     [MemberData(nameof(HashOrderRows))]
+    [MemberData(nameof(AmbientRows))]
+    [MemberData(nameof(BlockingRows))]
+    [MemberData(nameof(NumericTypeRows))]
+    [MemberData(nameof(PlatformPathRows))]
+    [MemberData(nameof(ConversionRows))]
     public async Task EachSampleProducesExactlyItsRule(string ruleId, int count, string member)
     {
         var result = await AnalyzerHarness.AnalyzeMemberAsync(member);
@@ -290,6 +476,77 @@ public sealed class RuleTests
         Assert.Equal(message, diagnostic.GetMessage(CultureInfo.InvariantCulture));
     }
 
+    /// <summary>
+    /// US3.7: the per-method exemption. In <c>MmoEngine.SimCore.Math.SimMath</c>, <c>Clamp</c> may call
+    /// <c>System.Math.Clamp</c> and the three saturating helpers may cast a float to <c>int</c>, so
+    /// nothing is reported in them; the same raw cast in another SimMath method reports MMO1009, a
+    /// <c>ulong</c>-to-<c>float</c> cast reports MMO1009 even in SimMath, and the clamp and cast in
+    /// another type report MMO1002 on the call and MMO1009 on the cast. The diagnostics are exactly
+    /// those four, at those spans.
+    /// </summary>
+    [Fact]
+    public async Task SimMathMayClampAndCastFloats()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var result = await AnalyzerHarness.AnalyzeSourcesAsync([(SimMathPath, SimMathSource), (OtherTypePath, OtherTypeSource)]);
+        Assert.True(
+            result.CompilerErrors.Count == 0,
+            $"The sources must compile:{Environment.NewLine}{AnalyzerHarness.Describe(result.CompilerErrors)}");
+
+        var simMath = result.Compilation.SyntaxTrees.Single(t => t.FilePath == SimMathPath).GetRoot(cancellationToken);
+        var other = result.Compilation.SyntaxTrees.Single(t => t.FilePath == OtherTypePath).GetRoot(cancellationToken);
+        var otherCast = Method(simMath, "Other").DescendantNodes().OfType<CastExpressionSyntax>().Single();
+        var fromBitsCast = Method(simMath, "FromBits").DescendantNodes().OfType<CastExpressionSyntax>().Single();
+        var typeMethod = Method(other, "M");
+        var typeCast = typeMethod.DescendantNodes().OfType<CastExpressionSyntax>().Single();
+        var typeCall = typeMethod.DescendantNodes().OfType<InvocationExpressionSyntax>().Single();
+
+        var expected = new (string Path, string Id, TextSpan Span)[]
+            {
+                (SimMathPath, "MMO1009", otherCast.Span),
+                (SimMathPath, "MMO1009", fromBitsCast.Span),
+                (OtherTypePath, "MMO1009", typeCast.Span),
+                (OtherTypePath, "MMO1002", typeCall.Span),
+            }
+            .OrderBy(e => e.Path, StringComparer.Ordinal)
+            .ThenBy(e => e.Span.Start)
+            .ThenBy(e => e.Id, StringComparer.Ordinal)
+            .ToArray();
+        var actual = result.Diagnostics
+            .Select(d => (Path: d.Location.SourceTree?.FilePath ?? string.Empty, d.Id, Span: d.Location.SourceSpan))
+            .ToArray();
+        var report = AnalyzerHarness.Describe(result.Diagnostics);
+        Assert.True(
+            expected.SequenceEqual(actual),
+            $"Expected [{string.Join(", ", expected)}], got:{Environment.NewLine}{report}");
+        Assert.All(result.Diagnostics, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
+
+        foreach (var helper in new[] { "Clamp", "FloorToInt", "RoundToInt", "TruncateToInt" })
+        {
+            var span = Method(simMath, helper).Span;
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                d => d.Location.SourceTree?.FilePath == SimMathPath && span.OverlapsWith(d.Location.SourceSpan));
+        }
+    }
+
+    /// <summary>
+    /// US3.7: the one MMO1009 is <c>'{0}' {1}</c> (contracts/analyzer-rules.md#messages), where
+    /// <c>{0}</c> is the conversion's syntax (the cast expression, or the implicitly converted
+    /// expression) or the called method, and <c>{1}</c> is the conversion's reason.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ConversionMessageRows))]
+    public async Task ConversionMessagesGiveTheirReason(string member, string reason)
+    {
+        var result = await AnalyzerHarness.AnalyzeMemberAsync(member);
+        var diagnostic = SingleDiagnostic(result, "MMO1009");
+        var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+
+        Assert.EndsWith(reason, message, StringComparison.Ordinal);
+        Assert.Equal($"'{ConversionDisplay(result)}' {reason}", message);
+    }
+
     /// <summary>Asserts the sample compiles and reports exactly one diagnostic, with <paramref name="ruleId"/>, and returns it.</summary>
     private static Diagnostic SingleDiagnostic(SampleResult result, string ruleId)
     {
@@ -324,4 +581,36 @@ public sealed class RuleTests
         var modulo = Assert.Single(nodes.OfType<BinaryExpressionSyntax>(), b => b.IsKind(SyntaxKind.ModuloExpression));
         return modulo.OperatorToken.Text;
     }
+
+    /// <summary>
+    /// The sample's conversion as MMO1009's <c>{0}</c> names it (contracts/analyzer-rules.md#messages):
+    /// the one invocation's method in <see cref="SymbolDisplayFormat.CSharpShortErrorMessageFormat"/>;
+    /// with no invocation, the one cast expression's source text; with neither, the expression body,
+    /// which is the implicitly converted expression.
+    /// </summary>
+    private static string ConversionDisplay(SampleResult result)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var nodes = result.Tree.GetRoot(cancellationToken).DescendantNodes(result.MemberSpan).ToArray();
+        var invocations = nodes.OfType<InvocationExpressionSyntax>().ToArray();
+        if (invocations.Length > 0)
+        {
+            var invocation = Assert.Single(invocations);
+            var symbol = result.Compilation.GetSemanticModel(result.Tree).GetSymbolInfo(invocation, cancellationToken).Symbol;
+            Assert.NotNull(symbol);
+            return symbol.ToDisplayString(SymbolDisplayFormat.CSharpShortErrorMessageFormat);
+        }
+
+        var casts = nodes.OfType<CastExpressionSyntax>().ToArray();
+        if (casts.Length > 0)
+        {
+            return Assert.Single(casts).ToString();
+        }
+
+        return Assert.Single(nodes.OfType<ArrowExpressionClauseSyntax>()).Expression.ToString();
+    }
+
+    /// <summary>The one method named <paramref name="name"/> under <paramref name="root"/>.</summary>
+    private static MethodDeclarationSyntax Method(SyntaxNode root, string name) =>
+        root.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.Text == name);
 }
