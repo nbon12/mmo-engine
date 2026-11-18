@@ -997,6 +997,12 @@ The design documents settled these points, which the spec leaves open. They are 
   `AdvSimd.IsSupported` and `PackedSimd.IsSupported` (MMO1001), and `Vector128.FusedMultiplyAdd` and
   `Vector128.MultiplyAddEstimate`, which report MMO1003 by precedence. T154 now lists them, and T159
   and T160 say that those two rows pass with T160, not T159.
+- **The exhaustive sweeps write one `SIMMATH` line per function and bound (T157).** T157 asked for
+  one line per function, but its format carries a single `(bound <bound>)`, and Sin, Cos, SinCos and
+  Tan each have two bounds (|x| ≤ 12867 and above). One line would have to drop a domain's maximum or
+  mix two bounds. So those four functions write a second line, labelled `<function>Large`, for the
+  large-argument domain, and every other function writes one line. The measure job greps the
+  `SIMMATH ` prefix, so it copies both. T157 and quickstart.md now say so.
 
 ## Delivery
 

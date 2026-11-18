@@ -85,7 +85,8 @@ MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release --fil
 ```
 
 Expected: every math test passes, and the console output holds one
-`SIMMATH <function> max <ulp> ulp at a 0x... b 0x... (bound <bound>)` line per swept function. The
+`SIMMATH <function> max <ulp> ulp at a 0x... b 0x... (bound <bound>)` line per swept function and
+bound: Sin, Cos, SinCos and Tan also write a `<function>Large` line for |x| > 12867. The
 detailed console logger is needed because the sweeps write those lines to the test output, which
 `dotnet test` shows for a passing test only at that verbosity. The sweeps take about 2 minutes on 4
 cores, so without the variable they skip; the fixed table in the normal test run is the gate
