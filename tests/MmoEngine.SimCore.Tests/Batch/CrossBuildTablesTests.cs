@@ -166,6 +166,9 @@ public sealed class CrossBuildTablesTests
         "short-version",
         "short-header",
         "reserved",
+        "oversized-counts",
+        "oversized-counts-wrapping",
+        "counts-at-results-limit",
     ];
 
     /// <summary>
@@ -425,6 +428,12 @@ public sealed class CrossBuildTablesTests
     /// (<c>short-magic</c>) for the 4-byte magic, 5 (<c>short-version</c>) for the version, which ends at 6, and
     /// 10 (<c>short-header</c>) for the 16-byte header, field <c>header</c>; and a reserved u16 of 1
     /// (<c>reserved</c>) is <c>Inconsistent</c> at 6, field <c>reserved</c>, <c>the reserved u16 is 1, not 0</c>.
+    /// Counts whose results, 16 + 8·M + 100·P bytes, are longer than <see cref="Array.MaxLength"/> are
+    /// <c>Oversized</c> at 8, field <c>counts</c>, <c>the counts need &lt;n&gt; result bytes, above 2147483591</c>,
+    /// checked from the 16-byte header alone before the length: M 0 and P 21,474,836 (<c>oversized-counts</c>,
+    /// 2,147,483,616 bytes) and P 42,949,673 (<c>oversized-counts-wrapping</c>, 4,294,967,316 bytes, which an
+    /// int sum would wrap to 20); P 21,474,835 (<c>counts-at-results-limit</c>, 2,147,483,516 result bytes)
+    /// passes that check and is <c>Inconsistent</c> at 8, field <c>length</c>, <c>16 bytes, the counts need 343597376</c>.
     /// </summary>
     [Theory]
     [MemberData(nameof(MalformedCases))]
@@ -481,10 +490,24 @@ public sealed class CrossBuildTablesTests
                 BinaryPrimitives.WriteUInt16LittleEndian(copy.AsSpan(6), 1);
                 (code, offset, field, detail) = (FormatErrorCode.Inconsistent, 6, "reserved", "the reserved u16 is 1, not 0");
                 break;
+            case "oversized-counts":
+                copy = HeaderOnly(inputs, 21_474_836u);
+                (code, offset, field, detail) = (FormatErrorCode.Oversized, 8, "counts", "the counts need 2147483616 result bytes, above 2147483591");
+                break;
+            case "oversized-counts-wrapping":
+                copy = HeaderOnly(inputs, 42_949_673u);
+                (code, offset, field, detail) = (FormatErrorCode.Oversized, 8, "counts", "the counts need 4294967316 result bytes, above 2147483591");
+                break;
+            case "counts-at-results-limit":
+                copy = HeaderOnly(inputs, 21_474_835u);
+                (code, offset, field, detail) = (FormatErrorCode.Inconsistent, 8, "length", "16 bytes, the counts need 343597376");
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of RefusesMalformedTables.");
         }
 
+        // The core's limit, written as a constant, is the runtime's longest array.
+        Assert.Equal(CrossBuildTables.MaxResultsLength, Array.MaxLength);
         byte[]? results = null;
         var thrown = Assert.Throws<CoreFormatException>(() => results = CrossBuildTables.Evaluate(copy, block));
 
@@ -668,6 +691,15 @@ public sealed class CrossBuildTablesTests
 
     private static ReadOnlySpan<byte> PoseRow(byte[] inputs, int mathRows, int j) =>
         inputs.AsSpan(HeaderLength + (MathRowLength * mathRows) + (PoseRowLength * j), PoseRowLength);
+
+    /// <summary>The inputs' 16-byte header alone, with M 0 and P <paramref name="poseRows"/>.</summary>
+    private static byte[] HeaderOnly(byte[] inputs, uint poseRows)
+    {
+        var header = inputs[..HeaderLength];
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(12), poseRows);
+        return header;
+    }
 
     /// <summary>Adds <paramref name="line"/> while fewer than 20 are listed.</summary>
     private static void Note(List<string> lines, string line)

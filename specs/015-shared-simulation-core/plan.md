@@ -949,6 +949,32 @@ The design documents settled these points, which the spec leaves open. They are 
   `pose-unknown-stance` and `math-unknown-function` rows and
   `RefusesInputsAndServerResultsThatAreNotOneTable`. Treating the bad reference as a Diverged build
   was not chosen, because the fault is the server's files, not the build's.
+- **`CrossBuildTables.Evaluate` refuses counts whose results would not fit in an array (T129, Phase 4
+  review).** The frame check bounded M and P only through the input length 16 + 12·M + 16·P, but a
+  pose result row is 100 bytes against a 16-byte input row. A whole input of about 343 MB with
+  P = 21,474,837 made the `int` results length overflow, so `Evaluate` threw `OverflowException`, and
+  at P = 42,949,673 the sum wrapped to 20 bytes and it threw `ArgumentOutOfRangeException`, where the
+  contract promises a `CoreFormatException`. `CheckFrame` now computes 16 + 8·M + 100·P in `long` and,
+  before the length check and so from the 16-byte header alone, refuses a value above
+  `CrossBuildTables.MaxResultsLength` (`Array.MaxLength`, 2,147,483,591, written as a constant so the
+  limit is the same in every build) as `Oversized` at 8, field `counts`,
+  `the counts need <n> result bytes, above 2147483591`. wasm-api.md#cross-build-tables, T116 and T129
+  now say so, and `RefusesMalformedTables` has the `oversized-counts`, `oversized-counts-wrapping` and
+  `counts-at-results-limit` rows. A smaller stated cap on M and P was not chosen: the table is fixed
+  at 99,480 and 6,192 rows today, and a cap would be one more number to keep in step with it, while
+  the array limit is the bound that actually fails.
+- **`agreement compare` reads the manifest's `formatVersion` first (Phase 4 review).** `ReadVersions`
+  required `rulesRevision` and `formats` in version 1's shape before it compared `formatVersion`, so a
+  manifest of another format version laid out differently was reported as
+  `agreement: cannot run: manifest.json: $.formats is missing ...` rather than as NotComparable,
+  although the manifest's own version exists to say its shape changed. `formatVersion` is now read
+  first: in a version 1 manifest the other versions are still required, and in any other version each
+  is compared only when present and a whole number in range. A missing or non-integer
+  `formatVersion` is still unreadable. simcore-cli.md#agreement-compare, T124 and T136 now say so, and
+  `WorkDirectoryFromAnotherRulesRevisionIsNotComparable` has the `manifest-format`,
+  `manifest-format-reshaped` and `manifest-format-and-rules` rows. Reporting only the format version
+  line for another manifest version was not chosen, because a readable rules revision that also
+  differs is still worth naming.
 
 ## Delivery
 

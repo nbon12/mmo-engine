@@ -325,7 +325,11 @@ Otherwise exit 1 when any build is `Diverged`, else 0. A Firefox or WebKit build
 could not install is reported `NotRun`, never as a pass.
 
 The NotComparable check reads only `formatVersion`, `rulesRevision` and `formats`, before the rest of
-the manifest, and prints one `NOT COMPARABLE work <work>: <detail>` line per difference, in this order:
+the manifest, `formatVersion` first. A missing or non-integer `formatVersion` is unreadable (`agreement:
+cannot run`). In a manifest of the current format version, 1, the other two must be there too. A
+manifest of another format version may be shaped differently, so its `rulesRevision` and each
+`formats` member are compared only when present and a whole number in range, and are otherwise
+skipped. The check prints one `NOT COMPARABLE work <work>: <detail>` line per difference, in this order:
 `manifest format version <m> in the work directory; this reader supports version <c>`,
 `rules revision <m> in the work directory; this core implements rules revision <c>`, then
 `<input command | collision data | recorded stream> format version <m> in the work directory; this

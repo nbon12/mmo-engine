@@ -117,6 +117,13 @@ public sealed class AgreementCommandTests
     {
         { "rules-revision", "NOT COMPARABLE work <work>: rules revision 2 in the work directory; this core implements rules revision 1" },
         { "recorded-stream-format", "NOT COMPARABLE work <work>: recorded stream format version 2 in the work directory; this reader supports version 1" },
+        { "manifest-format", "NOT COMPARABLE work <work>: manifest format version 2 in the work directory; this reader supports version 1" },
+        { "manifest-format-reshaped", "NOT COMPARABLE work <work>: manifest format version 2 in the work directory; this reader supports version 1" },
+        {
+            "manifest-format-and-rules",
+            "NOT COMPARABLE work <work>: manifest format version 2 in the work directory; this reader supports version 1\n"
+                + "NOT COMPARABLE work <work>: rules revision 2 in the work directory; this core implements rules revision 1"
+        },
     };
 
     public static TheoryData<string> CannotRunCases =>
@@ -828,10 +835,14 @@ public sealed class AgreementCommandTests
     /// US2 scenario 5 and contracts/simcore-cli.md#agreement-compare: Given a prepared work directory whose
     /// node-interp build diverges on flat-run-30hz (one ulp at step 15) and whose node-interp-nojit and
     /// chromium-worker builds equal the server, and whose <c>manifest.json</c> has (<c>rules-revision</c>)
-    /// <c>rulesRevision</c> 2 or (<c>recorded-stream-format</c>) <c>formats.recordedStream</c> 2, When
-    /// <c>agreement compare</c> runs, Then it exits 2, stdout is exactly the line
-    /// <paramref name="expectedLine"/>, naming the work directory and both values, and
-    /// <c>agreement: not comparable</c>, with no build line and no <c>DIVERGED</c> report, and no
+    /// <c>rulesRevision</c> 2, (<c>recorded-stream-format</c>) <c>formats.recordedStream</c> 2,
+    /// (<c>manifest-format</c>) <c>formatVersion</c> 2, or (<c>manifest-format-reshaped</c>) <c>formatVersion</c>
+    /// 2 with no <c>formats</c> member and a <c>rulesRevision</c> that is a string, a manifest of another format
+    /// version whose other versions are not where version 1 puts them, or (<c>manifest-format-and-rules</c>)
+    /// <c>formatVersion</c> 2 with no <c>formats</c> and <c>rulesRevision</c> 2, which is still compared, When
+    /// <c>agreement compare</c> runs, Then it exits 2, stdout is exactly the lines of
+    /// <paramref name="expectedLine"/> (one per difference, in the contract's order, each naming the work
+    /// directory and both values), then <c>agreement: not comparable</c>, with no build line and no <c>DIVERGED</c> report, and no
     /// <c>report/</c> is written: a work directory from other rules is refused instead of reporting the
     /// divergence it holds, and nothing is compared or written.
     /// </summary>
@@ -850,17 +861,30 @@ public sealed class AgreementCommandTests
             case "recorded-stream-format":
                 Child(manifest, "formats", ManifestFile)["recordedStream"] = 2;
                 break;
+            case "manifest-format":
+                manifest["formatVersion"] = 2;
+                break;
+            case "manifest-format-reshaped":
+                manifest["formatVersion"] = 2;
+                Assert.True(manifest.Remove("formats"), $"{ManifestFile} has no formats member to remove");
+                manifest["rulesRevision"] = "one";
+                break;
+            case "manifest-format-and-rules":
+                manifest["formatVersion"] = 2;
+                Assert.True(manifest.Remove("formats"), $"{ManifestFile} has no formats member to remove");
+                manifest["rulesRevision"] = 2;
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
         }
 
         File.WriteAllText(manifestPath, manifest.ToJsonString());
-        var line = expectedLine.Replace("<work>", work.Path, StringComparison.Ordinal);
+        var expected = expectedLine.Replace("<work>", work.Path, StringComparison.Ordinal).Split('\n');
 
         var (exit, stdout, stderr) = SimcoreCli.Run("agreement", "compare", "--work", work.Path);
 
         Assert.True(exit == 2, $"{caseName}: simcore agreement compare exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
-        Assert.Equal([line, "agreement: not comparable"], Lines(stdout));
+        Assert.Equal([.. expected, "agreement: not comparable"], Lines(stdout));
         var report = work.Combine("report");
         Assert.False(Directory.Exists(report), $"{caseName}: agreement compare wrote {report} for a work directory that is not comparable");
     }

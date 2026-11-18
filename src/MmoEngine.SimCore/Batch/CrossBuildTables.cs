@@ -47,6 +47,13 @@ public static class CrossBuildTables
     /// <summary>The highest function ID: 1 Sin, 2 Cos, 3 Tan, 4 SinCos, 5 Asin, 6 Acos, 7 Atan, 8 Atan2, 9 SinCosBinaryAngle, 10 Sqrt.</summary>
     public const byte MaxFunctionId = 10;
 
+    /// <summary>
+    /// The longest results <see cref="Evaluate"/> writes, 2,147,483,591 bytes: <see cref="Array.MaxLength"/>,
+    /// written as a constant so the limit is the same in every build. Counts whose results would be longer
+    /// are refused.
+    /// </summary>
+    public const int MaxResultsLength = 0x7FFFFFC7;
+
     private const string Format = "tables";
 
     private const int VersionOffset = 4;
@@ -159,14 +166,17 @@ public static class CrossBuildTables
     /// <see cref="HitboxBuilder.Build"/> for that stance's layout, yaw and position. The block is checked
     /// first, then the table.
     /// </summary>
-    /// <exception cref="CoreFormatException">The block is malformed (format <c>config</c>), or the table is (format <c>tables</c>).</exception>
+    /// <exception cref="CoreFormatException">
+    /// The block is malformed (format <c>config</c>), or the table is (format <c>tables</c>), counts whose
+    /// results, 16 + 8·M + 100·P bytes, would be longer than <see cref="MaxResultsLength"/> included.
+    /// </exception>
     /// <exception cref="ConfigValidationException">The block's configuration fails the guard.</exception>
     public static byte[] Evaluate(ReadOnlySpan<byte> inputs, ReadOnlySpan<byte> configBlock)
     {
         var layouts = CompiledConfig.Create(ConfigBlock.Decode(configBlock)).HitboxLayouts;
-        var (mathRows, poseRows) = CheckFrame(inputs);
+        var (mathRows, poseRows, resultsLength) = CheckFrame(inputs);
 
-        var results = new byte[HeaderLength + (MathResultLength * mathRows) + (PoseResultLength * poseRows)];
+        var results = new byte[resultsLength];
         WriteHeader(results, ResultsMagic, mathRows, poseRows);
         var output = HeaderLength;
         var input = HeaderLength;
@@ -394,10 +404,11 @@ public static class CrossBuildTables
     // ---------------------------------------------------------------- decoding
 
     /// <summary>
-    /// The frame checks: the magic, the version 1, the reserved 0 and the length against 16 + 12·M + 16·P.
-    /// Returns M and P.
+    /// The frame checks: the magic, the version 1, the reserved 0, the results' length 16 + 8·M + 100·P
+    /// against <see cref="MaxResultsLength"/>, then the length against 16 + 12·M + 16·P. Returns M, P and
+    /// the results' length.
     /// </summary>
-    private static (int MathRows, int PoseRows) CheckFrame(ReadOnlySpan<byte> inputs)
+    private static (int MathRows, int PoseRows, int ResultsLength) CheckFrame(ReadOnlySpan<byte> inputs)
     {
         var length = (ulong)inputs.Length;
         if (inputs.Length < InputsMagic.Length)
@@ -434,14 +445,29 @@ public static class CrossBuildTables
 
         var mathRows = BinaryPrimitives.ReadUInt32LittleEndian(inputs[MathCountOffset..]);
         var poseRows = BinaryPrimitives.ReadUInt32LittleEndian(inputs[PoseCountOffset..]);
+
+        // A pose result row is 100 bytes against a 16-byte input row, so counts that a whole input holds can
+        // still need more result bytes than an array takes. This is checked before the length, from the
+        // header alone. Both counts are below 2^32, so the sum fits in a long.
+        var resultsLength = HeaderLength + (MathResultLength * (long)mathRows) + (PoseResultLength * (long)poseRows);
+        if (resultsLength > MaxResultsLength)
+        {
+            throw Refusal(
+                FormatErrorCode.Oversized,
+                MathCountOffset,
+                "counts",
+                string.Create(CultureInfo.InvariantCulture, $"the counts need {resultsLength} result bytes, above {MaxResultsLength}"));
+        }
+
         var needed = HeaderLength + (MathRowLength * (long)mathRows) + (PoseRowLength * (long)poseRows);
         if (inputs.Length != needed)
         {
             throw Refusal(FormatErrorCode.Inconsistent, MathCountOffset, "length", string.Create(CultureInfo.InvariantCulture, $"{inputs.Length} bytes, the counts need {needed}"));
         }
 
-        // The length is an int and equals 16 + 12·M + 16·P, so both counts fit in an int.
-        return ((int)mathRows, (int)poseRows);
+        // The length is an int and equals 16 + 12·M + 16·P, so both counts fit in an int; the results'
+        // length is at most MaxResultsLength, so it fits too.
+        return ((int)mathRows, (int)poseRows, (int)resultsLength);
     }
 
     private static CoreFormatException Refusal(FormatErrorCode code, long offset, string field, string detail) =>

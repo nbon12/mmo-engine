@@ -104,26 +104,44 @@ internal sealed record AgreementManifest(
     /// <summary>
     /// The versions a manifest was prepared under: <c>formatVersion</c>, <c>rulesRevision</c> and
     /// <c>formats</c>, read before anything else so a manifest from other rules or formats is reported as
-    /// not comparable rather than read.
+    /// not comparable rather than read. <c>formatVersion</c> is read first. When it is
+    /// <see cref="CurrentFormatVersion"/>, the other versions must be there; when it is not, the manifest
+    /// may be shaped differently, so each other version is taken only when it is present and a whole number
+    /// in range, and is otherwise null and not compared.
     /// </summary>
-    /// <exception cref="InvalidDataException">A version is missing or not a whole number in range.</exception>
+    /// <exception cref="InvalidDataException">
+    /// <c>formatVersion</c> is missing or not a whole number in range, or, in a manifest of the current
+    /// format version, another version is.
+    /// </exception>
     public static ManifestVersions ReadVersions(JsonElement root)
     {
-        var formats = Member(root, "formats", Root, JsonValueKind.Object);
+        var formatVersion = Int(root, "formatVersion", Root);
+        if (formatVersion == CurrentFormatVersion)
+        {
+            var (rulesRevision, formats) = ReadRulesAndFormats(root);
+            return new ManifestVersions(formatVersion, rulesRevision, formats.InputCommand, formats.CollisionData, formats.RecordedStream);
+        }
+
+        // formatVersion was read, so the root is an object; Optional takes a formats that is not one as absent.
+        var other = root.TryGetProperty("formats", out var node) ? node : default;
         return new ManifestVersions(
-            Int(root, "formatVersion", Root),
-            UInt(root, "rulesRevision", Root),
-            new ManifestFormats(
-                Int(formats, "inputCommand", "$.formats"),
-                Int(formats, "collisionData", "$.formats"),
-                Int(formats, "recordedStream", "$.formats")));
+            formatVersion,
+            Optional(root, "rulesRevision", static (JsonElement e, out uint v) => e.TryGetUInt32(out v)),
+            Optional(other, "inputCommand", static (JsonElement e, out int v) => e.TryGetInt32(out v)),
+            Optional(other, "collisionData", static (JsonElement e, out int v) => e.TryGetInt32(out v)),
+            Optional(other, "recordedStream", static (JsonElement e, out int v) => e.TryGetInt32(out v)));
     }
 
-    /// <summary>The whole manifest. Stream names must match <c>^[a-z0-9-]+$</c>, be unique and not be <c>tables</c>.</summary>
+    /// <summary>
+    /// The whole manifest, read in the current format version's shape: <c>agreement compare</c> reports a
+    /// manifest of another format version through <see cref="ReadVersions"/> before it calls this. Stream
+    /// names must match <c>^[a-z0-9-]+$</c>, be unique and not be <c>tables</c>.
+    /// </summary>
     /// <exception cref="InvalidDataException">A member is missing, of the wrong kind or out of range, or a stream name is refused.</exception>
     public static AgreementManifest Read(JsonElement root)
     {
-        var versions = ReadVersions(root);
+        var formatVersion = Int(root, "formatVersion", Root);
+        var (rulesRevision, formats) = ReadRulesAndFormats(root);
         var seeds = Member(root, "seeds", Root, JsonValueKind.Object);
         var streams = new List<ManifestStream>();
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -151,9 +169,9 @@ internal sealed record AgreementManifest(
         }
 
         return new AgreementManifest(
-            versions.FormatVersion,
-            versions.RulesRevision,
-            versions.Formats,
+            formatVersion,
+            rulesRevision,
+            formats,
             Int(seeds, "first", "$.seeds"),
             Int(seeds, "last", "$.seeds"),
             streams,
@@ -165,6 +183,15 @@ internal sealed record AgreementManifest(
     /// <summary>Whether <paramref name="name"/> is a stream name: lowercase letters, digits and hyphens, and not <c>tables</c>.</summary>
     public static bool IsStreamName(string name) =>
         name.Length > 0 && name != "tables" && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
+
+    /// <summary><c>rulesRevision</c> and <c>formats</c> in the current format version's shape, each required.</summary>
+    private static (uint RulesRevision, ManifestFormats Formats) ReadRulesAndFormats(JsonElement root)
+    {
+        var formats = Member(root, "formats", Root, JsonValueKind.Object);
+        return (
+            UInt(root, "rulesRevision", Root),
+            new ManifestFormats(Int(formats, "inputCommand", "$.formats"), Int(formats, "collisionData", "$.formats"), Int(formats, "recordedStream", "$.formats")));
+    }
 
     private static void WriteStream(Utf8JsonWriter writer, ManifestStream stream)
     {
@@ -246,6 +273,19 @@ internal sealed record AgreementManifest(
     private static uint UInt(JsonElement obj, string name, string path) =>
         Number(obj, name, path, static (JsonElement e, out uint v) => e.TryGetUInt32(out v));
 
+    /// <summary>
+    /// The whole number <paramref name="name"/> of <paramref name="obj"/>, or null when <paramref name="obj"/>
+    /// is not an object, or the member is missing, not a number or out of range.
+    /// </summary>
+    private static T? Optional<T>(JsonElement obj, string name, TryGet<T> get)
+        where T : struct =>
+        obj.ValueKind == JsonValueKind.Object
+            && obj.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && get(value, out var number)
+            ? number
+            : null;
+
     private static T Number<T>(JsonElement obj, string name, string path, TryGet<T> get)
     {
         var value = Member(obj, name, path, JsonValueKind.Number);
@@ -271,36 +311,39 @@ internal sealed record AgreementManifest(
     private delegate bool TryGet<T>(JsonElement element, out T value);
 }
 
-/// <summary>The versions a manifest was prepared under.</summary>
-internal sealed record ManifestVersions(int FormatVersion, uint RulesRevision, ManifestFormats Formats)
+/// <summary>
+/// The versions a manifest was prepared under. Every one is set in a manifest of the current format version;
+/// in a manifest of another, one that is missing or unreadable is null.
+/// </summary>
+internal sealed record ManifestVersions(int FormatVersion, uint? RulesRevision, int? InputCommand, int? CollisionData, int? RecordedStream)
 {
     /// <summary>
     /// Each way these versions differ from this build's, as <c>NOT COMPARABLE work</c> details naming both
     /// values (US2 scenario 5): the manifest's own format version, the rules revision, then the input
-    /// command, collision data and recorded stream format versions. Empty when the work directory is
-    /// comparable.
+    /// command, collision data and recorded stream format versions. A null version is not compared. Empty
+    /// when the work directory is comparable.
     /// </summary>
     public IReadOnlyList<string> Differences()
     {
         var differences = new List<string>();
         AddFormat(differences, "manifest", FormatVersion, AgreementManifest.CurrentFormatVersion);
-        if (RulesRevision != SimCoreVersion.RulesRevision)
+        if (RulesRevision is { } rulesRevision && rulesRevision != SimCoreVersion.RulesRevision)
         {
             differences.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"rules revision {RulesRevision} in the work directory; this core implements rules revision {SimCoreVersion.RulesRevision}"));
+                $"rules revision {rulesRevision} in the work directory; this core implements rules revision {SimCoreVersion.RulesRevision}"));
         }
 
         var current = ManifestFormats.Current;
-        AddFormat(differences, "input command", Formats.InputCommand, current.InputCommand);
-        AddFormat(differences, "collision data", Formats.CollisionData, current.CollisionData);
-        AddFormat(differences, "recorded stream", Formats.RecordedStream, current.RecordedStream);
+        AddFormat(differences, "input command", InputCommand, current.InputCommand);
+        AddFormat(differences, "collision data", CollisionData, current.CollisionData);
+        AddFormat(differences, "recorded stream", RecordedStream, current.RecordedStream);
         return differences;
     }
 
-    private static void AddFormat(List<string> differences, string format, int version, int supported)
+    private static void AddFormat(List<string> differences, string format, int? read, int supported)
     {
-        if (version != supported)
+        if (read is { } version && version != supported)
         {
             differences.Add(string.Create(
                 CultureInfo.InvariantCulture,

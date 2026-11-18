@@ -925,7 +925,8 @@ Conventions for this phase (they hold for every task below):
     - version 2: `UnsupportedVersion` at 4, `unsupported version 2; this reader supports version 1`;
     - one byte short: `Inconsistent` at 8, field `length`, `<n> bytes, the counts need <m>`;
     - function ID 11 in math row 0: `OutOfRange` at 16, field `mathRows[0].function`, `unknown function ID 11`;
-    - stance 2 in pose row 0: `OutOfRange` at 16 + 12M, field `poseRows[0].stance`, `unknown stance 2`.
+    - stance 2 in pose row 0: `OutOfRange` at 16 + 12M, field `poseRows[0].stance`, `unknown stance 2`;
+    - added in the Phase 4 review, the 16-byte header alone with M 0: P 21,474,836 (`oversized-counts`) and P 42,949,673 (`oversized-counts-wrapping`) are `Oversized` at 8, field `counts`, `the counts need 2147483616 result bytes, above 2147483591` and `the counts need 4294967316 result bytes, above 2147483591`; P 21,474,835 (`counts-at-results-limit`, results within the limit) is `Inconsistent` at 8, field `length`, `16 bytes, the counts need 343597376`. The row also asserts `CrossBuildTables.MaxResultsLength == Array.MaxLength`.
   - Also `EvaluateRefusesAnInvalidConfigBlock`: a `movement.gravity` NaN block gives `ConfigValidationException` with [`movement.gravity: must be finite`].
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~CrossBuildTablesTests"` and confirm it fails.
 - [X] T117 [P] [US2] Write failing tests `TablesComparisonTests.ReportsTheFirstDifferingRow(string caseName, string expectedLine)` and `TablesComparisonTests.AnyNaNMatchesANaNRow(uint buildBits)` in `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.cs` (wasm-api.md#cross-build-tables, comparing).
@@ -1070,9 +1071,9 @@ Conventions for this phase (they hold for every task below):
     - the line `node-interp: streams match, <n> streams, <steps> steps; tables diverged` or `...; tables missing`;
     - `report/divergences/node-interp/tables.txt` holds the `TablesComparison` line or `boom`;
     - `agreement.json` tables {status `Diverged` or `Missing`, firstMismatch the line or `boom`}.
-  - `WorkDirectoryFromAnotherRulesRevisionIsNotComparable(string caseName, string expectedLine)` (US2.5). The work directory is the perturbed one of `CompareExitsOneOnADivergedBuildAndWritesItsReport`, so node-interp really diverges on flat-run-30hz at step 15, and the manifest's `rulesRevision` is set to 2, or `formats.recordedStream` to 2:
+  - `WorkDirectoryFromAnotherRulesRevisionIsNotComparable(string caseName, string expectedLine)` (US2.5). The work directory is the perturbed one of `CompareExitsOneOnADivergedBuildAndWritesItsReport`, so node-interp really diverges on flat-run-30hz at step 15, and the manifest's `rulesRevision` is set to 2, or `formats.recordedStream` to 2. Rows added in the Phase 4 review set `formatVersion` to 2 (`manifest-format`), also remove `formats` and make `rulesRevision` the string `"one"` (`manifest-format-reshaped`), or remove `formats` and set `rulesRevision` to 2 (`manifest-format-and-rules`):
     - exit 2;
-    - stdout is exactly `NOT COMPARABLE work <work>: rules revision 2 in the work directory; this core implements rules revision 1`, or `NOT COMPARABLE work <work>: recorded stream format version 2 in the work directory; this reader supports version 1`, then `agreement: not comparable`: no build line and no `DIVERGED` line;
+    - stdout is exactly `NOT COMPARABLE work <work>: rules revision 2 in the work directory; this core implements rules revision 1`, or `NOT COMPARABLE work <work>: recorded stream format version 2 in the work directory; this reader supports version 1`, or for both `manifest-format` rows `NOT COMPARABLE work <work>: manifest format version 2 in the work directory; this reader supports version 1`, or for `manifest-format-and-rules` that line then the rules revision line, then `agreement: not comparable`: no build line and no `DIVERGED` line;
     - no `report/` is written (simcore-cli.md#agreement-compare, "nothing is compared or written").
   - `CompareCannotRunWithoutItsInputs(string caseName)` Theory. Exit 2 with `agreement: cannot run: <reason>` for each row: no manifest, a manifest that is not valid JSON, a missing `server/<stream>.records`, a missing `server/tables.bin`, and `--require node-interp,unknown-build` (which names `unknown-build`). Rows added in the Phase 4 review name the refused server file by its work-directory path, exactly: `server/flat-run-30hz.records` cut 3 bytes short, with the required builds (`truncated-server-records`) and with no build folder (`truncated-server-records-no-builds`), gives `server/flat-run-30hz.records: 29 whole records and <last record's length - 3> more bytes; the stream has 30 expected hashes`; `server/tables.bin` cut 1 byte short (`truncated-server-tables`) gives `server/tables.bin (<n - 1> bytes) and tables/inputs.bin (<m> bytes) do not hold the same whole table`.
   - `UnknownFoldersAreIgnored`. A `<work>/other-build/` folder changes no output line.
@@ -1097,7 +1098,7 @@ Conventions for this phase (they hold for every task below):
   - Use explicit usings and no allocation. Makes T110 pass.
 - [X] T127 [P] [US2] Implement the batch stepper per wasm-api.md#core-api, #batchstepper, #report-buffer-layouts and #return-codes, and config-rules.md#browser-guard. Write `LoadResult` in `src/MmoEngine.SimCore/Batch/LoadResult.cs` (byte: Ok 0, FormatRefused 1, ConfigInvalid 2, NotReady 3), `StepError` in `src/MmoEngine.SimCore/Batch/StepError.cs` (int: NotReady -1, CountOutOfRange -2, CommandRefused -3, StepFault -4) and `BatchStepper` in `src/MmoEngine.SimCore/Batch/BatchStepper.cs`. Makes T113, T114 and T115 pass (US2.6, FR-025, FR-029 browser guard, FR-032).
   - **Constructor**: 1 <= capacity <= 256, else `ArgumentOutOfRangeException`. It allocates:
-    - a `CommandCapacity x InputCommand.EncodedSize` (17) command buffer, never reallocated;
+    - a `CommandCapacity x InputCodec.EncodedSize` (17) command buffer, never reallocated;
     - a 65,536-byte report buffer;
     - a one-element `CharacterCommand[]` scratch.
   - **`LoadCollision`**: decodes with `CollisionFile.Decode`.
@@ -1124,6 +1125,7 @@ Conventions for this phase (they hold for every task below):
     - The non-finite and out-of-domain rows come last.
   - **`Evaluate(inputs, configBlock)`**: decodes the config block, runs `ConfigGuard` (`ConfigValidationException`), compiles it, then refuses malformed tables with `CoreFormatException` (format `tables`, messages `tables <field> at offset <n>: <detail>`) for:
     - magic, version 1 and reserved 0;
+    - `counts` whose results, 16 + 8M + 100P bytes computed in `long`, are longer than `MaxResultsLength` (`Array.MaxLength`, 2,147,483,591): `Oversized` at 8, checked from the header before the length (Phase 4 review);
     - `length` against 16 + 12M + 16P;
     - an unknown `mathRows[i].function`;
     - a `poseRows[j].stance` above 1.
@@ -1225,7 +1227,7 @@ Conventions for this phase (they hold for every task below):
     - a required build is `NotRun`;
     - `report/agreement.json`, a divergence report or the `--summary` file cannot be written. This prints `agreement: cannot run: the report cannot be written (<message>)` in place of the outcome line, after the build lines and first reports, and holds even when a build diverged; `agreement.json` is written before the summary, so a summary failure leaves it in place (Phase 4 review);
     - `--require` names an unknown build;
-    - the manifest's `formatVersion`, `rulesRevision` or a `formats` version differs from this build's. That case prints `NOT COMPARABLE work <work>: rules revision <m> in the work directory; this core implements rules revision <c>` or `<format name> format version <m> in the work directory; this reader supports version <c>` (format names `manifest`, `input command`, `collision data`, `recorded stream`), then `agreement: not comparable`.
+    - the manifest's `formatVersion`, `rulesRevision` or a `formats` version differs from this build's. That case prints `NOT COMPARABLE work <work>: rules revision <m> in the work directory; this core implements rules revision <c>` or `<format name> format version <m> in the work directory; this reader supports version <c>` (format names `manifest`, `input command`, `collision data`, `recorded stream`), then `agreement: not comparable`. `formatVersion` is read first; a manifest of another format version may be shaped differently, so its other versions are compared only when present and whole numbers in range (Phase 4 review).
   - Otherwise exit 1 if any build is `Diverged`, else 0. Unknown folders are ignored.
   - A build's error file takes the place of its records or table results, without its trailing line breaks. A build with neither `tables.bin` nor `tables.error.txt` is `Missing` with `<build>/tables.bin was not written`. A tables-only divergence's first report is the first-mismatch line, or `tables: build <b>, results missing: <message>`; `tables.txt` is written for `Missing` too.
   - `agreement.json`'s `outcome` is `Match`, `Diverged` or `CannotRun` (a required build did not run). The report files and the summary are written whenever the builds were compared, and not for a NotComparable or unreadable work directory.

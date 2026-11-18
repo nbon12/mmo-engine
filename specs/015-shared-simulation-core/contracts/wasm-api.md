@@ -269,18 +269,26 @@ row 3,871.
 **`Evaluate(inputs, configBlock)`** compiles the config block (its hitbox layout), then evaluates
 every row in order with the same `SimMath` functions and `HitboxBuilder` the step uses. It allocates
 its result; it is not tick-path code. A malformed table throws `CoreFormatException`
-(`tables <field> at offset <n>: <detail>`, for a wrong magic or version, a length that does not match
-the counts, or an unknown function ID or stance), and an invalid block throws
+(`tables <field> at offset <n>: <detail>`, for a wrong magic or version, counts whose results would be
+longer than an array holds, a length that does not match the counts, or an unknown function ID or
+stance), and an invalid block throws
 `ConfigValidationException`. The block is checked first. The refusals that
 `CrossBuildTablesTests.RefusesMalformedTables` pins are below. An input shorter than the field being
 read is `Truncated` at its length (fields `magic`, `version`, then `header` for the 16 bytes), and a
-reserved `u16` other than 0 is `Inconsistent` at 6, field `reserved`. The pinned refusals are:
+reserved `u16` other than 0 is `Inconsistent` at 6, field `reserved`. A pose result row is 100 bytes
+against a 16-byte input row, so counts a whole input holds can still need results longer than
+`Array.MaxLength` (2,147,483,591 bytes, `CrossBuildTables.MaxResultsLength`). Those counts are
+`Oversized` at 8, field `counts`, checked from the 16-byte header alone before the length, so no row is
+read and nothing is allocated. The pinned refusals are:
 
 | Input | Code | Offset | Field | Detail |
 | --- | --- | --- | --- | --- |
 | magic `MMXX` | `UnknownMagic` | 0 | `magic` | `the magic is 4d4d5858, not 4d4d5854 (MMXT)`, the core's wording for a wrong magic, as for `MMCD` and `MMRS` |
 | version 2 | `UnsupportedVersion` | 4 | `version` | `unsupported version 2; this reader supports version 1` |
 | one byte short | `Inconsistent` | 8 | `length` | `<n> bytes, the counts need <m>` |
+| the header alone, M 0 and P 21,474,836 (results 16 + 100·P = 2,147,483,616 bytes) | `Oversized` | 8 | `counts` | `the counts need 2147483616 result bytes, above 2147483591` |
+| the header alone, M 0 and P 42,949,673 (4,294,967,316 bytes, which an `int` sum would wrap to 20) | `Oversized` | 8 | `counts` | `the counts need 4294967316 result bytes, above 2147483591` |
+| the header alone, M 0 and P 21,474,835 (2,147,483,516 result bytes, within the limit) | `Inconsistent` | 8 | `length` | `16 bytes, the counts need 343597376` |
 | function ID 11 in math row *i* | `OutOfRange` | 16 + 12·*i* | `mathRows[i].function` | `unknown function ID 11` |
 | stance 2 in pose row *j* | `OutOfRange` | 16 + 12·*M* + 16·*j* | `poseRows[j].stance` | `unknown stance 2` |
 
@@ -415,7 +423,7 @@ return codes.
 
 ```js
 // Assumes a booted runtime (E = SimCoreExports) and a world that LoadCollision, LoadConfig and Reset loaded.
-const COMMAND_SIZE = 17;                        // InputCommand.EncodedSize
+const COMMAND_SIZE = 17;                        // InputCodec.EncodedSize
 const commands = E.CommandBuffer();             // IMemoryView, fixed for the module's life
 let report = E.ReportBuffer();                  // IMemoryView; fetch again after every LoadConfig that returns 0
 const capacity = commands.length / COMMAND_SIZE;
@@ -646,7 +654,7 @@ type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scen
 | `StreamRunnerTests.RefusesBeforeStepZero` (Theory: `UnsupportedVersion`, `CollisionDataMissing`, `RulesRevisionMismatch`, an invalid config block) | US2.5, US6.5 |
 | `tests/MmoEngine.SimCore.Tests/Batch/CrossBuildTablesTests.InputsArePinned` | `BuildInputs()` returns the same bytes on every call, with the row counts and the XxHash64 the test pins, so a change to the table is a visible edit |
 | `CrossBuildTablesTests.EachRowEqualsTheDirectCall` | every math row's result equals the `SimMath` call it names, and every pose row's equals `HitboxBuilder` for that pose, bit for bit |
-| `CrossBuildTablesTests.RefusesMalformedTables` (Theory: magic, version, length, function ID, stance) | its refusals |
+| `CrossBuildTablesTests.RefusesMalformedTables` (Theory: magic, version, length, function ID, stance, short inputs, reserved, oversized counts) | its refusals |
 | `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3), and every out-of-domain row gives NaN, counted explicitly. It is the only definition of an out-of-domain row: a or b NaN; a = ±∞ for functions 1–4; \|a\| > 1 for 5 and 6; a < 0 and not −0 for 10 |
 | `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.ReportsTheFirstDifferingRow` (Theory: one bit flipped in a math row, in a pose row, a NaN against a finite value) and `TablesComparisonTests.AnyNaNMatchesANaNRow` | the comparison rule and its report |
 | `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests` (every export called as a plain method on x64) and `EntryPointReturnsZero` | the host, and its coverage gate |

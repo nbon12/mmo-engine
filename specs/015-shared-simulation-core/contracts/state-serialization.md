@@ -407,6 +407,11 @@ state from a buggy build can still be read.
   the invariant culture, so the decimal parses back to the same bits;
 - hashes as `x16`.
 
+A field line is `  <path>  server <value>  <build> <value>`, where each `<value>` is
+`0x%08X <decimal>` or `absent`. Every separator shown as two spaces is exactly two spaces, and the
+other separators are one space: the columns are not padded or aligned, so a reader can split a line
+without knowing the other lines.
+
 **Example.** The values are illustrative; the hashes are the real hashes of the two states
 described.
 
@@ -414,7 +419,7 @@ described.
 DIVERGED stream wall-slide-45, build chromium-worker, first divergent step 37
   hash  server d15d8dbcd3e66f5a  chromium-worker fdebaca498955582
   2 fields differ
-  characters[0].position.x  server 0x40A3D70A 5.12   chromium-worker 0x40A3D70B 5.1200004
+  characters[0].position.x  server 0x40A3D70A 5.12  chromium-worker 0x40A3D70B 5.1200004
   characters[0].position.z  server 0xBFAF5C29 -1.37  chromium-worker 0xBFAF5C2A -1.3700001
 ```
 
@@ -422,8 +427,8 @@ The remaining examples show the shape only; their values and hashes are placehol
 fired one shot fewer at its first divergent step lists the count and the missing shot:
 
 ```text
-  events.shots.count               server 0x00000001 1     node-interp 0x00000000 0
-  events.shots[0].characterId      server 0x00000001 1     node-interp absent
+  events.shots.count  server 0x00000001 1  node-interp 0x00000000 0
+  events.shots[0].characterId  server 0x00000001 1  node-interp absent
 ```
 
 Against the committed expected hashes:
