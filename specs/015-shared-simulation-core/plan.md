@@ -1043,6 +1043,26 @@ The design documents settled these points, which the spec leaves open. They are 
   function inside them, which can run without the range checks. A `GetHashCode` call is "not
   overridden" when Roslyn still binds it to `object`'s or `ValueType`'s, since it binds to the
   receiver type's override when there is one. analyzer-rules.md now says each of these.
+- **A positional record parameter reports once (T167).** While adding coverage rows, `record R(double X)`
+  gave two identical MMO1007 errors at `X`: one for the primary constructor's parameter and one for
+  the property the compiler declares from it at the same identifier. The contract said nothing about
+  records, and the core declares many positional record structs, so a banned type in one would show
+  every error twice. A property whose only declaring syntax is a parameter no longer reports its type,
+  because the parameter already does. A property the record declares itself still reports on its own
+  identifier. `RuleTests` pins both cases (`record struct S(Vector2 V)` gives one MMO1001,
+  `record R(double X)` one MMO1007, and an explicit `X` property two), and
+  analyzer-rules.md#precedence-and-deduplication now says so. The backstop is unchanged, since the
+  change can only remove diagnostics.
+- **T167 holds this phase's files to 95%; the gate's exit 0 stays with Phase 10 (T167).** T167 and
+  the Phase 5 checkpoint asked for `tools/coverage_gate.py` to exit 0. The gate lists every `src/` file
+  changed since `main`, though, and 12 files of Phases 1 to 3 that this phase does not touch are still
+  under 95%. Phase 1's checkpoint and T137's decision already give the slice-wide gate to Phase 10's
+  T260. So T167 passes when every file this phase changed is at or above 95% in the gate's table:
+  `Descriptors.cs` and `Tables.cs` at 100%, `DeterminismAnalyzer.cs` at 98.49%, `SimMath.cs` at 97.76%,
+  and `SimMathBounds.cs` with no coverable lines. In this sandbox, `dotnet test MmoEngine.sln` also
+  fails all 258 `MmoEngine.Harness.Tests`, because their ClickHouse fixture needs Docker and there is
+  none here. That project is Spec 014's, and this branch does not change it. CI's `.NET` workflow runs
+  it on `ubuntu-latest`, which has Docker.
 
 ## Delivery
 

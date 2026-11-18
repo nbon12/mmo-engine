@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -104,7 +105,11 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 ReportDeclaration(context, field.Type, field);
                 break;
             case IPropertySymbol property:
-                ReportDeclaration(context, property.Type, property);
+                if (!IsPositionalRecordProperty(property, context.CancellationToken))
+                {
+                    ReportDeclaration(context, property.Type, property);
+                }
+
                 ReportParameters(context, property.Parameters);
                 break;
             case IEventSymbol @event:
@@ -160,6 +165,15 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             context.ReportDiagnostic(finding.ToDiagnostic());
         }
     }
+
+    /// <summary>
+    /// True for a record's positional property, which the compiler declares from a primary constructor
+    /// parameter at that parameter's identifier. The parameter reports the declaration, so the
+    /// identifier carries one diagnostic, not two.
+    /// </summary>
+    private static bool IsPositionalRecordProperty(IPropertySymbol property, CancellationToken cancellationToken) =>
+        property.DeclaringSyntaxReferences.Length == 1
+        && property.DeclaringSyntaxReferences[0].GetSyntax(cancellationToken) is ParameterSyntax;
 
     /// <summary>Property and event accessors are reported on their property or event.</summary>
     private static bool IsAccessor(IMethodSymbol method) =>

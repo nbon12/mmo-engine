@@ -115,6 +115,11 @@ spreads; the declared identifier for a declaration; the directive line for `#if`
   and MMO1007 for the implicit conversion of `x` to `double`.
 - **Declarations report separately** from the operations inside them. `double M(float x) => x` gives
   two MMO1007: the return type and the conversion.
+- **A positional record parameter reports once.** The compiler also declares a property from each
+  primary constructor parameter of a record, at the parameter's identifier. The parameter reports
+  the declaration and that property does not, so `record R(double X)` gives one MMO1007, not two at
+  the same place. A property the record declares itself reports on its own identifier:
+  `record R(double X) { public double X { get; init; } = X; }` gives two.
 - **A method's identifier reports one rule**, the first in the precedence order among its return
   type, its `[Conditional]` or `[UnsafeAccessor]` attribute (MMO1008) and its `Synchronized` flag
   (MMO1006). Its parameters report on their own identifiers.
@@ -448,7 +453,10 @@ in order:
 The prototype had 75 rows; a mutation check (a wrong count, and a banned call in an allowed row) made
 both fail [measured]. The rows below are the minimum; extra rows for the property, event, pointer and
 initializer branches keep the analyzer above the 95% changed-file line coverage gate (the prototype's
-rows reached 94.4%).
+rows reached 94.4%). T167's coverage rows add a parameter's default value, an event reference, a
+function pointer's parameter and return type, an indexer's parameter and argument, a tuple field, a
+generic method's type argument, a static initializer, a `double` property read, a nullable
+conversion, `Keys` on a `SortedDictionary` (allowed) and the positional record parameters above.
 
 | Rule | Violating samples (count 1 unless noted) | Allowed samples |
 | --- | --- | --- |

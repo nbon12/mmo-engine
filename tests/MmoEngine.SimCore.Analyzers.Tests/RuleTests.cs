@@ -131,6 +131,20 @@ public sealed class RuleTests
         { "MMO1001", 1, "public static readonly Plane F = default;" },
         { "MMO1001", 2, "public static Vector128<int> M(Vector128<int> a) => a;" },
 
+        // Coverage rows (T167): a property initializer and a parameter's default value counted as their
+        // declarations; an event reference (the declaration, the handler parameter and the `+=`); a
+        // function pointer's parameter; an indexer's parameter, at its declaration and its use; a field
+        // of a tuple that holds a vector; a generic method's type argument; and a positional record
+        // parameter, which reports once although the compiler also declares a property from it.
+        { "MMO1001", 1, "public static Vector3 P { get; } = default;" },
+        { "MMO1001", 1, "public static void M(Vector3 v = default) { }" },
+        { "MMO1001", 3, "public static event Action<Vector2>? E; public static void M(Action<Vector2> h) => E += h;" },
+        { "MMO1001", 1, "public static unsafe void M(delegate*<Vector2, float> p) { }" },
+        { "MMO1001", 2, "public sealed class K { public float this[Vector2 v] => 0f; } public static float M(K k) => k[default];" },
+        { "MMO1001", 2, "public static int M((Vector2, int) t) => t.Item2;" },
+        { "MMO1001", 1, "public static int M() => Array.Empty<Vector3>().Length;" },
+        { "MMO1001", 1, "public record struct S(Vector2 V);" },
+
         { "", 0, "public static Vector128<float> M(Vector128<float> a, Vector128<float> b) => Vector128.Add(a, b) * b - Vector128.Create(1f);" },
         { "", 0, "public static float M(float x, float y) => x * y + 1f;" },
     };
@@ -154,6 +168,10 @@ public sealed class RuleTests
         { "MMO1002", 1, "public static float M(float x) => x % 2f;" },
         { "MMO1002", 1, "public static void M(ref float x) { x %= 2f; }" },
         { "MMO1002", 1, "public static float M(float x) => Math.Clamp(x, 0f, 1f);" },
+
+        // Coverage row (T167): a static initializer runs too, and a float field's declaration does not
+        // hide the call it holds.
+        { "MMO1002", 1, "public static readonly float F = MathF.Sin(1f);" },
 
         { "", 0, "public static float M(float x) => MathF.Sqrt(MathF.Abs(x)) + MathF.Floor(x) + MathF.Round(x) + MathF.Round(x, MidpointRounding.ToZero) + MathF.CopySign(x, -1f) + MathF.PI;" },
         { "", 0, "public static string M() => nameof(MathF.Sin);" },
@@ -194,9 +212,13 @@ public sealed class RuleTests
         { "MMO1004", 1, "public static void M(Dictionary<int, int> d, int[] dst) => d.Keys.CopyTo(dst, 0);" },
         { "MMO1004", 1, "public static IEnumerable<int> M(Dictionary<int, int> d) => from kv in d select kv.Value;" },
 
+        // Coverage row (T167): an indexer argument is not an order-insensitive sink.
+        { "MMO1004", 1, "public sealed class K { public int this[IEnumerable<int> e] => e.Count(); } public static int M(K k, HashSet<int> s) => k[s];" },
+
         { "", 0, "public static int M(Dictionary<int, int> d, int k) => d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count;" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
         { "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
+        { "", 0, "public static int M(SortedDictionary<int, int> d) => d.Keys.First();" },
     };
 
     /// <summary>
@@ -265,6 +287,14 @@ public sealed class RuleTests
         { "MMO1007", 1, "public static unsafe void M(nuint* p) { }" },
         { "MMO1007", 1, "public static void M(System.Runtime.InteropServices.NFloat n) { }" },
 
+        // Coverage rows (T167): a double property read, even when narrowed to float at once; a function
+        // pointer's return type; a positional record parameter, once; and a record property declared
+        // explicitly, which reports on its own identifier.
+        { "MMO1007", 1, "public static float M(TimeSpan t) => (float)t.TotalSeconds;" },
+        { "MMO1007", 1, "public static unsafe void M(delegate*<double> p) { }" },
+        { "MMO1007", 1, "public record R(double X);" },
+        { "MMO1007", 2, "public record R(double X) { public double X { get; init; } = X; }" },
+
         { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
         { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
     };
@@ -305,6 +335,9 @@ public sealed class RuleTests
         { "MMO1009", 1, "public static long M(float x) => long.CreateTruncating(x);" },
         { "MMO1009", 1, "public static DayOfWeek M(float x) => (DayOfWeek)x;" },
         { "MMO1009", 1, "public static UInt128 M(float x) => (UInt128)x;" },
+
+        // Coverage row (T167): a nullable float to a nullable integer.
+        { "MMO1009", 1, "public static int? M(float? x) => (int?)x;" },
 
         { "", 0, "public static int M() => (int)2.5f;" },
         { "", 0, "public static float M(int i) => i * 0.5f;" },
