@@ -1573,13 +1573,13 @@ Conventions for this phase (they hold for every task below):
 
 ### Implementation
 
-- [ ] T158 [US3] Implement the nine descriptors in `src/MmoEngine.SimCore.Analyzers/Descriptors.cs` (`internal static class Descriptors`, `public static readonly DiagnosticDescriptor Mmo1001` through `Mmo1009`, plus an `All` array in ID order).
+- [X] T158 [US3] Implement the nine descriptors in `src/MmoEngine.SimCore.Analyzers/Descriptors.cs` (`internal static class Descriptors`, `public static readonly DiagnosticDescriptor Mmo1001` through `Mmo1009`, plus an `All` array in ID order).
   - Each descriptor: `DiagnosticSeverity.Error`, `isEnabledByDefault: true`, category `"Determinism"`, `customTags: [WellKnownDiagnosticTags.NotConfigurable]`, and the Title and message format verbatim from contracts/analyzer-rules.md#rules and #messages.
   - Return `Descriptors.All` from `SupportedDiagnostics` in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs`.
   - Replace the header-only `src/MmoEngine.SimCore.Analyzers/AnalyzerReleases.Unshipped.md` with the contract's `### New Rules` table for MMO1001-MMO1009 (#release-tracking), so RS2008 and the release-tracking checks pass under `TreatWarningsAsErrors`.
   - The analyzer stays free of RS1035 banned APIs (no `File`, `Environment` or `Console`).
   - Makes T150 pass.
-- [ ] T159 [US3] Implement the analysis framework and MMO1001 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and the new `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#wiring, #precedence-and-deduplication and #vector128-allowlist-mmo1001.
+- [X] T159 [US3] Implement the analysis framework and MMO1001 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and the new `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#wiring, #precedence-and-deduplication and #vector128-allowlist-mmo1001.
   - Full `Initialize`:
     - `EnableConcurrentExecution()` and `ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics)`;
     - one `RegisterOperationAction` over Invocation, PropertyReference, FieldReference, MethodReference, EventReference, ObjectCreation, Lock, Loop, Conversion, Spread, VariableDeclarator, Binary, CompoundAssignment (for float `%=`, which the MMO1002 row requires), Unary, TypeOf, DefaultValue, DynamicInvocation, DynamicMemberReference, DynamicIndexerAccess and DynamicObjectCreation;
@@ -1588,15 +1588,15 @@ Conventions for this phase (they hold for every task below):
   - The operation action returns at once when any ancestor is an `IAttributeOperation`.
   - Classification:
     - A pure `static string? Classify(IOperation op)` returns the first matching rule in the order `MMO1003 > MMO1001 > MMO1002 > MMO1008 > MMO1005 > MMO1006 > MMO1004 > MMO1009 > MMO1007`.
-    - An operation is skipped when an ancestor inside the same statement (or the same field or property initializer) classifies to the same rule. The check walks `IOperation.Parent` with no shared mutable state.
+    - An operation is skipped when an ancestor inside the same statement (or the same field, property or parameter initializer) classifies to the same rule; the walk stops after the nearest enclosing statement. The check walks `IOperation.Parent` with no shared mutable state.
     - Matching compares `OriginalDefinition` by metadata name (``Namespace.Type`1+Nested`` plus the member name, or the documentation comment ID where one overload is meant).
   - Locations: the operation's syntax; the declared identifier for declarations.
   - `Tables.cs` (`internal static class Tables`, every set an `ImmutableHashSet<string>` built once) gets the System.Numerics vector, quaternion, matrix and plane type names, the `System.Runtime.Intrinsics` namespace prefix, and the `Vector128` and `Vector128<T>` allowlists of the contract (element type `float` only).
   - MMO1001 reports a banned vector or intrinsic type wherever it appears: type argument, array element, pointer target, return type, parameter, local or `typeof` operand. `{1}` is the type.
   - Makes the MMO1001 rows of T139 (US3.1) and T154's Vector128 rows pass, except T154's two MMO1003 rows (`Vector128.FusedMultiplyAdd` and `Vector128.MultiplyAddEstimate`), which pass with T160.
-- [ ] T160 [US3] Implement MMO1003 and MMO1002 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#math-allowlist-mmo1002 and #replacement-map-mmo1002-messages.
+- [X] T160 [US3] Implement MMO1003 and MMO1002 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#math-allowlist-mmo1002 and #replacement-map-mmo1002-messages.
   - MMO1003: any member named `FusedMultiply*` or `MultiplyAddEstimate` on any type, and every member of `System.Runtime.Intrinsics.X86.Fma` and `Fma+X64`.
-  - MMO1002 covers static members of `System.Math`, `System.MathF`, `System.Single`, `System.Double`, `System.Half` and `System.Runtime.InteropServices.NFloat`, and static members of the `System.Numerics` generic-math interfaces (so `T.Cos` counts), when they are not on the allowlist. It catches invocations, method groups and `&` function pointers, plus float `%` (Binary) and `%=` (CompoundAssignment).
+  - MMO1002 covers static methods of `System.Math`, `System.MathF`, `System.Single`, `System.Double`, `System.Half` and `System.Runtime.InteropServices.NFloat`, and static methods of the `System.Numerics` generic-math interfaces (so `T.Cos` counts), when they are not on the allowlist. It catches invocations, method groups and `&` function pointers, plus float `%` (Binary) and `%=` (CompoundAssignment). Operators and conversions those types define are not platform math, so `(Half)1` reports only MMO1007, and static properties such as `T.Pi` are constants.
   - Allowlist:
     - with float operands: `Sqrt`, `Abs`, `CopySign`, `Floor`, `Ceiling` and `Truncate`;
     - `Round` matched by the documentation IDs `M:System.MathF.Round(System.Single)` and `M:System.MathF.Round(System.Single,System.MidpointRounding)`, plus the `Math` and `float` equivalents;
@@ -1606,15 +1606,16 @@ Conventions for this phase (they hold for every task below):
     - float `Clamp` only when the containing type is `MmoEngine.SimCore.Math.SimMath`;
     - `nameof` operands are never operations.
   - `{1}` comes from the replacement map table; members not on the map get the fallback text.
-  - Makes T140 (US3.2), T141 (US3.3), T149, T154's math rows and its two MMO1003 Vector128 rows, `RuleTests.GeneratedCodeIsAnalyzed` and `BackstopTests.BackstopCountsAnAssemblySuppressedDiagnostic` pass.
-- [ ] T161 [US3] Implement MMO1004 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#hash-ordered-collections-mmo1004.
+  - Makes T140 (US3.2), T141 (US3.3) except the `Math.FusedMultiplyAdd(double)` row of `FusedCallsReportOnlyTheFmaRule`, whose two MMO1007 declarations pass with T163, T149, T154's math rows and its two MMO1003 Vector128 rows, `RuleTests.GeneratedCodeIsAnalyzed` and `BackstopTests.BackstopCountsAnAssemblySuppressedDiagnostic` pass.
+- [X] T161 [US3] Implement MMO1004 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#hash-ordered-collections-mmo1004.
   - The hash-ordered set: ``Dictionary`2`` with its `KeyCollection` and `ValueCollection`, ``HashSet`1``, `Hashtable`, ``ConcurrentDictionary`2``, ``ConcurrentBag`1``, ``ImmutableDictionary`2``, ``ImmutableHashSet`1``, ``FrozenDictionary`2``, ``FrozenSet`1``, ``ReadOnlyDictionary`2`` with its collections, `HybridDictionary`, ``ConditionalWeakTable`2``, and the interfaces ``IDictionary`2``, ``IReadOnlyDictionary`2``, ``ISet`1``, ``IReadOnlySet`1`` and `IDictionary`.
   - It reports:
     - `foreach` (Loop), at the collection expression;
     - `GetEnumerator`, `CopyTo` and `ToArray`;
     - `Keys` and `Values` only when their result type is not itself hash-ordered;
     - `..` spreads;
-    - every conversion of a hash-ordered value to another type: LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, and returning it as `IEnumerable<T>`. Order-insensitive sinks on hash types (`UnionWith`, a hash type's copy constructor) are excluded.
+    - every conversion of a hash-ordered value to a type that is not itself hash-ordered: LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, and returning it as `IEnumerable<T>`. Order-insensitive sinks on hash types (`UnionWith`, a hash type's copy constructor) are excluded. A conversion to a hash-ordered type (a `Dictionary` passed as an `IReadOnlyDictionary`) leaves the report to the later enumeration, as `Keys` does.
+  - A class derived from a listed class is hash-ordered too; an interface counts only as the expression's own type, so `SortedDictionary` (an `IDictionary<,>`) does not.
   - `{0}` and `{1}` follow contracts/analyzer-rules.md#messages: `{0}` is `foreach`, `..`, the converted expression's source text or the member's `CSharpShortErrorMessageFormat` display, and `{1}` is the enumerated or converted expression's constructed type as `ToDisplayString()` shows it, namespace-qualified.
   - Makes T142 (US3.4, with `HashOrderMessagesNameTheOperationAndTheCollection`), T153, T154's MMO1004 rows and `BackstopTests.BackstopReportsAnInjectedViolation` pass.
 - [ ] T162 [US3] Implement MMO1005 and MMO1006 in `src/MmoEngine.SimCore.Analyzers/DeterminismAnalyzer.cs` and `src/MmoEngine.SimCore.Analyzers/Tables.cs`, per contracts/analyzer-rules.md#ambient-time-randomness-and-hash-seeds-mmo1005 and #locks-and-blocking-mmo1006.
@@ -1644,7 +1645,7 @@ Conventions for this phase (they hold for every task below):
     - every non-constant `ulong` to `float` conversion, `SimMath` included.
 
     `{1}` is the reason text for the conversion kind.
-  - Makes T145, T146 and T147 (US3.7), T154's MMO1007, MMO1008 and MMO1009 rows, and T148's `RuleTests.AttributeApplicationsAreNotReported`, pass.
+  - Makes T145, T146 and T147 (US3.7), T154's MMO1007, MMO1008 and MMO1009 rows, T148's `RuleTests.AttributeApplicationsAreNotReported`, and the `Math.FusedMultiplyAdd(double)` row of T141's `RuleTests.FusedCallsReportOnlyTheFmaRule`, pass.
 - [ ] T164 [US3] Implement the const-only `src/MmoEngine.SimCore/Math/SimMathBounds.cs` (namespace `MmoEngine.SimCore.Math`, `public static class SimMathBounds`, `const float` fields only: `ReductionLimit = 12867f`, `SinCosMaxUlp = 1f`, `SinCosLargeMaxUlp = 2f`, `TanMaxUlp = 1.5f`, `TanLargeMaxUlp = 2.5f`, `AsinAcosMaxUlp = 1f`, `AtanMaxUlp = 1f`, `Atan2MaxUlp = 2f`, `SinCosBinaryAngleMaxUlp = 1f`, `SqrtMaxUlp = 0.5f`), before the backstop run (T165), so that T156 and T157 compile and the solution build can exit 0.
   - Each field's XML doc states the function, the domain and the measured maximum from research.md R3: Sin/Cos 0.790/0.799, Tan 1.278, large-argument 0.804/1.317, Asin/Acos 0.875/0.902, Atan 0.851, Atan2 1.475, SinCosBinaryAngle 0.737.
   - No other file changes: `SimMath.cs` and the coefficients are T166's.

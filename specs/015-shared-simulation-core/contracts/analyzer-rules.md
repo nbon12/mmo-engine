@@ -16,9 +16,9 @@ Every rule is severity Error, enabled by default, category `Determinism`, and ca
 | ID | Title | Reports | Allowed |
 | --- | --- | --- | --- |
 | MMO1001 | Vector or SIMD type outside the lane-wise allowlist | Any use or declaration of `System.Numerics` `Vector<T>`, `Vector`, `Vector2`, `Vector3`, `Vector4`, `Quaternion`, `Matrix3x2`, `Matrix4x4` or `Plane`, including as a type argument, array element, pointer target, return type, parameter, local or `typeof` operand. Every member of `System.Runtime.Intrinsics` and its sub-namespaces that is not on the [Vector128 allowlist](#vector128-allowlist-mmo1001): the X86, Arm and Wasm ISA classes, `Vector64`, `Vector256`, `Vector512`, `IsHardwareAccelerated`, `IsSupported`, the horizontal `Sum` and `Dot`, and every `*Estimate` and `*Native` member. A `Vector128<T>` whose element type is not `float`. | `Vector128<float>` with the allowlisted members. The core's own scalar types (`Vec3`). |
-| MMO1002 | Platform math outside the allowlist | Static methods of `System.Math`, `System.MathF`, `System.Single`, `System.Double`, `System.Half` and `System.Runtime.InteropServices.NFloat`, and static members of the generic-math interfaces in `System.Numerics` (so `T.Cos(x)` is caught), that are not on the [math allowlist](#math-allowlist-mmo1002). Invocations, method groups and function pointers (`&MathF.Sin`) all count. The `%` operator (and `%=`) on `float` operands. | The math allowlist, the constants, and `nameof(MathF.Sin)`. |
+| MMO1002 | Platform math outside the allowlist | Static methods of `System.Math`, `System.MathF`, `System.Single`, `System.Double`, `System.Half` and `System.Runtime.InteropServices.NFloat`, and static methods of the generic-math interfaces in `System.Numerics` (so `T.Cos(x)` is caught), that are not on the [math allowlist](#math-allowlist-mmo1002). Invocations, method groups and function pointers (`&MathF.Sin`) all count. The `%` operator (and `%=`) on `float` operands. | The math allowlist, the constants (static properties such as `T.Pi` included), and `nameof(MathF.Sin)`. The operators and conversions these types define, so `(Half)1` reports only MMO1007. |
 | MMO1003 | Fused multiply-add | Any member whose name starts with `FusedMultiply`, or is `MultiplyAddEstimate`, on any type (`Math`, `MathF`, `float`, `Vector128`, `AdvSimd` and the rest), and every member of `System.Runtime.Intrinsics.X86.Fma` and `Fma.X64`. | `a * b + c` written as two float operations. |
-| MMO1004 | Iteration over a hash-ordered collection | Enumerating a [hash-ordered collection](#hash-ordered-collections-mmo1004): `foreach`; `GetEnumerator`, `CopyTo` or `ToArray`; `Keys` or `Values` whose result is not itself hash-ordered; a `..` spread; and any conversion of the collection to another type (LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, returning it as `IEnumerable<T>`). | Lookups: `TryGetValue`, `ContainsKey`, `Contains`, the indexer, `Count`, `Keys.Count`. Order-insensitive sinks on hash types (`UnionWith`, a hash type's copy constructor). `SortedDictionary`, `SortedSet`, arrays and `List<T>`. |
+| MMO1004 | Iteration over a hash-ordered collection | Enumerating a [hash-ordered collection](#hash-ordered-collections-mmo1004): `foreach`; `GetEnumerator`, `CopyTo` or `ToArray`; `Keys` or `Values` whose result is not itself hash-ordered; a `..` spread; and any conversion of the collection to a type that is not itself hash-ordered (LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, returning it as `IEnumerable<T>`). | Lookups: `TryGetValue`, `ContainsKey`, `Contains`, the indexer, `Count`, `Keys.Count`. Order-insensitive sinks on hash types (`UnionWith`, a hash type's copy constructor). `SortedDictionary`, `SortedSet`, arrays and `List<T>`. |
 | MMO1005 | Ambient time, randomness or a per-process hash seed | The [ambient list](#ambient-time-randomness-and-hash-seeds-mmo1005): wall-clock and monotonic clocks, every timer, all of `System.Random` (seeded too), `Guid.NewGuid`, `RandomNumberGenerator`, and hashing seeded per process (`HashCode`, `string.GetHashCode`, a `GetHashCode` that is not overridden, `RuntimeHelpers.GetHashCode`). | The step number and step length passed in by the caller. The core's seeded spread hash (SplitMix64). `int.GetHashCode()` and other overrides that return the value's bits. |
 | MMO1006 | Lock or blocking synchronization | Every `lock` statement, including on `System.Threading.Lock`. The [blocking list](#locks-and-blocking-mmo1006): `Monitor`, `Mutex`, the semaphores, reader-writer locks, spin primitives, wait handles, `Barrier`, `BlockingCollection`, `Parallel`, `Thread.Sleep`/`Join`/`SpinWait`/`Yield`, `Task.Wait`/`WaitAll`/`WaitAny`/`RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`, `GetResult` on every awaiter, and `[MethodImpl(MethodImplOptions.Synchronized)]`. | `await`, `Interlocked` and `Volatile`; none of them blocks. |
 | MMO1007 | Non-float floating point or platform-sized number | Declarations of `double`, `Half`, `NFloat`, `nint` or `nuint` (fields, properties, events, parameters, return types, locals, type arguments, array elements), and any non-constant expression of those types. An untyped literal in a float expression (`x * 0.5`) is one. | `const double` fields and constant-folded expressions such as `(float)(Math.PI / 180.0)`. `int` and `long` for fixed point and counters. `decimal` is not checked. |
@@ -108,7 +108,8 @@ spreads; the declared identifier for a declaration; the directive line for `#if`
   for the call even though the call's type is `double`.
 - **No repeats inside one expression.** An operation is skipped when an enclosing operation in the
   same statement already reports the same rule. `Vector3.Dot(new Vector3(x), Vector3.UnitX)` gives
-  one MMO1001, not three. A field or property initializer counts as its declaration.
+  one MMO1001, not three. A field, property or parameter initializer counts as its declaration. The
+  statement is the nearest enclosing one, so each statement of a `foreach` body reports on its own.
 - **Different rules in one expression still report.** `(float)Math.Sin(x)` gives MMO1002 for the call
   and MMO1007 for the implicit conversion of `x` to `double`.
 - **Declarations report separately** from the operations inside them. `double M(float x) => x` gives
@@ -196,7 +197,13 @@ Everything else on the math host types is MMO1002. Besides the transcendental fu
 
 The enumerating members are `GetEnumerator`, `CopyTo`, `ToArray`, `Keys` and `Values`. `Keys` and
 `Values` report only when their result is not itself on the list; otherwise the later enumeration of
-that result reports.
+that result reports. A conversion works the same way: it reports when its target type is not on the
+list, and a conversion to one (a `Dictionary` passed as an `IReadOnlyDictionary`) leaves the report to
+the later enumeration of the converted value.
+
+A class derived from one of the listed classes enumerates in the same order, so it counts too. An
+interface counts only as the expression's own type, so `SortedDictionary`, which implements
+`IDictionary<,>`, and `SortedSet`, which implements `ISet<>`, do not.
 
 ### Ambient time, randomness and hash seeds (MMO1005)
 

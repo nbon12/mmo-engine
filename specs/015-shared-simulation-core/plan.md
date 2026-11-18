@@ -1003,6 +1003,33 @@ The design documents settled these points, which the spec leaves open. They are 
   mix two bounds. So those four functions write a second line, labelled `<function>Large`, for the
   large-argument domain, and every other function writes one line. The measure job greps the
   `SIMMATH ` prefix, so it copies both. T157 and quickstart.md now say so.
+- **The `Math.FusedMultiplyAdd(double)` row of `FusedCallsReportOnlyTheFmaRule` passes with T163, not
+  T160.** T160 said it makes T141 pass, but that row also asserts one MMO1007 on each `double`
+  declaration (the parameter and the return type), and MMO1007 is T163's. With T160 the call reports
+  exactly MMO1003 and the declarations report nothing yet, so the row cannot be green until T163.
+  T160 and T163 now say so.
+- **MMO1002 matches static methods, not the operators or properties of the math types (T160).** The
+  contract said "static members of the generic-math interfaces", while its scope was invocations,
+  method groups and function pointers. Counting operators would make `(Half)1`, whose conversion is
+  the static method `Half.op_Explicit(int)`, report MMO1002 ahead of MMO1007, against T145's row,
+  which expects one MMO1007; and a static property such as `T.Pi` is a constant. So MMO1002 matches
+  static methods reached by an invocation, a method group or a function pointer, plus float `%` and
+  `%=`. analyzer-rules.md#rules and T160 now say so.
+- **A conversion to a hash-ordered type does not report MMO1004, and derived classes count (T161).**
+  "Any conversion of the collection to another type" would report a `Dictionary` passed as an
+  `IReadOnlyDictionary`, which is a lookup, not an enumeration, while the contract already leaves
+  `Keys` and `Values` whose result is hash-ordered to the later enumeration. So a conversion reports
+  only when its target type is not hash-ordered, and the converted value stays tracked by its type. A
+  class derived from a listed class enumerates in the same order, so it counts; an interface counts
+  only as the expression's own type, because `SortedDictionary` and `SortedSet` implement
+  `IDictionary<,>` and `ISet<>`. analyzer-rules.md#hash-ordered-collections-mmo1004 and T161 now say so.
+- **A parameter's default value counts as its declaration, and deduplication stops at the nearest
+  statement (T159).** The contract named field and property initializers only; without parameter
+  initializers, `void M(Vector3 v = default)` would report the parameter and its `default` value
+  separately, one rule twice for one declaration. "The same statement" is the nearest enclosing
+  operation whose syntax is a statement, so each statement in a `foreach` body reports on its own,
+  even when the loop reports the same rule. analyzer-rules.md#precedence-and-deduplication and T159
+  now say so.
 
 ## Delivery
 
