@@ -87,14 +87,24 @@ internal static class AnalyzerHarness
     }
 
     /// <summary>
+    /// The sample file's text: <paramref name="member"/> as the only member of
+    /// <c>public static class C</c> in <c>namespace Sample;</c> under the sample usings. Tests that
+    /// compile the sample class next to other files pass this to <see cref="AnalyzeSourcesAsync"/>.
+    /// </summary>
+    public static string SampleText(string member)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        return SamplePrefix + member + SampleSuffix;
+    }
+
+    /// <summary>
     /// Compiles <paramref name="member"/> as the only member of <c>public static class C</c> in
     /// <c>namespace Sample;</c> under the sample usings, and runs the analyzer over it. The result
     /// carries the member's span in the file, so a test can check every diagnostic lies inside it.
     /// </summary>
     public static async Task<SampleResult> AnalyzeMemberAsync(string member, CSharpCompilationOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(member);
-        var text = SamplePrefix + member + SampleSuffix;
+        var text = SampleText(member);
         var memberSpan = new TextSpan(SamplePrefix.Length, member.Length);
         var tree = Parse(SamplePath, text);
         var compilation = Compile([tree], options, references: null);
