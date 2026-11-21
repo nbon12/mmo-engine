@@ -1323,6 +1323,22 @@ The design documents settled these points, which the spec leaves open. They are 
   with the band the prototype's worst error was 2.4e-5 m. So that the band cannot hollow the test
   out, it requires at least 10,000 hits, 10,000 misses and 100 starts inside, and the known row
   `misses-by-1mm` still checks a segment 1 mm outside a capsule's side. T189 now says so.
+- **T193's and T194's shooter stands at (0, 0, −25), 50 m from the target (Phase 7 red check).**
+  Both tasks put the shooter at the origin, 25 m from the target, with the wall of
+  `ProjectileWorlds.Wall()` fixed at z = 12.5 m, and fly an `InFlight` projectile. Such a projectile
+  is first swept at segment k = 1 (T186), and segment 0 of a 600 m/s shot covers the first 30 m at
+  20 Hz and 20 m at 30 Hz, so the world would never sweep the target at 20 Hz or the wall at 20 and
+  30 Hz, and those rows could not pass. Moving the shooter back 25 m puts both beyond segment 0 at
+  every rate while keeping the target at (0, 0, 25) and the wall where it is; the hit, part, point
+  and step assertions are unchanged. At 50 m the uncompensated drop is 3.4 cm, so both aim with
+  `ProjectileWorlds.AimWithDrop`, whose double path passes through the aimed centre, and each arrange
+  asserts that `PredictFirstHit` names the row's part (and, for T194, that the target is hit without
+  the wall). T196's world half spawns its projectile through the weapon step, the only way to sweep
+  segment 0 in the world: its shooter stands at the target's feet with `hitboxes.eyeHeightStanding`
+  1.21, so the spawned Origin is exactly the direct call's (0, 1.21, 0). T196 fixes the
+  `ProjectileTargets` constructor as `(characterIds, hitboxes, bounds)` spans, which T199 and T210
+  follow. The 25 m targets and the 12.5 m wall of T203's and T205's in-process rows meet the same
+  segment-0 constraint. T193, T194, T196 and T210 now say so.
 
 ## Delivery
 
