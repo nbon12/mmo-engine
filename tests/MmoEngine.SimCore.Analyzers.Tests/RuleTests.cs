@@ -139,6 +139,31 @@ public sealed class RuleTests
     private const string GeneratedSource = "public static class G { public static float M(float x) => System.MathF.Sin(x); }\n";
 
     /// <summary>
+    /// The library <see cref="ConditionalMethodsOfAReferencedAssemblyReportAtEachCall"/> compiles in the
+    /// test and references as metadata, as the core references the BCL: a <c>[Conditional]</c> static
+    /// method, a plain one, and a <c>[Conditional]</c> virtual method, whose overrides are conditional
+    /// without carrying the attribute.
+    /// </summary>
+    private const string ConditionalLibrarySource = """
+        namespace Lib
+        {
+            public static class L
+            {
+                [System.Diagnostics.Conditional("LIB_TRACE")]
+                public static void Log() { }
+
+                public static void Plain() { }
+            }
+
+            public class B
+            {
+                [System.Diagnostics.Conditional("LIB_TRACE")]
+                public virtual void VLog() { }
+            }
+        }
+        """;
+
+    /// <summary>
     /// MMO1001 (US3.1): System.Numerics vector, quaternion, matrix and plane types, <c>Vector&lt;T&gt;</c>,
     /// the horizontal and hardware-query <c>Vector128</c> members, ISA classes and non-float
     /// <c>Vector128&lt;T&gt;</c>, wherever they appear; lane-wise <c>Vector128&lt;float&gt;</c> and scalar
@@ -288,6 +313,10 @@ public sealed class RuleTests
         { "MMO1004", 1, "public static int M<T>(T s) where T : HashSet<int> => s.First();" },
         { "MMO1004", 1, "public static int M<T, U>(U d) where T : Dictionary<int, int> where U : T { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
 
+        // Review row (Phase 5, fifth pass): a loop nested without braces in a loop of the same rule is
+        // its own statement, so each reports, as with braces.
+        { "MMO1004", 2, "public static int M(Dictionary<int, int> d, HashSet<int> h) { var s = 0; foreach (var a in d) foreach (var b in h) s += b; return s; }" },
+
         { "", 0, "public static int M(Dictionary<int, int> d, int k) => d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count;" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
         { "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
@@ -371,6 +400,9 @@ public sealed class RuleTests
 
         // Review row (Phase 5, fourth pass): a pattern local of a lock type is a declaration.
         { "MMO1006", 1, "public static bool M(object o) => o is Mutex m;" },
+
+        // Review row (Phase 5, fifth pass): a lock nested without braces in a lock is its own statement.
+        { "MMO1006", 2, "public static void M(object a, object b) { lock (a) lock (b) { } }" },
 
         { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
         { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
@@ -492,6 +524,17 @@ public sealed class RuleTests
         // return 4 on wasm32 and 8 on x64 for a reference type or nint.
         { "MMO1008", 1, "public static int M() => System.Runtime.CompilerServices.Unsafe.SizeOf<object>();" },
         { "MMO1008", 1, "public static int M() => System.Runtime.InteropServices.Marshal.SizeOf<nint>();" },
+
+        // Review rows (Phase 5, fifth pass): build-dependent paths outside the listed types. A call to a
+        // [Conditional] method another assembly declares, which builds without CONTRACTS_FULL or TRACE
+        // drop; the debugger; and AppContext switches. A [Conditional] method this compilation declares
+        // reports once, at its declaration, and not again at a call, also through an override, which is
+        // conditional without the attribute.
+        { "MMO1008", 1, "public static void M(bool b) => System.Diagnostics.Contracts.Contract.Assert(b);" },
+        { "MMO1008", 1, "public static void M(TraceSource t) => t.TraceInformation(\"x\");" },
+        { "MMO1008", 1, "public static bool M() => Debugger.IsAttached;" },
+        { "MMO1008", 1, "public static bool M() => AppContext.TryGetSwitch(\"x\", out var b) && b;" },
+        { "MMO1008", 1, "public class B { [Conditional(\"X\")] public virtual void Log() { } } public sealed class D : B { public override void Log() { } } public static void M(D d) => d.Log();" },
 
         { "", 0, "public static object M() => typeof(int);" },
     };
@@ -709,6 +752,20 @@ public sealed class RuleTests
     {
         { "public static class Probe\n{\n}\n", 0 },
         { "public static class Probe\n{\n    public static object? P() => typeof(System.MathF).GetMethod(\"Sin\");\n}\n", 1 },
+    };
+
+    /// <summary>
+    /// The members of <see cref="ConditionalMethodsOfAReferencedAssemblyReportAtEachCall"/> and the text
+    /// of each call that must report MMO1008, in source order: a call to the library's
+    /// <c>[Conditional]</c> method, each of two calls, a call to a sample override of its
+    /// <c>[Conditional]</c> virtual method, and a call to its plain method, which reports nothing.
+    /// </summary>
+    public static TheoryData<string, string[]> ReferencedConditionalRows => new()
+    {
+        { "public static void M() => Lib.L.Log();", ["Lib.L.Log()"] },
+        { "public static void M() { Lib.L.Log(); Lib.L.Log(); }", ["Lib.L.Log()", "Lib.L.Log()"] },
+        { "public class D : Lib.B { public override void VLog() { } } public static void M(D d) => d.VLog();", ["d.VLog()"] },
+        { "public static void M() => Lib.L.Plain();", [] },
     };
 
     /// <summary>
@@ -1024,6 +1081,45 @@ public sealed class RuleTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal(fileName, diagnostic.Location.SourceTree?.FilePath);
         Assert.Equal(call.Span, diagnostic.Location.SourceSpan);
+    }
+
+    /// <summary>
+    /// US3.7 (contracts/analyzer-rules.md#rules, MMO1008): a call to a <c>[Conditional]</c> method that
+    /// another assembly declares, which some builds drop, reports MMO1008 at the call, whatever the
+    /// method's type; so does a call to an override of one, which C# makes conditional though the
+    /// override carries no attribute. The library compiles in the test and the sample references it as
+    /// metadata. The diagnostics are MMO1008, at Error, exactly on <paramref name="reportedTexts"/>, in
+    /// order; a plain method of the same library reports nothing.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReferencedConditionalRows))]
+    public async Task ConditionalMethodsOfAReferencedAssemblyReportAtEachCall(string member, string[] reportedTexts)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var library = CSharpCompilation.Create(
+            "Lib",
+            [CSharpSyntaxTree.ParseText(ConditionalLibrarySource, AnalyzerHarness.ParseOptions, cancellationToken: cancellationToken)],
+            AnalyzerHarness.References,
+            AnalyzerHarness.SampleOptions);
+        using var image = new MemoryStream();
+        var emitted = library.Emit(image, cancellationToken: cancellationToken);
+        Assert.True(emitted.Success, $"The library must compile:{Environment.NewLine}{AnalyzerHarness.Describe(emitted.Diagnostics)}");
+
+        var result = await AnalyzerHarness.AnalyzeSourcesAsync(
+            [(AnalyzerHarness.SamplePath, AnalyzerHarness.SampleText(member))],
+            references: AnalyzerHarness.References.Add(MetadataReference.CreateFromImage(image.ToArray())));
+        Assert.True(
+            result.CompilerErrors.Count == 0,
+            $"The sample must compile:{Environment.NewLine}{AnalyzerHarness.Describe(result.CompilerErrors)}");
+
+        var report = AnalyzerHarness.Describe(result.Diagnostics);
+        Assert.True(
+            Enumerable.Repeat("MMO1008", reportedTexts.Length).SequenceEqual(result.Diagnostics.Select(d => d.Id)),
+            $"Expected {reportedTexts.Length} x 'MMO1008', got:{Environment.NewLine}{report}");
+        Assert.All(result.Diagnostics, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
+        var tree = Assert.Single(result.Compilation.SyntaxTrees);
+        var text = tree.GetText(cancellationToken);
+        Assert.Equal(reportedTexts, result.Diagnostics.Select(d => text.ToString(d.Location.SourceSpan)));
     }
 
     /// <summary>Asserts the sample compiles and reports exactly one diagnostic, with <paramref name="ruleId"/>, and returns it.</summary>

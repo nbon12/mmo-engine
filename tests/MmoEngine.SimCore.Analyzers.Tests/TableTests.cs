@@ -187,6 +187,8 @@ public sealed class TableTests
         { MathAllowlist, "", 0, "public static int M(int a) => Math.Clamp(a, 0, 9);" },
         { MathAllowlist, "", 0, "public static long M(int a, int b) => Math.BigMul(a, b);" },
         { MathAllowlist, "", 0, "public static (int, int) M(int a, int b) => Math.DivRem(a, b);" },
+
+        { MathAllowlist, "", 0, "public static string M(float x) => x.ToString(\"R\", System.Globalization.CultureInfo.InvariantCulture);" },
     };
 
     /// <summary>
@@ -490,6 +492,10 @@ public sealed class TableTests
         { PlatformPaths, "MMO1008", 1, "public static bool M(string s) => System.Runtime.InteropServices.NativeLibrary.TryLoad(s, out _);" },
         { PlatformPaths, "MMO1008", 1, "public static int M() => System.Runtime.InteropServices.Marshal.SizeOf<int>();" },
         { PlatformPaths, "MMO1008", 1, "public static int M() => System.Runtime.CompilerServices.Unsafe.SizeOf<object>();" },
+        { PlatformPaths, "MMO1008", 1, "public static void M(TraceSource t) => t.TraceInformation(\"x\");" },
+        { PlatformPaths, "MMO1008", 1, "public static bool M() => Debugger.IsAttached;" },
+        { PlatformPaths, "MMO1008", 1, "public static bool M() => AppContext.TryGetSwitch(\"x\", out var b) && b;" },
+        { PlatformPaths, "MMO1008", 1, "public static bool M(int[] a) => System.Diagnostics.Contracts.Contract.ForAll(a, x => x > 0);" },
     };
 
     /// <summary>

@@ -295,10 +295,18 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// <summary>
     /// True when an enclosing operation in the same statement, or the initializer
     /// <paramref name="operation"/> belongs to, matches rule <paramref name="id"/>: that operation's
-    /// diagnostic covers this one. The walk stops after the nearest enclosing statement.
+    /// diagnostic covers this one. The walk stops after the nearest enclosing statement. An operation
+    /// that is a statement of its own (a loop or <c>lock</c>, braced or not) is its own nearest
+    /// statement, so nothing covers it and <c>lock (a) lock (b) { }</c> reports twice, as the braced form
+    /// does. A <c>foreach</c>'s loop variable shares its loop's syntax and is not a statement of its own.
     /// </summary>
     private static bool EnclosingOperationMatches(IOperation operation, string id)
     {
+        if (operation.Syntax is StatementSyntax && operation.Parent?.Syntax != operation.Syntax)
+        {
+            return false;
+        }
+
         for (var parent = operation.Parent; parent is not null; parent = parent.Parent)
         {
             if (string.Equals(Classify(parent) ?? InitializerRule(parent), id, StringComparison.Ordinal))
@@ -803,10 +811,13 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// MMO1008: every <c>dynamic</c> operation, and a member, constructor or operator of a platform
-    /// query, <c>Debug</c>, <c>Trace</c>, <c>Environment</c> (but its clocks), <c>System.Type</c>,
-    /// <c>Activator</c>, a System.Reflection type, <c>NativeLibrary</c>, <c>Marshal</c> or
-    /// <c>Unsafe</c>, or one of the platform-size members.
+    /// MMO1008: every <c>dynamic</c> operation; a member, constructor or operator of a platform query,
+    /// <c>Debug</c>, <c>Trace</c>, <c>Contract</c>, <c>Debugger</c>, <c>AppContext</c>,
+    /// <c>Environment</c> (but its clocks), <c>System.Type</c>, <c>Activator</c>, a System.Reflection
+    /// type, <c>NativeLibrary</c>, <c>Marshal</c> or <c>Unsafe</c>, or one of the platform-size members;
+    /// and a call to a <c>[Conditional]</c> method another assembly declares
+    /// (<see cref="IsReferencedConditional"/>). A conditional method group cannot become a delegate
+    /// (CS1618), so calls are its only use.
     /// </summary>
     private static Finding? PlatformPath(IOperation operation)
     {
@@ -824,8 +835,44 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         var name = Tables.FullName(type);
         var banned = Tables.PlatformPathMembers.Contains(key)
             || ((Tables.PlatformPathTypes.Contains(name) || name.StartsWith(Tables.ReflectionPrefix, StringComparison.Ordinal))
-                && !Tables.PlatformPathExemptions.Contains(key));
+                && !Tables.PlatformPathExemptions.Contains(key))
+            || (operation is IInvocationOperation { TargetMethod: var target }
+                && IsReferencedConditional(target, operation.SemanticModel?.Compilation.Assembly));
         return banned ? new Finding(Descriptors.Mmo1008, operation.Syntax.GetLocation(), Display(member)) : null;
+    }
+
+    /// <summary>
+    /// True when the first method up <paramref name="method"/>'s override chain, itself included, that
+    /// carries <c>[Conditional]</c> is declared outside <paramref name="compilation"/>: C# drops the call
+    /// in builds without the attribute's symbol, and an override of a conditional method is conditional
+    /// without carrying the attribute. One this compilation declares reports at its declaration
+    /// (<see cref="IsPlatformPathDeclaration"/>), so its calls do not report again.
+    /// </summary>
+    private static bool IsReferencedConditional(IMethodSymbol method, IAssemblySymbol? compilation)
+    {
+        for (var current = method.OriginalDefinition; current is not null; current = current.OverriddenMethod?.OriginalDefinition)
+        {
+            if (HasAttribute(current, Tables.ConditionalAttribute))
+            {
+                return !SymbolEqualityComparer.Default.Equals(current.ContainingAssembly, compilation);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True when <paramref name="method"/> carries the attribute whose metadata name is <paramref name="attributeName"/>.</summary>
+    private static bool HasAttribute(IMethodSymbol method, string attributeName)
+    {
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (attribute.AttributeClass is { } type && string.Equals(Tables.FullName(type), attributeName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

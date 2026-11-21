@@ -386,14 +386,20 @@ internal static class Tables
     // ---- MMO1008: platform queries, conditional compilation and reflection --------------------
 
     /// <summary>
-    /// The types every member of which is MMO1008: <c>Debug</c> and <c>Trace</c>, the platform and
-    /// runtime queries, <c>Environment</c> (except its two clocks, which are MMO1005),
-    /// <c>System.Type</c>, <c>Activator</c>, the native-code routes <c>NativeLibrary</c> and
-    /// <c>Marshal</c>, and <c>Unsafe</c>, whose <c>SizeOf</c> and byte offsets depend on the pointer size.
+    /// The types every member of which is MMO1008: <c>Debug</c> and <c>Trace</c>; <c>Contract</c>, whose
+    /// members either drop out of builds without <c>CONTRACTS_FULL</c> or need a build-time rewriter;
+    /// <c>Debugger</c>; the platform and runtime queries, <c>AppContext</c>'s switches and data among
+    /// them; <c>Environment</c> (except its two clocks, which are MMO1005); <c>System.Type</c>;
+    /// <c>Activator</c>; the native-code routes <c>NativeLibrary</c> and <c>Marshal</c>; and
+    /// <c>Unsafe</c>, whose <c>SizeOf</c> and byte offsets depend on the pointer size. A call to any
+    /// other <c>[Conditional]</c> method is MMO1008 by its attribute.
     /// </summary>
     public static readonly ImmutableHashSet<string> PlatformPathTypes = Set(
         "System.Diagnostics.Debug",
         "System.Diagnostics.Trace",
+        "System.Diagnostics.Contracts.Contract",
+        "System.Diagnostics.Debugger",
+        "System.AppContext",
         "System.OperatingSystem",
         "System.Runtime.InteropServices.RuntimeInformation",
         "System.Runtime.CompilerServices.RuntimeFeature",
@@ -422,12 +428,20 @@ internal static class Tables
     /// The attributes whose declarations are MMO1008: a call that some builds drop, an accessor that
     /// reaches private members, and a source-generated P/Invoke, whose partial declaration is not
     /// <c>extern</c>. Every <c>extern</c> declaration (<c>[DllImport]</c>, <c>InternalCall</c>,
-    /// <c>[UnsafeAccessor]</c>) is MMO1008 by itself.
+    /// <c>[UnsafeAccessor]</c>) is MMO1008 by itself. A call to a <c>[Conditional]</c> method another
+    /// assembly declares is MMO1008 too (<see cref="ConditionalAttribute"/>).
     /// </summary>
     public static readonly ImmutableHashSet<string> PlatformPathAttributes = Set(
-        "System.Diagnostics.ConditionalAttribute",
+        ConditionalAttribute,
         "System.Runtime.CompilerServices.UnsafeAccessorAttribute",
         "System.Runtime.InteropServices.LibraryImportAttribute");
+
+    /// <summary>
+    /// The attribute whose methods some builds drop at every call. A call to one, or to an override of
+    /// one, which C# makes conditional without the attribute, is MMO1008 when another assembly declares
+    /// it; a call to one this compilation declares is covered by that declaration's own diagnostic.
+    /// </summary>
+    public const string ConditionalAttribute = "System.Diagnostics.ConditionalAttribute";
 
     // ---- MMO1009: float-to-integer and ulong-to-float conversions -----------------------------
 

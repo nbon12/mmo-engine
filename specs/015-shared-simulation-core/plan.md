@@ -1216,6 +1216,42 @@ The design documents settled these points, which the spec leaves open. They are 
   value in every run for `int` elements, so they stay allowed; with a `string` element they inherit its
   seed, which the contract lists under "Not covered" with the other indirect routes, rather than
   banning every record struct hash.
+- **A call to another assembly's `[Conditional]` method is MMO1008, and so are `Contract`, `Debugger`
+  and `AppContext` (T163, Phase 5 review, fifth pass).** MMO1008 matched a fixed list of types, so
+  `Contract.Assert(b)`, which builds without `CONTRACTS_FULL` drop just as they drop `Debug.Assert`
+  without `DEBUG`, `TraceSource.TraceInformation` (`TRACE`), `Debugger.IsAttached` and
+  `AppContext.TryGetSwitch` reported nothing. A call now reports when the first method up its override
+  chain that carries `[Conditional]` is declared in another assembly; the chain matters because C#
+  makes an override of a conditional method conditional though the override cannot carry the
+  attribute. Three judgment calls. A reviewer asked for every `[Conditional]` call "from any assembly",
+  but a `[Conditional]` method the compilation declares already reports at its declaration, so its
+  calls do not report again: the same rule the contract applies to locals, whose references are covered
+  by their declaration, and it keeps a `[Conditional]` local function and its call at one diagnostic.
+  `Contract` is banned as a whole type, not only through the attribute, because its members that are
+  not `[Conditional]` (`Requires<TException>`, `Result<T>`) depend on a build-time rewriter. And
+  `AppContext` is banned whole: its switches and data are set by the host, and the core reads no host
+  configuration. The core uses none of them, so the backstop is unchanged.
+- **Culture-sensitive formatting is listed under "Not covered", not given a rule (T160, T163, Phase 5
+  review, fifth pass).** A reviewer found that the contract called `ToString` MMO1002; that wording was
+  already gone (the "MMO1002 does not list `ToString`" bullet above), but the gap behind it was
+  undocumented: a provider-less numeric `ToString()`, a `$"…"` to `string`, and `string.Compare`,
+  `StartsWith`, `EndsWith`, `IndexOf`, `ToUpper` and `ToLower` without a `StringComparison` or
+  `CultureInfo` follow the current culture. Adding a rule for them was a judgment call against. Every
+  project sets `InvariantGlobalization=true` in `Directory.Build.props`, so the server and WebAssembly
+  hosts run the same invariant culture; the core already formats numbers invariantly; and the hashed
+  state holds only integers and float bits, so a culture can change an error message but not a step's
+  result. The contract now names the gap and these backstops, and `TableTests` pins
+  `x.ToString("R", CultureInfo.InvariantCulture)` as allowed, so the analyzer and the claim that
+  instance members are outside MMO1002 cannot drift apart.
+- **A statement nested without braces reports on its own (T159, Phase 5 review, fifth pass).** The
+  deduplication walk started at the operation's parent, so in `foreach (var a in d) foreach (var b in h)`
+  the inner loop's parent was the outer loop, which matched MMO1004 too, and the inner loop was dropped;
+  `lock (a) lock (b) { }` likewise gave one MMO1006. With braces, the block between them stopped the walk
+  and both reported, so the count depended on braces, against the contract's "each statement reports on
+  its own". An operation that is a statement of its own is now its own nearest statement, and nothing
+  covers it. A `foreach`'s loop variable shares its loop's syntax, so it is not treated as a statement
+  of its own and is still covered by its loop: no rule can match both today, but keeping the walk for it
+  states what "the same statement" means. The core has no such nesting, so the backstop is unchanged.
 
 ## Delivery
 
