@@ -1,6 +1,7 @@
 <Project>
-  <!-- Licenses are recorded in specs/013-regionizer-simulator/research.md (D13) and
-       specs/014-telemetry-test-harness/research.md (R1, R2). Only MIT or
+  <!-- Licenses are recorded in specs/013-regionizer-simulator/research.md (D13),
+       specs/014-telemetry-test-harness/research.md (R1, R2) and
+       specs/015-shared-simulation-core/research.md (R5). Only MIT or
        Apache-2.0 packages, or an approved exception, may be added (constitution Principle VII). -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
@@ -22,5 +23,8 @@
     <PackageVersion Include="ClickHouse.Driver" Version="1.5.0" />
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />
     <PackageVersion Include="Testcontainers.ClickHouse" Version="4.16.0" />
+    <!-- Spec 015 (specs/015-shared-simulation-core/research.md R5): the determinism analyzer's Roslyn, pinned to the SDK 10.0.1xx compiler (contracts/analyzer-rules.md#roslyn-pin), and reference assemblies for the analyzer tests. Both MIT. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+    <PackageVersion Include="Basic.Reference.Assemblies.Net100" Version="1.8.14" />
   </ItemGroup>
 </Project>

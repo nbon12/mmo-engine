@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "command-bad-version",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 905, "hex": "02" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "UnsupportedVersion", "offset": 905, "field": "steps[0].commands[0].input.version" }
+}

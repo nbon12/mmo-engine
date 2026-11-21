@@ -1,0 +1,15 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "state-has-events",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 890, "hex": "0100" },
+    { "op": "insert", "offset": 892, "hex": "0100000001" },
+    { "op": "write", "offset": 48, "hex": "8d000000" },
+    { "op": "write", "offset": 56, "hex": "bb03000000000000" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 890, "field": "initialState.events.expiries.count" }
+}

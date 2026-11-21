@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "checksum-mismatch",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 921, "hex": "ff" }
+  ],
+  "expectedError": { "code": "ChecksumMismatch", "offset": 942, "field": "checksum" }
+}

@@ -1,0 +1,15 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "config-missing-field",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "delete", "offset": 756, "length": 6 },
+    { "op": "write", "offset": 64, "hex": "7300" },
+    { "op": "write", "offset": 44, "hex": "b4020000" },
+    { "op": "write", "offset": 56, "hex": "b003000000000000" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 756, "field": "config.input.weaponSlots" }
+}

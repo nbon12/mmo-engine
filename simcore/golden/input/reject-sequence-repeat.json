@@ -1,0 +1,15 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "reject-sequence-repeat",
+  "kind": "valid",
+  "command": {
+    "sequence": 5,
+    "clientStep": 0,
+    "buttons": 0,
+    "aimYaw": 0,
+    "aimPitch": 0,
+    "weaponSlot": 0
+  },
+  "validate": { "lastSequence": 5, "weaponSlots": 2, "expected": "SequenceNotIncreasing" }
+}

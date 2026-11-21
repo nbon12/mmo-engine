@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "state-character-count",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 14, "hex": "0200" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 766, "field": "initialState.characterCount" }
+}

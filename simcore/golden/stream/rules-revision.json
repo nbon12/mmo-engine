@@ -1,0 +1,14 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "rules-revision",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 8, "hex": "00000000" },
+    { "op": "fixChecksum" }
+  ],
+  "refusedAt": "open",
+  "collisionFixtures": ["tiny-world"],
+  "expectedError": { "code": "RulesRevisionMismatch", "offset": 8, "field": "rulesRevision" }
+}

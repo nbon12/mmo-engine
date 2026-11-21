@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "too-many-characters",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 14, "hex": "4100" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 14, "field": "characterCount" }
+}

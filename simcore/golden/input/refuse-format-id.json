@@ -1,0 +1,9 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "refuse-format-id",
+  "kind": "refusal",
+  "base": "neutral",
+  "mutations": [ { "op": "write", "offset": 0, "hex": "4a" } ],
+  "expectedError": { "code": "UnknownMagic", "offset": 0, "field": "formatId" }
+}

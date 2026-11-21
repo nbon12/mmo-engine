@@ -1,0 +1,9 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "refuse-version-2-longer",
+  "kind": "refusal",
+  "base": "neutral",
+  "mutations": [ { "op": "write", "offset": 1, "hex": "02" }, { "op": "append", "hex": "000000" } ],
+  "expectedError": { "code": "UnsupportedVersion", "offset": 1, "field": "version" }
+}

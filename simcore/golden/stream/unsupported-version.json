@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "unsupported-version",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 4, "hex": "0200" }
+  ],
+  "expectedError": { "code": "UnsupportedVersion", "offset": 4, "field": "version" }
+}

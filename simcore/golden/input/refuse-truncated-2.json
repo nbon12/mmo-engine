@@ -1,0 +1,9 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "refuse-truncated-2",
+  "kind": "refusal",
+  "base": "neutral",
+  "mutations": [ { "op": "truncate", "length": 2 } ],
+  "expectedError": { "code": "Truncated", "offset": 2, "field": "length" }
+}

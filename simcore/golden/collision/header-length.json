@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "header-length",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 6, "hex": "2800" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 6, "field": "headerLength" }
+}

@@ -1,0 +1,106 @@
+{
+  "stepRateHz": 30,
+  "world": {
+    "maxCharacters": 64,
+    "maxProjectiles": 1024
+  },
+  "movement": {
+    "walkSpeed": 3.5,
+    "runSpeed": 7.0,
+    "crouchSpeed": 2.0,
+    "groundAccel": 70,
+    "groundDecel": 50,
+    "airAccel": 8,
+    "gravity": 9.81,
+    "jumpSpeed": 4.5,
+    "maxFallSpeed": 50,
+    "capsuleRadius": 0.4,
+    "standHeight": 1.8,
+    "crouchHeight": 1.2,
+    "stepHeight": 0.35,
+    "snapDistance": 0.35,
+    "slopeLimitDegrees": 45,
+    "ledgeSupportMinNormalY": 0.1736,
+    "contactSkin": 0.01,
+    "contactTolerance": 0.002,
+    "maxSlideIterations": 5,
+    "maxSubMoves": 8
+  },
+  "weapons": [
+    {
+      "roundsPerMinute": 600,
+      "maxShotsPerStep": 1,
+      "fireMode": "Auto",
+      "magazineSize": 30,
+      "reserveRounds": 210,
+      "reloadMs": 2000,
+      "equipMs": 500,
+      "heatPerShot": 0,
+      "overheatThreshold": 100000,
+      "heatRecoveryLevel": 40000,
+      "heatCooldownPerSecond": 50000,
+      "heatCooldownDelayMs": 250,
+      "spreadHalfAngleDeg": 1.5,
+      "recoilKickPitchDeg": 0.25,
+      "recoilKickYawDeg": 0.1,
+      "recoilMaxPitchDeg": 6,
+      "recoilMaxYawDeg": 3,
+      "recoilRecoveryDegPerSecond": 10,
+      "recoilRecoveryDelayMs": 100,
+      "muzzleSpeed": 600,
+      "projectileClass": 0
+    },
+    {
+      "roundsPerMinute": 30,
+      "maxShotsPerStep": 1,
+      "fireMode": "Semi",
+      "magazineSize": 1,
+      "reserveRounds": 5,
+      "reloadMs": 3500,
+      "equipMs": 750,
+      "heatPerShot": 0,
+      "overheatThreshold": 100000,
+      "heatRecoveryLevel": 40000,
+      "heatCooldownPerSecond": 50000,
+      "heatCooldownDelayMs": 250,
+      "spreadHalfAngleDeg": 0.5,
+      "recoilKickPitchDeg": 0.25,
+      "recoilKickYawDeg": 0.1,
+      "recoilMaxPitchDeg": 6,
+      "recoilMaxYawDeg": 3,
+      "recoilRecoveryDegPerSecond": 10,
+      "recoilRecoveryDelayMs": 100,
+      "muzzleSpeed": 120,
+      "projectileClass": 1
+    }
+  ],
+  "projectileClasses": [
+    {
+      "gravityFactor": 1.0,
+      "maxRangeM": 600,
+      "lifetimeMs": 3000
+    },
+    {
+      "gravityFactor": 1.0,
+      "maxRangeM": 400,
+      "lifetimeMs": 8000
+    }
+  ],
+  "hitboxes": {
+    "standing": [
+      { "a": { "fwd": 0.03, "right": 0, "up": 1.56 }, "b": { "fwd": 0.03, "right": 0, "up": 1.70 }, "radius": 0.12 },
+      { "a": { "fwd": 0, "right": 0, "up": 1.02 }, "b": { "fwd": 0, "right": 0, "up": 1.40 }, "radius": 0.22 },
+      { "a": { "fwd": 0, "right": 0, "up": 0.12 }, "b": { "fwd": 0, "right": 0, "up": 0.92 }, "radius": 0.17 }
+    ],
+    "crouched": [
+      { "a": { "fwd": 0.15, "right": 0, "up": 1.00 }, "b": { "fwd": 0.15, "right": 0, "up": 1.10 }, "radius": 0.12 },
+      { "a": { "fwd": 0.05, "right": 0, "up": 0.55 }, "b": { "fwd": 0.08, "right": 0, "up": 0.85 }, "radius": 0.23 },
+      { "a": { "fwd": 0, "right": 0, "up": 0.12 }, "b": { "fwd": 0, "right": 0, "up": 0.45 }, "radius": 0.20 }
+    ],
+    "eyeHeightStanding": 1.62,
+    "eyeHeightCrouched": 1.05
+  },
+  "input": {
+    "weaponSlots": 2
+  }
+}
