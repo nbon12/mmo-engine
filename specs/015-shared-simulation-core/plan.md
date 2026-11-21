@@ -1549,6 +1549,22 @@ The design documents settled these points, which the spec leaves open. They are 
   digits`, `$.kind: must be "valid" or "refusal"`, `$: a refusal case needs expectedError or
   expectedConfigErrors` and `$.command.aimYaw: 65536 is outside [0, 65535]`. T231 and T234 now list
   them, and T234 says an absent optional list parses to an empty array, not null.
+- **`GoldenJson` reads a case strictly, beyond the value forms T234 lists (T232, T234).** `golden write`
+  writes every `.bin` from what `GoldenJson` returns, so a field it ignored would be a field no test
+  reads. It therefore refuses, each as `<JSON path>: <problem>`: a field the case's shape does not
+  have (`$.notes: is not a field of a valid input case`); a `format` other than the folder's, a
+  `formatVersion` other than the format's 1, and a `case` that is not the file name without `.json`
+  (T237's format-mismatch row is this refusal); a `stepCount` that is not the length of `steps` and a
+  `characterCount` that is not the initial state's, the stream twins of T234's `meshCount` rule, since
+  the encoder writes both from the stream and would silently drop the JSON's; `heights` that are not
+  `columns × rows` and `indices` that are not whole triangles, which the encoder would reject with an
+  `ArgumentException` rather than a `CoreFormatException`; a config entry whose `path` is not its
+  `fieldId`'s path in the rule table; and a mutation without exactly its op's arguments
+  (`truncate length`, `append hex`, `write offset hex`, `insert offset hex`, `delete offset length`,
+  `fixChecksum` none), an unknown `op`, or a `hex` that is not two hex digits per byte, so a mistyped
+  argument cannot default to 0. The valid case records fix `Kind` to `Valid` instead of taking it as a
+  parameter, and the refusal record fixes it to `Refusal`. contracts/input-command-format.md's shared
+  fixture rules now say the JSON is read strictly.
 
 ## Delivery
 

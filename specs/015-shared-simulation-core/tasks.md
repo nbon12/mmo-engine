@@ -2304,7 +2304,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
 ### Implementation
 
-- [ ] T232 [P] [US6] Create the fixture model `src/MmoEngine.SimCore.Server/Golden/GoldenCase.cs` (namespace `MmoEngine.SimCore.Server.Golden`), following contracts/input-command-format.md#shared-fixture-rules:
+- [X] T232 [P] [US6] Create the fixture model `src/MmoEngine.SimCore.Server/Golden/GoldenCase.cs` (namespace `MmoEngine.SimCore.Server.Golden`), following contracts/input-command-format.md#shared-fixture-rules:
   - `GoldenKind { Valid, Refusal }`;
   - `GoldenMutation(string Op, long Offset, long Length, string? Hex)`;
   - `GoldenExpectedError(FormatErrorCode Code, long Offset, string Field)`;
@@ -2318,12 +2318,12 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `GoldenRefusalCase(..., string Base, GoldenMutation[] Mutations, GoldenExpectedError? ExpectedError, string? RefusedAt, string[] CollisionFixtures, (string Path, string Message)[] ExpectedConfigErrors)`;
   - an `Encode()` on each valid case: `InputCodec.TryEncode` into 17 bytes, `CollisionFile.Encode(Data)` or `Stream.Encode()`. It lets `CoreFormatException` through;
   - `GoldenCaseException(string message)`.
-- [ ] T233 [US6] Implement `GoldenMutations.Apply(string format, ReadOnlySpan<byte> baseBytes, IReadOnlyList<GoldenMutation> mutations)` returning `byte[]`, in `src/MmoEngine.SimCore.Server/Golden/GoldenMutations.cs`, after T232.
+- [X] T233 [US6] Implement `GoldenMutations.Apply(string format, ReadOnlySpan<byte> baseBytes, IReadOnlyList<GoldenMutation> mutations)` returning `byte[]`, in `src/MmoEngine.SimCore.Server/Golden/GoldenMutations.cs`, after T232.
   - The ops are `truncate`, `append`, `write`, `insert`, `delete` and `fixChecksum`, applied in order. `fixChecksum` rewrites the 8-byte trailer as `XxHash64.HashToUInt64` (seed 0) of every byte before it, for `collision` and `stream` only.
   - Hex is parsed case-insensitively.
   - Bad arguments throw `GoldenCaseException` with a message starting `mutations[<i>]: `.
   - Makes T230 pass.
-- [ ] T234 [US6] Implement `GoldenJson` in `src/MmoEngine.SimCore.Server/Golden/GoldenJson.cs`, with `public static GoldenCase Parse(string folderFormat, string fileName, ReadOnlySpan<byte> utf8Json)` over `JsonDocument`, after T232.
+- [X] T234 [US6] Implement `GoldenJson` in `src/MmoEngine.SimCore.Server/Golden/GoldenJson.cs`, with `public static GoldenCase Parse(string folderFormat, string fileName, ReadOnlySpan<byte> utf8Json)` over `JsonDocument`, after T232.
   - **Values.** An x16 is exactly `^[0-9a-f]{16}$`. A float object is `{bits, value}`: `bits` is authoritative and must match `^0x[0-9A-F]{8}$`, and `value`'s raw text must parse with `float.Parse(..., CultureInfo.InvariantCulture)` to exactly those bits. `fieldId` is 4 uppercase hex digits and `valueBits` 8, after `0x`. Integers must fit their field's width.
   - **Shapes.**
     - Input valid cases: `command` and `validate`.
