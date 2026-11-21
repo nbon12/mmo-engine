@@ -32,6 +32,30 @@ public static class ScenarioCatalog
     /// <summary><c>fuzz-all-buttons</c>'s steps, at every rate.</summary>
     private const int FuzzStepCount = 300;
 
+    /// <summary><c>rifle-burst</c>'s match salt.</summary>
+    private const ulong RifleBurstSalt = 0x0015_5CE0_B025_7001UL;
+
+    /// <summary><c>reload-and-empty</c>'s match salt.</summary>
+    private const ulong ReloadAndEmptySalt = 0x0015_5CE0_2E10_AD02UL;
+
+    /// <summary><c>heat-overheat</c>'s match salt.</summary>
+    private const ulong HeatOverheatSalt = 0x0015_5CE0_4EA7_0003UL;
+
+    /// <summary><c>rifle-burst</c>'s aim pitch, a binary angle: 11.25° above the horizon.</summary>
+    private const short RifleBurstPitch = 2048;
+
+    /// <summary>The aim yaw of the weapon scenarios: 0, along the firing lane (+Z).</summary>
+    private const ushort FiringLaneYaw = 0;
+
+    /// <summary><c>heat-overheat</c>'s <c>weapons[0].heatPerShot</c>: the heat test weapon.</summary>
+    private const int HeatTestHeatPerShot = 10000;
+
+    /// <summary><c>reload-and-empty</c>'s initial magazine in slot 0.</summary>
+    private const ushort ReloadAndEmptyMagazine = 2;
+
+    /// <summary><c>reload-and-empty</c>'s initial reserve in slot 0.</summary>
+    private const ushort ReloadAndEmptyReserve = 210;
+
     private static readonly ScenarioDefinition[] Definitions = Sorted(
     [
         FlatRun(20),
@@ -46,6 +70,9 @@ public static class ScenarioCatalog
         CornerWedge(),
         ThinWallFast(),
         FuzzAllButtons(),
+        RifleBurst(),
+        ReloadAndEmpty(),
+        HeatOverheat(),
     ]);
 
     /// <summary>Every scenario's name, in ordinal order.</summary>
@@ -216,6 +243,87 @@ public static class ScenarioCatalog
         static (config, world, rate) => StreamGenerator.Build(FuzzSeed, config, world, rate, FuzzCharacterCount, FuzzStepCount));
 
     /// <summary>
+    /// <c>rifle-burst</c> (US4.5, US5.4): one character, ID 1, at rest, Grounded and Standing at
+    /// <see cref="TestWorldFeatures.FlatRunStart"/>, in front of the clear firing lane, with the placeholder
+    /// rifle (600 rpm) in slot 0, aiming at yaw 0 (+Z, along the lane) and pitch 2048 (11.25° above the
+    /// horizon) in its initial state and every command: Fire held for 3 s, then released for 1 s. That is
+    /// 80, 120 and 240 steps at 20, 30 and 60 Hz: 30 shots, their recoil kick and its recovery. It presses
+    /// Fire, so its <c>.mmrs</c> file is recorded once the projectile step is in place.
+    /// </summary>
+    private static ScenarioDefinition RifleBurst() => new(
+        "rifle-burst",
+        DefaultStepRateHz,
+        durationSeconds: 4.0,
+        [
+            new ScenarioCharacter(
+                1,
+                TestWorldGenerator.Features.FlatRunStart,
+                FiringLaneYaw,
+                static time => time.Before(3.0) ? Buttons.Fire : 0)
+            {
+                AimPitch = RifleBurstPitch,
+            },
+        ],
+        matchSalt: RifleBurstSalt);
+
+    /// <summary>
+    /// <c>reload-and-empty</c> (US4.3, US4.6): one character, ID 1, at rest, Grounded and Standing at
+    /// <see cref="TestWorldFeatures.FlatRunStart"/>, facing the firing lane, whose rifle in slot 0 starts
+    /// with Magazine 2 and Reserve 210. Fire is held over [0, 1 s), firing the 2 rounds and then reporting
+    /// Empty; one step holds Fire and Reload at 1 s, starting the reload; Fire is held over (1 s, 1.5 s],
+    /// blocked by Reloading; nothing is held until 3.5 s, so the reload completes; WeaponSlot 1 with Fire is
+    /// held over [3.5 s, 4 s), blocked by Switching; and nothing is held until 4.5 s, with slot 1 still
+    /// selected. That is 90, 135 and 270 steps at 20, 30 and 60 Hz. It presses Fire, so its <c>.mmrs</c> file
+    /// is recorded once the projectile step is in place.
+    /// </summary>
+    private static ScenarioDefinition ReloadAndEmpty() => new(
+        "reload-and-empty",
+        DefaultStepRateHz,
+        durationSeconds: 4.5,
+        [
+            new ScenarioCharacter(
+                1,
+                TestWorldGenerator.Features.FlatRunStart,
+                FiringLaneYaw,
+                static time => time.Before(1.0) ? Buttons.Fire
+                    : time.At(1.0) ? Buttons.Fire | Buttons.Reload
+                    : time.NotAfter(1.5) ? Buttons.Fire
+                    : time.Before(3.5) ? 0
+                    : time.Before(4.0) ? Buttons.Fire
+                    : 0)
+            {
+                WeaponSlot = static time => time.Before(3.5) ? (byte)0 : (byte)1,
+                ArrangeWeapon = static (slot, weapon) => slot == 0
+                    ? weapon with { Magazine = ReloadAndEmptyMagazine, Reserve = ReloadAndEmptyReserve }
+                    : weapon,
+            },
+        ],
+        matchSalt: ReloadAndEmptySalt);
+
+    /// <summary>
+    /// <c>heat-overheat</c> (US4.4, US4.6), at its own 30 Hz: one character, ID 1, at rest, Grounded and
+    /// Standing at <see cref="TestWorldFeatures.FlatRunStart"/>, facing the firing lane, whose slot 0 is the
+    /// heat test weapon: <c>weapons[0].heatPerShot</c> 10000 with every other value the rifle's (600 rpm,
+    /// magazine 30, <c>overheatThreshold</c> 100000, <c>heatRecoveryLevel</c> 40000,
+    /// <c>heatCooldownPerSecond</c> 50000, <c>heatCooldownDelayMs</c> 250). Fire is held from step 1 for 2.4 s:
+    /// 72 steps at 30 Hz (48 and 144 at 20 and 60 Hz), through the overheat at the 10th shot, the cooldown and
+    /// the 11th shot at the recovery level. It presses Fire, so its <c>.mmrs</c> file is recorded once the
+    /// projectile step is in place.
+    /// </summary>
+    private static ScenarioDefinition HeatOverheat() => new(
+        "heat-overheat",
+        DefaultStepRateHz,
+        durationSeconds: 2.4,
+        [new ScenarioCharacter(1, TestWorldGenerator.Features.FlatRunStart, FiringLaneYaw, static _ => Buttons.Fire)],
+        static config =>
+        {
+            var weapons = config.Weapons ?? throw new ArgumentException("The configuration has no weapons.", nameof(config));
+            var heat = weapons[0] ?? throw new ArgumentException("weapons[0] is missing.", nameof(config));
+            heat.HeatPerShot = HeatTestHeatPerShot;
+        },
+        HeatOverheatSalt);
+
+    /// <summary>
     /// A scenario at the default 30 Hz with one character, ID 1, at rest, Grounded and Standing at
     /// <paramref name="start"/>, holding <paramref name="buttons"/> at <paramref name="yaw"/> at every entry.
     /// </summary>
@@ -261,12 +369,25 @@ public readonly record struct ScenarioTime(int Entry, int StepRateHz)
     /// steps.
     /// </summary>
     public bool Before(double seconds) => Entry < seconds * StepRateHz;
+
+    /// <summary>
+    /// Whether the entry starts exactly at <paramref name="seconds"/>: k == seconds · hz, true for one entry
+    /// when the time is a whole number of steps.
+    /// </summary>
+    public bool At(double seconds) => Entry == seconds * StepRateHz;
+
+    /// <summary>
+    /// Whether the entry starts at or before <paramref name="seconds"/>: k ≤ seconds · hz, so a schedule can
+    /// hold a button over a range closed at its end, such as (1 s, 1.5 s].
+    /// </summary>
+    public bool NotAfter(double seconds) => Entry <= seconds * StepRateHz;
 }
 
 /// <summary>
-/// One character of a scenario: its ID, where it starts (at rest, Standing, with full weapons), whether it
-/// starts Grounded (on ground whose normal is (0, 1, 0)), its aim yaw for the whole run, and the buttons it
-/// holds at each entry. Every entry gives it one command.
+/// One character of a scenario: its ID, where it starts (at rest, Standing, with new weapons unless
+/// <see cref="ArrangeWeapon"/> changes them), whether it starts Grounded (on ground whose normal is
+/// (0, 1, 0)), its aim yaw and pitch for the whole run, and the buttons it holds and the weapon slot it
+/// selects at each entry. Every entry gives it one command.
 /// </summary>
 /// <param name="Id">The character's ID; a scenario's IDs are unique.</param>
 /// <param name="Position">The feet, at rest height; usually a <see cref="TestWorldFeatures"/> start.</param>
@@ -276,6 +397,19 @@ public sealed record ScenarioCharacter(uint Id, Vec3 Position, ushort AimYaw, Fu
 {
     /// <summary>Whether the character starts Grounded; otherwise airborne.</summary>
     public bool Grounded { get; init; } = true;
+
+    /// <summary>The aim pitch of the initial state and of every command, a binary angle; 0 (level) unless set.</summary>
+    public short AimPitch { get; init; }
+
+    /// <summary>The weapon slot each entry's command selects; null selects slot 0 at every entry.</summary>
+    public Func<ScenarioTime, byte>? WeaponSlot { get; init; }
+
+    /// <summary>
+    /// Called once per slot with the slot and its new weapon's state (<see cref="WeaponState.New"/>); its
+    /// result is that slot's initial state, so a definition can start a weapon with any field changed. Null
+    /// keeps the new weapons.
+    /// </summary>
+    public Func<int, WeaponState, WeaponState>? ArrangeWeapon { get; init; }
 }
 
 /// <summary>
@@ -288,8 +422,11 @@ public sealed record ScenarioCharacter(uint Id, Vec3 Position, ushort AimYaw, Fu
 /// </summary>
 public sealed class ScenarioDefinition
 {
-    /// <summary>The match salt every scenario stream carries.</summary>
-    public const ulong MatchSalt = 0x0015_5CE0_A210_5A17UL;
+    /// <summary>
+    /// The match salt a definition's stream carries unless the definition names its own; the movement
+    /// streams carry it.
+    /// </summary>
+    public const ulong DefaultMatchSalt = 0x0015_5CE0_A210_5A17UL;
 
     /// <summary>The step the initial state is at; the first entry is step 1.</summary>
     private const uint InitialStep = 0;
@@ -297,11 +434,21 @@ public sealed class ScenarioDefinition
     private readonly ScenarioCharacter[] _characters;
     private readonly Action<SimConfig>? _configure;
     private readonly Func<SimConfig, CollisionWorld, int, RecordedStream>? _generate;
+    private readonly ulong _matchSalt;
 
-    /// <summary>A definition; the characters are sorted by ID.</summary>
+    /// <summary>
+    /// A definition; the characters are sorted by ID. Its stream carries <paramref name="matchSalt"/>,
+    /// <see cref="DefaultMatchSalt"/> unless the definition names its own.
+    /// </summary>
     /// <exception cref="ArgumentNullException">The name or the characters are null.</exception>
     /// <exception cref="ArgumentException">The characters are empty, an ID repeats, or the duration is not positive.</exception>
-    public ScenarioDefinition(string name, int stepRateHz, double durationSeconds, IReadOnlyList<ScenarioCharacter> characters, Action<SimConfig>? configure = null)
+    public ScenarioDefinition(
+        string name,
+        int stepRateHz,
+        double durationSeconds,
+        IReadOnlyList<ScenarioCharacter> characters,
+        Action<SimConfig>? configure = null,
+        ulong matchSalt = DefaultMatchSalt)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(characters);
@@ -329,6 +476,7 @@ public sealed class ScenarioDefinition
         StepRateHz = stepRateHz;
         DurationSeconds = durationSeconds;
         _configure = configure;
+        _matchSalt = matchSalt;
     }
 
     private ScenarioDefinition(string name, int stepRateHz, double durationSeconds, Func<SimConfig, CollisionWorld, int, RecordedStream> generate)
@@ -380,8 +528,9 @@ public sealed class ScenarioDefinition
     /// <paramref name="world"/>: the base configuration copied, with the overrides applied and
     /// <c>stepRateHz</c> set; an initial state at step 0 holding the characters at rest with full weapons;
     /// and <see cref="DurationSeconds"/> × the rate entries, each with one command per character (sequence
-    /// numbers from 1, <c>ClientStep</c> equal to the step), every expected hash 0, seed 0 and
-    /// <see cref="MatchSalt"/>. A generated definition returns its generator's stream at the rate instead.
+    /// numbers from 1, <c>ClientStep</c> equal to the step, the character's aim, and the buttons and weapon
+    /// slot its schedule gives), every expected hash 0, seed 0 and the definition's match salt. A generated
+    /// definition returns its generator's stream at the rate instead.
     /// </summary>
     /// <exception cref="ArgumentNullException">The configuration or the world is null.</exception>
     /// <exception cref="ArgumentException">The duration is not a whole number of steps at the rate.</exception>
@@ -409,14 +558,15 @@ public sealed class ScenarioDefinition
             for (var c = 0; c < _characters.Length; c++)
             {
                 var character = _characters[c];
-                var input = new InputCommand((uint)k + 1u, step, character.Hold(time), character.AimYaw, 0, 0);
+                var slot = character.WeaponSlot?.Invoke(time) ?? 0;
+                var input = new InputCommand((uint)k + 1u, step, character.Hold(time), character.AimYaw, character.AimPitch, slot);
                 commands[c] = new RecordedCommand((byte)c, input);
             }
 
             steps[k] = new RecordedStep(step, commands, 0UL);
         }
 
-        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, MatchSalt, world.Checksum, config, InitialState(Name, config, _characters), steps);
+        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, _matchSalt, world.Checksum, config, InitialState(Name, config, _characters), steps);
     }
 
     /// <summary>
@@ -489,9 +639,10 @@ public sealed class ScenarioDefinition
     /// <summary>
     /// The canonical initial state of <paramref name="characters"/>, in ascending ID, for the stream
     /// <paramref name="name"/>: step 0, <c>nextProjectileId</c> 1, the characters at rest (velocity 0,
-    /// ground normal (0, 1, 0), Grounded or airborne as each says, Standing, aim pitch 0,
+    /// ground normal (0, 1, 0), Grounded or airborne as each says, Standing, each one's aim yaw and pitch,
     /// <c>lastSequence</c> 0, slot 0) with <c>input.weaponSlots</c> weapons, each new
-    /// (<see cref="WeaponState.New"/>) from its slot's configuration, no projectiles and no events.
+    /// (<see cref="WeaponState.New"/>) from its slot's configuration and then changed by the character's
+    /// <see cref="ScenarioCharacter.ArrangeWeapon"/>, no projectiles and no events.
     /// <see cref="StreamGenerator"/> builds its initial states here too.
     /// </summary>
     /// <exception cref="ArgumentException">The configuration has no weapons or input section, or too few weapons for its slots.</exception>
@@ -516,7 +667,7 @@ public sealed class ScenarioDefinition
                 Velocity = new Vec3(0f, 0f, 0f),
                 GroundNormal = new Vec3(0f, 1f, 0f),
                 AimYaw = character.AimYaw,
-                AimPitch = 0,
+                AimPitch = character.AimPitch,
                 Stance = Stance.Standing,
                 Flags = character.Grounded ? CharacterFlags.Grounded : 0,
                 LastSequence = 0,
@@ -526,7 +677,8 @@ public sealed class ScenarioDefinition
             for (var s = 0; s < weaponSlots; s++)
             {
                 var weapon = weaponConfigs[s] ?? throw new ArgumentException($"weapons[{s}] is missing.", nameof(config));
-                weapons[(c * weaponSlots) + s] = WeaponState.New(weapon.MagazineSize, weapon.ReserveRounds);
+                var fresh = WeaponState.New(weapon.MagazineSize, weapon.ReserveRounds);
+                weapons[(c * weaponSlots) + s] = character.ArrangeWeapon is null ? fresh : character.ArrangeWeapon(s, fresh);
             }
         }
 

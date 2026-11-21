@@ -22,9 +22,10 @@ namespace MmoEngine.SimCore.World;
 /// </summary>
 /// <remarks>
 /// The world has one writer, its caller, and takes no locks. Characters join and leave only through
-/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. Stage 1 validates the inputs and stage 2 steps movement;
-/// in this phase the weapon and projectile stages (3 and 5) copy the state forward unchanged, and Phases 6
-/// and 7 replace their bodies.
+/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. Stage 1 validates the inputs, stage 2 steps movement and
+/// stage 3 steps weapons, spawning each shot's projectile at the shooter's eye; in this phase the projectile
+/// stage (5) copies the projectiles forward and appends the new ones at their origins, and Phase 7 replaces
+/// its body.
 /// </remarks>
 public sealed class SimWorld
 {
@@ -58,6 +59,10 @@ public sealed class SimWorld
     // Collision query output, sized for the widest box the configured capsule sweeps.
     private readonly int[] _candidates;
 
+    // Stage 3: the projectiles this step's shots spawn, in ID order, which stage 5 appends.
+    private readonly Projectile[] _spawned;
+    private int _spawnCount;
+
     // Stage 4: three hitboxes and one bounding sphere per character.
     private readonly Hitbox[] _hitboxes;
     private readonly HitboxBounds[] _bounds;
@@ -89,9 +94,10 @@ public sealed class SimWorld
     /// the maxima: the current and next characters, weapons (<c>maxCharacters × weaponSlots</c>) and
     /// projectiles; the inputs and rejection reasons; the candidate buffer
     /// <c>int[collision.MaxQueryCandidates((3f * capsuleRadius) + (2f * contactSkin))]</c>; the hitboxes
-    /// (<c>maxCharacters × 3</c>) and bounding spheres; the six event buffers; and the
-    /// <c>byte[MaxStateLength]</c> state buffer. It starts empty: step 0, no characters, and
-    /// <c>nextProjectileId</c> 1.
+    /// (<c>maxCharacters × 3</c>) and bounding spheres; the spawn scratch
+    /// (<c>Min(maxProjectiles, maxCharacters × MaxShotsPerStepMax)</c>, the most one step can spawn); the six
+    /// event buffers; and the <c>byte[MaxStateLength]</c> state buffer. It starts empty: step 0, no
+    /// characters, and <c>nextProjectileId</c> 1.
     /// </summary>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public SimWorld(CompiledConfig config, CollisionWorld collision)
@@ -126,6 +132,7 @@ public sealed class SimWorld
         _inputs = new InputCommand[maxCharacters];
         _rejections = new InputRejection[maxCharacters];
         _candidates = new int[candidateCapacity];
+        _spawned = new Projectile[System.Math.Min(maxProjectiles, maxCharacters * config.MaxShotsPerStepMax)];
         _hitboxes = new Hitbox[maxCharacters * HitboxesPerCharacter];
         _bounds = new HitboxBounds[maxCharacters];
         _shots = new ShotEvent[maxCharacters * config.MaxShotsPerStepMax];
@@ -313,7 +320,7 @@ public sealed class SimWorld
             return fault;
         }
 
-        StepWeapons();
+        StepWeapons(unchecked(_step + 1u));
         BuildHitboxes();
         StepProjectiles();
         return default;
@@ -323,6 +330,7 @@ public sealed class SimWorld
     private void BeginStep()
     {
         _shotCount = 0;
+        _spawnCount = 0;
         _hitCount = 0;
         _expiryCount = 0;
         _inputRejectionCount = 0;
@@ -419,15 +427,44 @@ public sealed class SimWorld
     }
 
     /// <summary>
-    /// Stage 3: weapons, in ascending character ID. This phase copies the weapons and
-    /// <c>nextProjectileId</c> forward unchanged and fires nothing.
+    /// Stage 3: weapons, in ascending character ID (data-model.md#world-step-order). Each character's
+    /// current weapons are copied into its next-state slice and stepped by <see cref="WeaponStep.Step"/>
+    /// with the world's configuration and match salt, <paramref name="step"/>, the post-movement next
+    /// character and its stage 1 input. Its projectile count is the committed projectiles plus those spawned
+    /// so far this step, and it writes from the next free index of the spawn scratch and the shot events, so
+    /// new projectiles are in ID order and shots in ascending character ID, then firing order. A blocked
+    /// trigger adds <c>{CharacterId, Reason}</c> to the fire-block events, which the report's fire-block
+    /// counter counts. The fire loop's limits keep every write inside the buffers: a character fires at most
+    /// <c>MaxShotsPerStep</c> shots, and never past <c>maxProjectiles</c> projectiles in all.
     /// </summary>
-    private void StepWeapons()
+    private void StepWeapons(uint step)
     {
-        _weapons.AsSpan(0, _characterCount * _weaponSlots).CopyTo(_nextWeapons);
+        var slots = _weaponSlots;
+        _weapons.AsSpan(0, _characterCount * slots).CopyTo(_nextWeapons);
         _nextNextProjectileId = _nextProjectileId;
-        _shotCount = 0;
-        _fireBlockCount = 0;
+        for (var i = 0; i < _characterCount; i++)
+        {
+            ref var character = ref _nextCharacters[i];
+            var fired = WeaponStep.Step(
+                Config,
+                MatchSalt,
+                step,
+                ref character,
+                _nextWeapons.AsSpan(i * slots, slots),
+                in _inputs[i],
+                _projectileCount + _spawnCount,
+                ref _nextNextProjectileId,
+                _spawned.AsSpan(_spawnCount),
+                _shots.AsSpan(_shotCount),
+                out var block);
+            _spawnCount += fired;
+            _shotCount += fired;
+            if (block != FireBlock.None)
+            {
+                _fireBlocks[_fireBlockCount] = new FireBlockEvent { CharacterId = character.Id, Reason = block };
+                _fireBlockCount++;
+            }
+        }
     }
 
     /// <summary>Stage 4: each next character's hitboxes and bounding sphere, from its position, aim yaw and stance.</summary>
@@ -445,11 +482,16 @@ public sealed class SimWorld
         }
     }
 
-    /// <summary>Stage 5: projectiles, in ascending projectile ID. This phase copies them forward unchanged.</summary>
+    /// <summary>
+    /// Stage 5: projectiles, in ascending projectile ID. This phase copies the committed projectiles forward
+    /// unchanged and appends stage 3's spawns in order, still at their origins. IDs stay ascending, because
+    /// every new ID exceeds every live one. Phase 7 replaces this body with the projectile step.
+    /// </summary>
     private void StepProjectiles()
     {
         _projectiles.AsSpan(0, _projectileCount).CopyTo(_nextProjectiles);
-        _nextProjectileCount = _projectileCount;
+        _spawned.AsSpan(0, _spawnCount).CopyTo(_nextProjectiles.AsSpan(_projectileCount));
+        _nextProjectileCount = _projectileCount + _spawnCount;
         _hitCount = 0;
         _expiryCount = 0;
     }

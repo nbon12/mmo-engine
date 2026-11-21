@@ -1936,7 +1936,7 @@ Conventions for this phase (they hold for every task below):
     8. StepsSinceShot = 0; FireWait += ShotCost; Semi sets TriggerLatched.
   - Integers only, apart from the spread and the spawn. No LINQ, lambdas, boxing or exceptions. Every loop has a fixed bound.
   - Makes T170, T171, T174 and T172 pass.
-- [ ] T184 [US4] Replace the pass-through `StepWeapons` in `src/MmoEngine.SimCore/World/SimWorld.cs` with stage 3 of data-model.md#world-step-order, after T183.
+- [X] T184 [US4] Replace the pass-through `StepWeapons` in `src/MmoEngine.SimCore/World/SimWorld.cs` with stage 3 of data-model.md#world-step-order, after T183.
   - Constructor: allocate a spawn scratch `Projectile[]` of `Min(world.maxProjectiles, world.maxCharacters × largest maxShotsPerStep)`, with nothing else new on the tick path.
   - For each character index in ascending ID:
     - copy its current `WeaponState`s into the next-state weapons slice;
@@ -1946,7 +1946,7 @@ Conventions for this phase (they hold for every task below):
   - Then run `dotnet run --project src/MmoEngine.SimCore.Cli -- streams verify --dir simcore/streams --content simcore/content`. It must print `0 diverged, 0 not comparable, 0 refused` with all 11 committed movement streams matching: their commands never press Fire, Reload or change slot, so idle weapons leave every weapon field unchanged. If a movement stream's hash nevertheless changes because this stage legitimately changes it, re-record exactly that stream in this task with `dotnet run --project src/MmoEngine.SimCore.Cli -- streams record --scenario <name> --reason "<why>"`, committing the `.mmrs` and the `simcore/streams/REGENERATIONS.md` entry together.
   - `SimCoreVersion.RulesRevision` stays 1.
   - Makes T173 (`SevenHundredRpmAtThirtyHzFiresExactly35ShotsInThreeSeconds`, `SixHundredRpmFiresThirtyShotsInThreeSecondsAtEveryRate`), T175, T180's `FireWhenTheWeaponCannotFireReportsTheReason` and T181 pass.
-- [ ] T185 [US4] Add the definitions `rifle-burst`, `reload-and-empty` and `heat-overheat` to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs`, keeping `ScenarioCatalog.Names` in ordinal order, per contracts/simcore-cli.md#named-scenario-streams.
+- [X] T185 [US4] Add the definitions `rifle-burst`, `reload-and-empty` and `heat-overheat` to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs`, keeping `ScenarioCatalog.Names` in ordinal order, per contracts/simcore-cli.md#named-scenario-streams.
   - Common to all three: one character (ID 1), standing and grounded at `TestWorldGenerator.Features.FlatRunStart`, the start the flat-run definitions use, in front of the clear firing lane T101 keeps, with seed 0 and a fixed non-zero match-salt constant per definition. Exactly one command per step for character index 0, with Sequence = step index + 1, so `rifle-burst` is batchable. Durations are in seconds, so each builds at 20, 30 and 60 Hz.
   - `rifle-burst`: the placeholder rifle in slot 0, aim yaw 0 and pitch 2048 (11.25° above the horizon). Fire held for 3 s, then released for 1 s.
   - `reload-and-empty`: the initial state's weapons[0] has Magazine 2 and Reserve 210. Fire is held for [0, 1 s); one step holds Fire and Reload at 1 s; Fire is held for (1 s, 1.5 s]; nothing is held until 3.5 s; WeaponSlot 1 with Fire is held for [3.5 s, 4 s); nothing is held until 4.5 s.
