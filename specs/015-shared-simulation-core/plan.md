@@ -1300,6 +1300,29 @@ The design documents settled these points, which the spec leaves open. They are 
   stream, so the choice is now written down: T185 and the contracts/simcore-cli.md row state it, and
   `ReloadAndEmptyStreamReportsReloadingAndSwitchingBlocks` checks that the stream has 4.5 · hz steps
   and that every step after 4 s holds no button with WeaponSlot 1 and reports no fire block.
+- **`ProjectileWorlds.InFlight` takes the compiled configuration, and `PredictFirstHit` takes the
+  first swept segment (T186, T187, Phase 7 red check).** T186's `InFlight(id, ownerId, classIndex,
+  origin, launchVelocity, launchStep, step)` stores the closed form p(step − launchStep + 1), which
+  needs the class's `HalfG` and the step rate, so the helper takes the `CompiledConfig` as well. A
+  projectile loaded that way is first swept at k = step + 1 − launchStep ≥ 1, because the contract
+  fixes its position as p(k + 1) with launchStep ≤ step (contracts/state-serialization.md), while
+  T187's search started at k = 0: at 20 Hz a 600 m/s shot covers 30 m in segment 0, so a target
+  25 m away would be predicted in a segment the world never sweeps. `PredictFirstHit` therefore takes
+  an optional `firstK` (default 0, a projectile spawned in the step it is swept), and the tests of
+  `InFlight` projectiles pass the first segment the world sweeps. A target inside segment 0 is
+  reached only by a projectile spawned in that step. T186 and T187 now say so.
+- **T189's random draws skip a 1 mm knife-edge band around each capsule's surface (Phase 7 red
+  check).** In a float32 prototype of `ClippedTestMatchesADoubleReference`, one segment whose line
+  entered its capsule only 3.4e-5 m deep had a hit-point error of 1.154e-4 m, over the task's
+  1.1e-4 m bound (research.md R11's measured maximum). The cause is the float rounding of the inputs
+  every implementation shares: b − a and a + ((b − a)·t0) are about 2e-6 m off across the line, and a
+  grazing entry moves that about 50 times as far along it, so near the surface a pass or a failure,
+  and a hit/miss agreement, depends on which samples are drawn rather than on the method. A segment
+  whose least double distance to its capsule's axis lies within 1 mm of the radius is drawn again,
+  so the test still checks exactly 100,000 segments with the 1.1e-4 m bound and zero disagreements;
+  with the band the prototype's worst error was 2.4e-5 m. So that the band cannot hollow the test
+  out, it requires at least 10,000 hits, 10,000 misses and 100 starts inside, and the known row
+  `misses-by-1mm` still checks a segment 1 mm outside a capsule's side. T189 now says so.
 
 ## Delivery
 
