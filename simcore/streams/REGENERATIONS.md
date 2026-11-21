@@ -161,3 +161,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | mesh-occludes-shot | added: 832b5f0ef92bacdc | added: f37fe2bcbbe1e100 | |
+
+## 2026-11-21T08:19:41Z
+
+- Reason: First recording of the projectile-hits-hitbox scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario projectile-hits-hitbox`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| projectile-hits-hitbox | added: 824803c9feb674e9 | added: bebd1bfc4e86a66e | |
