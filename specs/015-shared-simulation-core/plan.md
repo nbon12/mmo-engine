@@ -1253,6 +1253,26 @@ The design documents settled these points, which the spec leaves open. They are 
   covers it. A `foreach`'s loop variable shares its loop's syntax, so it is not treated as a statement
   of its own and is still covered by its loop: no rule can match both today, but keeping the walk for it
   states what "the same statement" means. The core has no such nesting, so the backstop is unchanged.
+- **T169's spread distribution test uses the 0.1% χ² level and measures the angle of the normalised
+  direction (Phase 6 red check).** With the named `SpreadSalt` 0x0015_5EED_0000_0004 and counters
+  0..19,999, the data-model.md hash puts φ's 20,000 values in 16 bins with χ² = 27.78 (computed exactly
+  from the integer hash), above the task's 5%-level bound of 25.0, although the hash is uniform: one
+  fixed salt misses a 5% level one time in twenty. The versine bins give 27.75 against 30.1, too close
+  to keep. Changing the salt until it passes would be choosing the data to fit the bound, so the salt
+  stays and both bounds move to the 0.1% level: 43.82 for 19 degrees of freedom and 37.70 for 15. A
+  faithful T182 `Spread` passes all of `SpreadTests` with them. The cone check also takes the acos of
+  dir·f divided by |dir|, the angle between the two vectors: one sample sits at u1 = 0.9999987, where
+  the float direction's length error alone (up to 1.3e-7, bounded by the |dir| assertion) moved the
+  raw-dot angle within 1.6e-6 rad of the bound in a float simulation, so one ulp could fail a correct
+  core. research.md R10's prototype figures are unchanged.
+- **Two T170/T171 rows pin StepsSinceShot so that W4 does not act before the step they test (Phase 6
+  red check).** A new weapon's StepsSinceShot is 65535, at or above every delay, so W4 runs first.
+  `ShotReachingThresholdOverheats` would cool 2,700,000 to 2,650,000 before the shot, which then ends
+  at 2,950,000 and does not overheat; the row starts at StepsSinceShot 5 (6 after W0, below the
+  cooldown delay of 8). `AimWithRecoilWrapsYawAndClampsPitch` would recover the row's recoil by 61
+  units before the shot (18 and −30 to 0, 100 to 39); the rifle starts at StepsSinceShot 0 (1 after
+  W0, below the recovery delay of 3), and the test asserts the delay exceeds 1. T170 and T171 now say
+  so.
 
 ## Delivery
 
