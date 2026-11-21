@@ -35,13 +35,22 @@ public sealed class ValidateReportTests
     [InlineData("remove wasm.modes.aot", "wasm.modes: has no aot mode")]
     [InlineData("remove wasm.modes.aot.reason", "wasm.modes.aot.reason: is required when produced is false")]
     [InlineData(
+        "set wasm.modes.interp-prebuilt.download.total.rawBytes 4467851",
+        "wasm.modes.interp-prebuilt.download.total.rawBytes: is 4467851; the files sum to 4467850")]
+    [InlineData(
         "set wasm.modes.interp-prebuilt.download.total.brotliBytes 1417661",
         "wasm.modes.interp-prebuilt.download.total.brotliBytes: is 1417661; the files sum to 1417660")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.total.gzipBytes 1718201",
+        "wasm.modes.interp-prebuilt.download.total.gzipBytes: is 1718201; the files sum to 1718200")]
     [InlineData("set wasm.modes.interp-prebuilt.startup.coldStarts 9", "wasm.modes.interp-prebuilt.startup.coldStarts: is 9; must be 10")]
+    [InlineData("remove wasm.modes.interp-prebuilt.startup.node.firstStepMs", "wasm.modes.interp-prebuilt.startup.node.firstStepMs: is required")]
     [InlineData(
         "set wasm.modes.interp-prebuilt.startup.chromiumWorker.crossOriginIsolated false",
         "wasm.modes.interp-prebuilt.startup.chromiumWorker.crossOriginIsolated: is false; must be true")]
     [InlineData("remove wasm.modes.interp-prebuilt.steps.node[1]", "wasm.modes.interp-prebuilt.steps.node: has no weapon entry")]
+    [InlineData("set wasm.modes.interp-prebuilt.steps.node[0].meanNs 0", "wasm.modes.interp-prebuilt.steps.node[0].meanNs: is 0; must be greater than 0")]
+    [InlineData("set wasm.modes.interp-prebuilt.steps.node[0].p99Ns 0", "wasm.modes.interp-prebuilt.steps.node[0].p99Ns: is 0; must be greater than 0")]
     [InlineData(
         "set wasm.modes.interp-relinked.startup.node.totalMs.p90 90.0",
         "wasm.modes.interp-relinked.startup.node.totalMs.p90: is 90.0; must be at least the median 93.6")]

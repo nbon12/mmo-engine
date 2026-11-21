@@ -18,6 +18,8 @@ namespace MmoEngine.SimCore.Benchmarks;
 /// A report without statistics or without an allocation measurement, meaning a failed benchmark, is left
 /// out, so <c>simcore measure validate-report</c> names the step that is missing. The file is written to
 /// a temp file in the same directory and then renamed over the export, so a reader never sees half of it.
+/// BenchmarkDotNet logs an exporter's exception and goes on, so <see cref="WrittenPath"/> records whether
+/// the export was written, for the exit code of <see cref="Program"/>.
 /// </summary>
 public sealed class SimCoreMeasurementExporter : IExporter
 {
@@ -57,6 +59,12 @@ public sealed class SimCoreMeasurementExporter : IExporter
     /// <inheritdoc />
     public string Name => nameof(SimCoreMeasurementExporter);
 
+    /// <summary>
+    /// The path the last <see cref="ExportToFiles"/> call wrote, or null when it threw or there has been
+    /// none (the run selected no benchmark, or a critical validation error stopped it before the exporters).
+    /// </summary>
+    public string? WrittenPath { get; private set; }
+
     /// <summary>Writes nothing to the log: the export is a file, and the console table already shows the numbers.</summary>
     public void ExportToLog(Summary summary, ILogger logger)
     {
@@ -67,6 +75,7 @@ public sealed class SimCoreMeasurementExporter : IExporter
     public IEnumerable<string> ExportToFiles(Summary summary, ILogger consoleLogger)
     {
         ArgumentNullException.ThrowIfNull(summary);
+        WrittenPath = null;
         var entries = Entries(summary);
         Directory.CreateDirectory(summary.ResultsDirectoryPath);
         var path = Path.Combine(summary.ResultsDirectoryPath, FileName);
@@ -80,6 +89,7 @@ public sealed class SimCoreMeasurementExporter : IExporter
             }
 
             File.Move(temp, path, overwrite: true);
+            WrittenPath = path;
         }
         finally
         {

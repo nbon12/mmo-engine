@@ -113,6 +113,17 @@ public sealed class MeasurementReportValidatorTests
         "set wasm.modes.interp-prebuilt.steps.node[3] {\"kind\": \"movement\", \"scenario\": \"flat-run-30hz\", \"batch\": 1, \"steps\": 3008, \"meanNs\": 1.0, \"p99Ns\": 1.0}",
         "wasm.modes.interp-prebuilt.steps.node[3].kind: \"movement\" is not unique")]
     [InlineData("set wasm.modes.interp-relinked.agreement 1", "wasm.modes.interp-relinked.agreement: must be an object or null")]
+    [InlineData(
+        "set recordedAt \"2026-11-14T10:00:00Z\\n\"",
+        "recordedAt: is \"2026-11-14T10:00:00Z\\n\"; must match YYYY-MM-DDTHH:MM:SSZ")]
+    [InlineData(
+        "set commit \"9b1f0c2d3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c\\n\"",
+        "commit: is \"9b1f0c2d3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c\\n\"; must match 40 lowercase hex digits or \"unknown\"")]
+    [InlineData("set dotnet.sdkVersion \"10.0.115\\n\"", "dotnet.sdkVersion: is \"10.0.115\\n\"; must match <major>.<minor>.<patch>")]
+    [InlineData("set dotnet.runtimeVersion \"10.0.15\\n\"", "dotnet.runtimeVersion: is \"10.0.15\\n\"; must match <major>.<minor>.<patch>")]
+    [InlineData(
+        "set server.tool \"BenchmarkDotNet 0.15.8\\n\"",
+        "server.tool: is \"BenchmarkDotNet 0.15.8\\n\"; must match BenchmarkDotNet <version>")]
     public void EveryOtherCheckReportsItsLine(string mutation, string expectedLine)
     {
         var report = ReportMutations.Apply(ReportMutations.ReadFixture(), mutation);
@@ -120,6 +131,35 @@ public sealed class MeasurementReportValidatorTests
         var problems = MeasurementReportValidator.Validate(report);
 
         Assert.Equal([expectedLine], problems);
+    }
+
+    /// <summary>
+    /// Check 1: a member name repeated within an object makes the file invalid JSON, so one copy cannot
+    /// hide the other from the closed-schema check. Each row writes one member of the fixture twice with
+    /// the same value, at the top level and inside <c>machine</c>, so the repetition is the file's only
+    /// problem. The text is edited directly, because <see cref="ReportMutations"/> goes through
+    /// <c>JsonNode</c>, which cannot hold a repeated member. The exception's message is the runtime's, so
+    /// only the line's frame and the member's name are pinned.
+    /// </summary>
+    [Theory]
+    [InlineData("formatVersion", "\"formatVersion\": 1,", "\"formatVersion\": 1, \"formatVersion\": 1,")]
+    [InlineData(
+        "cpuModel",
+        "\"cpuModel\": \"AMD EPYC 7763 64-Core Processor\",",
+        "\"cpuModel\": \"AMD EPYC 7763 64-Core Processor\", \"cpuModel\": \"AMD EPYC 7763 64-Core Processor\",")]
+    public void RepeatedMemberMakesTheFileInvalidJson(string member, string original, string repeated)
+    {
+        var fixture = ReportMutations.ReadFixture();
+        var occurrences = fixture.Split(original).Length - 1;
+        Assert.True(occurrences == 1, $"The fixture holds {original} {occurrences} times; the row needs exactly one");
+        var report = fixture.Replace(original, repeated, StringComparison.Ordinal);
+
+        var problems = MeasurementReportValidator.Validate(report);
+
+        var line = Assert.Single(problems);
+        Assert.StartsWith("$: is not valid JSON (", line, StringComparison.Ordinal);
+        Assert.EndsWith(")", line, StringComparison.Ordinal);
+        Assert.Contains(member, line, StringComparison.Ordinal);
     }
 
     [Fact]

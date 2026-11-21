@@ -22,7 +22,13 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    object, and adds a P99 column to the console table. `SimCoreBenchmarkConfig.Create(runnerClass,
    job)` builds the configuration (the exporter, the P99 column and `MemoryDiagnoser`); the project's
    `Main` passes `MMO_RUNNER_CLASS` and the default job, and exits 2 when the variable is unset. The
-   dry-run test below calls the same method.
+   dry-run test below calls the same method. The step exits 0 only when this run wrote the export with
+   every benchmark it ran, because step 6 reads the file. Otherwise it exits 1 and writes one line to
+   stderr naming the reason: no benchmark ran (a filter that selects nothing, `--list` or `--help`), a
+   critical validation error stopped the run, a report has no statistics (a failed benchmark) or no
+   allocation measurement (the export leaves both out), or the export was not written. BenchmarkDotNet
+   catches an exporter's exception and only logs it, so the exporter records the path it wrote and the
+   entry point checks it; an export left over from an earlier run never passes the step.
 2. **The prebuilt interpreted build**, published before the workload is installed:
    `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o <dir>`. Without the workload, publish
    uses the prebuilt runtime [measured].
@@ -366,7 +372,9 @@ problem, 1 otherwise.
 2. Every field listed above is present with its type, and no other field is.
 3. `runnerClass` is not empty, and `server.runnerClass` equals it (US7 Independent Test: "the runner
    class").
-4. `recordedAt`, `commit`, `machine`, `dotnet` and the versions match their formats.
+4. `recordedAt`, `commit`, `machine`, `dotnet` and the versions match their formats. Each format
+   matches the whole string, so a value with anything after it, such as the trailing newline of a
+   command's output that was not trimmed, is a problem.
 5. `server.label` is `measurement`, and `server.benchmarks` has at least one entry for each of
    `movement`, `weapon` and `projectile`, each with `meanNs` > 0, `p99Ns` > 0 and `iterations` ≥ 1
    (US7 scenario 1, FR-030).
@@ -400,9 +408,12 @@ no tuning value is set (Principle VI). The zero-allocation tests in
 | Test | Asserts |
 | --- | --- |
 | `tests/MmoEngine.SimCore.Tests/Cli/ValidateReportTests.TheContractExampleIsValid` | the example above, kept as the fixture `tests/MmoEngine.SimCore.Tests/Cli/Fixtures/measurement-report.json`, validates with exit 0 and no output |
-| `ValidateReportTests.EachProblemIsReported(mutation, expectedLine)` (Theory) | one row per check: a mutation of the fixture (a field removed, an unknown field, an empty runner class, a server runner class that differs, a missing `weapon` benchmark, a missing mode, an unproduced mode without a reason, a total that does not add up, 9 cold starts, `crossOriginIsolated` false, a missing step kind, a `p90` below the `median`) gives exactly its `path: problem` line and exit 1 |
+| `ValidateReportTests.EachProblemIsReported(mutation, expectedLine)` (Theory) | one row per check: a mutation of the fixture (a field removed, an unknown field, an empty runner class, a server runner class that differs, a missing `weapon` benchmark, a missing mode, an unproduced mode without a reason, a raw, brotli or gzip total that does not add up, 9 cold starts, a missing `firstStepMs`, `crossOriginIsolated` false, a missing step kind, a WebAssembly step whose `meanNs` or `p99Ns` is 0, a `p90` below the `median`) gives exactly its `path: problem` line and exit 1. The rows cover every number US7 scenario 2 says the report records: the raw and compressed download sizes, the time to the first completed step and the cost per step |
 | `ValidateReportTests.AnUnproducedModeNeedsOnlyItsReason` | `{"produced": false, "reason": "…"}` for `aot` and `interp-relinked` is valid |
 | `ValidateReportTests.MalformedJsonIsInvalidAndAMissingFileCannotRun` | exit 1 with `$: is not valid JSON (…)`; exit 2 for a missing file |
-| `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. It runs in the serial collection |
+| `tests/MmoEngine.SimCore.Tests/Cli/MeasurementReportValidatorTests.EveryOtherCheckReportsItsLine(mutation, expectedLine)` (Theory) | every other check, called directly on one mutation of the fixture each, returns exactly its line; among the rows, `recordedAt`, `commit`, both .NET versions and `server.tool` with one trailing newline each fail their format |
+| `MeasurementReportValidatorTests.RepeatedMemberMakesTheFileInvalidJson` (Theory) | the fixture with `formatVersion`, or `machine.cpuModel`, written twice with the same value is exactly one `$: is not valid JSON (…)` line naming the member (check 1) |
+| `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithIterationCount(3).WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. Each entry, matched to its report by step and case, has exactly that report's `Mean` as `meanNs`, its `Percentiles.Percentile(99)` as `p99Ns`, its `N` (3) as `iterations` and its `GetBytesAllocatedPerOperation` as `allocatedBytesPerOp`. The job measures three iterations because with `Job.Dry`'s one the 99th percentile equals the mean. It runs in the serial collection |
+| `ServerBenchmarkExportTests.RunExitsZeroWhenItExportedEveryBenchmarkItRan`, `RunExitsOneWhenItWroteNoExport` (Theory), `RunExitsOneWhenAReportHasNoAllocationMeasurement` | step 1's exit code, through the entry point's `Program.Run(args, runnerClass, stderr, createConfig)` and `BenchmarkSwitcher` with the dry run's configuration: 0 when the movement, weapon and projectile benchmarks ran and were exported; 1 with exactly its stderr line when the filter selects nothing (an export left from an earlier run stays as it was), when a directory at the export's path makes the exporter throw, and when a report has no allocation measurement |
 | `tools/agreement/node/measure.test.mjs` (`node --test`) | the boot-manifest parser on a fixture `dotnet.js`, the nearest-rank percentile, and the totals |
 | The `measure` job | runs `validate-report` on the real report on the runner class (US7 Independent Test, SC-007) |

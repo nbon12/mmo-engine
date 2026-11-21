@@ -1684,6 +1684,30 @@ The design documents settled these points, which the spec leaves open. They are 
   new `EveryOtherCheckReportsItsLine` rows; its one uncovered line, `LoaderIsDotnetJs`' final
   `return false`, is unreachable because the loader count is checked first. The checkpoint and T254 now
   say the gate's exit 0 is T260's.
+- **The dry run measures three iterations, not `Job.Dry`'s one (T244, Phase 9 review).** With one
+  measured iteration, N is 1 and the 99th percentile equals the mean, so the test could not tell
+  whether the exporter wrote BenchmarkDotNet's mean, 99th percentile and N into `meanNs`, `p99Ns` and
+  `iterations`, and US7 scenario 1's "the mean and p99 cost" had no faithful check. The job is now
+  `Job.Dry.WithIterationCount(3)`: still a cold start with one invocation per iteration, so the run stays
+  about a second, and a cold-start job removes no outlier, so N is exactly 3. The test matches each entry
+  to its report by step and case and compares the four numbers exactly, which holds because
+  `Utf8JsonWriter` writes a double in its shortest round-trip form. T244 and the contract's tests table say so.
+- **The benchmark entry point exits 1 unless this run wrote the export with every benchmark it ran
+  (T251, T252, Phase 9 review).** T252's rule (1 for a critical validation error or a report without
+  statistics, else 0) let three runs exit 0 without a usable export: BenchmarkDotNet's composite exporter
+  catches an exporter's exception and only logs it, a filter that selects nothing gives no summary, which
+  the rule counted as success, and a report without an allocation measurement is left out of the export.
+  The `measure` job reads the export in the next step, so it would then fail on a missing file, or read
+  one left over from an earlier run. The exporter now records the path it wrote (`WrittenPath`), and
+  `Program.Run` returns 1, with one stderr line naming the reason, when there is no summary, a critical
+  validation error, a report without statistics or without an allocation measurement, or no path written
+  in this run. Requiring the write rather than deleting the old file first keeps the step from touching
+  anything it did not produce. `--list` and `--help` also exit 1, with the "no benchmark ran" line: the
+  entry point's exit code reports the measurement, and those print without measuring. To test the rule
+  through `BenchmarkSwitcher`, as `Main` runs, `Program.Run` gains a public overload that takes the
+  configuration builder; `Run(args, runnerClass, stderr)` passes `SimCoreBenchmarkConfig.Create` with the
+  default job. T251, T252, T244 and the contract's step 1 say so; Phase 12's `measure` job and T263 need
+  no change, because both already expect exit 0 together with the export.
 
 ## Delivery
 

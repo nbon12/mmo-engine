@@ -108,16 +108,18 @@ public static partial class MeasurementReportValidator
         return walk.Problems;
     }
 
-    [GeneratedRegex("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", RegexOptions.CultureInvariant)]
+    // Each format matches the whole string. The patterns end in \z, not $, because $ also matches before
+    // a final newline, and a value captured from a command's output without trimming must not pass.
+    [GeneratedRegex("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z", RegexOptions.CultureInvariant)]
     private static partial Regex RecordedAtPattern();
 
-    [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[0-9a-f]{40}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex CommitPattern();
 
-    [GeneratedRegex("^[0-9]+\\.[0-9]+\\.[0-9]+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[0-9]+\\.[0-9]+\\.[0-9]+\\z", RegexOptions.CultureInvariant)]
     private static partial Regex VersionPattern();
 
-    [GeneratedRegex("^BenchmarkDotNet [0-9]+\\.[0-9]+\\.[0-9]+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^BenchmarkDotNet [0-9]+\\.[0-9]+\\.[0-9]+\\z", RegexOptions.CultureInvariant)]
     private static partial Regex ToolPattern();
 
     private static bool IsRecordedAt(string value) =>
