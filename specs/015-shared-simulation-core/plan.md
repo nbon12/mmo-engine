@@ -1676,6 +1676,14 @@ The design documents settled these points, which the spec leaves open. They are 
   Writing null would make the whole export invalid, and throwing would lose every other entry, so such a
   report is left out like a failed one and `validate-report` names its step if no other case covers it.
   T251 says so.
+- **Phase 9's coverage checkpoint holds its own files, and the gate's exit 0 stays T260's (T254).** The
+  checkpoint asked `coverage_gate.py` to exit 0 with every changed `src/*.cs` at 95%, but the gate also
+  lists files of Phases 2 to 8 that no Phase 9 task touches (eight were under 95% at T254, among them
+  `MovementStep.cs`, `ConfigGuard.cs` and `StreamFiles.cs`), and T137 and T167 already leave those
+  to Phase 10's slice-wide top-up. T254 brought `MeasurementReportValidator.cs` from 89% to 99.8% with 20
+  new `EveryOtherCheckReportsItsLine` rows; its one uncovered line, `LoaderIsDotnetJs`' final
+  `return false`, is unreachable because the loader count is checked first. The checkpoint and T254 now
+  say the gate's exit 0 is T260's.
 
 ## Delivery
 

@@ -79,6 +79,40 @@ public sealed class MeasurementReportValidatorTests
     [InlineData(
         "set wasm.modes.interp-prebuilt {\"produced\": false, \"reason\": \"x\"} ; set wasm.modes.interp-relinked {\"produced\": false, \"reason\": \"y\"}",
         "wasm.modes: no interpreted mode was produced")]
+    [InlineData("set kind 1", "kind: must be a string")]
+    [InlineData("set machine 1", "machine: must be an object")]
+    [InlineData("set machine.cpuModel 1", "machine.cpuModel: must be a string")]
+    [InlineData("set machine.architecture 64", "machine.architecture: must be a string")]
+    [InlineData("set server.benchmarks {}", "server.benchmarks: must be an array")]
+    [InlineData("remove server.benchmarks[0].step", "server.benchmarks[0].step: is required")]
+    [InlineData("set wasm.modes []", "wasm.modes: must be an object")]
+    [InlineData("set wasm.modes.aot 1", "wasm.modes.aot: must be an object")]
+    [InlineData("set wasm.modes.aot.produced \"no\"", "wasm.modes.aot.produced: must be a boolean")]
+    [InlineData("set wasm.modes.interp-prebuilt.reason 1", "wasm.modes.interp-prebuilt.reason: must be a string or null")]
+    [InlineData("set wasm.modes.interp-prebuilt.download.files {}", "wasm.modes.interp-prebuilt.download.files: must be an array")]
+    [InlineData("remove wasm.modes.interp-prebuilt.download.total", "wasm.modes.interp-prebuilt.download.total: is required")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.files[0].group \"assembly\" ; set wasm.modes.interp-prebuilt.download.files[1].group \"loader\"",
+        "wasm.modes.interp-prebuilt.download.files: has 1 loader entries; must have exactly one, named dotnet.js")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.files[3].group \"assembly\"",
+        "wasm.modes.interp-prebuilt.download.files: has 0 wasmNative entries; must have exactly one")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.files[0].rawBytes \"x\"",
+        "wasm.modes.interp-prebuilt.download.files[0].rawBytes: must be an integer")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.files[0].rawBytes 0 ; set wasm.modes.interp-prebuilt.download.total.rawBytes 4430850",
+        "wasm.modes.interp-prebuilt.download.files[0].rawBytes: is 0; must be greater than 0")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.startup.node.importMs.p90 \"x\"",
+        "wasm.modes.interp-prebuilt.startup.node.importMs.p90: must be a number")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.startup.node.importMs.p90 0",
+        "wasm.modes.interp-prebuilt.startup.node.importMs.p90: is 0; must be greater than 0")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.steps.node[3] {\"kind\": \"movement\", \"scenario\": \"flat-run-30hz\", \"batch\": 1, \"steps\": 3008, \"meanNs\": 1.0, \"p99Ns\": 1.0}",
+        "wasm.modes.interp-prebuilt.steps.node[3].kind: \"movement\" is not unique")]
+    [InlineData("set wasm.modes.interp-relinked.agreement 1", "wasm.modes.interp-relinked.agreement: must be an object or null")]
     public void EveryOtherCheckReportsItsLine(string mutation, string expectedLine)
     {
         var report = ReportMutations.Apply(ReportMutations.ReadFixture(), mutation);
