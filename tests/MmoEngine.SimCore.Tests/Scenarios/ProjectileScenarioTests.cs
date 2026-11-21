@@ -311,8 +311,13 @@ public sealed class ProjectileScenarioTests
     /// US5 scenario 1 through the <c>launcher-arc</c> definition: Given
     /// <c>ScenarioCatalog.Get("launcher-arc").Build(TestConfigs.At(hz), testWorld, hz)</c> over the committed
     /// <c>simcore/content/test-world.mmcd</c>, When its steps run on a <see cref="SimWorld"/>, Then the run
-    /// fires exactly one shot, from slot 1, whose projectile the shot step's committed state holds with class 1,
-    /// the shooter as its owner and the shot step as its LaunchStep. The first segment p(k) → p(k + 1) of the
+    /// fires exactly one shot, from slot 1, and the arrange checks the Given on that shot itself
+    /// (<see cref="AssertFiredHorizontallyWithNoTarget"/>): the initial state holds only the shooter, so no
+    /// target is in range; the shooter's command in the shot step carries Fire at the level aim, yaw 0 (+Z) and
+    /// pitch 0; and the shot's direction lies inside the launcher's configured <c>spreadHalfAngleDeg</c> cone
+    /// around +Z. The shot step's committed state holds its projectile with class 1, the shooter as its owner,
+    /// the shot step as its LaunchStep and LaunchVelocity the bits of the shot's direction times the launcher's
+    /// muzzle speed, so the path followed below is that shot's. The first segment p(k) → p(k + 1) of the
     /// double closed form from that projectile's stored Origin and LaunchVelocity that meets the heightfield
     /// (<see cref="ProjectileReference.SegmentHeightfield"/>) gives the expected step LaunchStep + k and
     /// triangle ID; the arrange checks that the whole reference (<see cref="ProjectileReference.PredictFirstHit(CollisionData, CompiledConfig, ReferenceProjectile, IReadOnlyList{CharacterState}, long)"/>)
@@ -344,12 +349,18 @@ public sealed class ProjectileScenarioTests
             shots.Length == 1 && shots[0].Shot.Slot == LauncherSlot,
             FormattableString.Invariant($"{context}: the run fired [{string.Join(", ", shots.Select(s => $"step {s.Step.Step}: {s.Shot}"))}]; expected exactly one shot, from slot {LauncherSlot}"));
         var (shotStep, shot) = shots[0];
+        AssertFiredHorizontallyWithNoTarget(run, shotStep.Step, shot, config, context);
         var spawned = shotStep.Projectiles.Where(p => p.Id == shot.ProjectileId).ToArray();
         Assert.True(
             spawned.Length == 1 && spawned[0].Class == Heavy && spawned[0].OwnerId == shot.CharacterId && spawned[0].LaunchStep == shotStep.Step,
             FormattableString.Invariant(
                 $"{context}: the committed state of the shot step {shotStep.Step} holds [{string.Join(", ", spawned)}]; expected projectile {shot.ProjectileId} of class {Heavy}, owned by {shot.CharacterId}, launched at that step"));
         var launch = spawned[0];
+        var fromShot = ProjectileWorlds.LaunchVelocity(shot.Direction, config.Weapons[LauncherSlot].MuzzleSpeed);
+        Assert.True(
+            Bits(launch.LaunchVelocity) == Bits(fromShot),
+            FormattableString.Invariant(
+                $"{context}: the projectile's LaunchVelocity {launch.LaunchVelocity} (bits {Bits(launch.LaunchVelocity)}) is not the shot's direction {shot.Direction} times the launcher's muzzle speed, {fromShot} (bits {Bits(fromShot)})"));
 
         var (crossingK, triangleId) = FirstHeightfieldSegment(collisionData, config, launch, 0u, context);
         var hitStep = launch.LaunchStep + crossingK;
@@ -871,8 +882,11 @@ public sealed class ProjectileScenarioTests
     /// is taken from the run, and the arrange first asserts that the double reference flown from it over the
     /// test world and the other characters' capsules gives the placement's outcome, so no shot can pass by
     /// comparing two missing hits: Character (target 2, Torso) for the flat shots; Mesh on a triangle of the
-    /// wall mesh for the wall shots; Terrain short of <see cref="TestWorldFeatures.RidgeCrest"/>'s line (on the
-    /// shooter's side of it) for the face shots; and no hit before the crest line for the clearing shots. Then
+    /// wall mesh for the wall shots; Terrain on the ridge face for the face shots (<see cref="OnTheRidgeFace"/>:
+    /// on the shooter's side of <see cref="TestWorldFeatures.RidgeCrest"/>'s line, within
+    /// <see cref="TestWorldFeatures.RidgeHalfWidth"/> of it in X–Z and above
+    /// <see cref="TestWorldFeatures.RidgeFootHeight"/>, the ground around the ridge); and no hit before the
+    /// crest line for the clearing shots. Then
     /// the run matches it: for a predicted hit within <c>maxRangeM</c> of Origin, exactly one hit event holds
     /// the projectile, with the predicted kind, target ID and hitbox, a point within 1e-3 m of the predicted
     /// point and the predicted step, and no expiry event holds it; otherwise no hit event holds it and exactly
@@ -943,8 +957,9 @@ public sealed class ProjectileScenarioTests
                         break;
                     case RidgeFace:
                         Assert.True(
-                            predicted is { Kind: HitKind.Terrain } && ShortOfTheCrest(predicted.Point, launch.Origin, features.RidgeCrest),
-                            FormattableString.Invariant($"{at}: the double path must first meet the terrain short of the crest line {features.RidgeCrest}, not {predicted}"));
+                            predicted is { Kind: HitKind.Terrain } && OnTheRidgeFace(predicted.Point, launch.Origin, features),
+                            FormattableString.Invariant(
+                                $"{at}: the double path must first meet the ridge face, on the shooter's side of the crest line {features.RidgeCrest}, within {features.RidgeHalfWidth} m of it and above the ground at {features.RidgeFootHeight} m, not {predicted}"));
                         break;
                     case RidgeClearing:
                         Assert.True(
@@ -1203,6 +1218,22 @@ public sealed class ProjectileScenarioTests
     }
 
     /// <summary>
+    /// Whether <paramref name="point"/> lies on the ridge face <paramref name="shooter"/> sees, in double: on
+    /// the shooter's side of the crest line (<see cref="ShortOfTheCrest"/>), at most
+    /// <see cref="TestWorldFeatures.RidgeHalfWidth"/> from that line in the X–Z plane, and above
+    /// <see cref="TestWorldFeatures.RidgeFootHeight"/>, so a shot that falls onto the flat ground in front of the
+    /// ridge does not count.
+    /// </summary>
+    private static bool OnTheRidgeFace(DVec3 point, DVec3 shooter, TestWorldFeatures features)
+    {
+        var crest = features.RidgeCrest;
+        var dx = (double)crest.To.X - crest.From.X;
+        var dz = (double)crest.To.Z - crest.From.Z;
+        var fromLine = System.Math.Abs((dx * (point.Z - crest.From.Z)) - (dz * (point.X - crest.From.X))) / System.Math.Sqrt((dx * dx) + (dz * dz));
+        return ShortOfTheCrest(point, shooter, crest) && fromLine <= features.RidgeHalfWidth && point.Y > features.RidgeFootHeight;
+    }
+
+    /// <summary>
     /// The shooter and the target of a run of two characters, one of which fires every shot: the shooter is
     /// the only character that fires, and the target the other.
     /// </summary>
@@ -1299,6 +1330,41 @@ public sealed class ProjectileScenarioTests
             FormattableString.Invariant(
                 $"{context}: character {arranged.Id} is at {character.Position} yaw {character.AimYaw} {character.Stance}; it must hold its arranged pose {position} yaw {arranged.AimYaw} {(Stance)arranged.Stance}"));
         return character;
+    }
+
+    /// <summary>
+    /// US5.1's Given on <c>launcher-arc</c>'s one shot: the initial state holds only the shooter, so no target
+    /// is in range; the shooter's command in the shot step <paramref name="shotStep"/> carries Fire at the level
+    /// aim, yaw <see cref="TestWorldFeatures.FlatRunYaw"/> (0, +Z) and pitch 0; and the shot's direction lies
+    /// inside the launcher's configured spread cone (<c>spreadHalfAngleDeg</c>) around that level aim, its
+    /// angle from +Z computed in double.
+    /// </summary>
+    private static void AssertFiredHorizontallyWithNoTarget(ScenarioRun run, uint shotStep, ShotEvent shot, CompiledConfig config, string context)
+    {
+        var characterIds = run.InitialCharacters.Select(c => c.Id).ToArray();
+        Assert.True(
+            characterIds.Length == 1 && characterIds[0] == shot.CharacterId,
+            FormattableString.Invariant($"{context}: the initial state holds characters [{string.Join(", ", characterIds)}]; expected only the shooter {shot.CharacterId}, so no target is in range"));
+
+        var entries = run.Stream.Steps.Where(entry => entry.Step == shotStep).ToArray();
+        Assert.True(
+            entries.Length == 1 && entries[0].Commands.Length == 1 && entries[0].Commands[0].CharacterIndex == 0,
+            FormattableString.Invariant($"{context}: the stream must hold one entry for the shot step {shotStep}, with one command, for the shooter at character index 0"));
+        var command = entries[0].Commands[0].Command;
+        var levelYaw = TestWorldGenerator.Features.FlatRunYaw;
+        Assert.True(
+            (command.Buttons & Buttons.Fire) != 0 && command.AimYaw == levelYaw && command.AimPitch == 0 && command.WeaponSlot == LauncherSlot,
+            FormattableString.Invariant(
+                $"{context}: the shooter's command in the shot step is {command}; expected Fire from slot {LauncherSlot} at the level aim, yaw {levelYaw} and pitch 0"));
+
+        var spreadDeg = (double)config.Weapons[LauncherSlot].SpreadHalfAngleDeg;
+        var d = shot.Direction;
+        var sideways = System.Math.Sqrt(((double)d.X * d.X) + ((double)d.Y * d.Y));
+        var fromLevelDeg = System.Math.Atan2(sideways, d.Z) * 180.0 / System.Math.PI;
+        Assert.True(
+            fromLevelDeg <= spreadDeg + 1e-4,
+            FormattableString.Invariant(
+                $"{context}: the shot's direction {d} is {fromLevelDeg:R}° from the level aim +Z, outside the launcher's spread cone of half angle {spreadDeg:R}°"));
     }
 
     /// <summary>Every shot of the run, in step order, with the step that fired it.</summary>

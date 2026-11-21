@@ -11,7 +11,7 @@ namespace MmoEngine.SimCore.Projectiles;
 /// the segment p(k) → p(k + 1) of its closed-form path is swept against the collision world and the
 /// hitboxes it is given, and the projectile hits, expires or flies on. Stage 5 of every world step calls it
 /// once per projectile, in ascending ID; the continent server can call it inside its own tick. It takes
-/// state in and writes state out, reads no mutable state and allocates nothing.
+/// state in and writes state out, reads no mutable state, throws nothing and allocates nothing.
 /// </summary>
 public static class ProjectileStep
 {
@@ -47,7 +47,6 @@ public static class ProjectileStep
     /// <param name="targets">The characters it may hit; the owner's hitboxes are never tested.</param>
     /// <param name="hit">The hit, when the outcome is <see cref="ProjectileOutcome.Hit"/>; otherwise default.</param>
     /// <param name="expiry">The reason, when the outcome is <see cref="ProjectileOutcome.Expired"/>; otherwise default.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="config"/> or <paramref name="collision"/> is null.</exception>
     public static ProjectileOutcome Step(
         ref Projectile projectile,
         uint step,
@@ -57,8 +56,6 @@ public static class ProjectileStep
         out ProjectileHit hit,
         out ExpiryReason expiry)
     {
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(collision);
         hit = default;
         expiry = default;
         int projectileClass = projectile.Class;

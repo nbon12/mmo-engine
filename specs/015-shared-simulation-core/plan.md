@@ -1410,7 +1410,7 @@ The design documents settled these points, which the spec leaves open. They are 
   (T212).** T212 gave `launcher-arc` "Fire held for the first step, then no buttons for 1.5 s", which
   is 1 + 1.5·hz steps: no fixed number of seconds gives that at every rate, the same contradiction
   `jump-land` had (T105). It is now Fire in the first step and no buttons after it, 1.5 s in all (30,
-  45 and 90 steps), still more than twice the about 0.6 s the arc takes to land. T212 also had
+  45 and 90 steps), still more than twice the about 0.55 s the arc takes to land. T212 also had
   shooter 5 fire two class-1 shots from a launcher whose magazine holds one round, which the weapon
   step cannot do without a reload. Raising the launcher's `magazineSize` in the stream's configuration
   was rejected, because the row's overrides are zero spread and recoil only. Shooter 5 instead presses
@@ -1465,6 +1465,36 @@ The design documents settled these points, which the spec leaves open. They are 
   valid configuration cannot otherwise fault. T212 and contracts/simcore-cli.md#streams-record now say
   so. The `projectile-hits-hitbox` and `mesh-occludes-shot` rows of the named-stream table also name
   their zero-spread rifle override now, which T212 already gave.
+- **The projectile tick path throws nothing: `ProjectileTargets` keeps the characters every span
+  covers (T210, Phase 7 review).** `ProjectileStep.Step` kept two null-argument guards, and the
+  `ProjectileTargets` constructor, which the world builds on every step, threw when the hitbox or
+  bounds span did not hold exactly three hitboxes and one sphere per ID. T210 says "no exceptions on the
+  tick path", and Phase 6's review removed the same guard from `WeaponStep.Step` (3c6ca71). Dropping the
+  constructor's check alone would only move the exception into the step, as an out-of-range read of
+  `bounds[i]` or `hitboxes[3i]`. A separate validating factory for direct callers was rejected, because
+  it would leave two ways to build the same value. The constructor now keeps the first
+  n = min(IDs, ⌊hitboxes / 3⌋, bounds) characters and slices the spans to match, so it cannot throw and
+  the step cannot read past a span. The world sizes its spans exactly, so its targets are unchanged.
+  `ProjectileTargetsTests` pins the truncation and that a step ignores a character past the shortest
+  span. T210 now says so.
+- **The ridge face shots of `shots-at-known-distances` must land on the ridge band, and
+  `TestWorldFeatures` names it (T205, T212, T101, T077, Phase 7 review).** The face shot's guard, in the
+  stream test and in the definition's Build, accepted any Terrain hit on the shooter's side of the crest
+  line, so a shot that fell onto the 22 m of flat ground in front of the ridge would also have passed. The
+  in-process `over-ridge-blocked` row already bounds its face tightly. `TestWorldFeatures` gains
+  `RidgeHalfWidth` (8 m, where the faces meet the ground square to the crest line) and `RidgeFootHeight`
+  (0 m, the ground the ridge rises from), which `TestWorldGeneratorTests` checks against the triangles,
+  so the tests do not copy the generator's private constants. A face shot's hit must now be on the
+  shooter's side of the crest line, within `RidgeHalfWidth` of it in X–Z and above `RidgeFootHeight`.
+  The clearing shots keep "no hit before the crest line". The committed stream does not change: its face
+  hits land about 2 m from the crest.
+- **`launcher-arc`'s test checks US5.1's Given on the shot (T201, Phase 7 review).** The test followed
+  whatever launch it got, so a definition that fired steeply upward would still have passed a scenario
+  about a shot fired horizontally with no target in range. It now asserts that the initial state holds only
+  the shooter, that the shot step's command carries Fire at yaw 0 and pitch 0, that the shot's direction
+  lies inside the launcher's configured spread cone around +Z, and that the stored LaunchVelocity is
+  that direction times the muzzle speed. "Horizontally" is read as the level aim plus the configured
+  spread, because the launcher keeps its default 0.5° spread in this stream, as T212 gives it.
 
 ## Delivery
 

@@ -495,10 +495,11 @@ public sealed class ProjectileHitTests
     /// starts about 5 m before target 9 and ends past target 5 at every rate, and the reference meets both
     /// torsos on it, target 9's first. Then the hit is Character, target 9, Torso: the earlier t wins over the
     /// lower ID.</item>
-    /// <item><c>same-position-lower-id</c>: targets 5 and 9 standing at (0, 0, 25) with the same yaw and
-    /// stance, so their capsules are bit-identical, and the shot of <see cref="TargetInThePathReportsTheStruckHitboxPointAndStep"/>
-    /// from the shooter at (0, 0, −25) aimed at their torso centre. Then the hit is Character, target 5,
-    /// Torso.</item>
+    /// <item><c>same-position-lower-id</c>: targets 5 and 9 standing at (0, 0, 20) with the same yaw and
+    /// stance, so their capsules are bit-identical, and the shot of <c>nearer-target-first</c>, from the eye
+    /// of the shooter standing 600/hz m behind z = 15 m, aimed at their torso centre. Segment 1 then starts
+    /// about 5 m before the pair and ends past it at every rate, and the reference meets both torsos on it at
+    /// the same t. Then the hit is Character, target 5, Torso.</item>
     /// <item><c>overlapping-parts-lower-index</c>: a target (ID 2) crouched at (0, 0, 25) facing −Z and holding
     /// Crouch, and a level 600 m/s shot along +Z launched (by an owner standing off the line) so that p(1), the
     /// start of segment 1, lies inside both the crouched head and the crouched torso, and outside the legs:
@@ -668,26 +669,46 @@ public sealed class ProjectileHitTests
     }
 
     /// <summary>
-    /// <c>same-position-lower-id</c>: targets 5 and 9 standing at (0, 0, 25) with yaw 32768, records that
-    /// differ only in their ID, so stage 4 poses bit-identical capsules for both, and a shot from the shooter at
-    /// (0, 0, −25) aimed at their torso centre. The reference predicts target 5's torso.
+    /// <c>same-position-lower-id</c>: targets 5 and 9 standing at (0, 0, 20) with yaw 32768, records that
+    /// differ only in their ID, so stage 4 poses bit-identical capsules for both, and the
+    /// <c>nearer-target-first</c> geometry: the shooter's eye stands 600/hz m behind z = 15 m, so segment
+    /// k = 1 starts about 5 m before the pair and ends past it at every rate, and the shot is aimed at their
+    /// torso centre. The reference meets both torsos on segment 1 at the same t, inside (0, 1), and predicts
+    /// target 5's torso on that segment.
     /// </summary>
     private static KeyRow ArrangeSamePosition(CompiledConfig config, string context)
     {
-        var shooter = ProjectileWorlds.Shooter(ShooterId, ShooterFeet, yaw: 0, Stance.Standing);
-        var lower = ProjectileWorlds.Target(LowerTargetId, TargetFeet, FacingShooter, Stance.Standing);
-        var higher = ProjectileWorlds.Target(HigherTargetId, TargetFeet, FacingShooter, Stance.Standing);
+        var speed = ProjectileWorlds.MuzzleSpeed(config, SmallArms);
+        var shooterFeet = new Vec3(0f, 0f, NearerSegmentStartZ - (speed / config.StepRateHz));
+        var pairFeet = new Vec3(0f, 0f, 20f);
+        var shooter = ProjectileWorlds.Shooter(ShooterId, shooterFeet, yaw: 0, Stance.Standing);
+        var lower = ProjectileWorlds.Target(LowerTargetId, pairFeet, FacingShooter, Stance.Standing);
+        var higher = ProjectileWorlds.Target(HigherTargetId, pairFeet, FacingShooter, Stance.Standing);
         Assert.True(
             lower with { Id = HigherTargetId } == higher,
             $"{context}: targets {LowerTargetId} and {HigherTargetId} must differ only in their ID, so their capsules are bit-identical: {lower} and {higher}");
-        var torso = ProjectileReference.LayoutCapsules(Stance.Standing, TargetFeet, FacingShooter, config)[(int)HitboxPart.Torso];
-        var projectile = AimedInFlight(config, ShooterFeet, torso.Centre);
+        ReferenceCapsule TorsoOf(CharacterRecord target) => ProjectileReference.LayoutCapsules(
+            (Stance)target.Stance,
+            new DVec3(target.Position.X, target.Position.Y, target.Position.Z),
+            target.AimYaw,
+            config)[(int)HitboxPart.Torso];
+        var lowerTorso = TorsoOf(lower);
+        var higherTorso = TorsoOf(higher);
+        var projectile = AimedInFlight(config, shooterFeet, lowerTorso.Centre);
         CharacterRecord[] characters = [shooter, lower, higher];
 
+        var a = ProjectileReference.ClosedForm(projectile, config, FirstSweptK);
+        var b = ProjectileReference.ClosedForm(projectile, config, FirstSweptK + 1L);
+        var lowerT = ProjectileReference.SegmentCapsule(a, b, lowerTorso.A, lowerTorso.B, lowerTorso.Radius);
+        var higherT = ProjectileReference.SegmentCapsule(a, b, higherTorso.A, higherTorso.B, higherTorso.Radius);
+        Assert.True(
+            lowerT is { } lowerEntry && higherT is { } higherEntry && lowerEntry > 0.0 && lowerEntry < 1.0 && lowerEntry == higherEntry,
+            FormattableString.Invariant(
+                $"{context}: segment {FirstSweptK} ({a} to {b}) must enter target {LowerTargetId}'s and target {HigherTargetId}'s torsos at the same t in (0, 1); the reference gives t {Fraction(lowerT)} and {Fraction(higherT)}"));
         var predicted = ProjectileReference.PredictFirstHit(ProjectileWorlds.Flat(), config, projectile, characters, FirstSweptK);
         Assert.True(
-            predicted is { Kind: HitKind.Character, TargetId: LowerTargetId, Hitbox: HitboxPart.Torso },
-            FormattableString.Invariant($"{context}: the double reference must meet the shared torso and name the lower ID {LowerTargetId}, not {predicted}"));
+            predicted is { K: FirstSweptK, Kind: HitKind.Character, TargetId: LowerTargetId, Hitbox: HitboxPart.Torso },
+            FormattableString.Invariant($"{context}: the double reference must meet the shared torso on segment {FirstSweptK} and name the lower ID {LowerTargetId}, not {predicted}"));
         return new KeyRow(ProjectileWorlds.FlatWorld, characters, projectile, null, predicted.Step, HitKind.Character, LowerTargetId, HitboxPart.Torso, StartsOnTheTie: false);
     }
 

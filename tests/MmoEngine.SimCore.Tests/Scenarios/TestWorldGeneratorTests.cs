@@ -20,7 +20,8 @@ namespace MmoEngine.SimCore.Tests.Scenarios;
 /// The members of <see cref="TestWorldFeatures"/> this test reads: <c>FlatRunStart</c>;
 /// <c>WallShooterStart</c>, <c>WallTargetStart</c> and <c>WallMeshId</c> (the vertical wall between them);
 /// <c>RidgeShotStart</c>, <c>RidgeShotYaw</c> and <c>RidgeCrest</c> (its <c>From</c> and <c>To</c> are two
-/// points of the crest line, both at the crest height); <c>PlateauHeight</c>; <c>CrouchUnderLedgeStart</c>,
+/// points of the crest line, both at the crest height), <c>RidgeHalfWidth</c> and <c>RidgeFootHeight</c> (the
+/// ridge band's half width and the ground it rises from); <c>PlateauHeight</c>; <c>CrouchUnderLedgeStart</c>,
 /// <c>CrouchUnderLedgeYaw</c>, <c>LedgeUnderside</c> (a height), and <c>LedgeNearEdge</c> and
 /// <c>LedgeFarEdge</c> (where the walk line from the start crosses the ledge's near and far edges); and
 /// <c>Corner</c> (a point on the vertical line where the two walls meet). A location is every public
@@ -111,8 +112,11 @@ public sealed class TestWorldGeneratorTests
     /// <c>RidgeShotStart</c>; the heading <c>RidgeShotYaw</c> from <c>RidgeShotStart</c> crosses the crest line
     /// between its two points, 20 m to 200 m away, where the terrain is at the crest height and falls at
     /// least 0.5 m within 10 m on either side along the heading (a ridge, not a step), and the crest point is
-    /// inside both projectile classes' ranges from the eye. A cliff is a heightfield cell whose corner
-    /// heights drop by at least 3 m.
+    /// inside both projectile classes' ranges from the eye. The ground at <c>RidgeShotStart</c> is at
+    /// <c>RidgeFootHeight</c>, and square to the crest line from the crossing, on either side, the terrain is
+    /// at least 0.1 m above <c>RidgeFootHeight</c> 0.5 m inside <c>RidgeHalfWidth</c> and at
+    /// <c>RidgeFootHeight</c> at <c>RidgeHalfWidth</c> and 1 m beyond it, so the ridge band is the one named. A
+    /// cliff is a heightfield cell whose corner heights drop by at least 3 m.
     /// </summary>
     private static void CheckRidgeAndCliff(CollisionWorld world, TestWorldFeatures features, SimConfig config, List<string> failures)
     {
@@ -127,6 +131,10 @@ public sealed class TestWorldGeneratorTests
             crest - startGround >= 3.0,
             failures,
             $"RidgeCrest at {crest} m is {crest - startGround:F3} m above the ground at RidgeShotStart {start}, less than 3 m");
+        AddUnless(
+            System.Math.Abs(startGround - features.RidgeFootHeight) <= Tolerance,
+            failures,
+            $"The ground at RidgeShotStart {start} is at {startGround} m, not RidgeFootHeight {features.RidgeFootHeight}");
 
         var (sin, cos) = Heading(features.RidgeShotYaw);
         var (ex, ez) = ((double)to.X - from.X, (double)to.Z - from.Z);
@@ -159,6 +167,32 @@ public sealed class TestWorldGeneratorTests
                     crest - side >= 0.5,
                     failures,
                     $"The terrain {offset} m along the heading from the crest crossing is at {side} m, not at least 0.5 m below the crest {crest}");
+            }
+
+            // The ridge band: square to the crest line in X-Z, the faces stay above RidgeFootHeight just inside
+            // RidgeHalfWidth and reach it at RidgeHalfWidth and beyond.
+            var halfWidth = (double)features.RidgeHalfWidth;
+            var foot = (double)features.RidgeFootHeight;
+            var length = System.Math.Sqrt((ex * ex) + (ez * ez));
+            var (nx, nz) = (ez / length, -ex / length);
+            double[] sides = [-1.0, 1.0];
+            foreach (var sign in sides)
+            {
+                double Probe(double offset) => world.HeightAt((float)(px + (nx * sign * offset)), (float)(pz + (nz * sign * offset)));
+                var inside = Probe(halfWidth - 0.5);
+                AddUnless(
+                    inside - foot >= 0.1,
+                    failures,
+                    $"The terrain {sign * (halfWidth - 0.5)} m square to the crest from its crossing is at {inside} m, not at least 0.1 m above RidgeFootHeight {foot}: the ridge face must reach RidgeHalfWidth {halfWidth} m");
+                double[] outside = [halfWidth, halfWidth + 1.0];
+                foreach (var offset in outside)
+                {
+                    var ground = Probe(offset);
+                    AddUnless(
+                        System.Math.Abs(ground - foot) <= Tolerance,
+                        failures,
+                        $"The terrain {sign * offset} m square to the crest from its crossing is at {ground} m, not RidgeFootHeight {foot}: the ridge must end RidgeHalfWidth {halfWidth} m from the crest line");
+                }
             }
 
             var eye = startGround + EyeHeight;

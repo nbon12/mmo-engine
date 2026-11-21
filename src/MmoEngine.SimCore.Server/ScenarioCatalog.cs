@@ -381,8 +381,8 @@ public static class ScenarioCatalog
     /// pitch 0, with ActiveSlot 1 and the launcher Ready in its initial state. It has a command every step
     /// (one character, so the stream is batchable), each carrying WeaponSlot 1 so the launcher stays active
     /// (a slot-0 command would switch to the rifle): Fire in the first step, then no buttons, for 1.5 s in
-    /// all (30, 45 and 90 steps at 20, 30 and 60 Hz), so the heavy projectile reaches the terrain, about
-    /// 0.6 s and 70 to 85 m out, well before the end.
+    /// all (30, 45 and 90 steps at 20, 30 and 60 Hz), so the heavy projectile reaches the terrain about
+    /// 0.55 s and 66 m out (57 to 83 m across the launcher's 0.5° spread cone), well before the end.
     /// </summary>
     private static ScenarioDefinition LauncherArc() => new(
         "launcher-arc",
@@ -486,7 +486,7 @@ public static class ScenarioCatalog
     /// and the class's low-root pitch to the aim point (<see cref="AimAt"/>). Build steps a
     /// <see cref="SimWorld"/> over the commands and checks every shot's outcome.
     /// </summary>
-    /// <exception cref="ScenarioRefusedException">At Build, when the configuration has no launcher slot, the world has no wall mesh or ridge crossing, an aim point is out of its weapon's reach, a shot's outcome is not its placement's (naming the shot: a Character hit on the target's torso for the flat shots, a Mesh hit on a wall triangle for the wall shots, a Terrain hit short of the crest line for the face shots, no hit before the crest line for the clearing shots), or a projectile is still flying at the last step.</exception>
+    /// <exception cref="ScenarioRefusedException">At Build, when the configuration has no launcher slot, the world has no wall mesh or ridge crossing, an aim point is out of its weapon's reach, a shot's outcome is not its placement's (naming the shot: a Character hit on the target's torso for the flat shots, a Mesh hit on a wall triangle for the wall shots, a Terrain hit on the ridge face (within the ridge's half width of the crest line, on the shooter's side, above the surrounding ground) for the face shots, no hit before the crest line for the clearing shots), or a projectile is still flying at the last step.</exception>
     private static ScenarioDefinition ShotsAtKnownDistances()
     {
         const string name = "shots-at-known-distances";
@@ -658,7 +658,7 @@ public static class ScenarioCatalog
                 {
                     KnownDistancePlacement.Flat => hit is [{ Kind: HitKind.Character, Hitbox: HitboxPart.Torso } h0] && h0.TargetId == expected.TargetId,
                     KnownDistancePlacement.BehindWall => hit is [{ Kind: HitKind.Mesh } h1] && wall.Contains((int)h1.TargetId),
-                    KnownDistancePlacement.RidgeFace => hit is [{ Kind: HitKind.Terrain }] && shortOfCrest,
+                    KnownDistancePlacement.RidgeFace => hit is [{ Kind: HitKind.Terrain } h2] && OnTheRidgeFace(h2.Point, ridgeShooter, features),
                     _ => !shortOfCrest,
                 };
                 if (!outcome)
@@ -792,6 +792,26 @@ public static class ScenarioCatalog
     }
 
     /// <summary>
+    /// Whether <paramref name="point"/> lies on the face of the ridge that <paramref name="shooter"/> sees:
+    /// strictly on the shooter's side of <see cref="TestWorldFeatures.RidgeCrest"/>'s line
+    /// (<see cref="ShortOfTheLine"/>), within <see cref="TestWorldFeatures.RidgeHalfWidth"/> of that line in
+    /// the X–Z plane (the squared 2D cross product of the line's direction with the offset from its start is at
+    /// most the half width squared times the direction's squared length), and above
+    /// <see cref="TestWorldFeatures.RidgeFootHeight"/>, the ground the ridge rises from.
+    /// </summary>
+    private static bool OnTheRidgeFace(Vec3 point, Vec3 shooter, TestWorldFeatures features)
+    {
+        var line = features.RidgeCrest;
+        var lx = line.To.X - line.From.X;
+        var lz = line.To.Z - line.From.Z;
+        var cross = (lx * (point.Z - line.From.Z)) - (lz * (point.X - line.From.X));
+        var halfWidth = features.RidgeHalfWidth;
+        return ShortOfTheLine(point, shooter, line)
+            && cross * cross <= (halfWidth * halfWidth) * ((lx * lx) + (lz * lz))
+            && point.Y > features.RidgeFootHeight;
+    }
+
+    /// <summary>
     /// The triangle IDs of mesh <paramref name="meshId"/> (contracts/collision-data-format.md#triangle-ids):
     /// the heightfield triangle count plus the mesh triangles' global indices in file order.
     /// </summary>
@@ -854,7 +874,7 @@ public static class ScenarioCatalog
         /// <summary>At the torso of the target behind the wall: a Mesh hit on a wall triangle.</summary>
         BehindWall,
 
-        /// <summary>1 m below the crest: a Terrain hit short of the crest line.</summary>
+        /// <summary>1 m below the crest: a Terrain hit on the ridge face, within the ridge's half width of the crest line on the shooter's side, above the surrounding ground.</summary>
         RidgeFace,
 
         /// <summary>1.5 m above the crest: no hit before the crest line.</summary>

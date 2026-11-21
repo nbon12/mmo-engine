@@ -121,6 +121,8 @@ public static class TestWorldGenerator
         RidgeShotStart = new Vec3(-60f, RestHeight, -100f),
         RidgeShotYaw = FacingPlusX,
         RidgeCrest = new TestWorldLine(new Vec3(RidgeX, RidgeHeight, -108f), new Vec3(RidgeX, RidgeHeight, -92f)),
+        RidgeHalfWidth = TestWorldGenerator.RidgeHalfWidth,
+        RidgeFootHeight = 0f,
 
         CrouchUnderLedgeStart = new Vec3(-2f, RestHeight, -30f),
         CrouchUnderLedgeYaw = FacingPlusX,
@@ -418,6 +420,16 @@ public sealed record TestWorldFeatures
 
     /// <summary>Two points of the ridge's crest line, both at the crest height.</summary>
     public TestWorldLine RidgeCrest { get; init; } = new(default, default);
+
+    /// <summary>
+    /// The ridge's half width, m: its two faces fall from the crest line to the surrounding ground at
+    /// <see cref="RidgeFootHeight"/> this far from the line in X–Z, on either side, so the ridge occupies the
+    /// band within this distance of the crest line.
+    /// </summary>
+    public float RidgeHalfWidth { get; init; }
+
+    /// <summary>The height of the flat ground the ridge rises from, at its feet and under <see cref="RidgeShotStart"/>, m.</summary>
+    public float RidgeFootHeight { get; init; }
 
     /// <summary><c>crouch-under-ledge</c>'s start, 2 m before the ledge's near edge.</summary>
     public Vec3 CrouchUnderLedgeStart { get; init; }

@@ -174,7 +174,9 @@ at field `grid.cells[cx,cz]` or `grid.registrations`
 | Heightfield, Meshes, Grid | as above | immutable |
 | MaxQueryCandidates(box width) | `int` | the largest candidate count a capsule query box of that width can return, from the cell sizes and the per-cell limit: 2·n(cellSize)² + 64·n(gridCellSize)² with n(c) = ⌊(w + 1/64)/c⌋ + 2. An interval of real length L overlaps at most ⌊L/c⌋ + 2 cells, and the 1/64 m margin covers the float rounding of the box's edges and cell indices, which can make a computed box reach a little past w. The world calls it with the widest box its configured capsule can sweep (a sub-move is at most r long) and sizes its candidate buffer from the result. |
 
-Queries, all allocation-free, writing into a caller-supplied span:
+Queries, all allocation-free. The box query writes the triangle IDs it finds into a caller-supplied
+span and returns how many it wrote (−1 when they would not fit, below). The segment query returns true
+on a hit and puts the earliest hit in an out parameter, as a `SegmentHit` (T, TriangleId, Kind):
 
 - **Box query** (capsule sweeps, push-out, headroom): heightfield cells overlapping the box first
   (skipping a cell whose four corner heights miss the box's Y range), then grid cells. A triangle
