@@ -318,9 +318,10 @@ The base of the refusal cases.
 ### Refusal cases
 
 All have base `two-steps`. Cases marked "open" decode and are refused by `StreamRunner` when it
-opens them; their JSON has `"refusedAt": "open"` and names the collision fixtures supplied. A case
-with no mutations has the same bytes as its base. `config-invalid` expects a configuration error
-instead of a format error, so its JSON holds `expectedConfigErrors`, a list of `{ path, message }`.
+opens them; their JSON has `"refusedAt": "open"` and names the collision fixtures supplied in
+`collisionFixtures` (`[]` when none is), and the other cases have neither field. A case with no
+mutations has the same bytes as its base. `config-invalid` expects a configuration error instead of
+a format error, so its JSON holds `expectedConfigErrors`, a list of `{ path, message }`.
 
 | Case | Mutations | Code | Offset | Field |
 | --- | --- | --- | --- | --- |

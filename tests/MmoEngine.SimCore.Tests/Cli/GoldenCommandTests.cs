@@ -126,8 +126,10 @@ public sealed class GoldenCommandTests
     /// mutation cannot be applied; the <c>stream/</c> folder is missing), when <c>simcore golden write</c>
     /// runs, then it exits 2; stdout's last line starts with
     /// <c>golden write: refused, &lt;format&gt;/&lt;case&gt;.json: </c>, naming the changed file (or
-    /// <c>stream/</c> for the missing folder), and for the encoder and mutation rows carries the encoder's
-    /// error or the mutation's; an Error event is logged on stderr; and nothing is written:
+    /// <c>stream/</c> for the missing folder), and for the encoder and mutation rows ends with the encoder's
+    /// error or the mutation's in full (<c>encoder-refuses</c>' is the whole line, ending with the encoder's
+    /// <c>collision cellSize at offset 24: 0.1 is outside [0.25, 64]</c>, the <c>OutOfRange</c> detail);
+    /// an Error event is logged on stderr; and nothing is written:
     /// <c>input/example.bin</c> is not recreated, and every other file keeps its bytes and last-write time.
     /// </summary>
     [Theory]
@@ -156,7 +158,7 @@ public sealed class GoldenCommandTests
         switch (mutationName)
         {
             case "encoder-refuses":
-                Assert.Contains("collision cellSize at offset 24: ", lines[^1], StringComparison.Ordinal);
+                Assert.Equal("golden write: refused, collision/heightfield-only.json: collision cellSize at offset 24: 0.1 is outside [0.25, 64]", lines[^1]);
                 break;
             case "encoder-refuses-config":
                 Assert.EndsWith(": the encoder refuses the case (The configuration is invalid: weapons: must have between 1 and 8 entries)", lines[^1], StringComparison.Ordinal);

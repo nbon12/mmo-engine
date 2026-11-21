@@ -272,13 +272,13 @@ deliberate change.
 the network. The formats are needed from story 1, but versioning and refusal paths can follow the
 first working movement.
 
-**Independent Test**: Encode and decode every committed golden fixture and compare the bytes. Then
-feed truncated, oversized and wrong-version inputs to each decoder and check the refusal.
+**Independent Test**: Encode and decode every committed valid golden fixture and compare the bytes.
+Then feed truncated, oversized and wrong-version inputs to each decoder and check the refusal.
 
 **Acceptance Scenarios**:
 
-1. **Given** each committed golden fixture, **When** it is decoded and re-encoded, **Then** the bytes
-   are identical to the fixture.
+1. **Given** each committed valid golden fixture, **When** it is decoded and re-encoded, **Then** the
+   bytes are identical to the fixture.
 2. **Given** an input command, a collision data file or a recorded stream with an unknown format
    version, **When** it is decoded, **Then** it is refused with an error naming the version found and
    the versions supported.
@@ -289,6 +289,10 @@ feed truncated, oversized and wrong-version inputs to each decoder and check the
    it is refused.
 5. **Given** a recorded stream that names collision data by checksum, **When** the matching collision
    data isn't supplied, **Then** the stream is refused before any step runs.
+
+A refusal fixture is refused when it is decoded or opened, by design (scenarios 2 to 5), so it cannot
+round-trip. Its bytes are its base fixture's bytes with its mutations applied (FR-023), and that is how
+they are pinned.
 
 ---
 

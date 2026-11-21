@@ -123,6 +123,23 @@ public sealed class GoldenRefusalTests
         ["stream/command-index-out-of-range"] = (FormatErrorCode.OutOfRange, 903, "steps[0].commands[0].characterIndex"),
     };
 
+    /// <summary>T220's two rows, keyed <c>&lt;format&gt;/&lt;case&gt;</c>: the cases whose content no longer matches their trailer.</summary>
+    private static readonly string[] ContractChecksumCases = ["collision/checksum-mismatch", "stream/checksum-mismatch"];
+
+    /// <summary>
+    /// T221's and T222's four rows, keyed <c>&lt;format&gt;/&lt;case&gt;</c>: the stream cases that decode
+    /// and are refused when they are opened (contracts/recorded-stream-format.md#refusal-cases).
+    /// </summary>
+    private static readonly string[] ContractOpenCases =
+        ["stream/collision-missing", "stream/collision-other", "stream/config-invalid", "stream/rules-revision"];
+
+    /// <summary>
+    /// The number of valid cases at the head of each format's <see cref="GoldenFixtures.ContractCaseNames"/>
+    /// list, which holds the valid cases first and then the refusal cases (input 29, collision 4, stream 4).
+    /// </summary>
+    private static readonly (string Format, int ValidCount)[] ContractValidCounts =
+        [(InputFormat, 29), (CollisionFormat, 4), (StreamFormat, 4)];
+
     /// <summary>
     /// US6 scenario 2: given the case's committed <c>.bin</c>, when it is decoded, then the error's code is
     /// <see cref="FormatErrorCode.UnsupportedVersion"/>, its offset and field equal the case's
@@ -459,6 +476,51 @@ public sealed class GoldenRefusalTests
     }
 
     /// <summary>
+    /// US6 scenarios 2 to 5, checked from both sides: every refusal fixture reaches the Theory that asserts
+    /// its refusal. <see cref="MalformedBytesAreRefusedAtTheirOffsetAndFieldWithNoResult"/> takes its rows
+    /// from the fixtures' own classification (<c>refusedAt</c> and <c>expectedError.code</c>) and checks only
+    /// that each row it receives is a contract row, and the other refusal Theories have fixed rows, so a
+    /// fixture authored with a stray <c>"refusedAt": "open"</c>, or with the code <c>UnsupportedVersion</c>
+    /// or <c>ChecksumMismatch</c>, would otherwise leave every Theory that asserts its refusal. Given the
+    /// committed fixtures, when they are classified, then, compared as sets of
+    /// <c>&lt;format&gt;/&lt;case&gt;</c> labels in ordinal order: <see cref="GoldenFixtures.OtherDecodeRefusals"/>
+    /// is exactly T218's 43 contract rows; the <see cref="GoldenFixtures.DecodeRefusalCases"/> whose JSON
+    /// code is <c>UnsupportedVersion</c> are exactly T217's 6 and those coded <c>ChecksumMismatch</c>
+    /// exactly T220's 2, so the decode refusals are those 51; <see cref="GoldenFixtures.OpenRefusals"/> is
+    /// exactly T221's and T222's 4; and <see cref="GoldenFixtures.RefusalCases"/> is the 55 refusal cases
+    /// of the contract's case lists, each in exactly one of those groups.
+    /// </summary>
+    [Fact]
+    public void EveryRefusalFixtureReachesTheTheoryThatChecksIt()
+    {
+        string[] contractRefusals =
+        [
+            .. ContractValidCounts.SelectMany(row => GoldenFixtures.ContractCaseNames(row.Format).Skip(row.ValidCount).Select(name => $"{row.Format}/{name}")),
+        ];
+        string[] groups = [.. ContractDecodeRefusals.Keys, .. ContractVersionRows.Keys, .. ContractChecksumCases, .. ContractOpenCases];
+        Assert.True(
+            groups.Distinct(StringComparer.Ordinal).Count() == groups.Length,
+            $"the contract's refusal groups share a case: {string.Join(", ", groups.GroupBy(label => label, StringComparer.Ordinal).Where(group => group.Count() > 1).Select(group => group.Key))}");
+        AssertSameLabels("the four contract groups (T217, T218, T220, T221 and T222)", contractRefusals, groups);
+
+        var decode = Labels(GoldenFixtures.DecodeRefusalCases);
+        var codes = decode.ToDictionary(label => label, ExpectedCode, StringComparer.Ordinal);
+
+        AssertSameLabels("OtherDecodeRefusals, T218's rows", ContractDecodeRefusals.Keys, Labels(GoldenFixtures.OtherDecodeRefusals));
+        AssertSameLabels(
+            "the decode refusals coded UnsupportedVersion, T217's rows",
+            ContractVersionRows.Keys,
+            decode.Where(label => codes[label] == nameof(FormatErrorCode.UnsupportedVersion)));
+        AssertSameLabels(
+            "the decode refusals coded ChecksumMismatch, T220's rows",
+            ContractChecksumCases,
+            decode.Where(label => codes[label] == nameof(FormatErrorCode.ChecksumMismatch)));
+        AssertSameLabels("DecodeRefusalCases", [.. ContractDecodeRefusals.Keys, .. ContractVersionRows.Keys, .. ContractChecksumCases], decode);
+        AssertSameLabels("OpenRefusals, T221's and T222's rows", ContractOpenCases, Labels(GoldenFixtures.OpenRefusals));
+        AssertSameLabels("RefusalCases", contractRefusals, Labels(GoldenFixtures.RefusalCases));
+    }
+
+    /// <summary>
     /// Runs <paramref name="bin"/> with <see cref="StreamRunner.Run(ReadOnlySpan{byte}, IReadOnlyList{CollisionWorld}, int)"/>
     /// and returns what it threw, asserting that the refusal is the call's only outcome and came before step
     /// zero: an exception was thrown, no record array was returned, and the exception is not a
@@ -586,6 +648,41 @@ public sealed class GoldenRefusalTests
                 hex.ValueKind == JsonValueKind.String && string.Equals(parsed.Hex, hex.GetString(), StringComparison.OrdinalIgnoreCase),
                 $"{at}: GoldenJson parsed hex \"{parsed.Hex}\"; the JSON holds {hex.GetRawText()}");
         }
+    }
+
+    /// <summary>The rows of a <c>(format, case)</c> member of <see cref="GoldenFixtures"/>, as <c>&lt;format&gt;/&lt;case&gt;</c> labels.</summary>
+    private static string[] Labels(TheoryData<string, string> rows) => [.. rows.Select(row => $"{row.Data.Item1}/{row.Data.Item2}")];
+
+    /// <summary>
+    /// The <c>expectedError.code</c> of the case labelled <c>&lt;format&gt;/&lt;case&gt;</c>, read with
+    /// <see cref="JsonDocument"/>, or null when it has no <c>expectedError</c> object with a string code.
+    /// </summary>
+    private static string? ExpectedCode(string label)
+    {
+        var slash = label.IndexOf('/', StringComparison.Ordinal);
+        using var json = GoldenFixtures.ReadJson(label[..slash], label[(slash + 1)..]);
+        return json.RootElement.TryGetProperty("expectedError", out var expected)
+            && expected.ValueKind == JsonValueKind.Object
+            && expected.TryGetProperty("code", out var code)
+            && code.ValueKind == JsonValueKind.String
+                ? code.GetString()
+                : null;
+    }
+
+    /// <summary>
+    /// Asserts that <paramref name="actual"/> holds exactly the labels of <paramref name="expected"/>, each
+    /// once, compared in ordinal order, naming the missing and unexpected labels on failure.
+    /// </summary>
+    private static void AssertSameLabels(string what, IEnumerable<string> expected, IEnumerable<string> actual)
+    {
+        var want = expected.Order(StringComparer.Ordinal).ToArray();
+        var got = actual.Order(StringComparer.Ordinal).ToArray();
+        var missing = want.Except(got, StringComparer.Ordinal).ToArray();
+        var unexpected = got.Except(want, StringComparer.Ordinal).ToArray();
+        Assert.True(
+            missing.Length == 0 && unexpected.Length == 0 && got.Length == want.Length,
+            $"{what}: {got.Length} cases, the contract gives {want.Length}; missing [{string.Join(", ", missing)}], not expected [{string.Join(", ", unexpected)}]");
+        Assert.Equal(want, got);
     }
 
     /// <summary>

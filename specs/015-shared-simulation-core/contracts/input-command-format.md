@@ -203,9 +203,11 @@ These rules hold for all three formats: `simcore/golden/input/`, `simcore/golden
   other than the folder's, a `formatVersion` other than the format's, a `case` other than the file
   name, counts that disagree with their lists (`meshCount`, `stepCount`, the stream's
   `characterCount` against its initial state, `heights` against `columns`·`rows`), a config entry
-  whose `path` is not its `fieldId`'s, and a mutation that does not carry exactly its op's arguments.
-  Each refusal is `<JSON path>: <problem>`, such as `$.heights[0].bits: must be 0x and 8 uppercase
-  hex digits`.
+  whose `path` is not its `fieldId`'s, a mutation that does not carry exactly its op's arguments, and
+  a field that belongs to the cases refused at open (`refusedAt`, `collisionFixtures`,
+  `expectedConfigErrors`) on a case that is not one. A case refused at open must name its
+  `collisionFixtures`, an empty list included. Each refusal is `<JSON path>: <problem>`, such as
+  `$.heights[0].bits: must be 0x and 8 uppercase hex digits`.
 - **Writing.** The `.bin` of a valid case is the encoder's output for its `.json`; the `.bin` of a
   refusal case is its mutations applied to its base. `simcore golden write` writes both from the
   `.json` files. Tests open the fixtures read-only and never rewrite them, so a format change shows

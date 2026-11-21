@@ -1604,6 +1604,34 @@ The design documents settled these points, which the spec leaves open. They are 
   rows. Steps 2 to 4 of contracts/simcore-cli.md#golden-write now state those refusals. Lines left
   uncovered need a read failure, a missing `--dir` default (the test helper takes only rooted paths) or a
   case no parser output reaches.
+- **The refusal Theories' groups are pinned to the contract tables from both sides (T214, T218; Phase 8
+  review).** T218's Theory takes its 43 rows from the fixtures' own `refusedAt` and `expectedError.code`
+  and checks only that each row it gets is a contract row, and T217, T220, T221 and T222 have fixed
+  rows. A fixture written with a valid-looking but wrong value (a stray `"refusedAt": "open"` on a
+  decode refusal, or the code `ChecksumMismatch` on `stream/truncated`) would have moved into a group
+  no Theory reads and left every refusal assertion for it, with the suite green. The Fact
+  `GoldenRefusalTests.EveryRefusalFixtureReachesTheTheoryThatChecksIt` now requires `OtherDecodeRefusals`,
+  the `UnsupportedVersion` and `ChecksumMismatch` decode refusals, `OpenRefusals` and `RefusalCases` to
+  equal the test's literal tables exactly, which also puts T214's `DecodeRefusalCases` and
+  `OpenRefusals` to use. Mis-coding `stream/truncated` locally fails that Fact while every other
+  refusal Theory stays green.
+- **US6 scenario 1 and the Independent Test name the valid fixtures (spec.md; Phase 8 review).** The
+  scenario said "each committed golden fixture" is decoded and re-encoded, but a refusal fixture is
+  refused when decoded or opened by design (scenarios 2 to 5), so only the 37 valid cases can
+  round-trip, as contracts/input-command-format.md#shared-fixture-rules already said. The scenario and
+  the Independent Test now say "valid", and a sentence after the scenarios says how the 55 refusal
+  fixtures' bytes are pinned instead: their mutations applied to their base (FR-023), checked by
+  `GoldenRefusalTests.MutationsReproduceEachRefusalFixture`, which tasks.md's coverage table now lists.
+  That sentence is not a new scenario.
+- **`collisionFixtures` appears exactly on the cases refused at open (T234; Phase 8 review).**
+  `GoldenJson` accepted `collisionFixtures` on any refusal, so a decode refusal could carry a list no
+  test reads, against the strict-reading rule. It is now refused there
+  (`$.collisionFixtures: only a case refused at open names collision fixtures`), as `expectedConfigErrors`
+  already was, and it is required with `refusedAt` (`$.collisionFixtures: is required for a case refused
+  at open`), because the stream contract says an open case names the fixtures it is opened with and an
+  absent list would read as "none supplied" by default. `collision-missing` already writes `[]`, so no
+  committed fixture changes. The checks run after the existing `expectedError` and
+  `expectedConfigErrors` checks, so those rows keep their messages.
 
 ## Delivery
 

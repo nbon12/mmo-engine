@@ -122,7 +122,8 @@ public sealed record StreamValidCase(
 /// this case's, and what it expects: a format error, or (for a stream refused when it is opened) the
 /// configuration errors. <see cref="RefusedAt"/> is <c>"open"</c> for a stream that decodes and is refused
 /// by <c>StreamRunner</c> when it opens it, with <see cref="CollisionFixtures"/> the collision cases it is
-/// opened with, and null for a decoder refusal. Absent lists are empty.
+/// opened with (which such a case must name, an empty list included), and null for a decoder refusal, whose
+/// <see cref="CollisionFixtures"/> is empty. An absent <c>expectedConfigErrors</c> is empty.
 /// </summary>
 public sealed record GoldenRefusalCase(
     string Format,

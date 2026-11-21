@@ -508,7 +508,8 @@ public static class GoldenJson
         }
 
         string[] collisionFixtures = [];
-        if (root.TryGetProperty("collisionFixtures", out var fixturesElement))
+        var hasCollisionFixtures = root.TryGetProperty("collisionFixtures", out var fixturesElement);
+        if (hasCollisionFixtures)
         {
             var array = Array(fixturesElement, "$.collisionFixtures");
             collisionFixtures = new string[array.GetArrayLength()];
@@ -533,6 +534,18 @@ public static class GoldenJson
         if (configErrors.Length != 0 && refusedAt is null)
         {
             throw Problem("$.expectedConfigErrors", $"only a case refused at open has configuration errors");
+        }
+
+        // The collision fixtures are what a case refused at open is opened with: such a case names them, an
+        // empty list included, and a decode refusal, which is never opened, has none to name.
+        if (hasCollisionFixtures && refusedAt is null)
+        {
+            throw Problem("$.collisionFixtures", $"only a case refused at open names collision fixtures");
+        }
+
+        if (!hasCollisionFixtures && refusedAt is not null)
+        {
+            throw Problem("$.collisionFixtures", $"is required for a case refused at open");
         }
 
         return new GoldenRefusalCase(format, version, caseName, baseName, mutations, expectedError, refusedAt, collisionFixtures, configErrors);

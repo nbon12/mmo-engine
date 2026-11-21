@@ -141,13 +141,16 @@ public sealed class GoldenJsonTests
         { Edited(Node(InputExampleJson), "extra", root => root["extra"] = 1), "$.extra: is not a field of a valid input case" },
         { Edited(Node(InputExampleJson), "validate", root => root["validate"]!["expected"] = "Accepted"), "$.validate.expected: \"Accepted\" is not a InputRejection" },
 
-        // Refusal cases: the code None, a refusedAt other than "open", refusedAt on an input case, both expectations, and
-        // configuration errors on a case that is not refused when opened.
+        // Refusal cases: the code None, a refusedAt other than "open", refusedAt on an input case, both expectations,
+        // configuration errors or collision fixtures on a case that is not refused when opened, and a case refused when
+        // opened that does not name the collision fixtures it is opened with.
         { Edited(Node(RefuseVersion2Json), "expectedError", root => root["expectedError"]!["code"] = "None"), "$.expectedError.code: None is no refusal" },
         { Edited(Node(RefuseVersion2Json), "refusedAt", root => root["refusedAt"] = "decode"), "$.refusedAt: must be \"open\"" },
         { Edited(Node(RefuseVersion2Json), "refusedAt", root => root["refusedAt"] = "open"), "$.refusedAt: only a stream case is refused at open" },
         { Edited(Node(RefuseVersion2Json), "expectedConfigErrors", root => root["expectedConfigErrors"] = GravityConfigErrors()), "$: a refusal case has expectedError or expectedConfigErrors, not both" },
         { Edited(Node(ConfigInvalidJson), "expectedConfigErrors", root => root.Remove("refusedAt")), "$.expectedConfigErrors: only a case refused at open has configuration errors" },
+        { Edited(Node(RefuseVersion2Json), "collisionFixtures", root => root["collisionFixtures"] = new JsonArray("tiny-world")), "$.collisionFixtures: only a case refused at open names collision fixtures" },
+        { Edited(Node(ConfigInvalidJson), "refusedAt", root => root.Remove("collisionFixtures")), "$.collisionFixtures: is required for a case refused at open" },
 
         // Mutations: an unknown op, odd hex, a missing argument and an argument the op does not take.
         { Edited(Node(RefuseVersion2Json), "mutations", root => root["mutations"]![0]!["op"] = "rotate"), "$.mutations[0].op: \"rotate\" is not an op; the ops are truncate, append, write, insert, delete and fixChecksum" },
@@ -302,8 +305,9 @@ public sealed class GoldenJsonTests
     /// <c>expectedConfigErrors</c>, or with both; <c>aimYaw</c> 65536, which does not fit a u16, or written as
     /// a string, a fraction or a number beyond 64 bits; a <c>formatVersion</c> other than the format's; a
     /// field the case's shape does not have; an enum name that is no member; the code <c>None</c>; a
-    /// <c>refusedAt</c> other than <c>open</c>, or on an input case; configuration errors on a case that is
-    /// not refused when opened; a mutation with an unknown op, odd hex, a missing argument or one its op
+    /// <c>refusedAt</c> other than <c>open</c>, or on an input case; configuration errors or
+    /// <c>collisionFixtures</c> on a case that is not refused when opened, and no <c>collisionFixtures</c> on
+    /// one that is; a mutation with an unknown op, odd hex, a missing argument or one its op
     /// does not take; collision and stream counts that disagree with their lists (<c>heights</c>,
     /// <c>meshCount</c>, a vertex that is not a triple, indices that are not whole triangles,
     /// <c>stepCount</c>, <c>characterCount</c>, 256 commands in a step); config entries that are not
