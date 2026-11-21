@@ -1339,6 +1339,25 @@ The design documents settled these points, which the spec leaves open. They are 
   `ProjectileTargets` constructor as `(characterIds, hitboxes, bounds)` spans, which T199 and T210
   follow. The 25 m targets and the 12.5 m wall of T203's and T205's in-process rows meet the same
   segment-0 constraint. T193, T194, T196 and T210 now say so.
+- **T197's exact ties are at t = 0, and its two targets share the first swept segment (Phase 7 red
+  check).** The test cannot arrange an exact float tie inside a segment. A capsule's t goes through the
+  bounding-sphere clip and t0 + ((t1 − t0)·tc), and a triangle's t goes through a different division,
+  so two candidates that meet the segment at the same real point get t values whose last bits only the
+  implementation fixes. Every correct build reports two kinds of tie exactly, both at t = 0. A segment
+  that starts inside a capsule gives exactly 0 (data-model.md#projectile-step step 3). A segment that
+  starts on a triangle's plane, where every coordinate along the plane's normal is equal, has a
+  numerator of exactly ±0. So `overlapping-parts-lower-index` starts segment 1 inside both the crouched
+  head and the crouched torso. `world-before-character` starts it on a mesh floor at y = 0, 5 cm in
+  front of the standing target's feet and inside its legs. The floor sits over the flat heightfield sunk
+  to −1 m, for two reasons: a mesh coplanar with the terrain would lose the tie to the lower terrain
+  IDs, and a wall through the target would push the target out of its movement capsule (movement
+  sub-step 7), taking its hitboxes with it. The launch puts p(1).y at exactly +0 in the contract's float
+  expression: a level velocity and an origin height of −((HalfG·t)·t). The arrange checks the tie with
+  the reference's segment tests on the swept float segment p(1) → p(2), because the double closed
+  form's p(1) is about 1e-10 m off the plane. `nearer-target-first` puts targets 9 and 5 at z = 20 and
+  24 m on the line, with the shooter's eye 600/hz m behind z = 15 m. Targets 20 and 24 m from the
+  shooter could not share one swept segment at 60 Hz, where a segment is 10 m long, and then the step
+  order, not the key, would pick target 9. T197 now says so.
 
 ## Delivery
 
