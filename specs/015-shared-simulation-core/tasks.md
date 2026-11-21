@@ -1898,7 +1898,7 @@ Conventions for this phase (they hold for every task below):
 
 ### Implementation
 
-- [ ] T182 [P] [US4] Implement `public static class Spread` in `src/MmoEngine.SimCore/Weapons/Spread.cs` (namespace `MmoEngine.SimCore.Weapons`, explicit usings, no static mutable field), per data-model.md#weapon-step (One shot, steps 2 and 3) and research R10. It reuses Phase 4's `MmoEngine.SimCore.Hashing.SplitMix64.Mix` as the finaliser and defines no second one:
+- [X] T182 [P] [US4] Implement `public static class Spread` in `src/MmoEngine.SimCore/Weapons/Spread.cs` (namespace `MmoEngine.SimCore.Weapons`, explicit usings, no static mutable field), per data-model.md#weapon-step (One shot, steps 2 and 3) and research R10. It reuses Phase 4's `MmoEngine.SimCore.Hashing.SplitMix64.Mix` as the finaliser and defines no second one:
   - `public static ulong Hash(ulong matchSalt, uint characterId, int slot, uint shotCounter)` = `SplitMix64.Mix(SplitMix64.Mix(matchSalt ^ characterId) ^ (((ulong)slot << 32) | shotCounter))`.
   - `public static bool KicksYawPositive(ulong hash)` = bit 16 of `hash` is 0.
   - `public static Vec3 Direction(ulong hash, ushort yaw, short pitch, float versMax)`:
@@ -1910,7 +1910,7 @@ Conventions for this phase (they hold for every task below):
     - Each component is `((cosT * f) + ((sinT * cφ) * r)) + ((sinT * sφ) * u)`, with exactly this parenthesisation.
   - No MathF, no FMA, no allocation.
   - Makes T169 pass.
-- [ ] T183 [US4] Implement `public static class WeaponStep` in `src/MmoEngine.SimCore/Weapons/WeaponStep.cs` with the static, allocation-free `public static int Step(CompiledConfig config, ulong matchSalt, uint step, ref CharacterState character, Span<WeaponState> weapons, in InputCommand input, int projectileCount, ref uint nextProjectileId, Span<Projectile> spawned, Span<ShotEvent> shots, out FireBlock fireBlock)`. Here `ShotEvent` is the Phase 2 shot element of `src/MmoEngine.SimCore/World/StepEvents.cs`.
+- [X] T183 [US4] Implement `public static class WeaponStep` in `src/MmoEngine.SimCore/Weapons/WeaponStep.cs` with the static, allocation-free `public static int Step(CompiledConfig config, ulong matchSalt, uint step, ref CharacterState character, Span<WeaponState> weapons, in InputCommand input, int projectileCount, ref uint nextProjectileId, Span<Projectile> spawned, Span<ShotEvent> shots, out FireBlock fireBlock)`. Here `ShotEvent` is the Phase 2 shot element of `src/MmoEngine.SimCore/World/StepEvents.cs`.
   - Parameters:
     - `character` is the post-movement next state; only `ActiveSlot` is written.
     - `weapons` holds this character's `input.weaponSlots` entries, updated in place.
