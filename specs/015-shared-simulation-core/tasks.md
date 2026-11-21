@@ -2316,7 +2316,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `CollisionValidCase(..., CollisionData Data, long FileLength, ulong Checksum, GoldenCollisionDerived Derived)`;
   - `StreamValidCase(..., RecordedStream Stream, GoldenConfigEntry[] ConfigEntries, long ConfigLength, long InitialStateLength, long StepsLength, long FileLength, ulong Checksum)`;
   - `GoldenRefusalCase(..., string Base, GoldenMutation[] Mutations, GoldenExpectedError? ExpectedError, string? RefusedAt, string[] CollisionFixtures, (string Path, string Message)[] ExpectedConfigErrors)`;
-  - an `Encode()` on each valid case: `InputCodec.TryEncode` into 17 bytes, `CollisionFile.Encode(Data)` or `Stream.Encode()`. It lets `CoreFormatException` through;
+  - an `EncodeBin()` on each valid case: `InputCodec.TryEncode` into 17 bytes, `CollisionFile.Encode(Data)` or `Stream.Encode()`. It lets `CoreFormatException` through. It is not named `Encode()`, because `StreamWriterTests.OnlyRecordAndAgreementPrepareEncodeStreamFiles` requires `RecordedStream.cs` to be the only file in `src/` that declares a parameterless `Encode()`;
   - `GoldenCaseException(string message)`.
 - [X] T233 [US6] Implement `GoldenMutations.Apply(string format, ReadOnlySpan<byte> baseBytes, IReadOnlyList<GoldenMutation> mutations)` returning `byte[]`, in `src/MmoEngine.SimCore.Server/Golden/GoldenMutations.cs`, after T232.
   - The ops are `truncate`, `append`, `write`, `insert`, `delete` and `fixChecksum`, applied in order. `fixChecksum` rewrites the 8-byte trailer as `XxHash64.HashToUInt64` (seed 0) of every byte before it, for `collision` and `stream` only.
@@ -2332,7 +2332,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - Refusal cases: `base`, `mutations`, then `expectedError` or `expectedConfigErrors`, plus optional `refusedAt` (`"open"`) and `collisionFixtures`. An absent `expectedError` or `refusedAt` parses to null, and an absent `collisionFixtures` or `expectedConfigErrors` to an empty array.
   - **Errors.** Every problem throws `GoldenCaseException("<JSON path>: <problem>")`, with the messages T231 gives.
   - Makes T231 pass.
-- [ ] T235 [P] [US6] Complete `CollisionFile.Decode` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` and the counting pass in `src/MmoEngine.SimCore/Collision/UniformGrid.cs` with checks 5, 6, 8 and 9 of contracts/collision-data-format.md#check-order and #limits, using the contract's messages. Leave the order of checks 1–4 and 7 from Phase 2 unchanged.
+- [X] T235 [P] [US6] Complete `CollisionFile.Decode` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` and the counting pass in `src/MmoEngine.SimCore/Collision/UniformGrid.cs` with checks 5, 6, 8 and 9 of contracts/collision-data-format.md#check-order and #limits, using the contract's messages. Leave the order of checks 1–4 and 7 from Phase 2 unchanged.
   - **Check 5.** `fileLength` ≤ 268,435,456 (`Oversized`, 8). `columns` and `rows` in [2, 4097]: below gives `OutOfRange`, above gives `Oversized`, at 32 and 36. `meshCount` ≤ 4096 (`Oversized`, 40).
   - **Check 6**, all in checked `ulong` arithmetic:
     - D + 12M + 8 ≤ `fileLength`, else `Inconsistent`, 8, `fileLength`;
@@ -2371,7 +2371,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 - [ ] T237 [US6] Implement `golden write [--dir simcore/golden]` in `src/MmoEngine.SimCore.Cli/Commands/GoldenCommand.cs` and register it in `src/MmoEngine.SimCore.Cli/Program.cs`, following steps 1–4 of contracts/simcore-cli.md#golden-write, after T233 and T234:
   - Read every `<case>.json` under `input/`, `collision/` and `stream/` in that format order, and in ordinal name order within each, with `GoldenJson.Parse`.
   - Refuse with exit 2 and write nothing when any of these happens: a missing `--dir`; invalid JSON; a `format` that differs from the folder; a refusal whose `base` is not a valid case of the same format; or an encoder that refuses a valid case (`CoreFormatException` from `CollisionFile.Encode` or `RecordedStream.Encode`). The stdout line is `golden write: refused, <format>/<case>.json: <problem>`, and an Error event is logged on stderr through `CliLogging`.
-  - Compute every `.bin` in memory before writing anything. A valid case's `.bin` is its `Encode()`. A refusal case's `.bin` is `GoldenMutations.Apply` on its base's computed bytes.
+  - Compute every `.bin` in memory before writing anything. A valid case's `.bin` is its `EncodeBin()`. A refusal case's `.bin` is `GoldenMutations.Apply` on its base's computed bytes.
   - Write only the files whose bytes differ from what is on disk, through `AtomicFile`.
   - Print one `<format>/<case>: written|unchanged, <n> bytes` line per case, then `golden write: <cases> cases, <w> written, <u> unchanged`, and exit 0.
   - Makes T225's `GoldenWriteRefusesAnInvalidCaseAndWritesNothing` (except the `encoder-refuses` row, which needs the collision fixtures) and `GoldenWriteOfAMissingDirectoryExitsTwo` pass.

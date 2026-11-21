@@ -63,30 +63,56 @@ public static class CollisionFile
     private const int ColumnsOffset = 32;
     private const int RowsOffset = 36;
     private const int MeshCountOffset = 40;
+    private const int ReservedOffset = 44;
+
+    /// <summary>The fewest and the most samples along X or Z.</summary>
+    private const uint MinSamples = 2;
+    private const uint MaxSamples = 4097;
+
+    /// <summary>The most meshes; the vertex and triangle count ranges per mesh; the most vertices or triangles in all.</summary>
+    private const uint MaxMeshCount = 4096;
+    private const uint MinVertexCount = 3;
+    private const uint MaxVertexCount = 1u << 20;
+    private const uint MinTriangleCount = 1;
+    private const uint MaxTriangleCount = 1u << 21;
+    private const ulong MaxTotalCount = 1UL << 22;
+
+    /// <summary>Every origin, height, vertex coordinate and heightfield end is within ±8192 m.</summary>
+    private const float MaxCoordinate = 8192f;
+    private const float MinCellSize = 0.25f;
+    private const float MaxCellSize = 64f;
+    private const float MinGridCellSize = 1f;
+    private const float MaxGridCellSize = 64f;
+
+    /// <summary>The vertex coordinate names, x, y and z, for error fields.</summary>
+    private const string Axes = "xyz";
 
     /// <summary>The file's first four bytes, ASCII <c>MMCD</c>.</summary>
     public static ReadOnlySpan<byte> Magic => "MMCD"u8;
 
     /// <summary>
-    /// Decodes a collision file and builds its world. It runs checks 1 to 4 and 7 of
-    /// contracts/collision-data-format.md#check-order in order (magic, version, header length, file length,
-    /// checksum), then parses the header, heights, directory, vertices and indices through bounds-checked
-    /// slices, and builds the world in file order. It throws at the first failure and never returns a
-    /// partial world.
+    /// Decodes a collision file and builds its world. It runs the checks of
+    /// contracts/collision-data-format.md#check-order in order and throws at the first failure: 1 to 4, the
+    /// frame (magic, version before any length, header length, file length); 5, the count limits
+    /// (<c>fileLength</c>, <c>columns</c>, <c>rows</c>, <c>meshCount</c>); 6, the heights and directory fit,
+    /// each directory entry's counts and the running sums, and the length recomputed from the counts equals
+    /// <c>fileLength</c>, in checked <c>u64</c>; 7, the checksum; 8, the values in the contract's order; 9,
+    /// the world build's grid limits. Checks 1 to 6 read only the header and the directory and allocate
+    /// nothing sized from a count, so a hostile header cannot force a large allocation or make the decoder
+    /// hash past the end. No world is constructed before every check passes, so it never returns a partial
+    /// world.
     /// </summary>
-    /// <remarks>
-    /// The count limits, the length recomputed from the counts, the values and the grid limits (checks 5, 6,
-    /// 8 and 9) are added by Phase 8 (T235), between the frame checks and the parse. Until then a block that
-    /// runs past the content is refused as <see cref="FormatErrorCode.Inconsistent"/> at <c>fileLength</c>.
-    /// </remarks>
     /// <exception cref="CoreFormatException">The file is refused.</exception>
     public static CollisionWorld Decode(ReadOnlySpan<byte> bytes)
     {
-        var fileLength = CheckFrame(bytes);
-        var content = bytes[..(int)(fileLength - TrailerLength)];
-        var checksum = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(int)(fileLength - TrailerLength)..]);
-        var data = Parse(content, fileLength);
-        return CollisionWorld.Create(data, checksum);
+        var layout = CheckFrame(bytes);
+        var trailerOffset = layout.FileLength - TrailerLength;
+        var content = bytes[..trailerOffset];
+        var checksum = BinaryPrimitives.ReadUInt64LittleEndian(bytes[trailerOffset..]);
+        CheckValues(content, layout);
+        var data = Parse(content, layout);
+        var world = CollisionWorld.TryCreate(data, checksum, out var overflow);
+        return world ?? throw GridError(data, overflow);
     }
 
     /// <summary>
@@ -182,11 +208,13 @@ public static class CollisionFile
     }
 
     /// <summary>
-    /// Checks 1 to 4 and 7 of #check-order: the magic, the version (before any length, so another version is
+    /// Checks 1 to 7 of #check-order: the magic, the version (before any length, so another version is
     /// refused as such whatever its length), the header length, the actual length against <c>fileLength</c>,
-    /// and the trailer. Returns <c>fileLength</c>, which then equals the input's length.
+    /// the count limits, the counts against <c>fileLength</c>, and the trailer. Returns the counts, which then
+    /// fill the file exactly. Checks 1 to 6 read only the header and the directory, so a file whose counts
+    /// disagree with its length is refused before it is hashed.
     /// </summary>
-    private static long CheckFrame(ReadOnlySpan<byte> bytes)
+    private static Layout CheckFrame(ReadOnlySpan<byte> bytes)
     {
         var length = (ulong)bytes.Length;
 
@@ -242,6 +270,62 @@ public static class CollisionFile
             throw Error(FormatErrorCode.Oversized, (long)fileLength, "fileLength", FormatDetail.DeclaredLength, fileLength, length);
         }
 
+        // 5: the count limits, from the header only.
+        if (fileLength > MaxFileLength)
+        {
+            throw Above(FileLengthOffset, "fileLength", fileLength, MaxFileLength);
+        }
+
+        var columns = CheckSamples(bytes, ColumnsOffset, "columns");
+        var rows = CheckSamples(bytes, RowsOffset, "rows");
+        var meshCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes[MeshCountOffset..]);
+        if (meshCount > MaxMeshCount)
+        {
+            throw Above(MeshCountOffset, "meshCount", meshCount, MaxMeshCount);
+        }
+
+        // 6: the heights and the directory fit, then each entry's counts and the running sums, then the
+        // length recomputed from the counts, all in checked u64.
+        var directoryOffset = checked(HeaderLength + (4UL * columns * rows));
+        var bodyOffset = checked(directoryOffset + (DirectoryEntryLength * (ulong)meshCount));
+        var directoryNeed = checked(bodyOffset + TrailerLength);
+        if (directoryNeed > fileLength)
+        {
+            throw Error(FormatErrorCode.Inconsistent, FileLengthOffset, "fileLength", FormatDetail.CountsNeed, directoryNeed, fileLength);
+        }
+
+        var need = bodyOffset;
+        var vertexTotal = 0UL;
+        var triangleTotal = 0UL;
+        for (var m = 0; m < (int)meshCount; m++)
+        {
+            var entryOffset = (int)directoryOffset + (DirectoryEntryLength * m);
+            var vertexCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes[(entryOffset + 4)..]);
+            var triangleCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes[(entryOffset + 8)..]);
+            CheckCount(entryOffset + 4, m, "vertexCount", vertexCount, MinVertexCount, MaxVertexCount);
+            CheckCount(entryOffset + 8, m, "triangleCount", triangleCount, MinTriangleCount, MaxTriangleCount);
+
+            vertexTotal = checked(vertexTotal + vertexCount);
+            if (vertexTotal > MaxTotalCount)
+            {
+                throw TotalError(entryOffset + 4, m, "vertexCount", "vertex", vertexTotal);
+            }
+
+            triangleTotal = checked(triangleTotal + triangleCount);
+            if (triangleTotal > MaxTotalCount)
+            {
+                throw TotalError(entryOffset + 8, m, "triangleCount", "triangle", triangleTotal);
+            }
+
+            need = checked(need + (VertexLength * (ulong)vertexCount) + (TriangleLength * (ulong)triangleCount));
+        }
+
+        need = checked(need + TrailerLength);
+        if (need != fileLength)
+        {
+            throw Error(FormatErrorCode.Inconsistent, FileLengthOffset, "fileLength", FormatDetail.CountsNeed, need, fileLength);
+        }
+
         // 7: the trailer. fileLength equals the length, which is at least the 48-byte header.
         var trailerOffset = bytes.Length - TrailerLength;
         var trailer = BinaryPrimitives.ReadUInt64LittleEndian(bytes[trailerOffset..]);
@@ -251,85 +335,314 @@ public static class CollisionFile
             throw Error(FormatErrorCode.ChecksumMismatch, trailerOffset, "checksum", FormatDetail.ChecksumMismatch, trailer, content);
         }
 
-        return bytes.Length;
+        return new Layout((int)columns, (int)rows, (int)meshCount, (int)directoryOffset, bytes.Length);
+    }
+
+    /// <summary>Check 5 for <c>columns</c> or <c>rows</c>: in [2, 4097]; below is <c>OutOfRange</c>, above <c>Oversized</c>.</summary>
+    private static uint CheckSamples(ReadOnlySpan<byte> bytes, int offset, string field)
+    {
+        var samples = BinaryPrimitives.ReadUInt32LittleEndian(bytes[offset..]);
+        if (samples < MinSamples)
+        {
+            throw Below(offset, field, samples, MinSamples);
+        }
+
+        if (samples > MaxSamples)
+        {
+            throw Above(offset, field, samples, MaxSamples);
+        }
+
+        return samples;
+    }
+
+    /// <summary>Check 6 for one directory entry's count: below its range is <c>OutOfRange</c>, above it <c>Oversized</c>.</summary>
+    private static void CheckCount(int offset, int mesh, string name, uint count, uint min, uint max)
+    {
+        if (count < min)
+        {
+            throw Below(offset, MeshField(mesh, name), count, min);
+        }
+
+        if (count > max)
+        {
+            throw Above(offset, MeshField(mesh, name), count, max);
+        }
+    }
+
+    /// <summary>
+    /// Check 8, the values, in the contract's order rather than file order: <c>reserved</c>; the origin;
+    /// <c>cellSize</c>; <c>gridCellSize</c>; the heightfield's extent in X then Z (reported at
+    /// <c>columns</c> and <c>rows</c>); the grid cells per axis (reported at <c>gridCellSize</c>); the
+    /// heights; the mesh IDs ascending; then each mesh in directory order, its vertices and then its indices.
+    /// It reads the content in place and allocates only a refusal.
+    /// </summary>
+    private static void CheckValues(ReadOnlySpan<byte> content, Layout layout)
+    {
+        var reserved = BinaryPrimitives.ReadUInt32LittleEndian(content[ReservedOffset..]);
+        if (reserved != 0)
+        {
+            throw new CoreFormatException(new FormatError(
+                Format,
+                FormatErrorCode.OutOfRange,
+                ReservedOffset,
+                "reserved",
+                string.Create(CultureInfo.InvariantCulture, $"{reserved} is not 0")));
+        }
+
+        var originX = CheckFloat(content, OriginXOffset, "originX", -MaxCoordinate, MaxCoordinate);
+        var originZ = CheckFloat(content, OriginZOffset, "originZ", -MaxCoordinate, MaxCoordinate);
+        var cellSize = CheckFloat(content, CellSizeOffset, "cellSize", MinCellSize, MaxCellSize);
+        var gridCellSize = CheckFloat(content, GridCellSizeOffset, "gridCellSize", MinGridCellSize, MaxGridCellSize);
+
+        // The playable area ends at origin + (float)(samples − 1)·cellSize, the expression every sample uses.
+        var extentX = (float)(layout.Columns - 1) * cellSize;
+        var extentZ = (float)(layout.Rows - 1) * cellSize;
+        CheckExtent(originX + extentX, ColumnsOffset, "columns", 'x');
+        CheckExtent(originZ + extentZ, RowsOffset, "rows", 'z');
+        CheckGridCells(extentX, gridCellSize, 'X');
+        CheckGridCells(extentZ, gridCellSize, 'Z');
+
+        var sampleCount = layout.Columns * layout.Rows;
+        for (var n = 0; n < sampleCount; n++)
+        {
+            var offset = HeaderLength + (4 * n);
+            var height = BinaryPrimitives.ReadSingleLittleEndian(content[offset..]);
+            if (!IsCoordinate(height))
+            {
+                throw ValueError(offset, string.Create(CultureInfo.InvariantCulture, $"heights[{n}]"), height, -MaxCoordinate, MaxCoordinate);
+            }
+        }
+
+        for (var m = 1; m < layout.MeshCount; m++)
+        {
+            var entryOffset = layout.DirectoryOffset + (DirectoryEntryLength * m);
+            var meshId = BinaryPrimitives.ReadUInt32LittleEndian(content[entryOffset..]);
+            var previous = BinaryPrimitives.ReadUInt32LittleEndian(content[(entryOffset - DirectoryEntryLength)..]);
+            if (meshId <= previous)
+            {
+                throw new CoreFormatException(new FormatError(
+                    Format,
+                    FormatErrorCode.Inconsistent,
+                    entryOffset,
+                    MeshField(m, "meshId"),
+                    string.Create(CultureInfo.InvariantCulture, $"{meshId} is not above {previous}")));
+            }
+        }
+
+        var body = layout.BodyOffset;
+        for (var m = 0; m < layout.MeshCount; m++)
+        {
+            var entryOffset = layout.DirectoryOffset + (DirectoryEntryLength * m);
+            var vertexCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(content[(entryOffset + 4)..]);
+            var triangleCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(content[(entryOffset + 8)..]);
+            for (var c = 0; c < 3 * vertexCount; c++)
+            {
+                var offset = body + (4 * c);
+                var coordinate = BinaryPrimitives.ReadSingleLittleEndian(content[offset..]);
+                if (!IsCoordinate(coordinate))
+                {
+                    var field = string.Create(CultureInfo.InvariantCulture, $"meshes[{m}].vertices[{c / 3}].{Axes[c % 3]}");
+                    throw ValueError(offset, field, coordinate, -MaxCoordinate, MaxCoordinate);
+                }
+            }
+
+            var indices = body + (VertexLength * vertexCount);
+            for (var k = 0; k < 3 * triangleCount; k++)
+            {
+                var offset = indices + (4 * k);
+                var index = BinaryPrimitives.ReadUInt32LittleEndian(content[offset..]);
+                if (index >= (uint)vertexCount)
+                {
+                    throw new CoreFormatException(new FormatError(
+                        Format,
+                        FormatErrorCode.OutOfRange,
+                        offset,
+                        string.Create(CultureInfo.InvariantCulture, $"meshes[{m}].indices[{k}]"),
+                        string.Create(CultureInfo.InvariantCulture, $"vertex index {index} is not below vertexCount {vertexCount}")));
+                }
+            }
+
+            body = indices + (TriangleLength * triangleCount);
+        }
+    }
+
+    /// <summary>A header float that must be finite and within [<paramref name="min"/>, <paramref name="max"/>]: <c>NonFinite</c>, else <c>OutOfRange</c>.</summary>
+    private static float CheckFloat(ReadOnlySpan<byte> content, int offset, string field, float min, float max)
+    {
+        var value = BinaryPrimitives.ReadSingleLittleEndian(content[offset..]);
+        if (!float.IsFinite(value) || value < min || value > max)
+        {
+            throw ValueError(offset, field, value, min, max);
+        }
+
+        return value;
+    }
+
+    /// <summary>The heightfield's end along one axis must be at most 8192 m; it is reported at that axis's sample count.</summary>
+    private static void CheckExtent(float end, int offset, string field, char axis)
+    {
+        if (end > MaxCoordinate)
+        {
+            throw new CoreFormatException(new FormatError(
+                Format,
+                FormatErrorCode.OutOfRange,
+                offset,
+                field,
+                string.Create(CultureInfo.InvariantCulture, $"the heightfield ends at {axis} = {end}; the limit is {MaxCoordinate}")));
+        }
+    }
+
+    /// <summary>⌈extent / gridCellSize⌉, the grid's cells along one axis, must be at most 4096; it is reported at <c>gridCellSize</c>.</summary>
+    private static void CheckGridCells(float extent, float gridCellSize, char axis)
+    {
+        var cells = System.MathF.Ceiling(extent / gridCellSize);
+        if (cells > UniformGrid.MaxCellsPerAxis)
+        {
+            throw new CoreFormatException(new FormatError(
+                Format,
+                FormatErrorCode.OutOfRange,
+                GridCellSizeOffset,
+                "gridCellSize",
+                string.Create(CultureInfo.InvariantCulture, $"{cells} grid cells along {axis}; the limit is {UniformGrid.MaxCellsPerAxis}")));
+        }
+    }
+
+    /// <summary>True when <paramref name="value"/> is finite and within ±8192 m.</summary>
+    private static bool IsCoordinate(float value) => float.IsFinite(value) && System.MathF.Abs(value) <= MaxCoordinate;
+
+    /// <summary>A refused float: <c>NonFinite</c> (<c>NaN is not finite</c>), or <c>OutOfRange</c> (<c>9000 is outside [-8192, 8192]</c>).</summary>
+    private static CoreFormatException ValueError(int offset, string field, float value, float min, float max)
+    {
+        var bits = BitConverter.SingleToUInt32Bits(value);
+        return float.IsFinite(value)
+            ? Error(FormatErrorCode.OutOfRange, offset, field, FormatDetail.OutOfRangeFloat, bits, BitConverter.SingleToUInt32Bits(min), BitConverter.SingleToUInt32Bits(max))
+            : Error(FormatErrorCode.NonFinite, offset, field, FormatDetail.NotFinite, bits);
+    }
+
+    /// <summary>
+    /// Check 9's refusal, at the file offset of the first index of the triangle whose registration broke a
+    /// grid limit: <c>grid.cells[cx,cz]</c> (<c>65 triangles; the limit is 64</c>) or
+    /// <c>grid.registrations</c>.
+    /// </summary>
+    private static CoreFormatException GridError(CollisionData data, GridOverflow overflow)
+    {
+        var offset = TriangleOffset(data, overflow.TriangleIndex);
+        var error = overflow.Registrations
+            ? new FormatError(
+                Format,
+                FormatErrorCode.OutOfRange,
+                offset,
+                "grid.registrations",
+                string.Create(CultureInfo.InvariantCulture, $"{overflow.Count} registrations; the limit is {UniformGrid.MaxRegistrations}"))
+            : new FormatError(
+                Format,
+                FormatErrorCode.OutOfRange,
+                offset,
+                string.Create(CultureInfo.InvariantCulture, $"grid.cells[{overflow.CellX},{overflow.CellZ}]"),
+                string.Create(CultureInfo.InvariantCulture, $"{overflow.Count} triangles; the limit is {CollisionWorld.MaxTrianglesPerCell}"));
+        return new CoreFormatException(error);
+    }
+
+    /// <summary>The file offset of global mesh triangle <paramref name="index"/>'s first index, walked from the layout.</summary>
+    private static long TriangleOffset(CollisionData data, int index)
+    {
+        var body = HeaderLength + (4L * data.Heights.Length) + (DirectoryEntryLength * (long)data.Meshes.Length);
+        var remaining = index;
+        foreach (var mesh in data.Meshes)
+        {
+            var triangles = mesh.Indices.Length / 3;
+            var indices = body + (4L * mesh.Vertices.Length);
+            if (remaining < triangles)
+            {
+                return indices + (TriangleLength * (long)remaining);
+            }
+
+            remaining -= triangles;
+            body = indices + (4L * mesh.Indices.Length);
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(index), index, "The triangle index is past the meshes.");
     }
 
     /// <summary>
     /// Reads the header values, the heights, the directory and every mesh body from the content (the file
-    /// without its trailer) into new arrays. Every block is sliced only after its length is known to fit.
+    /// without its trailer) into new arrays. Checks 1 to 8 have passed, so every block lies where the counts
+    /// put it and every value is in range.
     /// </summary>
-    private static CollisionData Parse(ReadOnlySpan<byte> content, long fileLength)
+    private static CollisionData Parse(ReadOnlySpan<byte> content, Layout layout)
     {
-        var originX = BinaryPrimitives.ReadSingleLittleEndian(Slice(content, OriginXOffset, 4, fileLength));
-        var originZ = BinaryPrimitives.ReadSingleLittleEndian(Slice(content, OriginZOffset, 4, fileLength));
-        var cellSize = BinaryPrimitives.ReadSingleLittleEndian(Slice(content, CellSizeOffset, 4, fileLength));
-        var gridCellSize = BinaryPrimitives.ReadSingleLittleEndian(Slice(content, GridCellSizeOffset, 4, fileLength));
-        var columns = BinaryPrimitives.ReadUInt32LittleEndian(Slice(content, ColumnsOffset, 4, fileLength));
-        var rows = BinaryPrimitives.ReadUInt32LittleEndian(Slice(content, RowsOffset, 4, fileLength));
-        var meshCount = BinaryPrimitives.ReadUInt32LittleEndian(Slice(content, MeshCountOffset, 4, fileLength));
+        var originX = BinaryPrimitives.ReadSingleLittleEndian(content[OriginXOffset..]);
+        var originZ = BinaryPrimitives.ReadSingleLittleEndian(content[OriginZOffset..]);
+        var cellSize = BinaryPrimitives.ReadSingleLittleEndian(content[CellSizeOffset..]);
+        var gridCellSize = BinaryPrimitives.ReadSingleLittleEndian(content[GridCellSizeOffset..]);
 
-        var sampleCount = (ulong)columns * rows;
-        var heightBytes = Slice(content, HeaderLength, sampleCount, 4, fileLength);
-        var heights = new float[heightBytes.Length / 4];
+        var heights = new float[layout.Columns * layout.Rows];
         for (var n = 0; n < heights.Length; n++)
         {
-            heights[n] = BinaryPrimitives.ReadSingleLittleEndian(heightBytes[(4 * n)..]);
+            heights[n] = BinaryPrimitives.ReadSingleLittleEndian(content[(HeaderLength + (4 * n))..]);
         }
 
-        var directoryOffset = (ulong)HeaderLength + (ulong)heightBytes.Length;
-        var directory = Slice(content, directoryOffset, meshCount, DirectoryEntryLength, fileLength);
-        var meshes = new MeshData[meshCount];
-        var body = directoryOffset + (ulong)directory.Length;
+        var meshes = new MeshData[layout.MeshCount];
+        var body = layout.BodyOffset;
         for (var m = 0; m < meshes.Length; m++)
         {
-            var entry = directory[(DirectoryEntryLength * m)..];
+            var entry = content[(layout.DirectoryOffset + (DirectoryEntryLength * m))..];
             var meshId = BinaryPrimitives.ReadUInt32LittleEndian(entry);
-            var vertexCount = BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
-            var triangleCount = BinaryPrimitives.ReadUInt32LittleEndian(entry[8..]);
+            var vertexCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
+            var triangleCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(entry[8..]);
 
-            var vertexBytes = Slice(content, body, vertexCount, VertexLength, fileLength);
-            var vertices = new float[vertexBytes.Length / 4];
+            var vertices = new float[3 * vertexCount];
             for (var v = 0; v < vertices.Length; v++)
             {
-                vertices[v] = BinaryPrimitives.ReadSingleLittleEndian(vertexBytes[(4 * v)..]);
+                vertices[v] = BinaryPrimitives.ReadSingleLittleEndian(content[(body + (4 * v))..]);
             }
 
-            body += (ulong)vertexBytes.Length;
-            var indexBytes = Slice(content, body, triangleCount, TriangleLength, fileLength);
-            var indices = new uint[indexBytes.Length / 4];
+            body += VertexLength * vertexCount;
+            var indices = new uint[3 * triangleCount];
             for (var k = 0; k < indices.Length; k++)
             {
-                indices[k] = BinaryPrimitives.ReadUInt32LittleEndian(indexBytes[(4 * k)..]);
+                indices[k] = BinaryPrimitives.ReadUInt32LittleEndian(content[(body + (4 * k))..]);
             }
 
-            body += (ulong)indexBytes.Length;
+            body += TriangleLength * triangleCount;
             meshes[m] = new MeshData(meshId, vertices, indices);
         }
 
-        return new CollisionData(originX, originZ, cellSize, gridCellSize, checked((int)columns), checked((int)rows), heights, meshes);
+        return new CollisionData(originX, originZ, cellSize, gridCellSize, layout.Columns, layout.Rows, heights, meshes);
     }
 
-    /// <summary><paramref name="count"/> elements of <paramref name="size"/> bytes from <paramref name="offset"/>.</summary>
-    private static ReadOnlySpan<byte> Slice(ReadOnlySpan<byte> content, ulong offset, ulong count, int size, long fileLength)
+    private static string MeshField(int mesh, string name) =>
+        string.Create(CultureInfo.InvariantCulture, $"meshes[{mesh}].{name}");
+
+    /// <summary>A count below its range: <c>OutOfRange</c>, such as <c>1 is below 2</c>.</summary>
+    private static CoreFormatException Below(int offset, string field, ulong value, ulong min) =>
+        new(new FormatError(Format, FormatErrorCode.OutOfRange, offset, field, string.Create(CultureInfo.InvariantCulture, $"{value} is below {min}")));
+
+    /// <summary>A count or length above its limit: <c>Oversized</c>, such as <c>4098 is above 4097</c>.</summary>
+    private static CoreFormatException Above(int offset, string field, ulong value, ulong max) =>
+        new(new FormatError(Format, FormatErrorCode.Oversized, offset, field, string.Create(CultureInfo.InvariantCulture, $"{value} is above {max}")));
+
+    /// <summary>A running sum of directory counts past 2²²: <c>Oversized</c> at the entry that took it there.</summary>
+    private static CoreFormatException TotalError(int offset, int mesh, string name, string what, ulong total) =>
+        new(new FormatError(
+            Format,
+            FormatErrorCode.Oversized,
+            offset,
+            MeshField(mesh, name),
+            string.Create(CultureInfo.InvariantCulture, $"the {what} counts reach {total}; the limit is {MaxTotalCount}")));
+
+    private static CoreFormatException Error(FormatErrorCode code, long offset, string field, FormatDetail detail, ulong a, ulong b = 0, ulong c = 0) =>
+        new(new FormatError(Format, code, offset, field, detail, a, b, c));
+
+    /// <summary>
+    /// The counts checks 5 and 6 have bounded: the samples along X and Z, the meshes, the directory's offset
+    /// D = 48 + 4·columns·rows, and the file's length, which the counts then fill exactly.
+    /// </summary>
+    private readonly record struct Layout(int Columns, int Rows, int MeshCount, int DirectoryOffset, int FileLength)
     {
-        var available = offset <= (ulong)content.Length ? (ulong)content.Length - offset : 0UL;
-        if (offset > (ulong)content.Length || count > available / (ulong)size)
-        {
-            // Saturating: what the counts read so far need, the trailer included.
-            var need = count > (ulong.MaxValue - offset - TrailerLength) / (ulong)size
-                ? ulong.MaxValue
-                : offset + (count * (ulong)size) + TrailerLength;
-            throw Error(FormatErrorCode.Inconsistent, FileLengthOffset, "fileLength", FormatDetail.CountsNeed, need, (ulong)fileLength);
-        }
-
-        return content.Slice((int)offset, (int)(count * (ulong)size));
+        /// <summary>The first mesh body, after the directory: D + 12M.</summary>
+        public int BodyOffset => DirectoryOffset + (DirectoryEntryLength * MeshCount);
     }
-
-    private static ReadOnlySpan<byte> Slice(ReadOnlySpan<byte> content, int offset, int length, long fileLength) =>
-        Slice(content, (ulong)offset, (ulong)length, 1, fileLength);
-
-    private static CoreFormatException Error(FormatErrorCode code, long offset, string field, FormatDetail detail, ulong a, ulong b = 0) =>
-        new(new FormatError(Format, code, offset, field, detail, a, b));
 }
 
 /// <summary>The preformatted details the file frames (<c>MMCD</c>, <c>MMRS</c>) share.</summary>

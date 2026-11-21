@@ -16,6 +16,12 @@ namespace MmoEngine.SimCore.Collision;
 /// </summary>
 public sealed class UniformGrid
 {
+    /// <summary>The most registrations the grid holds, 2²⁴: the sum over kept triangles of the cells each overlaps (contracts/collision-data-format.md#limits).</summary>
+    internal const int MaxRegistrations = 1 << 24;
+
+    /// <summary>The most grid cells along X or along Z, 4096 (contracts/collision-data-format.md#limits).</summary>
+    internal const int MaxCellsPerAxis = 4096;
+
     private readonly int[] _cellStart;
     private readonly int[] _cellTriangles;
 
@@ -63,9 +69,14 @@ public sealed class UniformGrid
     /// <summary>
     /// The grid over <paramref name="heightfield"/>'s extent, with <paramref name="meshes"/>' kept triangles
     /// registered: a counting pass in ID order, the prefix sums into <c>CellStart</c>, then a filling pass in
-    /// ID order, so every cell's list is ascending.
+    /// ID order, so every cell's list is ascending. The counting pass is check 9 of
+    /// contracts/collision-data-format.md#check-order: it stops at the first triangle that brings a cell to
+    /// <see cref="CollisionWorld.MaxTrianglesPerCell"/> + 1 triangles, or the registrations past
+    /// <see cref="MaxRegistrations"/>, and then returns null with <paramref name="overflow"/> saying where,
+    /// before the triangle array is allocated. The caller has bounded the cells per axis (check 8), so
+    /// <c>CellStart</c> holds at most 2²⁴ + 1 entries.
     /// </summary>
-    internal static UniformGrid Build(Heightfield heightfield, MeshSet meshes, float cellSize)
+    internal static UniformGrid? TryBuild(Heightfield heightfield, MeshSet meshes, float cellSize, out GridOverflow overflow)
     {
         var extentX = (float)(heightfield.Columns - 1) * heightfield.CellSize;
         var extentZ = (float)(heightfield.Rows - 1) * heightfield.CellSize;
@@ -74,7 +85,8 @@ public sealed class UniformGrid
         var cellStart = new int[checked((cellsX * cellsZ) + 1)];
         var grid = new UniformGrid(heightfield.OriginX, heightfield.OriginZ, cellSize, cellsX, cellsZ, cellStart, []);
 
-        // Counting pass, in ID order: cellStart[c + 1] counts cell c's registrations.
+        // Counting pass, in ID order: cellStart[c + 1] counts cell c's registrations. Check 9 stops it at the
+        // first registration that takes a cell past the per-cell limit or the total past the grid's.
         var total = 0;
         for (var index = 0; index < meshes.TriangleCount; index++)
         {
@@ -88,8 +100,19 @@ public sealed class UniformGrid
             {
                 for (var cx = cx0; cx <= cx1; cx++)
                 {
-                    cellStart[(cz * cellsX) + cx + 1]++;
-                    total = checked(total + 1);
+                    var count = ++cellStart[(cz * cellsX) + cx + 1];
+                    total++;
+                    if (count > CollisionWorld.MaxTrianglesPerCell)
+                    {
+                        overflow = new GridOverflow(index, cx, cz, count, Registrations: false);
+                        return null;
+                    }
+
+                    if (total > MaxRegistrations)
+                    {
+                        overflow = new GridOverflow(index, cx, cz, total, Registrations: true);
+                        return null;
+                    }
                 }
             }
         }
@@ -123,6 +146,7 @@ public sealed class UniformGrid
             }
         }
 
+        overflow = default;
         return new UniformGrid(heightfield.OriginX, heightfield.OriginZ, cellSize, cellsX, cellsZ, cellStart, cellTriangles);
     }
 
@@ -135,3 +159,12 @@ public sealed class UniformGrid
         cz1 = CellZ(triangle.Max.Z);
     }
 }
+
+/// <summary>
+/// Where the uniform grid's counting pass stopped (check 9 of
+/// specs/015-shared-simulation-core/contracts/collision-data-format.md#check-order): the global mesh triangle
+/// index (ID − the heightfield triangle count) whose registration broke a limit, the cell it was registered
+/// in, and the count that broke it: the cell's triangles when <see cref="Registrations"/> is false, the
+/// grid's registrations when it is true.
+/// </summary>
+internal readonly record struct GridOverflow(int TriangleIndex, int CellX, int CellZ, int Count, bool Registrations);

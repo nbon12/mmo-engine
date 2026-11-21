@@ -130,15 +130,17 @@ public sealed partial class CollisionWorld
     /// <summary>
     /// Builds the world from checked primary data, in file order: the heightfield, the mesh triangles
     /// with their normals and bounding boxes, then the grid. The world keeps <paramref name="data"/>, which
-    /// the decoder created for it and nothing else holds.
+    /// the decoder created for it and nothing else holds. When the grid's counting pass breaks a limit
+    /// (check 9 of contracts/collision-data-format.md#check-order), no world is constructed: it returns null
+    /// and <paramref name="overflow"/> says where, for the decoder to report.
     /// </summary>
-    internal static CollisionWorld Create(CollisionData data, ulong checksum)
+    internal static CollisionWorld? TryCreate(CollisionData data, ulong checksum, out GridOverflow overflow)
     {
         ArgumentNullException.ThrowIfNull(data);
         var heightfield = new Heightfield(data.OriginX, data.OriginZ, data.CellSize, data.Columns, data.Rows, data.Heights);
         var meshes = MeshSet.Build(data.Meshes, heightfield.TriangleCount);
-        var grid = UniformGrid.Build(heightfield, meshes, data.GridCellSize);
-        return new CollisionWorld(data, checksum, heightfield, meshes, grid);
+        var grid = UniformGrid.TryBuild(heightfield, meshes, data.GridCellSize, out overflow);
+        return grid is null ? null : new CollisionWorld(data, checksum, heightfield, meshes, grid);
     }
 
     private static MeshData[] CopyMeshes(MeshData[] meshes)

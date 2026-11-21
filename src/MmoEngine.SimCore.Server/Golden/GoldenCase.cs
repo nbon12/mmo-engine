@@ -54,6 +54,11 @@ public sealed record GoldenCollisionDerived(
 /// reads it: the format it belongs to, the format version it pins, its name and its kind. The derived
 /// records are the three valid shapes and the refusal shape.
 /// </summary>
+/// <remarks>
+/// A valid case's <c>.bin</c> comes from its <c>EncodeBin()</c>. The name is not <c>Encode()</c> because
+/// <c>RecordedStream.Encode()</c> must stay the only parameterless <c>Encode()</c> in <c>src/</c>: the
+/// architecture test <c>StreamWriterTests</c> finds the code that encodes stream files by that text.
+/// </remarks>
 public abstract record GoldenCase(string Format, int FormatVersion, string Case, GoldenKind Kind);
 
 /// <summary>A valid input case: the command and how it validates.</summary>
@@ -61,7 +66,7 @@ public sealed record InputValidCase(string Format, int FormatVersion, string Cas
     : GoldenCase(Format, FormatVersion, Case, GoldenKind.Valid)
 {
     /// <summary>The command's 17 bytes, from <see cref="InputCodec.TryEncode"/>.</summary>
-    public byte[] Encode()
+    public byte[] EncodeBin()
     {
         var bytes = new byte[InputCodec.EncodedSize];
         if (!InputCodec.TryEncode(Command, bytes))
@@ -88,7 +93,7 @@ public sealed record CollisionValidCase(
     : GoldenCase(Format, FormatVersion, Case, GoldenKind.Valid)
 {
     /// <summary>The collision file, from <see cref="CollisionFile.Encode"/>. A <see cref="CoreFormatException"/> passes through.</summary>
-    public byte[] Encode() => CollisionFile.Encode(Data);
+    public byte[] EncodeBin() => CollisionFile.Encode(Data);
 }
 
 /// <summary>
@@ -109,7 +114,7 @@ public sealed record StreamValidCase(
     : GoldenCase(Format, FormatVersion, Case, GoldenKind.Valid)
 {
     /// <summary>The stream file, from <see cref="RecordedStream.Encode"/>. A <see cref="CoreFormatException"/> passes through.</summary>
-    public byte[] Encode() => Stream.Encode();
+    public byte[] EncodeBin() => Stream.Encode();
 }
 
 /// <summary>

@@ -1565,6 +1565,24 @@ The design documents settled these points, which the spec leaves open. They are 
   argument cannot default to 0. The valid case records fix `Kind` to `Valid` instead of taking it as a
   parameter, and the refusal record fixes it to `Refusal`. contracts/input-command-format.md's shared
   fixture rules now say the JSON is read strictly.
+- **A valid golden case encodes with `EncodeBin()`, not `Encode()` (T232, T237).** T232 named the method
+  `Encode()`, but the Phase 3 architecture test
+  `StreamWriterTests.OnlyRecordAndAgreementPrepareEncodeStreamFiles` finds the code that encodes stream
+  files by the text `.Encode()`, and holds that text to `RecordedStream.Encode` by requiring
+  `RecordedStream.cs` to be the only file in `src/` that declares a parameterless `Encode()`. Three more
+  declarations would have broken that guard, so the golden method has another name and the guard keeps
+  meaning what it says. T232 and T237 now name `EncodeBin()`.
+- **The collision decoder's check 9 reports through the world build, and check 6 checks an entry's two
+  counts before the running sums (T235).** `UniformGrid.TryBuild` and `CollisionWorld.TryCreate` return
+  null with a `GridOverflow` (the global triangle index, the cell and the count) instead of building, and
+  `CollisionFile.Decode` turns that into the refusal at the file offset of the triangle's first index,
+  because only the decoder knows the file layout. No world is constructed on that path. Within one
+  directory entry, check 6 tests `vertexCount` and `triangleCount` against their ranges, then the vertex
+  and triangle running sums; the contract lists "each entry's counts and the running sums" without an
+  order inside the entry. Check 5 and 6 details follow the stream decoder's wording (`1 is below 2`,
+  `4098 is above 4097`, `the vertex counts reach 5242880; the limit is 4194304`), as do the extent and
+  grid-cell details (`the heightfield ends at x = 8193.5; the limit is 8192`,
+  `16384 grid cells along X; the limit is 4096`), which the contract does not pin.
 
 ## Delivery
 
