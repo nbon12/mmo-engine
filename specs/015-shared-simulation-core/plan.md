@@ -1531,6 +1531,24 @@ The design documents settled these points, which the spec leaves open. They are 
   outcomes and their `lastSequence` and `weaponSlots`, the collision file lengths, `tiny-world`'s
   checksum, `two-steps`' block lengths, negative zero written as `-0.0` in every collision valid case,
   and each case's `kind` against its contract table.
+- **Phase 8's check 5 rows keep a stale trailer, and more stream rows are green early than T228 said
+  (T227 to T229, Phase 8 red check).** T228 said every row rewrites the trailer, but checks 5 and 6
+  come before the checksum in both decoders, so their rows (T227's check 5 and 6 rows, T228's
+  `file-too-long`, `step-count-too-many` and `zero-characters`, T229's header-only rows with a zero
+  trailer) keep the stale trailer: they then also prove the checks run before the checksum, as the
+  contracts require ("a hostile header never makes the decoder hash"), and Phase 3's
+  `StepCountAndStepNumbersAreRefusedAtTheirField` already does the same. Run against a temporary
+  `two-steps.bin`, `entry-past-block` and `step-count-beyond-block` already pass on Phase 2's
+  bounds-checked parse (T059), so T228's list of early-green rows names them too. T227's two-mesh
+  world is `TestWorlds.TinyWorld()` plus a mesh built in the test, because `TestWorlds` has none.
+- **T230 adds an order-sensitive pair and T231 pins four messages (Phase 8 red check).** T230's only
+  ordering example, `write 0 "ff"` then `truncate 1`, gives `ff` in either order, so
+  `OpsApplyInOrder` also applies `truncate 2` then `append "ff"`, which gives `00 01 ff` and
+  `00 01` when reversed. T231 gave no text for four malformed rows, and `GoldenCaseException`'s message
+  is the whole assertion, so the test fixes them: `$.config[0].fieldId: must be 0x and 4 uppercase hex
+  digits`, `$.kind: must be "valid" or "refusal"`, `$: a refusal case needs expectedError or
+  expectedConfigErrors` and `$.command.aimYaw: 65536 is outside [0, 65535]`. T231 and T234 now list
+  them, and T234 says an absent optional list parses to an empty array, not null.
 
 ## Delivery
 

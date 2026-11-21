@@ -2194,8 +2194,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `GoldenWriteOfAMissingDirectoryExitsTwo`: `--dir` names a folder that does not exist under a temp root. Exit 2, the last stdout line starts with `golden write: refused, `, and nothing is created.
 
   Confirm red with `--filter "FullyQualifiedName~GoldenCommandTests"`.
-- [ ] T226 [P] [US6] Write failing test `DecoderPropertyTests.TruncatedOrCorruptedFixturesNeverYieldAPartialResult(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Properties/DecoderPropertyTests.cs` (FR-020, US6.3), over `GoldenFixtures.ValidCases`.
-  - It uses CsCheck with a fixed seed constant `Seed` declared in the class, passed to `Sample`, and printed in the failure message, with 1,000 iterations per case.
+- [X] T226 [P] [US6] Write failing test `DecoderPropertyTests.TruncatedOrCorruptedFixturesNeverYieldAPartialResult(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Properties/DecoderPropertyTests.cs` (FR-020, US6.3), over `GoldenFixtures.ValidCases`.
+  - It uses CsCheck with a fixed seed constant `Seed` declared in the class, passed to `Sample`, and printed in the failure message, with 1,000 iterations per case. CsCheck applies a given seed to the first iteration only, so iteration i is its own one-draw, one-thread `Sample` from the seed `new PCG(i, Seed)`, as `RegionizerPropertyTests` does.
   - Each iteration generates one of three changes to the valid `.bin`:
     - a truncation to a length in [0, length);
     - one to four byte flips (offset, non-zero XOR);
@@ -2204,9 +2204,10 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - returns a value whose re-encoding (`TryEncode`, `CollisionFile.Encode(world.Data)` or `stream.Encode()`) equals the mutated bytes; or
     - refuses: `TryDecode` false with `command == default`, or `CoreFormatException` from `CollisionFile.Decode` or `RecordedStream.Decode`.
   - Any other exception type (`IndexOutOfRangeException`, `ArgumentOutOfRangeException`, `OverflowException`, `OutOfMemoryException`, `NullReferenceException`) fails the property and prints the seed and the mutated bytes' length.
+  - A refusal also names its own format, and its message equals `Error.ToString()`. Across a case's iterations at least one change must decode and at least one must be refused, so both outcomes are exercised.
   - Confirm it fails.
-- [ ] T227 [P] [US6] Write failing test `CollisionFileLimitTests.EachLimitIsRefusedAtItsFieldAndOffset(string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/CollisionFileLimitTests.cs` (FR-020, checks 5, 6, 8 and 9 of contracts/collision-data-format.md#check-order).
-  - Rows not covered by a fixture are built in the test from `CollisionFile.Encode(TestWorlds.TinyWorld())`, or written byte by byte where `Encode` would refuse them. The trailer is rewritten with `XxHash64` in the test wherever a value check must be reached.
+- [X] T227 [P] [US6] Write failing test `CollisionFileLimitTests.EachLimitIsRefusedAtItsFieldAndOffset(string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/CollisionFileLimitTests.cs` (FR-020, checks 5, 6, 8 and 9 of contracts/collision-data-format.md#check-order).
+  - Rows not covered by a fixture are built in the test from `CollisionFile.Encode(TestWorlds.TinyWorld())`, or written byte by byte where `Encode` would refuse them. The two-mesh rows encode `TestWorlds.TinyWorld()` with a second mesh added in the test: `meshId` 2, one triangle (−0.5, 0, −0.5), (0.5, 0, −0.5), (0.5, 1, −0.5). The trailer is rewritten with `XxHash64` in the test wherever a value check must be reached; the check 5 and 6 rows keep the stale trailer, so they also show that those checks run before the checksum.
   - Each row asserts `Assert.Throws<CoreFormatException>` with exactly this `Code`, `Offset` and `Field`:
 
     | Row | Change | Code | Offset | Field |
@@ -2229,15 +2230,15 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     | `extent-z` | write 20 = 8191.5 | `OutOfRange` | 36 | `rows` |
     | `grid-cells-per-axis` | origin (−8192, −1), `cellSize` 4, `gridCellSize` 1, `columns` 4097, `rows` 2, no meshes (16,384 cells along X) | `OutOfRange` | 28 | `gridCellSize` |
     | `vertex-non-finite` | write 100 = NaN | `NonFinite` | 100 | `meshes[0].vertices[0].y` |
-    | `mesh-id-not-ascending` | a two-mesh world from `TestWorlds`, with mesh 1's `meshId` set to mesh 0's | `Inconsistent` | mesh 1's `meshId` offset | `meshes[1].meshId` |
+    | `mesh-id-not-ascending` | the two-mesh world, with mesh 1's `meshId` set to mesh 0's | `Inconsistent` | mesh 1's `meshId` offset | `meshes[1].meshId` |
     | `reserved-before-origin` | write 44 = 1 and write 16 = `0x7FC00000` (NaN): check 8 tests `reserved` before the origin, though the origin comes first in the file | `OutOfRange` | 44 | `reserved` |
-    | `mesh-by-mesh` | a two-mesh world from `TestWorlds`, with mesh 0's `indices[0]` set to its `vertexCount` and mesh 1's `vertices[0].x` set to NaN: check 8 finishes mesh 0's indices before mesh 1's vertices | `OutOfRange` | mesh 0's `indices[0]` offset | `meshes[0].indices[0]` |
+    | `mesh-by-mesh` | the two-mesh world, with mesh 0's `indices[0]` set to its `vertexCount` and mesh 1's `vertices[0].x` set to NaN: check 8 finishes mesh 0's indices before mesh 1's vertices | `OutOfRange` | mesh 0's `indices[0]` offset | `meshes[0].indices[0]` |
     | `registrations-over-limit` | origin (−2048, −2048), `cellSize` 4, `gridCellSize` 1, 1025 × 1025 heights, one mesh with vertices (−2048, 0, −2048), (2048, 0, −2048), (−2048, 0, 2048), (2048, 0, 2048) and triangles (0, 1, 2), (1, 3, 2). Each triangle overlaps all 4096 × 4096 = 2²⁴ cells, so the second one passes the total. | `OutOfRange` | the second triangle's first index (computed from the layout) | `grid.registrations` |
     | `file-too-long` | a 268,435,457-byte buffer holding `tiny-world`'s header with `fileLength` 268,435,457 | `Oversized` | 8 | `fileLength` |
 
   - Confirm it fails.
-- [ ] T228 [P] [US6] Write failing test `RecordedStreamCheckTests.EachStructuralCheckIsRefusedAtItsFieldAndOffset(string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/RecordedStreamCheckTests.cs` (FR-020, checks 5, 8 and 12 of contracts/recorded-stream-format.md#decoding).
-  - Rows are built from the committed `stream/two-steps.bin` or `stream/two-characters.bin`, with the trailer rewritten by `XxHash64` in the test. Offsets for `two-characters` are computed from its header (steps block at 64 + `configLength` + `initialStateLength`; command c's index at entry start + 5 + 18c).
+- [X] T228 [P] [US6] Write failing test `RecordedStreamCheckTests.EachStructuralCheckIsRefusedAtItsFieldAndOffset(string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/RecordedStreamCheckTests.cs` (FR-020, checks 5, 8 and 12 of contracts/recorded-stream-format.md#decoding).
+  - Rows are built from the committed `stream/two-steps.bin` or `stream/two-characters.bin`. The rows checked after the checksum have the trailer rewritten by `XxHash64` in the test; the three check 5 rows (`file-too-long`, `step-count-too-many`, `zero-characters`) keep the stale trailer, so they also show that check 5 runs before the checksum. Offsets for `two-characters` are computed from its header (steps block at 64 + `configLength` + `initialStateLength`; command c's index at entry start + 5 + 18c).
   - Each row asserts `Assert.Throws<CoreFormatException>` with exactly this `Code`, `Offset` and `Field`:
 
     | Row | Change | Code | Offset | Field |
@@ -2254,9 +2255,9 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     | `bytes-after-entries` | insert 4 zero bytes at 942; `stepsLength` 48; `fileLength` 954 | `Inconsistent` | 942 | `steps` |
     | `step-count-beyond-block` | write 16 = 1,048,576 | `Inconsistent` | 942 | `steps[2].step` |
 
-  - The `command-unknown-magic` row is green once Phase 2's T059 is done, and the `step-count-too-many` and `first-step-number` rows since the Phase 3 review brought check 5's `stepCount` limit and check 12's step numbers forward (T092); the other rows keep the Theory red.
+  - Once the fixtures exist, the `command-unknown-magic`, `entry-past-block` and `step-count-beyond-block` rows are green from Phase 2's T059 (its bounds-checked parse already refuses an entry past the block at the field being read), and the `step-count-too-many` and `first-step-number` rows since the Phase 3 review brought check 5's `stepCount` limit and check 12's step numbers forward (T092); the other rows keep the Theory red.
   - Confirm it fails.
-- [ ] T229 [P] [US6] Write failing test `HostileHeaderTests.HostileCountsAreRefusedWithoutACountSizedAllocation(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/HostileHeaderTests.cs` (FR-020: nothing is allocated before every count is bounded).
+- [X] T229 [P] [US6] Write failing test `HostileHeaderTests.HostileCountsAreRefusedWithoutACountSizedAllocation(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/HostileHeaderTests.cs` (FR-020: nothing is allocated before every count is bounded).
   - Rows:
     - `collision`, `huge-heightfield`: a 56-byte file with `columns` 4097, `rows` 4097, `meshCount` 4096 and `fileLength` 56. Expect `Inconsistent`, 8, `fileLength`.
     - `collision`, `huge-mesh`: a 2 × 2 heightfield with one directory entry (`vertexCount` 2²⁰, `triangleCount` 2²¹) and `fileLength` 84. Expect `Inconsistent`, 8, `fileLength`.
@@ -2264,9 +2265,10 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `stream`, `step-count-beyond-block`: `two-steps` with `stepCount` 1,048,576 and a fixed trailer. Expect `Inconsistent`, 942, `steps[2].step`.
   - Each row decodes once to warm up, then measures `GC.GetAllocatedBytesForCurrentThread()` around a second decode inside `try`/`catch (CoreFormatException)`.
   - It asserts that exact code, offset and field, and fewer than 65,536 bytes allocated. A count-sized buffer would be at least 8 MiB.
+  - The three header-only rows keep a zero trailer, because check 6 refuses them before the checksum is computed. `huge-mesh` and `huge-blocks` also assert the detail the contracts pin: `the counts need 37748820 bytes; fileLength is 84` and `the blocks need 4296081479 bytes; fileLength is 72`. `step-count-beyond-block` is green once T240's fixture exists, as in T228.
   - The method is synchronous, so the per-thread counter sees only its own work. The class needs no serial collection, and its XML comment says why.
   - Confirm it fails.
-- [ ] T230 [P] [US6] Write failing tests `GoldenMutationsTests` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenMutationsTests.cs` (contracts/input-command-format.md#shared-fixture-rules, Mutations table):
+- [X] T230 [P] [US6] Write failing tests `GoldenMutationsTests` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenMutationsTests.cs` (contracts/input-command-format.md#shared-fixture-rules, Mutations table):
   - `EachOpEditsTheBytesAsTheContractSays(string op)`, a Theory over a base `00 01 02 03 04 05` (a 16-byte base for `fixChecksum`). Expected results:
     - `truncate 2` gives `00 01`;
     - `append "ff"` gives `… 05 ff`;
@@ -2274,11 +2276,12 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `insert 2 "cc"` gives `00 01 cc 02 03 04 05`;
     - `delete 1 2` gives `00 03 04 05`;
     - `fixChecksum` on collision or stream bytes sets the last 8 bytes to `XxHash64.HashToUInt64(first 8)`, written little-endian.
-  - `OpsApplyInOrder`: `write 0 "ff"` then `truncate 1` gives `ff`.
-  - `BadArgumentsAreRefusedNamingTheMutation(string row)`: truncate past the length, write past the end, insert past the end, delete past the end, odd-length or non-hex `hex`, an unknown `op`, and `fixChecksum` with format `input` or on fewer than 8 bytes. Each throws `GoldenCaseException` whose message starts with `mutations[<i>]: ` for the failing mutation's index.
+    - The byte ops run in all three formats, every row leaves the base unchanged, and `write 1 "AaBb"` gives the same bytes as `"aabb"` (hex is read case-insensitively).
+  - `OpsApplyInOrder`: `write 0 "ff"` then `truncate 1` gives `ff`, and `truncate 2` then `append "ff"` gives `00 01 ff`. The first pair gives `ff` in either order, so only the second detects reversed order.
+  - `BadArgumentsAreRefusedNamingTheMutation(string row)`: truncate past the length, write past the end, insert past the end, delete past the end, odd-length or non-hex `hex`, an unknown `op`, and `fixChecksum` with format `input` or on fewer than 8 bytes, as the nine rows `truncate-past-length`, `write-past-end`, `insert-past-end`, `delete-past-end`, `hex-odd-length`, `hex-not-hex`, `unknown-op`, `fix-checksum-input` and `fix-checksum-short`. Each throws `GoldenCaseException` whose message starts with `mutations[<i>]: ` for the failing mutation's index. Most rows put a valid mutation first, so the bounds are checked against the current length, not the base's.
 
   Confirm it fails.
-- [ ] T231 [P] [US6] Write failing tests `GoldenJsonTests` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenJsonTests.cs`:
+- [X] T231 [P] [US6] Write failing tests `GoldenJsonTests` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenJsonTests.cs`:
   - `ParsesTheContractExamples`:
     - the input `example` JSON of contracts/input-command-format.md#input-cases parses to an `InputValidCase` whose `Command` is `new InputCommand(1, 100, Buttons.Forward | Buttons.Fire, 16384, -1024, 0)`, validating as `None` with `lastSequence` 0 and `weaponSlots` 2;
     - the `refuse-version-2` JSON parses to a refusal case with base `neutral`, one `write` mutation at offset 1 with hex `02`, and `expectedError` (`UnsupportedVersion`, 1, `version`);
@@ -2291,10 +2294,11 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - an x16 with uppercase letters, 15 digits, or a `0x` prefix gives `$.matchSalt: must be 16 lowercase hex digits`;
     - float `bits` in lowercase or with 7 digits gives `$.heights[0].bits: must be 0x and 8 uppercase hex digits`;
     - a float `value` that does not parse to its bits (`{ "bits": "0x3F800000", "value": 2.0 }`) gives `$.heights[0].value: 2 does not have bits 0x3F800000`;
-    - a `fieldId` with 3 digits;
-    - an unknown `kind`;
-    - a refusal with neither `expectedError` nor `expectedConfigErrors`;
-    - `aimYaw` 65536.
+    - a `fieldId` with 3 digits gives `$.config[0].fieldId: must be 0x and 4 uppercase hex digits`;
+    - an unknown `kind` gives `$.kind: must be "valid" or "refusal"`;
+    - a refusal with neither `expectedError` nor `expectedConfigErrors` gives `$: a refusal case needs expectedError or expectedConfigErrors`;
+    - `aimYaw` 65536 gives `$.command.aimYaw: 65536 is outside [0, 65535]`.
+  - The stream and collision cases are built in the test (the `seeded` stream from the placeholder config, the worked example state and `two-steps`' steps, with its lengths and checksum computed from the contract's layout; `tiny-world` with `heights[8]` written `-0.0`), and each malformed row edits one value of a case the other two tests parse, written first in the JSON.
 
   Confirm it fails.
 
@@ -2325,8 +2329,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - Input valid cases: `command` and `validate`.
     - Collision valid cases: top-level `originX`, `originZ`, `cellSize`, `gridCellSize`, `columns`, `rows`, `meshCount` (must equal the length of `meshes`), `heights`, and `meshes` (`meshId`, `vertices` as `[x, y, z]` float objects, flat `indices`), with `fileLength`, `checksum` and `derived`.
     - Stream valid cases: `rulesRevision`, `stepHz`, `characterCount`, `stepCount`, `seed`, `matchSalt`, `collisionChecksum`, `config` entries, `initialStateHex` and `steps` (`step`, `commands` with `characterIndex` plus the six command fields, `expectedHash`), with `configLength`, `initialStateLength`, `stepsLength`, `fileLength` and `checksum`. Its `RecordedStream` is built from the config entries written as a config block and read with `ConfigBlock`'s standalone decode, the state bytes and the steps, through the `RecordedStream` constructor from Phase 2.
-    - Refusal cases: `base`, `mutations`, then `expectedError` or `expectedConfigErrors`, plus optional `refusedAt` (`"open"`) and `collisionFixtures`.
-  - **Errors.** Every problem throws `GoldenCaseException("<JSON path>: <problem>")`.
+    - Refusal cases: `base`, `mutations`, then `expectedError` or `expectedConfigErrors`, plus optional `refusedAt` (`"open"`) and `collisionFixtures`. An absent `expectedError` or `refusedAt` parses to null, and an absent `collisionFixtures` or `expectedConfigErrors` to an empty array.
+  - **Errors.** Every problem throws `GoldenCaseException("<JSON path>: <problem>")`, with the messages T231 gives.
   - Makes T231 pass.
 - [ ] T235 [P] [US6] Complete `CollisionFile.Decode` in `src/MmoEngine.SimCore/Formats/CollisionFile.cs` and the counting pass in `src/MmoEngine.SimCore/Collision/UniformGrid.cs` with checks 5, 6, 8 and 9 of contracts/collision-data-format.md#check-order and #limits, using the contract's messages. Leave the order of checks 1–4 and 7 from Phase 2 unchanged.
   - **Check 5.** `fileLength` ≤ 268,435,456 (`Oversized`, 8). `columns` and `rows` in [2, 4097]: below gives `OutOfRange`, above gives `Oversized`, at 32 and 36. `meshCount` ≤ 4096 (`Oversized`, 40).
