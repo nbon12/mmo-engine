@@ -1422,6 +1422,49 @@ The design documents settled these points, which the spec leaves open. They are 
   `ScenarioPlan.Run` (a `SimWorld` stepped over a candidate schedule), so the point-blank step is
   found and every shot's outcome checked before the stream is returned. T212 and the
   contracts/simcore-cli.md rows now say so.
+- **T199's flights alternate between a level and a 2° launch (Phase 7 review).** T199 launched every
+  flight 2° above +X. That path passes 1.77 m (class 0) and 1.48 m (class 1) from the target's
+  bounding-sphere centre, whose radius is about 0.95 m, so `SegmentCapsule.ClipToSphere` always missed:
+  the capsule tests and the character hit never ran while bytes were counted, and an allocation there
+  would have passed. A level launch alone is not enough either: at 20 Hz a class-0 shot meets the
+  target in its first segment, so it would never return Flying. The test now builds both launch structs
+  before the count and switches to the other after each Hit or Expired (struct, integer and bool
+  assignments). The level shot strikes the head (class 0) or the torso (class 1), and the 2° shot ends
+  at its range (class 0) or on the terrain (class 1). The test counts Flying returns, Hits on target 2
+  with Kind Character, and the other ends, and requires at least one of each. T199 now says so.
+- **T193 checks the hit point against the predicted entry point (Phase 7 review).** The point half of
+  US5.2's Then was checked only as "a point on the struck capsule's surface", which an exit point would
+  also satisfy. The test now also requires the point to lie within 1e-3 m of the entry point that
+  `ProjectileReference.PredictFirstHit` names, the tolerance `ProjectileScenarioTests` uses. The
+  measured error is about 1.5e-6 m. T193 now says so.
+- **T200 and T201 compare the stored positions with the contract's expression written out in the test
+  (Phase 7 review).** Both compared each stored Position with `Ballistics.PositionAt`, the function
+  stage 5 itself calls, so a change to its arithmetic would have moved both sides and passed. They now
+  compare with `ProjectileWorlds.ContractPosition`, the test support's own copy of
+  data-model.md#projectile's expression. The US5.1 row of the scenario coverage table also names
+  `BallisticsTests.PositionAtHasTheContractBits` (T188), which pins `PositionAt` itself. T200 and T201
+  now say so.
+- **A planned definition that the configuration cannot give is a `ScenarioRefusedException`, and a
+  probe-run fault is a `StepFaultException` (T212, Phase 7 review).** T212 had the planned definitions
+  throw `InvalidOperationException`, and `ScenarioPlan.Run` turned a step fault into one too. Neither is
+  a type `streams record` catches. A configuration that passes `config check` could therefore crash the
+  command with an unhandled exception and exit 1: `weapons[0].muzzleSpeed` 5 puts
+  `mesh-occludes-shot`'s target out of reach; a 10 km range with a 60 s lifetime leaves a
+  `shots-at-known-distances` shot flying at the last step; and a one-weapon configuration has no
+  launcher slot to set to zero spread, which threw `ArgumentException`. The contract keeps exit 1 for a
+  step fault and exit 2 for a refused input. A broad catch of `InvalidOperationException` or
+  `ArgumentException` was rejected for the reason given for T106 to T108 above: it would also turn
+  real programming errors into exit 2. Every plan refusal now throws the dedicated
+  `ScenarioRefusedException` (its scenario name and reason, message `<name>: <reason>`). That covers an
+  aim out of reach, a missing weapon slot, a missing mesh or crest crossing, a point-blank step that never
+  comes, and a shot that does not end as planned. `streams record` catches exactly that type around the
+  build and prints `streams record: <name>: <reason>`. It writes nothing and exits 2.
+  `ScenarioPlan.Run` throws `new StepFaultException(step, fault)`, as `StreamRunner` does, so a probe
+  fault exits 1 with the contract's `step <n> faulted: <code> at <path>` message. Its world comes from
+  an internal factory, which the test uses to supply a world with no collision-candidate capacity. A
+  valid configuration cannot otherwise fault. T212 and contracts/simcore-cli.md#streams-record now say
+  so. The `projectile-hits-hitbox` and `mesh-occludes-shot` rows of the named-stream table also name
+  their zero-spread rifle override now, which T212 already gave.
 
 ## Delivery
 

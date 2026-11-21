@@ -1,8 +1,11 @@
+using System.Text.RegularExpressions;
 using MmoEngine.SimCore.Batch;
+using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Geometry;
 using MmoEngine.SimCore.Inputs;
 using MmoEngine.SimCore.Server;
 using MmoEngine.SimCore.Tests.Support;
+using MmoEngine.SimCore.World;
 
 namespace MmoEngine.SimCore.Tests.Scenarios;
 
@@ -12,9 +15,11 @@ namespace MmoEngine.SimCore.Tests.Scenarios;
 /// and keeps its characters in ascending ID; it builds only a whole number of steps at the rate asked, over
 /// a configuration whose weapon slots name its weapons, from a state the serializer accepts; and
 /// <see cref="ScenarioDefinition.Record"/> and <see cref="ScenarioDefinition.WithExpectedHashes"/> take the
-/// expected hashes from a run whose records match the steps one for one. Every stream is built over
-/// <see cref="TestWorlds.TestWorld"/> with <see cref="TestConfigs.Default"/>; the committed stream is read
-/// through <see cref="RepoPaths"/>, read-only.
+/// expected hashes from a run whose records match the steps one for one. A planned definition refuses, with
+/// a <see cref="ScenarioRefusedException"/>, a configuration its plan cannot meet, and its probe run reports
+/// a faulted step as the <see cref="StepFaultException"/> <see cref="StreamRunner"/> throws. Every stream is
+/// built over <see cref="TestWorlds.TestWorld"/> with <see cref="TestConfigs.Default"/> or a valid edit of it;
+/// the committed stream is read through <see cref="RepoPaths"/>, read-only.
 /// </summary>
 public sealed class ScenarioDefinitionTests
 {
@@ -28,6 +33,9 @@ public sealed class ScenarioDefinitionTests
 
     /// <summary>Rows of <see cref="WithExpectedHashesRefusesRecordsThatDoNotMatchTheSteps"/>.</summary>
     public static TheoryData<string> MismatchedRecordsCases => ["missing-record", "extra-bytes"];
+
+    /// <summary>Rows of <see cref="PlannedBuildRefusesAConfigurationItsPlanCannotMeet"/>.</summary>
+    public static TheoryData<string> RefusedPlanCases => ["aim-out-of-reach", "still-flying", "missing-weapon-slot"];
 
     /// <summary>
     /// Given (<c>no-characters</c>) no characters, (<c>zero-duration</c>) a duration of 0 s, or
@@ -155,6 +163,94 @@ public sealed class ScenarioDefinitionTests
         Assert.Equal("records", thrown.ParamName);
         Assert.StartsWith(message, thrown.Message, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-record step 3: Given a configuration that passes
+    /// <see cref="SimConfigValidator"/> but that a planned definition's plan cannot meet,
+    /// (<c>aim-out-of-reach</c>) <c>mesh-occludes-shot</c> with <c>weapons[0].muzzleSpeed</c> 5, which cannot
+    /// reach the target's torso 25 m away; (<c>still-flying</c>) <c>shots-at-known-distances</c> with
+    /// <c>projectileClasses[0].maxRangeM</c> 10000 and <c>lifetimeMs</c> 60000, so the clearing rifle shot is
+    /// still flying at the last step; or (<c>missing-weapon-slot</c>) <c>shots-at-known-distances</c> with one
+    /// weapon and <c>input.weaponSlots</c> 1, so there is no launcher slot to set to zero spread, When the
+    /// definition is built over the test world, Then it throws a <see cref="ScenarioRefusedException"/> whose
+    /// <c>Scenario</c> is the definition's name, whose message is <c>&lt;name&gt;: &lt;reason&gt;</c>, and whose
+    /// reason is <c>(&lt;x&gt;, &lt;y&gt;, &lt;z&gt;) is out of reach of slot 0's weapon from (&lt;x&gt;, &lt;y&gt;, &lt;z&gt;).</c>,
+    /// exactly <c>at 30 Hz 1 projectiles are still flying at the last step.</c>, or exactly
+    /// <c>the configuration has no weapons[1], whose spread and recoil kick the scenario sets to 0.</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RefusedPlanCases))]
+    public void PlannedBuildRefusesAConfigurationItsPlanCannotMeet(string caseName)
+    {
+        var (scenario, config) = RefusedPlan(caseName);
+        Assert.Empty(SimConfigValidator.Errors(config));
+
+        var thrown = Assert.Throws<ScenarioRefusedException>(() => ScenarioCatalog.Get(scenario).Build(config, TestWorlds.TestWorld));
+
+        Assert.Equal(scenario, thrown.Scenario);
+        Assert.Equal($"{scenario}: {thrown.Reason}", thrown.Message);
+        switch (caseName)
+        {
+            case "aim-out-of-reach":
+                Assert.Matches(new Regex(@"^\(-?[0-9.]+, -?[0-9.]+, -?[0-9.]+\) is out of reach of slot 0's weapon from \(-?[0-9.]+, -?[0-9.]+, -?[0-9.]+\)\.$"), thrown.Reason);
+                break;
+            case "still-flying":
+                Assert.Equal("at 30 Hz 1 projectiles are still flying at the last step.", thrown.Reason);
+                break;
+            default:
+                Assert.Equal("the configuration has no weapons[1], whose spread and recoil kick the scenario sets to 0.", thrown.Reason);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-record step 3: Given a planned definition and a plan of it at 30 Hz
+    /// over the test world whose world is a <see cref="SimWorld"/> with a collision candidate capacity of 0,
+    /// so every query overflows, When the plan runs one character walking forward from the flat-run start,
+    /// Then it throws a <see cref="StepFaultException"/> for step 1 with code <c>QueryCapacityExceeded</c>
+    /// naming character element 0, and the message <c>step 1 faulted: QueryCapacityExceeded at &lt;path&gt;</c>,
+    /// the exception <see cref="StreamRunner"/> throws for a faulted step, so <c>streams record</c> reports a
+    /// fault in a plan's probe run with exit 1, as it reports one in the recording.
+    /// </summary>
+    [Fact]
+    public void PlanRunReportsAFaultedProbeStepAsAStepFault()
+    {
+        const int Hz = 30;
+        var walker = new ScenarioCharacter(1, TestWorldGenerator.Features.FlatRunStart, 0, _ => Buttons.Forward);
+        var definition = ScenarioDefinition.Planned("probe-fault", Hz, 1.0, _ => [walker]);
+        var plan = new ScenarioPlan(
+            definition,
+            TestConfigs.At(Hz),
+            TestWorlds.TestWorld,
+            Hz,
+            Hz,
+            static (compiled, collision) => new SimWorld(compiled, collision, candidateCapacity: 0));
+
+        var thrown = Assert.Throws<StepFaultException>(() => plan.Run([walker]));
+
+        Assert.Equal(1u, thrown.Step);
+        Assert.Equal(StepFaultCode.QueryCapacityExceeded, thrown.Fault.Code);
+        Assert.Equal(0, thrown.Fault.ElementIndex);
+        Assert.StartsWith("characters[0].", thrown.Fault.Path, StringComparison.Ordinal);
+        Assert.Equal($"step 1 faulted: QueryCapacityExceeded at {thrown.Fault.Path}", thrown.Message);
+    }
+
+    /// <summary>The scenario and the valid configuration of a <see cref="RefusedPlanCases"/> row.</summary>
+    private static (string Scenario, SimConfig Config) RefusedPlan(string caseName) => caseName switch
+    {
+        "aim-out-of-reach" => ("mesh-occludes-shot", TestConfigs.With(static config => config.Weapons![0]!.MuzzleSpeed = 5f)),
+        "still-flying" => ("shots-at-known-distances", TestConfigs.With(static config =>
+        {
+            config.ProjectileClasses![0]!.MaxRangeM = 10000f;
+            config.ProjectileClasses![0]!.LifetimeMs = 60000;
+        })),
+        "missing-weapon-slot" => ("shots-at-known-distances", TestConfigs.With(static config =>
+        {
+            config.Weapons = [config.Weapons![0]];
+            config.Input!.WeaponSlots = 1;
+        })),
+        _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Not a row of PlannedBuildRefusesAConfigurationItsPlanCannotMeet."),
+    };
 
     /// <summary>A character standing at the flat-run start, holding nothing.</summary>
     private static ScenarioCharacter Character(uint id) => new(id, TestWorldGenerator.Features.FlatRunStart, 0, _ => default(Buttons));

@@ -411,14 +411,18 @@ public static class ScenarioCatalog
     /// target's post-movement hitboxes, found by stepping a <see cref="SimWorld"/> over the schedule
     /// (<see cref="ScenarioPlan.Run"/>): the point-blank shot. The target holds no button after that step.
     /// </summary>
-    /// <exception cref="InvalidOperationException">At Build, when no step puts the shooter's eye inside the target's hitboxes, or a shot does not strike its planned part.</exception>
-    private static ScenarioDefinition ProjectileHitsHitbox() => ScenarioDefinition.Planned(
-        "projectile-hits-hitbox",
-        DefaultStepRateHz,
-        durationSeconds: 8.0,
-        PlanProjectileHitsHitbox,
-        ZeroSpreadAndRecoil(RifleSlot),
-        ProjectileHitsHitboxSalt);
+    /// <exception cref="ScenarioRefusedException">At Build, when an aimed centre is out of the rifle's reach, no step puts the shooter's eye inside the target's hitboxes, or a shot does not strike its planned part.</exception>
+    private static ScenarioDefinition ProjectileHitsHitbox()
+    {
+        const string name = "projectile-hits-hitbox";
+        return ScenarioDefinition.Planned(
+            name,
+            DefaultStepRateHz,
+            durationSeconds: 8.0,
+            PlanProjectileHitsHitbox,
+            ZeroSpreadAndRecoil(name, RifleSlot),
+            ProjectileHitsHitboxSalt);
+    }
 
     /// <summary>
     /// <c>mesh-occludes-shot</c> (US5.3), 1 s: the shooter, ID 1, at
@@ -428,34 +432,38 @@ public static class ScenarioCatalog
     /// configuration sets the rifle's spread and recoil kick to 0, as <c>projectile-hits-hitbox</c>'s does,
     /// and the shooter presses Fire in the first step aimed at the target's torso centre (<see cref="AimAt"/>).
     /// </summary>
-    /// <exception cref="InvalidOperationException">At Build, when <see cref="CollisionWorld.SegmentQuery"/> finds no wall triangle first on the line from the shooter's eye to the aimed centre.</exception>
-    private static ScenarioDefinition MeshOccludesShot() => ScenarioDefinition.Planned(
-        "mesh-occludes-shot",
-        DefaultStepRateHz,
-        durationSeconds: 1.0,
-        static plan =>
-        {
-            var features = TestWorldGenerator.Features;
-            var shooterStart = features.WallShooterStart;
-            var targetStart = features.WallTargetStart;
-            var targetYaw = Facing(targetStart, shooterStart);
-            var eye = Eye(plan.Config, shooterStart, Stance.Standing);
-            var torso = PartCentre(plan.Config, targetStart, targetYaw, Stance.Standing, HitboxPart.Torso);
-            var wall = MeshTriangleRange(plan.World, features.WallMeshId);
-            if (!plan.World.SegmentQuery(eye, torso, out var hit) || hit.Kind != HitKind.Mesh || !wall.Contains(hit.TriangleId))
+    /// <exception cref="ScenarioRefusedException">At Build, when the world has no wall mesh, <see cref="CollisionWorld.SegmentQuery"/> finds no wall triangle first on the line from the shooter's eye to the aimed centre, or the centre is out of the rifle's reach.</exception>
+    private static ScenarioDefinition MeshOccludesShot()
+    {
+        const string name = "mesh-occludes-shot";
+        return ScenarioDefinition.Planned(
+            name,
+            DefaultStepRateHz,
+            durationSeconds: 1.0,
+            static plan =>
             {
-                throw new InvalidOperationException($"{plan.Name}: no wall triangle lies first on the line from the shooter's eye {eye} to the target's torso centre {torso}.");
-            }
+                var features = TestWorldGenerator.Features;
+                var shooterStart = features.WallShooterStart;
+                var targetStart = features.WallTargetStart;
+                var targetYaw = Facing(targetStart, shooterStart);
+                var eye = Eye(plan.Config, shooterStart, Stance.Standing);
+                var torso = PartCentre(plan.Config, targetStart, targetYaw, Stance.Standing, HitboxPart.Torso);
+                var wall = MeshTriangleRange(plan, features.WallMeshId);
+                if (!plan.World.SegmentQuery(eye, torso, out var hit) || hit.Kind != HitKind.Mesh || !wall.Contains(hit.TriangleId))
+                {
+                    throw new ScenarioRefusedException(plan.Name, $"no wall triangle lies first on the line from the shooter's eye {eye} to the target's torso centre {torso}.");
+                }
 
-            var aim = AimAt(plan, eye, torso, RifleSlot);
-            return
-            [
-                new ScenarioCharacter(ShooterId, shooterStart, aim.Yaw, static time => time.Entry == 0 ? Buttons.Fire : 0) { AimPitch = aim.Pitch },
-                new ScenarioCharacter(TargetId, targetStart, targetYaw, static _ => 0),
-            ];
-        },
-        ZeroSpreadAndRecoil(RifleSlot),
-        MeshOccludesShotSalt);
+                var aim = AimAt(plan, eye, torso, RifleSlot);
+                return
+                [
+                    new ScenarioCharacter(ShooterId, shooterStart, aim.Yaw, static time => time.Entry == 0 ? Buttons.Fire : 0) { AimPitch = aim.Pitch },
+                    new ScenarioCharacter(TargetId, targetStart, targetYaw, static _ => 0),
+                ];
+            },
+            ZeroSpreadAndRecoil(name, RifleSlot),
+            MeshOccludesShotSalt);
+    }
 
     /// <summary>
     /// <c>shots-at-known-distances</c> (US5-IT's agreement half), 10.5 s: five characters, Standing and
@@ -478,18 +486,22 @@ public static class ScenarioCatalog
     /// and the class's low-root pitch to the aim point (<see cref="AimAt"/>). Build steps a
     /// <see cref="SimWorld"/> over the commands and checks every shot's outcome.
     /// </summary>
-    /// <exception cref="InvalidOperationException">At Build, naming the shot, when a shot's outcome is not its placement's (a Character hit on the target's torso for the flat shots, a Mesh hit on a wall triangle for the wall shots, a Terrain hit short of the crest line for the face shots, no hit before the crest line for the clearing shots), or a projectile is still flying at the last step.</exception>
-    private static ScenarioDefinition ShotsAtKnownDistances() => ScenarioDefinition.Planned(
-        "shots-at-known-distances",
-        DefaultStepRateHz,
-        durationSeconds: 10.5,
-        PlanShotsAtKnownDistances,
-        static config =>
-        {
-            ZeroSpreadAndRecoil(RifleSlot)(config);
-            ZeroSpreadAndRecoil(LauncherSlot)(config);
-        },
-        ShotsAtKnownDistancesSalt);
+    /// <exception cref="ScenarioRefusedException">At Build, when the configuration has no launcher slot, the world has no wall mesh or ridge crossing, an aim point is out of its weapon's reach, a shot's outcome is not its placement's (naming the shot: a Character hit on the target's torso for the flat shots, a Mesh hit on a wall triangle for the wall shots, a Terrain hit short of the crest line for the face shots, no hit before the crest line for the clearing shots), or a projectile is still flying at the last step.</exception>
+    private static ScenarioDefinition ShotsAtKnownDistances()
+    {
+        const string name = "shots-at-known-distances";
+        return ScenarioDefinition.Planned(
+            name,
+            DefaultStepRateHz,
+            durationSeconds: 10.5,
+            PlanShotsAtKnownDistances,
+            static config =>
+            {
+                ZeroSpreadAndRecoil(name, RifleSlot)(config);
+                ZeroSpreadAndRecoil(name, LauncherSlot)(config);
+            },
+            ShotsAtKnownDistancesSalt);
+    }
 
     /// <summary>The characters of <c>projectile-hits-hitbox</c> at the plan's rate.</summary>
     private static ScenarioCharacter[] PlanProjectileHitsHitbox(ScenarioPlan plan)
@@ -552,7 +564,7 @@ public static class ScenarioCatalog
 
         if (pointBlank < 0)
         {
-            throw new InvalidOperationException($"{plan.Name}: at {plan.StepRateHz} Hz no step puts the shooter's eye inside the running target's hitboxes.");
+            throw new ScenarioRefusedException(plan.Name, $"at {plan.StepRateHz} Hz no step puts the shooter's eye inside the running target's hitboxes.");
         }
 
         var characters = Characters(pointBlank);
@@ -560,8 +572,9 @@ public static class ScenarioCatalog
         var struck = Array.ConvertAll(hits, hit => hit.Kind == HitKind.Character && hit.TargetId == TargetId ? hit.Hitbox : HitboxPart.None);
         if (!struck.AsSpan(0, System.Math.Min(struck.Length, parts.Length)).SequenceEqual(parts) || hits.Length != parts.Length + 1 || struck[^1] == HitboxPart.None || hits[^1].T != 0f)
         {
-            throw new InvalidOperationException(
-                $"{plan.Name}: at {plan.StepRateHz} Hz the shots struck [{string.Join(", ", hits)}]; planned Head, Torso and Legs standing, then crouched, then the point-blank hit.");
+            throw new ScenarioRefusedException(
+                plan.Name,
+                $"at {plan.StepRateHz} Hz the shots struck [{string.Join(", ", hits)}]; planned Head, Torso and Legs standing, then crouched, then the point-blank hit.");
         }
 
         return characters;
@@ -629,7 +642,7 @@ public static class ScenarioCatalog
         ]));
 
         var probe = plan.Run(characters);
-        var wall = MeshTriangleRange(plan.World, features.WallMeshId);
+        var wall = MeshTriangleRange(plan, features.WallMeshId);
         var shots = probe.SelectMany(step => step.Shots).ToArray();
         var hits = probe.SelectMany(step => step.Hits).ToArray();
         foreach (var (shooterId, shooterShots) in planned)
@@ -650,25 +663,35 @@ public static class ScenarioCatalog
                 };
                 if (!outcome)
                 {
-                    throw new InvalidOperationException(
-                        $"{plan.Name}: at {plan.StepRateHz} Hz shooter {shooterId}'s shot {j} ({expected.Placement}, slot {expected.Slot}) is {(shot is null ? "not fired" : shot.ToString())} with hits [{string.Join(", ", hit)}]; it does not end as its placement says.");
+                    throw new ScenarioRefusedException(
+                        plan.Name,
+                        $"at {plan.StepRateHz} Hz shooter {shooterId}'s shot {j} ({expected.Placement}, slot {expected.Slot}) is {(shot is null ? "not fired" : shot.ToString())} with hits [{string.Join(", ", hit)}]; it does not end as its placement says.");
                 }
             }
         }
 
         if (probe[^1].ProjectileCount != 0)
         {
-            throw new InvalidOperationException($"{plan.Name}: at {plan.StepRateHz} Hz {probe[^1].ProjectileCount} projectiles are still flying at the last step.");
+            throw new ScenarioRefusedException(plan.Name, $"at {plan.StepRateHz} Hz {probe[^1].ProjectileCount} projectiles are still flying at the last step.");
         }
 
         return [.. characters];
     }
 
-    /// <summary>The configuration override that sets <c>weapons[slot]</c>'s spread and recoil kick to 0, so its shots fly where they are aimed.</summary>
-    private static Action<SimConfig> ZeroSpreadAndRecoil(byte slot) => config =>
+    /// <summary>
+    /// The configuration override of scenario <paramref name="name"/> that sets <c>weapons[slot]</c>'s spread
+    /// and recoil kick to 0, so its shots fly where they are aimed.
+    /// </summary>
+    /// <exception cref="ScenarioRefusedException">When applied, the configuration has no <c>weapons[slot]</c> (a valid one-weapon configuration has no launcher slot).</exception>
+    private static Action<SimConfig> ZeroSpreadAndRecoil(string name, byte slot) => config =>
     {
-        var weapons = config.Weapons ?? throw new ArgumentException("The configuration has no weapons.", nameof(config));
-        var weapon = (slot < weapons.Count ? weapons[slot] : null) ?? throw new ArgumentException($"weapons[{slot}] is missing.", nameof(config));
+        var weapons = config.Weapons;
+        var weapon = weapons is not null && slot < weapons.Count ? weapons[slot] : null;
+        if (weapon is null)
+        {
+            throw new ScenarioRefusedException(name, $"the configuration has no weapons[{slot}], whose spread and recoil kick the scenario sets to 0.");
+        }
+
         weapon.SpreadHalfAngleDeg = 0f;
         weapon.RecoilKickPitchDeg = 0f;
         weapon.RecoilKickYawDeg = 0f;
@@ -698,7 +721,7 @@ public static class ScenarioCatalog
     /// atan((v² − √(…)) / (g·d)) without its cancellation. Both go through
     /// <see cref="SimMath.RoundToInt"/> to binary angle units.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The point is out of the weapon's reach.</exception>
+    /// <exception cref="ScenarioRefusedException">The point is out of the weapon's reach.</exception>
     private static ScenarioAim AimAt(ScenarioPlan plan, Vec3 eye, Vec3 point, byte slot)
     {
         var weapon = plan.Config.Weapons[slot];
@@ -711,7 +734,7 @@ public static class ScenarioCatalog
         var discriminant = (v2 * v2) - (g * lift);
         if (!(discriminant >= 0f))
         {
-            throw new InvalidOperationException($"{plan.Name}: {point} is out of reach of slot {slot}'s weapon from {eye}.");
+            throw new ScenarioRefusedException(plan.Name, $"{point} is out of reach of slot {slot}'s weapon from {eye}.");
         }
 
         var pitch = SimMath.Atan2(lift, d * (v2 + SimMath.Sqrt(discriminant)));
@@ -737,7 +760,7 @@ public static class ScenarioCatalog
     }
 
     /// <summary>Where the heading <paramref name="yaw"/> from <paramref name="start"/> crosses <paramref name="line"/>, in the X–Z plane, at the start's height.</summary>
-    /// <exception cref="InvalidOperationException">The heading is parallel to the line.</exception>
+    /// <exception cref="ScenarioRefusedException">The heading is parallel to the line.</exception>
     private static Vec3 Crossing(Vec3 start, ushort yaw, TestWorldLine line, string name)
     {
         SimMath.SinCosBinaryAngle(yaw, out var hx, out var hz);
@@ -746,7 +769,7 @@ public static class ScenarioCatalog
         var across = (hx * lz) - (hz * lx);
         if (across == 0f)
         {
-            throw new InvalidOperationException($"{name}: the heading {yaw} never crosses the line {line}.");
+            throw new ScenarioRefusedException(name, $"the heading {yaw} never crosses the line {line}.");
         }
 
         var fx = line.From.X - start.X;
@@ -772,9 +795,10 @@ public static class ScenarioCatalog
     /// The triangle IDs of mesh <paramref name="meshId"/> (contracts/collision-data-format.md#triangle-ids):
     /// the heightfield triangle count plus the mesh triangles' global indices in file order.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The world has no such mesh.</exception>
-    private static TriangleIdRange MeshTriangleRange(CollisionWorld world, uint meshId)
+    /// <exception cref="ScenarioRefusedException">The plan's world has no such mesh.</exception>
+    private static TriangleIdRange MeshTriangleRange(ScenarioPlan plan, uint meshId)
     {
+        var world = plan.World;
         var first = world.HeightfieldTriangleCount;
         foreach (var mesh in world.Data.Meshes)
         {
@@ -787,7 +811,7 @@ public static class ScenarioCatalog
             first += count;
         }
 
-        throw new InvalidOperationException($"The collision world has no mesh {meshId}.");
+        throw new ScenarioRefusedException(plan.Name, $"the collision world has no mesh {meshId}.");
     }
 
     /// <summary>
@@ -950,11 +974,25 @@ public sealed class ScenarioPlan
 {
     private readonly ScenarioDefinition _definition;
     private readonly SimConfig _config;
+    private readonly Func<CompiledConfig, CollisionWorld, SimWorld> _newWorld;
 
-    internal ScenarioPlan(ScenarioDefinition definition, SimConfig config, CollisionWorld world, int stepRateHz, int stepCount)
+    /// <summary>
+    /// A plan of <paramref name="definition"/> at <paramref name="stepRateHz"/>. <paramref name="newWorld"/>
+    /// makes the world <see cref="Run"/> steps, a new <see cref="SimWorld"/> when null: the tests' way to give
+    /// it a world whose collision queries overflow and see a probe step fault.
+    /// </summary>
+    /// <exception cref="ConfigValidationException">The configuration is invalid.</exception>
+    internal ScenarioPlan(
+        ScenarioDefinition definition,
+        SimConfig config,
+        CollisionWorld world,
+        int stepRateHz,
+        int stepCount,
+        Func<CompiledConfig, CollisionWorld, SimWorld>? newWorld = null)
     {
         _definition = definition;
         _config = config;
+        _newWorld = newWorld ?? (static (compiled, collision) => new SimWorld(compiled, collision));
         Config = CompiledConfig.Create(config);
         World = world;
         StepRateHz = stepRateHz;
@@ -978,14 +1016,17 @@ public sealed class ScenarioPlan
 
     /// <summary>
     /// The stream these characters give, stepped on a new <see cref="SimWorld"/> reset with its initial state
-    /// and the definition's match salt: one <see cref="ScenarioProbeStep"/> per entry, in order.
+    /// and the definition's match salt: one <see cref="ScenarioProbeStep"/> per entry, in order. A step that
+    /// faults stops the run with the <see cref="StepFaultException"/> <see cref="StreamRunner"/> would throw
+    /// for it (<c>step &lt;n&gt; faulted: &lt;code&gt; at &lt;path&gt;</c>, n the step that did not commit), so
+    /// <c>simcore streams record</c> reports a fault in a plan's probe run as it reports one in the recording.
     /// </summary>
     /// <exception cref="ArgumentException">The characters are empty or an ID repeats.</exception>
-    /// <exception cref="InvalidOperationException">A step faults.</exception>
+    /// <exception cref="StepFaultException">A step faults.</exception>
     public IReadOnlyList<ScenarioProbeStep> Run(IReadOnlyList<ScenarioCharacter> characters)
     {
         var stream = _definition.Assemble(_config, World, StepRateHz, StepCount, ScenarioDefinition.SortedCharacters(characters));
-        var world = new SimWorld(Config, World);
+        var world = _newWorld(Config, World);
         world.Reset(stream.InitialState.Span, stream.MatchSalt);
         var steps = new List<ScenarioProbeStep>(stream.Steps.Count);
         foreach (var entry in stream.Steps)
@@ -994,7 +1035,7 @@ public sealed class ScenarioPlan
             var report = world.Step(commands);
             if (report.Fault.Code != StepFaultCode.None)
             {
-                throw new InvalidOperationException($"{Name}: step {entry.Step} faulted with {report.Fault.Code} at '{report.Fault.Path}'.");
+                throw new StepFaultException(entry.Step, report.Fault);
             }
 
             var (poses, projectiles) = ScenarioProbeStep.Read(report.State);
@@ -1235,7 +1276,8 @@ public sealed class ScenarioDefinition
     /// <exception cref="ArgumentNullException">The configuration or the world is null.</exception>
     /// <exception cref="ArgumentException">The duration is not a whole number of steps at the rate, or a plan's characters are empty or repeat an ID.</exception>
     /// <exception cref="ConfigValidationException">A planned definition's configuration is invalid.</exception>
-    /// <exception cref="InvalidOperationException">A planned definition's plan refuses the world or the configuration, such as a shot that does not end as planned.</exception>
+    /// <exception cref="ScenarioRefusedException">A planned definition cannot be built on the configuration or the world, such as an aim point out of reach, a weapon slot the configuration lacks or a shot that does not end as planned.</exception>
+    /// <exception cref="StepFaultException">A step of a planned definition's probe run (<see cref="ScenarioPlan.Run"/>) faults.</exception>
     public RecordedStream Build(SimConfig baseConfig, CollisionWorld world, int? stepRateHz = null)
     {
         ArgumentNullException.ThrowIfNull(baseConfig);

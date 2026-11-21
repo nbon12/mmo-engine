@@ -133,10 +133,19 @@ writes under `simcore/streams/`; the tests open stream files read-only.
    and the commands, against the collision file in `--content` that the scenario names.
 3. Run it through the server build (`StreamRunner`) to compute every step's expected hash. A step
    fault stops the command with exit 1 and prints `streams record: <name>: <message>` on stderr,
-   where the message is the `StepFaultException`'s (`step <n> faulted: <code> at <path>`). A refusal
-   (an invalid configuration, printed as its `path: message` lines; a missing collision file, named on
-   stderr; a refused content file per [content files](#content-files)) exits 2. Either way nothing is
-   written. A valid configuration does not fault, so the test
+   where the message is the `StepFaultException`'s (`step <n> faulted: <code> at <path>`). A step that
+   faults in a planned definition's probe run (`ScenarioPlan.Run`, which `projectile-hits-hitbox`,
+   `mesh-occludes-shot` and `shots-at-known-distances` step at build time) throws the same
+   `StepFaultException` and is reported the same way. A refusal exits 2: an invalid configuration,
+   printed as its `path: message` lines; a missing collision file, named on stderr; a refused content
+   file per [content files](#content-files); or a planned definition that the configuration or the
+   content cannot give, such as an aim point out of the weapon's reach, a weapon slot the
+   configuration lacks (a valid one-weapon configuration has no launcher slot), a mesh the collision
+   file lacks or a shot that does not end as its plan says. The last is a `ScenarioRefusedException`
+   (`src/MmoEngine.SimCore.Server/ScenarioRefusedException.cs`), printed as
+   `streams record: <name>: <reason>`, for example
+   `streams record: shots-at-known-distances: at 30 Hz 1 projectiles are still flying at the last step.`
+   Either way nothing is written. A valid configuration does not fault, so the test
    `RecordExitsOneWhenAServerRunFaultsAndWritesNothing` injects the fault through the CLI's internal
    stream-runner parameter (`Program.Run`'s `runStream`); the CLI never calls core internals.
 4. Write `<out>/<name>.mmrs` with `rulesRevision` = `SimCoreVersion.RulesRevision`
@@ -635,8 +644,8 @@ scenarios 1 and 2).
 | `launcher-arc` | one character, the launcher | fires the heavy projectile horizontally from the flat-run start over the open terrain in front of it, which holds no mesh, in its first step, with no buttons after it, 1.5 s in all; the arc meets the terrain at the closed-form step; also the measurement's projectile step | US5.1 |
 | `reload-and-empty` | one character, the rifle with 2 rounds in the magazine | fires 2 shots, reports Empty, reloads from reserve after the reload time; switches slot and presses Fire while Switching and Reloading; then releases Fire with slot 1 still selected to the end | US4.3, US4.6 |
 | `heat-overheat` | 30 Hz; one character; slot 0 is the heat test weapon: the rifle with `heatPerShot` 10000 and every other value the rifle's (600 rpm, magazine 30, `overheatThreshold` 100000, `heatRecoveryLevel` 40000, `heatCooldownPerSecond` 50000, `heatCooldownDelayMs` 250) | starts at step 0 and holds Fire for 72 steps (1–72): shots at steps 1, 4, …, 28; the 10th shot, at step 28, brings Heat to 3,000,000 stored units (100000 × 30) and sets Overheated; Fire is blocked with `FireBlock.Overheated` at steps 29–70; cooling starts at step 36, after the 8-step delay, at 50,000 units a step, and at step 71 brings Heat to 1,200,000 (40000 × 30), the recovery level, so the 11th shot fires at step 71; step 72 fires nothing and reports no block | US4.4, US4.6 |
-| `projectile-hits-hitbox` | two characters: shooter and target | rifle shots at the standing and the crouched target striking head, torso and legs; a projectile that crosses a whole hitbox within one step; a point-blank shot that starts inside a hitbox | US5.2, US5.6, the layout half of US5.5 (the struck parts match the stance's layout), Edge cases: point-blank; the bit-for-bit half of US5.5 is the [cross-build tables](wasm-api.md#cross-build-tables) |
-| `mesh-occludes-shot` | two characters, the target behind the wall | the shot hits the mesh, not the target | US5.3 |
+| `projectile-hits-hitbox` | two characters: shooter and target 25 m apart on flat terrain, the target facing the shooter; the rifle's `spreadHalfAngleDeg`, `recoilKickPitchDeg` and `recoilKickYawDeg` set to 0 | rifle shots at the standing and the crouched target striking head, torso and legs; a projectile that crosses a whole hitbox within one step; a point-blank shot that starts inside a hitbox | US5.2, US5.6, the layout half of US5.5 (the struck parts match the stance's layout), Edge cases: point-blank; the bit-for-bit half of US5.5 is the [cross-build tables](wasm-api.md#cross-build-tables) |
+| `mesh-occludes-shot` | two characters on opposite sides of the wall, facing each other, the target behind it; the rifle's spread and recoil kick set to 0, as in `projectile-hits-hitbox` | the shot hits the mesh, not the target | US5.3 |
 | `shots-at-known-distances` | five characters: a shooter with a target 25 m away on flat terrain, a shooter with a target behind the wall, and a shooter facing the ridge; zero spread and recoil for both slots | each projectile class fired at the target on flat terrain, at the target behind the wall, into the ridge face and over the ridge (the ridge shooter reloads the one-round launcher between its two heavy shots, 10.5 s in all); every shot hits, or expires at its range, where the closed-form path says | US5-IT (the shots the agreement suite runs) |
 | `fuzz-all-buttons` | four characters; one seeded fuzz stream, committed | every button, the full aim range and the four rejection reasons, from a fixed seed | US1.9, US2.3 |
 

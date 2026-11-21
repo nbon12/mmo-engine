@@ -59,6 +59,12 @@ public sealed class ProjectileHitTests
     /// <summary>The bound on a hit point's distance from its capsule's surface (T193).</summary>
     private const double SurfaceTolerance = 1e-4;
 
+    /// <summary>
+    /// The bound on a hit point's distance from the entry point the double reference predicts (T193), as in
+    /// <c>ProjectileScenarioTests</c>.
+    /// </summary>
+    private const double HitPointTolerance = 1e-3;
+
     /// <summary>The bound on a wall hit point's distance from the wall plane (T194).</summary>
     private const double PlaneTolerance = 1e-4;
 
@@ -188,8 +194,9 @@ public sealed class ProjectileHitTests
     /// <c>events.hits</c> is exactly one element, with that projectile ID, Kind Character, target 2, that
     /// hitbox, 0 ≤ T ≤ 1 and a point whose double distance to that capsule's axis segment (posed by
     /// <see cref="HitboxBuilder"/> from the target's committed pose) equals the capsule's radius within
-    /// 1e-4 m; no earlier step reports a hit or an expiry, the projectile is in every committed state before
-    /// that step, and it is in none from that step on.
+    /// 1e-4 m and which lies within 1e-3 m of the entry point the double reference predicts (so an exit point
+    /// or any other point on the surface fails); no earlier step reports a hit or an expiry, the projectile is
+    /// in every committed state before that step, and it is in none from that step on.
     /// </summary>
     [Theory]
     [MemberData(nameof(PartRows))]
@@ -231,6 +238,10 @@ public sealed class ProjectileHitTests
         Assert.True(
             System.Math.Abs(distance - capsule.Radius) <= SurfaceTolerance,
             FormattableString.Invariant($"{at}: the hit point {hit.Point} is {distance:R} m from the {part} axis {capsule.A} – {capsule.B}; expected the radius {capsule.Radius:R} within {SurfaceTolerance:R} m"));
+        var off = DVec3.Distance(hit.Point, predicted.Point);
+        Assert.True(
+            off <= HitPointTolerance,
+            FormattableString.Invariant($"{at}: the hit point {hit.Point} is {off:R} m from the entry point {predicted.Point} the double reference predicts; expected within {HitPointTolerance:R} m"));
     }
 
     /// <summary>

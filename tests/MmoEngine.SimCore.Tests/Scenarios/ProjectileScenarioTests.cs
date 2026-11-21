@@ -193,8 +193,10 @@ public sealed class ProjectileScenarioTests
     /// <see cref="ProjectileWorlds.GroundHalfExtent"/>) and within the class's <c>maxRangeM</c> of Origin
     /// (about 345 m for class 0 and 69 m for class 1), so the flight cannot end in a Range expiry without a
     /// terrain hit. When it is stepped with <c>SimWorld.Step</c> until it leaves the state, Then at every step
-    /// n before the hit the committed state holds it alone with Position exactly the bits of
-    /// <c>Ballistics.PositionAt(k + 1)</c> for k = n − 1, within 1e-3 m of the double closed form at k + 1;
+    /// n before the hit the committed state holds it alone with Position exactly the bits of the contract's
+    /// closed form at k + 1 for k = n − 1, written out in the test
+    /// (<see cref="ProjectileWorlds.ContractPosition"/>, not the core's <c>Ballistics.PositionAt</c>), and
+    /// within 1e-3 m of the double closed form at k + 1;
     /// the step whose hit list holds it is exactly the first step whose segment p(k) → p(k + 1), evaluated in
     /// double, meets the heightfield (<see cref="ProjectileReference.SegmentHeightfield"/>), with Kind Terrain,
     /// Hitbox None and a point within 1e-3 m of height 0; no earlier step reports a hit; no step reports an
@@ -266,10 +268,10 @@ public sealed class ProjectileScenarioTests
                     $"{at}: the committed state holds projectiles [{string.Join(", ", outcome.Projectiles.Select(p => p.Id))}]; expected [{ProjectileId}] until the hit");
                 var k = outcome.Step - launch.LaunchStep;
                 var stored = outcome.Projectiles[0].Position;
-                var contract = Ballistics.PositionAt(in launch, k + 1u, halfG, hz);
+                var contract = ProjectileWorlds.ContractPosition(launch.Origin, launch.LaunchVelocity, halfG, hz, k + 1u);
                 Assert.True(
                     Bits(stored) == Bits(contract),
-                    FormattableString.Invariant($"{at}: the stored Position {stored} (bits {Bits(stored)}) is not PositionAt({k + 1u}) {contract} (bits {Bits(contract)})"));
+                    FormattableString.Invariant($"{at}: the stored Position {stored} (bits {Bits(stored)}) is not the contract's closed form ContractPosition({k + 1u}) {contract} (bits {Bits(contract)})"));
                 var closedForm = ProjectileReference.ClosedForm(record, config, k + 1L);
                 var offPath = DVec3.Distance(stored, closedForm);
                 Assert.True(
@@ -317,8 +319,9 @@ public sealed class ProjectileScenarioTests
     /// meets that same terrain triangle at that step first, nothing before it, within the class's
     /// <c>maxRangeM</c> of Origin, and that the stream runs to that step. Then at every step from the launch
     /// step to the one before the hit, the committed state holds the projectile with its launch Origin,
-    /// LaunchVelocity and LaunchStep and with Position exactly the bits of <c>Ballistics.PositionAt(k + 1)</c>
-    /// for k = step − LaunchStep; the run's only hit is at the expected step, on that projectile, with Kind
+    /// LaunchVelocity and LaunchStep and with Position exactly the bits of the contract's closed form at
+    /// k + 1 from the launch Origin and LaunchVelocity (<see cref="ProjectileWorlds.ContractPosition"/>, written
+    /// out in the test rather than the core's <c>Ballistics.PositionAt</c>) for k = step − LaunchStep; the run's only hit is at the expected step, on that projectile, with Kind
     /// Terrain, that triangle ID as its target ID and Hitbox None; the projectile is in no committed state from
     /// that step on; and no step reports an expiry.
     /// </summary>
@@ -388,10 +391,10 @@ public sealed class ProjectileScenarioTests
                     Bits(stored.Origin) == Bits(launch.Origin) && Bits(stored.LaunchVelocity) == Bits(launch.LaunchVelocity) && stored.LaunchStep == launch.LaunchStep,
                     $"{at}: the stored projectile {stored} no longer has the launch Origin, LaunchVelocity and LaunchStep of {launch}");
                 var k = step.Step - stored.LaunchStep;
-                var contract = Ballistics.PositionAt(in stored, k + 1u, halfG, hz);
+                var contract = ProjectileWorlds.ContractPosition(launch.Origin, launch.LaunchVelocity, halfG, hz, k + 1u);
                 Assert.True(
                     Bits(stored.Position) == Bits(contract),
-                    FormattableString.Invariant($"{at}: the stored Position {stored.Position} (bits {Bits(stored.Position)}) is not PositionAt({k + 1u}) {contract} (bits {Bits(contract)})"));
+                    FormattableString.Invariant($"{at}: the stored Position {stored.Position} (bits {Bits(stored.Position)}) is not the contract's closed form ContractPosition({k + 1u}) {contract} (bits {Bits(contract)})"));
                 continue;
             }
 

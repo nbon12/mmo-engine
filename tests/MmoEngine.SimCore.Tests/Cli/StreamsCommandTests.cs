@@ -80,6 +80,9 @@ public sealed class StreamsCommandTests
     public static TheoryData<string> RefusedInputCases =>
         ["invalid-config", "empty-content", "oversized-content", "invalid-at-the-scenario-rate", "unreadable-old-stream", "unwritable-stream"];
 
+    /// <summary>Rows of <see cref="RecordRefusesAPlannedScenarioItsConfigurationCannotGiveAndWritesNothing"/>.</summary>
+    public static TheoryData<string> RefusedPlanCases => ["aim-out-of-reach", "still-flying", "missing-weapon-slot"];
+
     /// <summary>Old copies of flat-run-30hz that decode: from another rules revision, or one step short.</summary>
     public static TheoryData<string> DecodableOldStreamCases => ["other-rules-revision", "fewer-steps"];
 
@@ -505,6 +508,77 @@ public sealed class StreamsCommandTests
         Assert.True(exit == 1, $"simcore streams record exited {exit} on a step fault, expected 1; stdout: {stdout}; stderr: {stderr}");
         Assert.Contains("streams record: flat-run-30hz: step 7 faulted: NonFinite at characters[0].velocity.y", Lines(stderr.ToString()));
         AssertNothingWritten(before, sandbox.Root, "step fault");
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#streams-record step 3: Given copies of the committed streams, content and
+    /// configuration, the configuration edited so that it still passes validation but a planned definition's
+    /// plan cannot meet it, (<c>aim-out-of-reach</c>) <c>weapons[0].muzzleSpeed</c> 5 for
+    /// <c>mesh-occludes-shot</c>; (<c>still-flying</c>) <c>projectileClasses[0].maxRangeM</c> 10000 and
+    /// <c>lifetimeMs</c> 60000 for <c>shots-at-known-distances</c>; or (<c>missing-weapon-slot</c>) one weapon
+    /// and <c>input.weaponSlots</c> 1 for <c>shots-at-known-distances</c>, When
+    /// <c>simcore streams record --scenario &lt;name&gt;</c> runs in a child process, Then it exits 2, prints
+    /// nothing on stdout, has the stderr line
+    /// <c>streams record: mesh-occludes-shot: (&lt;x&gt;, &lt;y&gt;, &lt;z&gt;) is out of reach of slot 0's weapon from (&lt;x&gt;, &lt;y&gt;, &lt;z&gt;).</c>,
+    /// exactly <c>streams record: shots-at-known-distances: at 30 Hz 1 projectiles are still flying at the last step.</c>
+    /// or exactly <c>streams record: shots-at-known-distances: the configuration has no weapons[1], whose spread and recoil kick the scenario sets to 0.</c>,
+    /// shows no unhandled exception, and every file in the temp directory keeps its bytes and last-write time,
+    /// with none added or removed.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RefusedPlanCases))]
+    public void RecordRefusesAPlannedScenarioItsConfigurationCannotGiveAndWritesNothing(string caseName)
+    {
+        using var sandbox = Sandbox.Create($"streams-record-plan-{caseName}");
+        var config = JsonNode.Parse(File.ReadAllText(sandbox.Config))!.AsObject();
+        string scenario;
+        switch (caseName)
+        {
+            case "aim-out-of-reach":
+                scenario = "mesh-occludes-shot";
+                config["weapons"]![0]!["muzzleSpeed"] = 5;
+                break;
+            case "still-flying":
+                scenario = "shots-at-known-distances";
+                config["projectileClasses"]![0]!["maxRangeM"] = 10000;
+                config["projectileClasses"]![0]!["lifetimeMs"] = 60000;
+                break;
+            case "missing-weapon-slot":
+                scenario = "shots-at-known-distances";
+                config["weapons"]!.AsArray().RemoveAt(1);
+                config["input"]!["weaponSlots"] = 1;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row.");
+        }
+
+        File.WriteAllText(sandbox.Config, config.ToJsonString());
+        var before = Snapshot(sandbox.Root);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(
+            "streams", "record", "--scenario", scenario, "--reason", "Test regeneration",
+            "--out", sandbox.Streams, "--content", sandbox.Content, "--config", sandbox.Config);
+
+        Assert.True(exit == 2, $"{caseName}: simcore streams record exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        Assert.True(stdout.Length == 0, $"{caseName}: stdout is \"{stdout}\"; a refusal prints nothing there");
+        Assert.DoesNotContain("Unhandled exception", stderr, StringComparison.Ordinal);
+        var prefix = $"streams record: {scenario}: ";
+        switch (caseName)
+        {
+            case "aim-out-of-reach":
+                Assert.Contains(
+                    Lines(stderr),
+                    line => Regex.IsMatch(line, @"^streams record: mesh-occludes-shot: \(-?[0-9.]+, -?[0-9.]+, -?[0-9.]+\) is out of reach of slot 0's weapon from \(-?[0-9.]+, -?[0-9.]+, -?[0-9.]+\)\.$"));
+                break;
+            case "still-flying":
+                Assert.Contains($"{prefix}at 30 Hz 1 projectiles are still flying at the last step.", Lines(stderr));
+                break;
+            default:
+                Assert.Contains($"{prefix}the configuration has no weapons[1], whose spread and recoil kick the scenario sets to 0.", Lines(stderr));
+                break;
+        }
+
+        AssertNothingWritten(before, sandbox.Root, caseName);
     }
 
     /// <summary>

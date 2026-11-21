@@ -199,6 +199,12 @@ internal static class StreamsCommand
                 stderr.Write($"{RecordName}: {definition.Name}: {ex.Message}\n");
                 return CliExitCodes.Usage;
             }
+            catch (ScenarioRefusedException ex)
+            {
+                // A planned definition that the configuration or the content cannot give is a refused input.
+                stderr.Write($"{RecordName}: {definition.Name}: {ex.Reason}\n");
+                return CliExitCodes.Usage;
+            }
         }
 
         // 4 and 5: compare with the streams already in the folder.
