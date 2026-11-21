@@ -1856,7 +1856,7 @@ Conventions for this phase (they hold for every task below):
     - step 71 fires exactly one shot (the 11th), cooling having brought Heat to 1,200,000 first, so the committed Heat is 1,500,000 and Phase is Firing;
     - step 72 has no shot and no fire block.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.HeatWeaponOverheatsAndResumesAtTheRecoveryLevel"` and confirm it fails.
-- [ ] T178 [US4] Write failing test `WeaponScenarioTests.HeatWeaponStopsAtTheThresholdAndResumesAtTheRecoveryLevel(int hz, int tenthShotStep, int resumeStep)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.4 at the other rates). InlineData rows (20, 19, 47) and (60, 55, 141).
+- [X] T178 [US4] Write failing test `WeaponScenarioTests.HeatWeaponStopsAtTheThresholdAndResumesAtTheRecoveryLevel(int hz, int tenthShotStep, int resumeStep)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.4 at the other rates). InlineData rows (20, 19, 47) and (60, 55, 141).
   - Given `heat-overheat` built at hz, assert:
     - the first 10 shots fall on steps 1 + j · hz/10 (j = 0..9), the last at tenthShotStep, with Heat 100,000 · hz and Phase Overheated after it;
     - Overheated is reported at every step from tenthShotStep + 1 to resumeStep − 1;
@@ -1864,7 +1864,7 @@ Conventions for this phase (they hold for every task below):
     - the step after it has no shot and no block;
     - resumeStep == tenthShotStep + HeatCooldownDelaySteps + ceil(60,000 · hz / 50,000) − 1, computed from the compiled configuration.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.HeatWeaponStopsAtTheThresholdAndResumesAtTheRecoveryLevel"` and confirm it fails.
-- [ ] T179 [US4] Write failing test `WeaponScenarioTests.EachShotKicksTheAimAndTheOffsetRecoversAfterFiring(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.5).
+- [X] T179 [US4] Write failing test `WeaponScenarioTests.EachShotKicksTheAimAndTheOffsetRecoversAfterFiring(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.5).
   - Given `rifle-burst` built at hz (Fire held 3 s at yaw 0 and pitch 2048, then released for 1 s), with the placeholders compiled to kick 46 pitch and 18 yaw units, maximums 1092 and 546, recovery 91/61/30 units per step and a recovery delay of 2/3/6 steps (equal to the shot interval hz/10, so W4 runs in each shot's step before its kick). Assert:
     - exactly 30 shots;
     - after the n-th shot, RecoilPitch == min(max(P(n−1) − (StepsSinceShot reached the delay ? RecoveryPerStep : 0), 0) + 46, 1092), where P(n−1) is the committed RecoilPitch before that step. Concretely, 46 after every shot at 20 and 30 Hz, and 46 + 16 · (n − 1) at 60 Hz (510 after the 30th);
@@ -1872,7 +1872,7 @@ Conventions for this phase (they hold for every task below):
     - every shot's direction bits == `Spread.Direction(hash, (ushort)(0 + yawBeforeKick), clamp(2048 + pitchBeforeKick), VersMax)`, and the first shot uses yaw 0 and pitch 2048 unchanged. At 20 and 30 Hz every shot uses the bare aim; at 60 Hz shot n uses pitch 2048 + 16 · (n − 1);
     - after the last shot at step L = 1 + 29 · hz/10, both offsets are unchanged at steps L + 1 .. L + delay − 1. From step L + delay, each step moves both toward 0 by exactly RecoveryPerStep, never past 0, until both are 0: at step L + delay at 20 and 30 Hz, and at step L + 22 at 60 Hz.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.EachShotKicksTheAimAndTheOffsetRecoversAfterFiring"` and confirm it fails.
-- [ ] T180 [US4] Write failing test `WeaponScenarioTests.FireWhenTheWeaponCannotFireReportsTheReason(FireBlock reason, int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.6). Theory over `TestRates.WithRateLast(...)` crossing the six reasons with 20, 30, 60.
+- [X] T180 [US4] Write failing test `WeaponScenarioTests.FireWhenTheWeaponCannotFireReportsTheReason(FireBlock reason, int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.6). Theory over `TestRates.WithRateLast(...)` crossing the six reasons with 20, 30, 60.
   - Each row is arranged with `WeaponRuns.Create` on `TestConfigs.At(hz)`:
     - `Switching`: input WeaponSlot 1 with Fire held.
     - `Reloading`: Magazine 29, Reload and Fire held.
@@ -1887,7 +1887,7 @@ Conventions for this phase (they hold for every task below):
     - every step from 3.5 · hz + 1 to 4 · hz (slot 1 with Fire held, inside EquipSteps) reports `[{1, Switching}]`;
     - no shot fires in either range.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.FireWhenTheWeaponCannotFireReportsTheReason|FullyQualifiedName~WeaponScenarioTests.ReloadAndEmptyStreamReportsReloadingAndSwitchingBlocks"` and confirm both fail.
-- [ ] T181 [US4] Write failing test `WeaponScenarioTests.EveryWeaponFiresOnTheStepsItsConfigurationImplies(int slot, int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4-IT). Theory crossing slot 0 (rifle, Auto) and slot 1 (launcher, Semi) with 20, 30, 60.
+- [X] T181 [US4] Write failing test `WeaponScenarioTests.EveryWeaponFiresOnTheStepsItsConfigurationImplies(int slot, int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4-IT). Theory crossing slot 0 (rifle, Auto) and slot 1 (launcher, Semi) with 20, 30, 60.
   - Arrange through `WeaponRuns.Create` on `TestConfigs.At(hz)` with ActiveSlot = slot, for 20 · hz steps. Fire is held every step for slot 0 and on even steps only for slot 1. Reload is held on every step whose previous committed Magazine is 0.
   - A private reference model in the test class, `ExpectedWeapon`, is advanced alongside the world. It is plain integer C# written from data-model.md#weapon-step: W0–W6, the fire block order and the fire loop. It calls `Spread.Hash` and `Spread.Direction` for directions and never `WeaponStep`.
   - After every step, assert that these equal the model's: the shot count; each shot's ShotCounter, ProjectileId and direction bits; the fire-block reason; and Phase, PhaseSteps, FireWait, ShotCounter, Magazine, Reserve, Heat, StepsSinceShot, RecoilPitch and RecoilYaw.
