@@ -1,7 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using BenchmarkDotNet.Exporters;
 using BenchmarkDotNet.Loggers;
+using BenchmarkDotNet.Mathematics;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 
@@ -12,12 +14,14 @@ namespace MmoEngine.SimCore.Benchmarks;
 /// <c>&lt;results directory&gt;/simcore-server-benchmarks.json</c>
 /// (specs/015-shared-simulation-core/contracts/measurement-report.md#how-the-report-is-produced, step 1,
 /// and the <c>server</c> table of #fields): <c>tool</c>, <c>label</c>, <c>runnerClass</c> and one
-/// <c>benchmarks[]</c> entry per benchmark that has statistics, in step order (movement, weapon,
-/// projectile, hitboxBuild, stateHash), then in each class's <c>Case</c> <c>[Params]</c> order. Each
-/// benchmark's step is its single <c>[BenchmarkCategory]</c> and its case its <c>Case</c> parameter.
-/// A report without statistics or without an allocation measurement, meaning a failed benchmark, is left
-/// out, so <c>simcore measure validate-report</c> names the step that is missing. The file is written to
-/// a temp file in the same directory and then renamed over the export, so a reader never sees half of it.
+/// <c>benchmarks[]</c> entry per benchmark that has statistics and an allocation measurement, in step order
+/// (movement, weapon, projectile, hitboxBuild, stateHash), then in each class's <c>Case</c> <c>[Params]</c>
+/// order. Each benchmark's step is its single <c>[BenchmarkCategory]</c> and its case its <c>Case</c>
+/// parameter. A report without statistics (a failed benchmark) or without an allocation measurement is
+/// left out (<see cref="TryMeasurements"/>), and <see cref="Program"/> exits 1 naming it, by the same rule,
+/// because <c>simcore measure validate-report</c> only notices a missing movement, weapon or projectile
+/// step. The file is written to a temp file in the same directory and then renamed over the export, so a
+/// reader never sees half of it.
 /// BenchmarkDotNet logs an exporter's exception and goes on, so <see cref="WrittenPath"/> records whether
 /// the export was written, for the exit code of <see cref="Program"/>.
 /// </summary>
@@ -102,7 +106,42 @@ public sealed class SimCoreMeasurementExporter : IExporter
         return [path];
     }
 
-    /// <summary>The export's entries in its order; failed benchmarks are left out.</summary>
+    /// <summary>
+    /// The one rule for which reports the export lists, which <see cref="Program"/> also applies to its exit
+    /// code: true, with the report's <paramref name="statistics"/> and <paramref name="allocatedBytesPerOp"/>,
+    /// when it has both; else false, with why it is left out: <c>has no statistics: it failed</c> when
+    /// <see cref="BenchmarkReport.ResultStatistics"/> is null, or <c>has no allocation measurement</c> when
+    /// <c>GcStats.GetBytesAllocatedPerOperation</c> is null, because <c>allocatedBytesPerOp</c> is a required
+    /// integer.
+    /// </summary>
+    internal static bool TryMeasurements(
+        BenchmarkReport report,
+        [NotNullWhen(true)] out Statistics? statistics,
+        out long allocatedBytesPerOp,
+        [NotNullWhen(false)] out string? leftOutReason)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        statistics = report.ResultStatistics;
+        allocatedBytesPerOp = 0;
+        if (statistics is null)
+        {
+            leftOutReason = "has no statistics: it failed";
+            return false;
+        }
+
+        if (report.GcStats.GetBytesAllocatedPerOperation(report.BenchmarkCase) is not { } allocated)
+        {
+            statistics = null;
+            leftOutReason = "has no allocation measurement";
+            return false;
+        }
+
+        allocatedBytesPerOp = allocated;
+        leftOutReason = null;
+        return true;
+    }
+
+    /// <summary>The export's entries in its order; the reports <see cref="TryMeasurements"/> leaves out are skipped.</summary>
     private static List<Entry> Entries(Summary summary)
     {
         var entries = new List<Entry>();
@@ -111,9 +150,7 @@ public sealed class SimCoreMeasurementExporter : IExporter
             var benchmark = report.BenchmarkCase;
             var (step, stepIndex) = StepOf(benchmark);
             var (caseName, caseIndex) = CaseOf(benchmark);
-            var statistics = report.ResultStatistics;
-            var allocated = report.GcStats.GetBytesAllocatedPerOperation(benchmark);
-            if (statistics is null || allocated is not { } allocatedBytesPerOp)
+            if (!TryMeasurements(report, out var statistics, out var allocatedBytesPerOp, out _))
             {
                 continue;
             }

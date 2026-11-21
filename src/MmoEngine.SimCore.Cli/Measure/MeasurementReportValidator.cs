@@ -10,7 +10,10 @@ namespace MmoEngine.SimCore.Cli.Measure;
 /// The checks of <c>simcore measure validate-report</c>
 /// (specs/015-shared-simulation-core/contracts/measurement-report.md#what-validate-report-checks) over the
 /// report's closed schema (#fields). Each problem is one <c>path: problem</c> line. Paths are dot-separated
-/// member names and <c>[i]</c> indexes; a value in a message is its raw JSON text. Every object is walked in
+/// member names and <c>[i]</c> indexes; a value in a message is its raw JSON text. Text taken from the file
+/// that is not raw JSON text (a member name in a path, and the step named in a uniqueness message) is
+/// written JSON-escaped (<see cref="Shown"/>), so a control character, a quote or a backslash in it appears
+/// as its escape and every problem stays on one line. Every object is walked in
 /// the file's member order; after its present members, each missing required member is reported in schema
 /// order, and the cross-field checks that belong to the object come last: the runner-class equality and the
 /// step coverage of <c>server</c>, the mode set and the interpreted mode of <c>wasm.modes</c>, the loader,
@@ -91,8 +94,10 @@ public static partial class MeasurementReportValidator
 
     /// <summary>
     /// Every problem of the report <paramref name="json"/>, in document order; empty when it is valid.
-    /// Malformed JSON is the one problem <c>$: is not valid JSON (&lt;message&gt;)</c>, and a root that is
-    /// not an object is <c>$: must be an object</c>.
+    /// Malformed JSON is the one problem <c>$: is not valid JSON (&lt;message&gt;)</c>, and so is text that
+    /// is not Unicode: <paramref name="json"/> holding an unpaired surrogate, or a member name or string
+    /// whose escapes leave one, such as <c>"\uD800"</c> (RFC 8259, section 8.2). A root that is not an
+    /// object is <c>$: must be an object</c>.
     /// </summary>
     public static IReadOnlyList<string> Validate(string json)
     {
@@ -102,14 +107,21 @@ public static partial class MeasurementReportValidator
         {
             document = JsonDocument.Parse(json, DocumentOptions);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException)
         {
+            // ArgumentException: json holds an unpaired surrogate, which cannot be transcoded to UTF-8.
+            // InvalidOperationException: the repeated-member check unescaped a name to an unpaired surrogate.
             return [NotValidJson(ex.Message)];
         }
 
         using (document)
         {
             var root = document.RootElement;
+            if (UnreadableText(root) is { } unreadable)
+            {
+                return [NotValidJson(unreadable)];
+            }
+
             if (root.ValueKind != JsonValueKind.Object)
             {
                 return ["$: must be an object"];
@@ -130,11 +142,18 @@ public static partial class MeasurementReportValidator
     /// <summary>
     /// Every problem of a <c>server</c> object on its own, at path <c>server</c>, with its
     /// <c>runnerClass</c> checked against <paramref name="runnerClass"/>: check 5 and every <c>server</c>
-    /// field rule, as the benchmark exporter's file is checked before it is copied into the report.
+    /// field rule, as the benchmark exporter's file is checked before it is copied into the report. A member
+    /// name or string whose escapes leave an unpaired surrogate is the one problem
+    /// <c>server: is not valid JSON (&lt;message&gt;)</c>.
     /// </summary>
     public static IReadOnlyList<string> ValidateServerObject(JsonElement server, string runnerClass)
     {
         ArgumentNullException.ThrowIfNull(runnerClass);
+        if (UnreadableText(server) is { } unreadable)
+        {
+            return [$"server: is not valid JSON ({unreadable})"];
+        }
+
         var text = JsonSerializer.Serialize(runnerClass, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         var walk = new Walk(new ExpectedRunnerClass(runnerClass, text));
         walk.Server(server, "server");
@@ -164,6 +183,60 @@ public static partial class MeasurementReportValidator
     private static string NotValidJson(string reason) => $"$: is not valid JSON ({reason})";
 
     private static string Join(string path, string name) => path.Length == 0 ? name : $"{path}.{name}";
+
+    /// <summary>
+    /// <paramref name="text"/> from the file as it is shown in a path or a message: JSON-escaped, as inside a
+    /// JSON string without its quotes, so a control character, a quote or a backslash appears as its escape
+    /// and a problem never spans two lines. The schema's names are plain ASCII and come back unchanged. Call
+    /// it only on text <see cref="UnreadableText"/> has passed, which has no unpaired surrogate.
+    /// </summary>
+    private static string Shown(string text) => JsonEncodedText.Encode(text, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString();
+
+    /// <summary>
+    /// The runtime's message for the first member name or string value within <paramref name="element"/>
+    /// whose escapes leave an unpaired surrogate, such as <c>"\uD800"</c>, or null when there is none. Every
+    /// read of such text throws, so the whole document is read once before the walk reads any of it.
+    /// </summary>
+    private static string? UnreadableText(JsonElement element)
+    {
+        try
+        {
+            ReadAllText(element);
+            return null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>Reads every member name and string value within <paramref name="element"/>; the document's depth limit bounds the recursion.</summary>
+    private static void ReadAllText(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var member in element.EnumerateObject())
+                {
+                    _ = member.Name;
+                    ReadAllText(member.Value);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    ReadAllText(item);
+                }
+
+                break;
+            case JsonValueKind.String:
+                _ = element.GetString();
+                break;
+            default:
+                break;
+        }
+    }
 
     private static string Index(string path, int index) => string.Create(CultureInfo.InvariantCulture, $"{path}[{index}]");
 
@@ -275,7 +348,7 @@ public static partial class MeasurementReportValidator
 
             foreach (var member in element.EnumerateObject())
             {
-                var memberPath = Join(path, member.Name);
+                var memberPath = Join(path, Shown(member.Name));
                 var field = Array.Find(fields, candidate => candidate.Name == member.Name);
                 if (field is null)
                 {
@@ -349,7 +422,7 @@ public static partial class MeasurementReportValidator
                 {
                     if (TryString(value, member, out var name) && TryStringMember(entry, "step", out var step) && !seen.Add((step, name)))
                     {
-                        Add(member, $"{value.GetRawText()} is not unique within {step}");
+                        Add(member, $"{value.GetRawText()} is not unique within {Shown(step)}");
                     }
                 }),
                 new("meanNs", PositiveNumber),
@@ -396,7 +469,7 @@ public static partial class MeasurementReportValidator
 
             foreach (var member in modes.EnumerateObject())
             {
-                var modePath = Join(path, member.Name);
+                var modePath = Join(path, Shown(member.Name));
                 if (Array.IndexOf(ModeNames, member.Name) < 0)
                 {
                     Add(modePath, "is not a known mode");

@@ -84,8 +84,9 @@ public sealed class StepCaseTests
     /// Given <c>StepCase.Create(kind, caseName, hz)</c>, its pass has at least one step and starts full.
     /// When <c>PassLength</c> <c>Step()</c> calls run, each takes one step off <c>StepsLeftInPass</c>, which
     /// ends at 0, and one more <c>Step()</c> throws <see cref="InvalidOperationException"/>. Then
-    /// <c>Restart()</c> sets <c>StepsLeftInPass</c> back to <c>PassLength</c>, and a second pass ends with the
-    /// same <c>LastResultHash</c> (the XxHash64 of the case's output state bytes) as the first.
+    /// <c>Restart()</c> sets <c>StepsLeftInPass</c> back to <c>PassLength</c>, and the case reads as a new one:
+    /// <c>LastStep</c> is 0 and <c>LastResultHash</c> (the XxHash64 of the case's output state bytes) is the
+    /// new case's. A second pass ends with the same <c>LastResultHash</c> as the first.
     /// </summary>
     [Theory]
     [MemberData(nameof(Cases))]
@@ -97,6 +98,8 @@ public sealed class StepCaseTests
         Assert.True(
             stepCase.StepsLeftInPass == stepCase.PassLength,
             $"{what}: a new case has {stepCase.StepsLeftInPass} steps left in its pass; it must have PassLength {stepCase.PassLength}");
+        Assert.True(stepCase.LastStep == 0u, $"{what}: a new case has LastStep {stepCase.LastStep}; it must be 0 before the first Step()");
+        var newCase = stepCase.LastResultHash;
 
         RunPass(stepCase, what);
         var firstPass = stepCase.LastResultHash;
@@ -109,6 +112,10 @@ public sealed class StepCaseTests
         Assert.True(
             stepCase.StepsLeftInPass == stepCase.PassLength,
             $"{what}: Restart() left {stepCase.StepsLeftInPass} steps in the pass; it must restore PassLength {stepCase.PassLength}");
+        Assert.True(stepCase.LastStep == 0u, $"{what}: Restart() left LastStep {stepCase.LastStep}; it must be 0, as on a new case");
+        Assert.True(
+            stepCase.LastResultHash == newCase,
+            $"{what}: after Restart() LastResultHash is {stepCase.LastResultHash:x16}; the new case's was {newCase:x16}");
         RunPass(stepCase, what);
         Assert.True(
             stepCase.LastResultHash == firstPass,

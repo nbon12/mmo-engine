@@ -179,6 +179,56 @@ public sealed class MeasurementReportValidatorTests
         Assert.Contains(member, line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Check 1 on text that is not Unicode, called directly, so it never throws out of the validator. Each
+    /// row gives exactly one line that starts with <c>$: is not valid JSON (</c> and ends with <c>)</c>:
+    /// <c>raw</c> is a string holding a lone high surrogate in place of <c>EPYC</c>, which cannot be
+    /// transcoded to UTF-8; <c>escaped-in-a-nested-name</c> writes the escape <c>\uD800</c> before the name
+    /// <c>DOTNET_TieredPGO</c>, two objects down. The rest is the runtime's message. The lone surrogate is
+    /// written in code, because an attribute argument is stored as UTF-8, which cannot hold one.
+    /// </summary>
+    [Theory]
+    [InlineData("raw")]
+    [InlineData("escaped-in-a-nested-name")]
+    public void TextThatIsNotUnicodeIsNotValidJson(string variant)
+    {
+        var (original, replacement) = variant switch
+        {
+            "raw" => ("EPYC", "\uD800"),
+            "escaped-in-a-nested-name" => ("\"DOTNET_TieredPGO\"", "\"\\uD800DOTNET_TieredPGO\""),
+            _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, "not a row of this test"),
+        };
+        var fixture = ReportMutations.ReadFixture();
+        var occurrences = fixture.Split(original).Length - 1;
+        Assert.True(occurrences == 1, $"{variant}: the fixture holds {original} {occurrences} times; the row needs exactly one");
+
+        var problems = MeasurementReportValidator.Validate(fixture.Replace(original, replacement, StringComparison.Ordinal));
+
+        var line = Assert.Single(problems);
+        Assert.StartsWith("$: is not valid JSON (", line, StringComparison.Ordinal);
+        Assert.EndsWith(")", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>ValidateServerObject</c> on a <c>server</c> object whose <c>tool</c> is the escape <c>\uD800</c>
+    /// returns exactly one line, which starts with <c>server: is not valid JSON (</c>, instead of throwing.
+    /// </summary>
+    [Fact]
+    public void AServerObjectWithAnUnpairedSurrogateIsNotValidJson()
+    {
+        const string Tool = "\"tool\": \"BenchmarkDotNet 0.15.8\"";
+        var fixture = ReportMutations.ReadFixture();
+        var occurrences = fixture.Split(Tool).Length - 1;
+        Assert.True(occurrences == 1, $"The fixture holds {Tool} {occurrences} times; the test needs exactly one");
+        using var document = JsonDocument.Parse(fixture.Replace(Tool, "\"tool\": \"\\uD800\"", StringComparison.Ordinal));
+
+        var problems = MeasurementReportValidator.ValidateServerObject(document.RootElement.GetProperty("server"), "gha-ubuntu-latest-x64");
+
+        var line = Assert.Single(problems);
+        Assert.StartsWith("server: is not valid JSON (", line, StringComparison.Ordinal);
+        Assert.EndsWith(")", line, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ARootThatIsNotAnObjectIsReported()
     {

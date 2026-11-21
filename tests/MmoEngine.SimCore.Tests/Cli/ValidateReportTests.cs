@@ -1,4 +1,5 @@
 using System.Text;
+using MmoEngine.SimCore.Cli.Commands;
 using MmoEngine.SimCore.Tests.Support;
 
 namespace MmoEngine.SimCore.Tests.Cli;
@@ -164,6 +165,123 @@ public sealed class ValidateReportTests
     }
 
     /// <summary>
+    /// Check 1: every member name and string is Unicode text. An escape that leaves an unpaired surrogate,
+    /// <c>\uD800</c>, is not (RFC 8259, section 8.2), and reading it would throw, so it is malformed JSON
+    /// rather than a crash. Each row edits the fixture's text once: <c>in-a-string</c> writes the escape in
+    /// place of <c>EPYC</c> in <c>machine.cpuModel</c>, and <c>in-a-member-name</c> before the name
+    /// <c>cpuModel</c>. Each gives exit 1, and stdout is exactly one line that starts with
+    /// <c>$: is not valid JSON (</c> and ends with <c>)</c>; the rest is the runtime's message.
+    /// </summary>
+    [Theory]
+    [InlineData("in-a-string", "EPYC", "\\uD800")]
+    [InlineData("in-a-member-name", "\"cpuModel\"", "\"\\uD800cpuModel\"")]
+    public void AnUnpairedSurrogateEscapeIsNotValidJson(string variant, string original, string replacement)
+    {
+        using var directory = TempDirectories.Create("validate-report");
+        var report = WriteReport(directory, ReplaceOnce(ReportMutations.ReadFixture(), original, replacement));
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("measure", "validate-report", report);
+
+        Assert.True(exit == 1, $"{variant}: validate-report exited {exit}, expected 1; stdout: {stdout}; stderr: {stderr}");
+        Assert.EndsWith("\n", stdout, StringComparison.Ordinal);
+        var line = Assert.Single(stdout[..^1].Split('\n'));
+        Assert.StartsWith("$: is not valid JSON (", line, StringComparison.Ordinal);
+        Assert.EndsWith(")", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Text from the file that goes into a path or a message without being raw JSON text, a member name or
+    /// the step named in a uniqueness message, is shown JSON-escaped, so a line feed, a quote or a backslash
+    /// in it never splits a problem across two lines. Each row gives exit 1, and stdout is exactly
+    /// <paramref name="expectedLines"/>, each ended by one line feed: an unknown field named <c>a</c>, line
+    /// feed, <c>b</c>; one named <c>a"b\c</c>; an unknown mode named <c>x</c>, line feed, <c>y</c>; and two
+    /// <c>server</c> benchmarks whose step is <c>"x\ny"</c> with the same case.
+    /// </summary>
+    [Theory]
+    [InlineData("set a\nb 1", new[] { "a\\nb: is not a known field" })]
+    [InlineData("set a\"b\\c 1", new[] { "a\\\"b\\\\c: is not a known field" })]
+    [InlineData("set wasm.modes.x\ny {\"produced\": false, \"reason\": \"x\"}", new[] { "wasm.modes.x\\ny: is not a known mode" })]
+    [InlineData(
+        "set server.benchmarks[0].step \"x\\ny\" ; set server.benchmarks[1].step \"x\\ny\" ; set server.benchmarks[1].case \"flat-run\"",
+        new[]
+        {
+            "server.benchmarks[0].step: is \"x\\ny\"; must be movement, weapon, projectile, hitboxBuild or stateHash",
+            "server.benchmarks[1].step: is \"x\\ny\"; must be movement, weapon, projectile, hitboxBuild or stateHash",
+            "server.benchmarks[1].case: \"flat-run\" is not unique within x\\ny",
+        })]
+    public void TextFromTheFileIsShownEscapedSoEachProblemIsOneLine(string mutation, string[] expectedLines)
+    {
+        using var directory = TempDirectories.Create("validate-report");
+        var report = WriteReport(directory, ReportMutations.Apply(ReportMutations.ReadFixture(), mutation));
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("measure", "validate-report", report);
+
+        Assert.True(exit == 1, $"{mutation}: validate-report exited {exit}, expected 1; stdout: {stdout}; stderr: {stderr}");
+        var lineFeeds = stdout.Count(character => character == '\n');
+        Assert.True(
+            lineFeeds == expectedLines.Length,
+            $"{mutation}: stdout holds {lineFeeds} line feeds for {expectedLines.Length} problems: {stdout}");
+        Assert.Equal(string.Concat(expectedLines.Select(line => line + "\n")), stdout);
+    }
+
+    /// <summary>
+    /// A report of up to <see cref="MeasureCommand.MaxFileLength"/> bytes is read, and a longer one is refused
+    /// before it is checked: exit 2, nothing on stdout and a logged event naming the path. Each row is the
+    /// contract's example followed by spaces up to its length, so only the length differs: the limit itself
+    /// is valid (exit 0), one byte more is refused.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 2)]
+    public void AReportLongerThanTheLimitIsRefused(int bytesOverTheLimit, int expectedExit)
+    {
+        using var directory = TempDirectories.Create("validate-report");
+        var fixture = Encoding.UTF8.GetBytes(ReportMutations.ReadFixture());
+        var length = MeasureCommand.MaxFileLength + bytesOverTheLimit;
+        var bytes = new byte[length];
+        fixture.CopyTo(bytes, 0);
+        bytes.AsSpan(fixture.Length).Fill((byte)' ');
+        var report = WriteReportBytes(directory, bytes);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("measure", "validate-report", report);
+
+        Assert.True(exit == expectedExit, $"a {length}-byte report: validate-report exited {exit}, expected {expectedExit}; stdout: {stdout}; stderr: {stderr}");
+        Assert.Equal(string.Empty, stdout);
+        if (expectedExit == 2)
+        {
+            Assert.Contains(report, stderr, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// A stream without a length, such as a pipe or <c>/dev/zero</c>, is read only until it passes the
+    /// limit: an endless one is refused after exactly limit + 1 bytes, and one of exactly the limit is read
+    /// whole.
+    /// </summary>
+    [Fact]
+    public void AStreamWithoutALengthIsReadOnlyUntilItPassesTheLimit()
+    {
+        const int Limit = 64;
+        using var endless = new UnseekableStream(content: null);
+        using var atTheLimit = new UnseekableStream(Enumerable.Range(0, Limit).Select(value => (byte)value).ToArray());
+
+        var refused = MeasureCommand.ReadAtMost(endless, Limit);
+        var read = MeasureCommand.ReadAtMost(atTheLimit, Limit);
+
+        Assert.Null(refused);
+        Assert.True(endless.BytesRead == Limit + 1, $"the endless stream gave {endless.BytesRead} bytes; at most {Limit + 1} may be read");
+        Assert.Equal(Enumerable.Range(0, Limit).Select(value => (byte)value).ToArray(), read);
+    }
+
+    /// <summary><paramref name="text"/> with its one occurrence of <paramref name="original"/> replaced.</summary>
+    private static string ReplaceOnce(string text, string original, string replacement)
+    {
+        var occurrences = text.Split(original).Length - 1;
+        Assert.True(occurrences == 1, $"The fixture holds {original} {occurrences} times; the row needs exactly one");
+        return text.Replace(original, replacement, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The fixture's UTF-8 bytes with the <c>E</c> of <c>EPYC</c>, inside <c>machine.cpuModel</c>, replaced
     /// by 0xFF.
     /// </summary>
@@ -194,5 +312,55 @@ public sealed class ValidateReportTests
         var path = directory.Combine("measurement-report.json");
         File.WriteAllText(path, text);
         return path;
+    }
+
+    /// <summary>
+    /// A readable stream that cannot seek and has no length: <c>content</c>'s bytes, or endless zeros when it
+    /// is null, as a device such as <c>/dev/zero</c> gives. It counts the bytes it has given.
+    /// </summary>
+    private sealed class UnseekableStream(byte[]? content) : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException("The stream has no length.");
+
+        public override long Position
+        {
+            get => throw new NotSupportedException("The stream cannot seek.");
+            set => throw new NotSupportedException("The stream cannot seek.");
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var left = content is null ? long.MaxValue : content.Length - BytesRead;
+            var given = left < count ? (int)left : count;
+            if (content is null)
+            {
+                buffer.AsSpan(offset, given).Clear();
+            }
+            else
+            {
+                content.AsSpan((int)BytesRead, given).CopyTo(buffer.AsSpan(offset));
+            }
+
+            BytesRead += given;
+            return given;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException("The stream cannot seek.");
+
+        public override void SetLength(long value) => throw new NotSupportedException("The stream cannot seek.");
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("The stream is read-only.");
     }
 }

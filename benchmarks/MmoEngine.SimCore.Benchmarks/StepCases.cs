@@ -173,9 +173,15 @@ public sealed class StepCase
         return new StepCase(kind, caseName, hz, driver);
     }
 
-    /// <summary>Starts the pass again: the case's state is its first step's again, and <see cref="StepsLeftInPass"/> is <see cref="PassLength"/>.</summary>
+    /// <summary>
+    /// Starts the pass again: the case's state is its first step's again, <see cref="StepsLeftInPass"/> is
+    /// <see cref="PassLength"/>, and every last-step value, <see cref="LastStep"/> and
+    /// <see cref="LastResultHash"/> included, reads as on a new case.
+    /// </summary>
     public void Restart()
     {
+        // Every kind writes the step number the same way, so it is reset here; each driver resets the rest.
+        _lastStep = 0;
         _driver.Restart(this);
         _index = 0;
     }

@@ -56,8 +56,9 @@ public static class Program
     /// <paramref name="runnerClass"/> is null or empty, without running a benchmark. 1, after writing one
     /// line naming the reason to <paramref name="stderr"/>, when the run gave no summary
     /// (<see cref="NoBenchmarkLine"/>), a summary has a critical validation error
-    /// (<see cref="ValidationFailedLine"/>), a report has no statistics (a failed benchmark) or no allocation
-    /// measurement (the export leaves both out), or the exporter did not write its file in this run
+    /// (<see cref="ValidationFailedLine"/>), a report is one the export leaves out
+    /// (<see cref="SimCoreMeasurementExporter.TryMeasurements"/>: no statistics, meaning a failed benchmark, or
+    /// no allocation measurement), or the exporter did not write its file in this run
     /// (<see cref="NotExportedLine"/>). Else 0. An export left over from an earlier run never makes the exit
     /// code 0.
     /// </returns>
@@ -116,15 +117,10 @@ public static class Program
 
             foreach (var report in summary.Reports)
             {
-                var benchmark = report.BenchmarkCase;
-                if (report.ResultStatistics is null)
+                // The exporter's own rule, so every report the export leaves out fails the run.
+                if (!SimCoreMeasurementExporter.TryMeasurements(report, out _, out _, out var leftOutReason))
                 {
-                    return $"{NameOf(benchmark)} has no statistics: it failed, and simcore-server-benchmarks.json leaves it out";
-                }
-
-                if (report.GcStats.GetBytesAllocatedPerOperation(benchmark) is null)
-                {
-                    return $"{NameOf(benchmark)} has no allocation measurement, and simcore-server-benchmarks.json leaves it out";
+                    return $"{NameOf(report.BenchmarkCase)} {leftOutReason}, and {SimCoreMeasurementExporter.FileName} leaves it out";
                 }
             }
         }

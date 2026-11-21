@@ -444,9 +444,14 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- measure validate-report "$REPO
 
 Checks the measurement report against [measurement-report.md](measurement-report.md#what-validate-report-checks).
 Output: one `path: problem` line per problem, in document order; nothing when the report is valid.
-The file's bytes are decoded as strict UTF-8, skipping a leading byte-order mark. Exit 0 valid, 1
-invalid (including malformed JSON and bytes that are not UTF-8, each reported as
-`$: is not valid JSON (…)`), 2 when the file is missing or unreadable.
+The file's bytes are decoded as strict UTF-8, skipping a leading byte-order mark. A member name or
+string from the file that goes into a path or a message is shown JSON-escaped, so each problem is one
+line. Exit 0 valid, 1 invalid (including malformed JSON, bytes that are not UTF-8 and escapes that
+leave an unpaired surrogate, each reported as `$: is not valid JSON (…)`), 2 when the file is missing
+or unreadable, or holds more than 1 MiB (`MeasureCommand.MaxFileLength`, `config check`'s limit; a
+real report is about 10 KB). A file whose length is over the limit is refused before it is read, and
+one without a length, such as a pipe or a device, once more than 1 MiB has been read. Exit 2 prints
+nothing on stdout and logs an event naming the path on stderr.
 
 ## `config check`
 
