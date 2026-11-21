@@ -444,8 +444,9 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- measure validate-report "$REPO
 
 Checks the measurement report against [measurement-report.md](measurement-report.md#what-validate-report-checks).
 Output: one `path: problem` line per problem, in document order; nothing when the report is valid.
-Exit 0 valid, 1 invalid (including malformed JSON, reported as `$: is not valid JSON (…)`), 2 when the
-file is missing or unreadable.
+The file's bytes are decoded as strict UTF-8, skipping a leading byte-order mark. Exit 0 valid, 1
+invalid (including malformed JSON and bytes that are not UTF-8, each reported as
+`$: is not valid JSON (…)`), 2 when the file is missing or unreadable.
 
 ## `config check`
 

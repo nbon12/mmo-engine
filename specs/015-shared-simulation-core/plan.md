@@ -1708,6 +1708,25 @@ The design documents settled these points, which the spec leaves open. They are 
   configuration builder; `Run(args, runnerClass, stderr)` passes `SimCoreBenchmarkConfig.Create` with the
   default job. T251, T252, T244 and the contract's step 1 say so; Phase 12's `measure` job and T263 need
   no change, because both already expect exit 0 together with the export.
+- **`validate-report` decodes the file as strict UTF-8, in the validator (T249, T250, Phase 9 review).**
+  `MeasureCommand` read the report with `Encoding.UTF8`, which replaces an invalid byte with U+FFFD, so a
+  file with invalid bytes inside a string passed check 1's "valid JSON". The command now hands the file's
+  bytes to a new `MeasurementReportValidator.ValidateUtf8`, which skips a leading UTF-8 byte-order mark,
+  decodes the rest with a throwing `UTF8Encoding` and reports a failure as `$: is not valid JSON (…)`, so
+  check 1 lives in one file. The byte-order mark is skipped by hand rather than by `StreamReader`'s
+  detection, which would also accept UTF-16 and UTF-32 files with their marks and decode them leniently:
+  JSON exchanged between systems is UTF-8 (RFC 8259, section 8.1), and the report's only producer,
+  `measure.mjs`, writes UTF-8, so a UTF-16 file is now invalid rather than accepted. `config check` still
+  reads with `File.ReadAllText`; it belongs to Phase 2's `ConfigCommand` and this review did not cover it.
+  T249, T250, the contract's check 1 and simcore-cli.md say so.
+- **An integer field is a signed 64-bit integer (T249, Phase 9 review).** The validator reads integers
+  with `JsonElement.TryGetInt64`, so `99999999999999999999`, `4.0` and `1e2` are `must be an integer`,
+  which the contract's fields table did not say. Every real value (counts, iteration counts, byte sizes,
+  `formatVersion`, `batch`, `steps`) fits in 64 bits, and the download totals are summed as `Int128`
+  beyond that range, so the contract now states the bound instead of the validator parsing arbitrary
+  precision for values no producer can write. New `EveryOtherCheckReportsItsLine` rows pin the bound, and
+  the same review pinned the exact `Int128` sum, check 5's `p99Ns` and movement and projectile coverage,
+  and every `build` boolean of each mode, including a produced `aot` mode the fixture does not have.
 
 ## Delivery
 

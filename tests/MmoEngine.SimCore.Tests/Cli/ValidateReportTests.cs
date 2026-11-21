@@ -1,3 +1,4 @@
+using System.Text;
 using MmoEngine.SimCore.Tests.Support;
 
 namespace MmoEngine.SimCore.Tests.Cli;
@@ -107,6 +108,83 @@ public sealed class ValidateReportTests
             $"validate-report on a missing file exited {missingExit}, expected 2; stdout: {missingStdout}; stderr: {missingStderr}");
         Assert.Equal(string.Empty, missingStdout);
         Assert.Contains(missing, missingStderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Check 1: the file is UTF-8 JSON. Bytes that are not UTF-8 make it invalid, even inside a string that
+    /// no other check reads closely, where a lossy decoder would turn them into U+FFFD and the report would
+    /// pass. Each row writes the fixture's bytes with one change, and expects exit 1 and exactly one line
+    /// that starts with <c>$: is not valid JSON (</c> and ends with <c>)</c>:
+    /// <list type="bullet">
+    ///   <item><c>invalid-byte</c>: the <c>E</c> of <c>EPYC</c> in <c>machine.cpuModel</c> replaced by
+    ///   0xFF, which no UTF-8 sequence holds;</item>
+    ///   <item><c>byte-order-mark-then-invalid-byte</c>: the same after a UTF-8 byte-order mark, which is
+    ///   skipped, so the bytes after it are decoded just as strictly;</item>
+    ///   <item><c>utf-16</c>: the fixture as UTF-16 little-endian with its byte-order mark.</item>
+    /// </list>
+    /// The decoder's message is the runtime's, so the rest of the line is not pinned.
+    /// </summary>
+    [Theory]
+    [InlineData("invalid-byte")]
+    [InlineData("byte-order-mark-then-invalid-byte")]
+    [InlineData("utf-16")]
+    public void BytesThatAreNotUtf8AreNotValidJson(string variant)
+    {
+        using var directory = TempDirectories.Create("validate-report");
+        var fixture = ReportMutations.ReadFixture();
+        var bytes = variant switch
+        {
+            "invalid-byte" => WithInvalidByte(fixture),
+            "byte-order-mark-then-invalid-byte" => [.. Encoding.UTF8.GetPreamble(), .. WithInvalidByte(fixture)],
+            "utf-16" => [.. Encoding.Unicode.GetPreamble(), .. Encoding.Unicode.GetBytes(fixture)],
+            _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, "not a row of this test"),
+        };
+        var report = WriteReportBytes(directory, bytes);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("measure", "validate-report", report);
+
+        Assert.True(exit == 1, $"{variant}: validate-report exited {exit}, expected 1; stdout: {stdout}; stderr: {stderr}");
+        Assert.EndsWith("\n", stdout, StringComparison.Ordinal);
+        var line = Assert.Single(stdout[..^1].Split('\n'));
+        Assert.StartsWith("$: is not valid JSON (", line, StringComparison.Ordinal);
+        Assert.EndsWith(")", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>A UTF-8 byte-order mark before the contract's example is skipped: exit 0 and nothing on stdout.</summary>
+    [Fact]
+    public void AUtf8ByteOrderMarkIsSkipped()
+    {
+        using var directory = TempDirectories.Create("validate-report");
+        var report = WriteReportBytes(directory, [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(ReportMutations.ReadFixture())]);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("measure", "validate-report", report);
+
+        Assert.True(exit == 0, $"validate-report on the example after a byte-order mark exited {exit}, expected 0; stdout: {stdout}; stderr: {stderr}");
+        Assert.Equal(string.Empty, stdout);
+    }
+
+    /// <summary>
+    /// The fixture's UTF-8 bytes with the <c>E</c> of <c>EPYC</c>, inside <c>machine.cpuModel</c>, replaced
+    /// by 0xFF.
+    /// </summary>
+    private static byte[] WithInvalidByte(string fixture)
+    {
+        const string Marker = "EPYC";
+        var occurrences = fixture.Split(Marker).Length - 1;
+        Assert.True(occurrences == 1, $"The fixture holds {Marker} {occurrences} times; the row needs exactly one");
+        var bytes = Encoding.UTF8.GetBytes(fixture);
+        var index = bytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(Marker));
+        bytes[index] = 0xFF;
+        return bytes;
+    }
+
+    /// <summary>Writes <paramref name="bytes"/> as <c>measurement-report.json</c> in <paramref name="directory"/>.</summary>
+    /// <returns>The report's absolute path.</returns>
+    private static string WriteReportBytes(TempDirectory directory, byte[] bytes)
+    {
+        var path = directory.Combine("measurement-report.json");
+        File.WriteAllBytes(path, bytes);
+        return path;
     }
 
     /// <summary>Writes <paramref name="text"/> as <c>measurement-report.json</c> in <paramref name="directory"/>.</summary>

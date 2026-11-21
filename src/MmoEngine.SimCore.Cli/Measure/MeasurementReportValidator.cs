@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -57,6 +58,38 @@ public static partial class MeasurementReportValidator
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
 
     /// <summary>
+    /// UTF-8 that throws on a byte sequence it cannot decode, instead of replacing it with U+FFFD, so bytes
+    /// that are not UTF-8 cannot pass as a string's text.
+    /// </summary>
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// Every problem of the report file <paramref name="utf8"/>, as read from disk: a leading UTF-8
+    /// byte-order mark is skipped, the rest is decoded strictly, and the text is checked with
+    /// <see cref="Validate(string)"/>. Bytes that are not UTF-8 (including UTF-16) are the one problem
+    /// <c>$: is not valid JSON (&lt;decoder message&gt;)</c>, as malformed JSON is (check 1).
+    /// </summary>
+    public static IReadOnlyList<string> ValidateUtf8(ReadOnlySpan<byte> utf8)
+    {
+        if (utf8.StartsWith("\uFEFF"u8))
+        {
+            utf8 = utf8[3..];
+        }
+
+        string json;
+        try
+        {
+            json = StrictUtf8.GetString(utf8);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            return [NotValidJson(ex.Message)];
+        }
+
+        return Validate(json);
+    }
+
+    /// <summary>
     /// Every problem of the report <paramref name="json"/>, in document order; empty when it is valid.
     /// Malformed JSON is the one problem <c>$: is not valid JSON (&lt;message&gt;)</c>, and a root that is
     /// not an object is <c>$: must be an object</c>.
@@ -71,7 +104,7 @@ public static partial class MeasurementReportValidator
         }
         catch (JsonException ex)
         {
-            return [$"$: is not valid JSON ({ex.Message})"];
+            return [NotValidJson(ex.Message)];
         }
 
         using (document)
@@ -127,6 +160,8 @@ public static partial class MeasurementReportValidator
         && DateTime.TryParseExact(value, "yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out _);
 
     private static bool IsCommit(string value) => value == "unknown" || CommitPattern().IsMatch(value);
+
+    private static string NotValidJson(string reason) => $"$: is not valid JSON ({reason})";
 
     private static string Join(string path, string name) => path.Length == 0 ? name : $"{path}.{name}";
 

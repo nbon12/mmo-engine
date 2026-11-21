@@ -2463,6 +2463,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `MalformedJsonIsInvalidAndAMissingFileCannotRun`:
     - A file holding `{"formatVersion": 1,` gives exit 1. Stdout is exactly one line that starts with `$: is not valid JSON (` and ends with `)`.
     - A path that does not exist, inside a fresh temp directory, gives exit 2. Stdout is empty and stderr contains that path.
+  - `BytesThatAreNotUtf8AreNotValidJson(string variant)` (check 1, added in the Phase 9 review): a Theory whose rows write the fixture's bytes with one change. `invalid-byte` replaces the `E` of `EPYC` in `machine.cpuModel` with 0xFF (the row first asserts `EPYC` occurs exactly once); `byte-order-mark-then-invalid-byte` is the same after a UTF-8 byte-order mark; `utf-16` is the fixture as UTF-16 little-endian with its byte-order mark. Each gives exit 1, and stdout is exactly one line that starts with `$: is not valid JSON (` and ends with `)`.
+  - `AUtf8ByteOrderMarkIsSkipped`: a UTF-8 byte-order mark followed by the fixture gives exit 0 and empty stdout.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~ValidateReportTests"` and confirm it fails: there is no `measure` command yet.
 - [X] T243 [US7] Write failing tests `MeasurementReportValidatorTests` in `tests/MmoEngine.SimCore.Tests/Cli/MeasurementReportValidatorTests.cs`. They cover every other check of contracts/measurement-report.md#what-validate-report-checks, so `MeasurementReportValidator.cs` reaches 95% line coverage. They call `MmoEngine.SimCore.Cli.Measure.MeasurementReportValidator.Validate(string json)` directly on `ReportMutations.Apply(<fixture text>, mutation)`. This task depends on the fixture and `ReportMutations` from T242.
   - `EveryOtherCheckReportsItsLine(string mutation, string expectedLine)`: a Theory with InlineData. Each row returns exactly `[expectedLine]`:
@@ -2473,6 +2475,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `set recordedAt "2026-11-14 10:00:00"` → `recordedAt: is "2026-11-14 10:00:00"; must match YYYY-MM-DDTHH:MM:SSZ`
     - `set commit "ABC"` → `commit: is "ABC"; must match 40 lowercase hex digits or "unknown"`
     - `set machine.logicalCores 0` → `machine.logicalCores: is 0; must be at least 1`
+    - `set machine.logicalCores 4.0`, `set machine.logicalCores 1e2` and `set machine.logicalCores 9223372036854775808` → `machine.logicalCores: must be an integer` (an integer is decimal digits in the signed 64-bit range; three rows)
     - `set machine.architecture "x86"` → `machine.architecture: is "x86"; must be "x64" or "arm64"`
     - `set dotnet.sdkVersion "10"` → `dotnet.sdkVersion: is "10"; must match <major>.<minor>.<patch>`
     - `remove dotnet.environment.DOTNET_TieredPGO` → `dotnet.environment.DOTNET_TieredPGO: is required`
@@ -2482,18 +2485,24 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `set server.benchmarks[0].step "physics"` → `server.benchmarks[0].step: is "physics"; must be movement, weapon, projectile, hitboxBuild or stateHash`
     - `set server.benchmarks[1].case "flat-run"` → `server.benchmarks[1].case: "flat-run" is not unique within movement`
     - `set server.benchmarks[0].meanNs 0` → `server.benchmarks[0].meanNs: is 0; must be greater than 0`
+    - `set server.benchmarks[0].p99Ns 0` → `server.benchmarks[0].p99Ns: is 0; must be greater than 0`
     - `set server.benchmarks[0].iterations 0` → `server.benchmarks[0].iterations: is 0; must be at least 1`
+    - `remove server.benchmarks[0] ; remove server.benchmarks[0] ; remove server.benchmarks[0]` (each remove deletes the current first entry, so the three movement entries go) → `server.benchmarks: has no movement benchmark`
+    - `remove server.benchmarks[4]` → `server.benchmarks: has no projectile benchmark`
     - `set server.benchmarks[0].allocatedBytesPerOp -1` → `server.benchmarks[0].allocatedBytesPerOp: is -1; must be at least 0`
     - `set wasm.modes.jit {"produced": false, "reason": "x"}` → `wasm.modes.jit: is not a known mode`
     - `set wasm.modes.aot.reason ""` → `wasm.modes.aot.reason: must not be empty`
     - `set wasm.modes.aot.build {"aot": true, "relinked": true, "workload": true}` → `wasm.modes.aot.build: is not a known field`
     - `set wasm.modes.interp-prebuilt.reason "x"` → `wasm.modes.interp-prebuilt.reason: must be null when produced is true`
-    - `set wasm.modes.interp-prebuilt.build.relinked true` → `wasm.modes.interp-prebuilt.build.relinked: is true; must be false`
+    - `set wasm.modes.interp-prebuilt.build.<flag> true` → `wasm.modes.interp-prebuilt.build.<flag>: is true; must be false`, one row each for `aot`, `relinked` and `workload`
+    - `set wasm.modes.interp-relinked.build.aot true` → `wasm.modes.interp-relinked.build.aot: is true; must be false`
+    - `set wasm.modes.interp-relinked.build.<flag> false` → `wasm.modes.interp-relinked.build.<flag>: is false; must be true`, one row each for `relinked` and `workload`
     - `set wasm.modes.interp-prebuilt.runtime.debugLevel 1` → `wasm.modes.interp-prebuilt.runtime.debugLevel: is 1; must be 0`
     - `set wasm.modes.interp-prebuilt.download.files[1].group "loader"` → `wasm.modes.interp-prebuilt.download.files: has 2 loader entries; must have exactly one, named dotnet.js`
     - `set wasm.modes.interp-prebuilt.download.files[8].name "MmoEngine.SimCore.a0eeztrxtm.wasm"` → `wasm.modes.interp-prebuilt.download.files[8].name: "MmoEngine.SimCore.a0eeztrxtm.wasm" is not unique`
     - `set wasm.modes.interp-prebuilt.download.files[6].group "fonts"` → `wasm.modes.interp-prebuilt.download.files[6].group: is "fonts"; must be loader, jsModuleNative, jsModuleRuntime, wasmNative, coreAssembly, assembly or icu`
     - `set wasm.modes.interp-prebuilt.download.total.files 8` → `wasm.modes.interp-prebuilt.download.total.files: is 8; there are 9 files`
+    - `set wasm.modes.interp-prebuilt.download.files[0].rawBytes 9223372036854775807 ; set wasm.modes.interp-prebuilt.download.files[1].rawBytes 9223372036854775807` → `wasm.modes.interp-prebuilt.download.total.rawBytes: is 4467850; the files sum to 18446744073713842464` (2 × 9223372036854775807 plus the other seven files' 4290850: the sum is exact, neither wrapped nor thrown)
     - `set wasm.modes.interp-prebuilt.startup.node.importMs.median 0` → `wasm.modes.interp-prebuilt.startup.node.importMs.median: is 0; must be greater than 0`
     - `set wasm.modes.interp-prebuilt.steps.node[0].batch 2` → `wasm.modes.interp-prebuilt.steps.node[0].batch: is 2; must be 1`
     - `set wasm.modes.interp-prebuilt.steps.chromiumWorker[0].steps 2999` → `wasm.modes.interp-prebuilt.steps.chromiumWorker[0].steps: is 2999; must be at least 3000`
@@ -2514,6 +2523,9 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `UnknownCommitAndUnsetEnvironmentAreValid`: `set commit "unknown" ; set dotnet.environment.DOTNET_TieredPGO "unset"` returns no problem.
   - `ProblemsComeInDocumentOrder`: `set wasm.modes.interp-prebuilt.startup.coldStarts 9 ; set machine.logicalCores 0` returns exactly `["machine.logicalCores: is 0; must be at least 1", "wasm.modes.interp-prebuilt.startup.coldStarts: is 9; must be 10"]`, in that order.
   - `ServerObjectAloneIsCheckedAgainstTheGivenRunnerClass`: `ValidateServerObject(<fixture's server element>, "gha-ubuntu-latest-x64")` returns no problem. With `"other-runner"` it returns exactly `["server.runnerClass: is \"gha-ubuntu-latest-x64\"; must equal runnerClass \"other-runner\""]`.
+  - A produced `aot` mode (check 9, added in the Phase 9 review), which the fixture does not have: `ProducedAotReport()` parses the fixture with `JsonNode`, deep-copies `wasm.modes.interp-relinked` into `wasm.modes.aot`, and sets the copy's `build` to `{"aot": true, "relinked": true, "workload": true}` and its `agreement.build` to `"node-aot"`.
+    - `AProducedAotModeWithEveryBuildFlagAndNodeAotIsValid`: `Validate` returns no problem.
+    - `AProducedAotModeReportsItsLine(string mutation, string expectedLine)`: a Theory over `ReportMutations.Apply(ProducedAotReport(), mutation)`. Each row returns exactly `[expectedLine]`: `set wasm.modes.aot.build.<flag> false` → `wasm.modes.aot.build.<flag>: is false; must be true` for each of `aot`, `relinked` and `workload`; `set wasm.modes.aot.agreement.build "node-interp-relinked"` → `wasm.modes.aot.agreement.build: is "node-interp-relinked"; must be "node-aot"`; `set wasm.modes.aot.agreement null` → `wasm.modes.aot.agreement: is required when the mode was produced`.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MeasurementReportValidatorTests"` and confirm it fails: `MeasurementReportValidator` does not exist yet.
 - [X] T244 [P] [US7] Write failing tests `ServerBenchmarkExportTests` in `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.cs` (US7.1, FR-030). Also add `tests/MmoEngine.SimCore.Tests/Benchmarks/BenchmarkDryRunCollection.cs`: `[CollectionDefinition(Name, DisableParallelization = true)]`, with an XML doc comment giving the reason, written the way `tests/MmoEngine.Regionizer.Tests/Allocation/ZeroAllocationTests.cs` documents its collection. The reason: BenchmarkDotNet's in-process toolchain runs the benchmarks on the test process's own thread, times them, and raises the process and thread priority while it runs, so it must not share the process with parallel tests. The class is `[Collection(BenchmarkDryRunCollection.Name)]`.
   - `DryRunExportsAValidServerObject` (US7.1):
@@ -2601,7 +2613,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - world: `StepFault LastFault` and `ulong LastStepHash`, the last `StepReport`'s `Fault` and `Hash`.
   - Pass rules the tests check: a new case and a restarted one have `StepsLeftInPass == PassLength`, and each `Step()` lowers it by exactly 1. The movement pass runs the stream's steps from its first, so it is at most the definition's step count. The weapon pass runs every step of `rifle-burst`, so it fires every shot of the world run. The projectile pass runs from the step after the firing step to the step on which the projectile hits or expires, so its length is that step minus the firing step, and every step but its last is `Flying`. The world pass has one step per stream entry, which is `StreamRunner.Run`'s record count.
 - [X] T249 [P] [US7] Implement `src/MmoEngine.SimCore.Cli/Measure/MeasurementReportValidator.cs`, following every check of contracts/measurement-report.md#what-validate-report-checks over the closed schema of #fields. Makes T243 pass.
-  - API: `public static IReadOnlyList<string> Validate(string json)` and `public static IReadOnlyList<string> ValidateServerObject(JsonElement server, string runnerClass)`, both using `System.Text.Json.JsonDocument`.
+  - API: `public static IReadOnlyList<string> Validate(string json)` and `public static IReadOnlyList<string> ValidateServerObject(JsonElement server, string runnerClass)`, both using `System.Text.Json.JsonDocument`, and `public static IReadOnlyList<string> ValidateUtf8(ReadOnlySpan<byte> utf8)`, which takes the file's bytes: it skips a leading UTF-8 byte-order mark, decodes the rest with `new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)`, returns the one line `$: is not valid JSON (<DecoderFallbackException message>)` when the bytes are not UTF-8 (UTF-16 included), and else returns `Validate` of the text.
   - Walk order: each object is walked in the file's member order. After its present members, each missing required member is reported in schema order. Cross-field checks are reported at the end of the object they belong to: runner-class equality, the step coverage of `server.benchmarks`, the mode set, at least one interpreted mode, the download totals and the step kinds.
   - Paths use dot-separated member names and `[i]` indexes. A value in a message is printed as its raw JSON text (`GetRawText`).
   - The message vocabulary is exactly that of the test rows:
@@ -2613,11 +2625,13 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `has no <kind> benchmark`, `has no <kind> entry`, `has no <mode> mode`, `has <n> loader entries; must have exactly one, named dotnet.js`, `has <n> wasmNative entries; must have exactly one`
     - `<v> is not unique`, `<v> is not unique within <step>`
     - `must be null when produced is true`, `must be null for interp-prebuilt`, `no interpreted mode was produced`
-    - `$: must be an object`, `$: is not valid JSON (<JsonException message>)`
+    - `$: must be an object`, `$: is not valid JSON (<JsonException message>)`, `$: is not valid JSON (<DecoderFallbackException message>)`
   - Rules:
     - Runner-class emptiness is checked only at the top level. `server.runnerClass` is checked only for equality.
     - A missing mode is reported only by the mode-set check.
     - The download totals are summed exactly, as `Int128`, so no sum of 64-bit sizes wraps and an oversized sum is still a `the files sum to <n>` line.
+    - An integer is read with `JsonElement.TryGetInt64`: decimal digits with an optional minus sign, no fraction or exponent, in the signed 64-bit range. Any other number (`4.0`, `1e2`, `9223372036854775808`) is `must be an integer`.
+    - Bytes that are not UTF-8 are never decoded with replacement characters: `ValidateUtf8` reports them as invalid JSON.
     - A member name repeated within an object makes the file invalid JSON (`JsonDocumentOptions.AllowDuplicateProperties` false).
     - Each format pattern (`recordedAt`, `commit`, the two .NET versions and `server.tool`) matches the whole string: it ends in `\z`, not `$`, which also matches before a final newline, so a value captured from a command's output without trimming fails its format.
     - A mode whose `produced` is missing or not a boolean reports only that and its unknown fields.
@@ -2625,8 +2639,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - There is no threshold on any number (Principle VI).
 - [X] T250 [US7] Implement `src/MmoEngine.SimCore.Cli/Commands/MeasureCommand.cs` and register it in `src/MmoEngine.SimCore.Cli/Program.cs`, following contracts/simcore-cli.md#measure-validate-report, after T249. Makes T242 pass.
   - The command is `measure validate-report <file>`.
-  - Read the file with `FileAccess.Read`. If it is missing or unreadable, exit `CliExitCodes` 2 with nothing on stdout, and log on stderr through `CliLogging` an event naming the path.
-  - Otherwise print `MeasurementReportValidator.Validate`'s lines on stdout, one per line, in order. Exit 0 when there are none, else 1. Malformed JSON is exit 1 with its `$: is not valid JSON (...)` line.
+  - Read the file's bytes with `FileAccess.Read`. If it is missing or unreadable, exit `CliExitCodes` 2 with nothing on stdout, and log on stderr through `CliLogging` an event naming the path.
+  - Otherwise print the lines `MeasurementReportValidator.ValidateUtf8` returns for those bytes on stdout, one per line, in order. Exit 0 when there are none, else 1. Malformed JSON and bytes that are not UTF-8 are exit 1 with a `$: is not valid JSON (...)` line. The command does not decode the bytes itself, so no lossy decoder turns an invalid byte into U+FFFD.
   - The command writes no file.
 - [X] T251 [US7] Implement the exporter, the column and the configuration in `benchmarks/MmoEngine.SimCore.Benchmarks/`, following contracts/measurement-report.md#how-the-report-is-produced, step 1, and the `server` table of #fields, after T247. Together with the next task, makes T244's `ConfigCarriesTheExporterP99ColumnMemoryDiagnoserAndJoinedSummary` and `DryRunExportsAValidServerObject` pass.
   - `P99Column.cs`: `IColumn`, with `Id` and `ColumnName` `P99`. Its value is `report.ResultStatistics.Percentiles.Percentile(99)`, shown in the summary's time unit. `IsAvailable` returns true for every summary, including an empty one: `ConfigCarriesTheExporterP99ColumnMemoryDiagnoserAndJoinedSummary` reads the configuration's columns against an empty `Summary`, and a column provider drops an unavailable column.

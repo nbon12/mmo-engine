@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using MmoEngine.SimCore.Cli.Measure;
 using MmoEngine.SimCore.Tests.Support;
 
@@ -21,6 +22,9 @@ public sealed class MeasurementReportValidatorTests
     [InlineData("set recordedAt \"2026-11-14 10:00:00\"", "recordedAt: is \"2026-11-14 10:00:00\"; must match YYYY-MM-DDTHH:MM:SSZ")]
     [InlineData("set commit \"ABC\"", "commit: is \"ABC\"; must match 40 lowercase hex digits or \"unknown\"")]
     [InlineData("set machine.logicalCores 0", "machine.logicalCores: is 0; must be at least 1")]
+    [InlineData("set machine.logicalCores 4.0", "machine.logicalCores: must be an integer")]
+    [InlineData("set machine.logicalCores 1e2", "machine.logicalCores: must be an integer")]
+    [InlineData("set machine.logicalCores 9223372036854775808", "machine.logicalCores: must be an integer")]
     [InlineData("set machine.architecture \"x86\"", "machine.architecture: is \"x86\"; must be \"x64\" or \"arm64\"")]
     [InlineData("set dotnet.sdkVersion \"10\"", "dotnet.sdkVersion: is \"10\"; must match <major>.<minor>.<patch>")]
     [InlineData("remove dotnet.environment.DOTNET_TieredPGO", "dotnet.environment.DOTNET_TieredPGO: is required")]
@@ -32,7 +36,12 @@ public sealed class MeasurementReportValidatorTests
         "server.benchmarks[0].step: is \"physics\"; must be movement, weapon, projectile, hitboxBuild or stateHash")]
     [InlineData("set server.benchmarks[1].case \"flat-run\"", "server.benchmarks[1].case: \"flat-run\" is not unique within movement")]
     [InlineData("set server.benchmarks[0].meanNs 0", "server.benchmarks[0].meanNs: is 0; must be greater than 0")]
+    [InlineData("set server.benchmarks[0].p99Ns 0", "server.benchmarks[0].p99Ns: is 0; must be greater than 0")]
     [InlineData("set server.benchmarks[0].iterations 0", "server.benchmarks[0].iterations: is 0; must be at least 1")]
+    [InlineData(
+        "remove server.benchmarks[0] ; remove server.benchmarks[0] ; remove server.benchmarks[0]",
+        "server.benchmarks: has no movement benchmark")]
+    [InlineData("remove server.benchmarks[4]", "server.benchmarks: has no projectile benchmark")]
     [InlineData("set server.benchmarks[0].allocatedBytesPerOp -1", "server.benchmarks[0].allocatedBytesPerOp: is -1; must be at least 0")]
     [InlineData("set wasm.modes.jit {\"produced\": false, \"reason\": \"x\"}", "wasm.modes.jit: is not a known mode")]
     [InlineData("set wasm.modes.aot.reason \"\"", "wasm.modes.aot.reason: must not be empty")]
@@ -40,7 +49,12 @@ public sealed class MeasurementReportValidatorTests
         "set wasm.modes.aot.build {\"aot\": true, \"relinked\": true, \"workload\": true}",
         "wasm.modes.aot.build: is not a known field")]
     [InlineData("set wasm.modes.interp-prebuilt.reason \"x\"", "wasm.modes.interp-prebuilt.reason: must be null when produced is true")]
+    [InlineData("set wasm.modes.interp-prebuilt.build.aot true", "wasm.modes.interp-prebuilt.build.aot: is true; must be false")]
     [InlineData("set wasm.modes.interp-prebuilt.build.relinked true", "wasm.modes.interp-prebuilt.build.relinked: is true; must be false")]
+    [InlineData("set wasm.modes.interp-prebuilt.build.workload true", "wasm.modes.interp-prebuilt.build.workload: is true; must be false")]
+    [InlineData("set wasm.modes.interp-relinked.build.aot true", "wasm.modes.interp-relinked.build.aot: is true; must be false")]
+    [InlineData("set wasm.modes.interp-relinked.build.relinked false", "wasm.modes.interp-relinked.build.relinked: is false; must be true")]
+    [InlineData("set wasm.modes.interp-relinked.build.workload false", "wasm.modes.interp-relinked.build.workload: is false; must be true")]
     [InlineData("set wasm.modes.interp-prebuilt.runtime.debugLevel 1", "wasm.modes.interp-prebuilt.runtime.debugLevel: is 1; must be 0")]
     [InlineData(
         "set wasm.modes.interp-prebuilt.download.files[1].group \"loader\"",
@@ -54,6 +68,9 @@ public sealed class MeasurementReportValidatorTests
     [InlineData(
         "set wasm.modes.interp-prebuilt.download.total.files 8",
         "wasm.modes.interp-prebuilt.download.total.files: is 8; there are 9 files")]
+    [InlineData(
+        "set wasm.modes.interp-prebuilt.download.files[0].rawBytes 9223372036854775807 ; set wasm.modes.interp-prebuilt.download.files[1].rawBytes 9223372036854775807",
+        "wasm.modes.interp-prebuilt.download.total.rawBytes: is 4467850; the files sum to 18446744073713842464")]
     [InlineData(
         "set wasm.modes.interp-prebuilt.startup.node.importMs.median 0",
         "wasm.modes.interp-prebuilt.startup.node.importMs.median: is 0; must be greater than 0")]
@@ -183,6 +200,41 @@ public sealed class MeasurementReportValidatorTests
         Assert.Empty(problems);
     }
 
+    /// <summary>
+    /// Check 9 on a produced <c>aot</c> mode, which the fixture does not have (<see cref="ProducedAotReport"/>):
+    /// with <c>build</c> all true, because AOT relinks the runtime with the workload, and
+    /// <c>agreement.build</c> <c>node-aot</c>, the report is valid.
+    /// </summary>
+    [Fact]
+    public void AProducedAotModeWithEveryBuildFlagAndNodeAotIsValid()
+    {
+        var problems = MeasurementReportValidator.Validate(ProducedAotReport());
+
+        Assert.Empty(problems);
+    }
+
+    /// <summary>
+    /// Check 9 on a produced <c>aot</c> mode: each of its three <c>build</c> booleans must be true, its
+    /// <c>agreement</c> must name <c>node-aot</c>, and the agreement is required. Each row mutates
+    /// <see cref="ProducedAotReport"/> once and returns exactly its line.
+    /// </summary>
+    [Theory]
+    [InlineData("set wasm.modes.aot.build.aot false", "wasm.modes.aot.build.aot: is false; must be true")]
+    [InlineData("set wasm.modes.aot.build.relinked false", "wasm.modes.aot.build.relinked: is false; must be true")]
+    [InlineData("set wasm.modes.aot.build.workload false", "wasm.modes.aot.build.workload: is false; must be true")]
+    [InlineData(
+        "set wasm.modes.aot.agreement.build \"node-interp-relinked\"",
+        "wasm.modes.aot.agreement.build: is \"node-interp-relinked\"; must be \"node-aot\"")]
+    [InlineData("set wasm.modes.aot.agreement null", "wasm.modes.aot.agreement: is required when the mode was produced")]
+    public void AProducedAotModeReportsItsLine(string mutation, string expectedLine)
+    {
+        var report = ReportMutations.Apply(ProducedAotReport(), mutation);
+
+        var problems = MeasurementReportValidator.Validate(report);
+
+        Assert.Equal([expectedLine], problems);
+    }
+
     /// <summary>The problems follow the report's member order, not the order the mutation made them in.</summary>
     [Fact]
     public void ProblemsComeInDocumentOrder()
@@ -214,5 +266,26 @@ public sealed class MeasurementReportValidatorTests
 
         Assert.Empty(matching);
         Assert.Equal(["server.runnerClass: is \"gha-ubuntu-latest-x64\"; must equal runnerClass \"other-runner\""], other);
+    }
+
+    /// <summary>
+    /// The fixture with its unproduced <c>aot</c> mode replaced by a copy of its produced
+    /// <c>interp-relinked</c> mode, whose <c>build</c> is set to all true and whose <c>agreement.build</c> is
+    /// set to <c>node-aot</c>: a valid report with a produced AOT build.
+    /// </summary>
+    private static string ProducedAotReport()
+    {
+        var root = JsonNode.Parse(ReportMutations.ReadFixture())
+            ?? throw new InvalidOperationException("The fixture is the JSON literal null.");
+        var modes = root["wasm"]?["modes"]?.AsObject()
+            ?? throw new InvalidOperationException("The fixture has no wasm.modes object.");
+        var aot = modes["interp-relinked"]?.DeepClone().AsObject()
+            ?? throw new InvalidOperationException("The fixture has no wasm.modes.interp-relinked object.");
+        aot["build"] = new JsonObject { ["aot"] = true, ["relinked"] = true, ["workload"] = true };
+        var agreement = aot["agreement"]?.AsObject()
+            ?? throw new InvalidOperationException("The fixture's interp-relinked mode has no agreement object.");
+        agreement["build"] = "node-aot";
+        modes["aot"] = aot;
+        return root.ToJsonString();
     }
 }

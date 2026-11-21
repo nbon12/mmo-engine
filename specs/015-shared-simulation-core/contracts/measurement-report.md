@@ -245,7 +245,10 @@ sandbox ([research.md](../research.md) R8, R17); they are not runner-class measu
 
 Every number's unit is in its name: `Ns` nanoseconds, `Ms` milliseconds, `Bytes` bytes. Fields
 without a unit suffix are counts or labels. The schema is closed: a field not listed here is a
-problem.
+problem. An integer field is a JSON number written as an optional minus sign and decimal digits, with
+no fraction or exponent, in the signed 64-bit range; any other number, such as `4.0`, `1e2` or
+`9223372036854775808`, is `must be an integer`. Every count, iteration count and byte size fits that
+range, and the download totals are still summed exactly, beyond it.
 
 **Top level**
 
@@ -367,8 +370,10 @@ Every check prints one `path: problem` line when it fails, for example
 `wasm.modes.aot.reason: is required when produced is false`. The command exits 0 when there is no
 problem, 1 otherwise.
 
-1. The file is valid JSON, with no member name repeated within an object, and an object;
-   `formatVersion` is 1, `kind` is `simcore-measurement` and `label` is `measurement`.
+1. The file is UTF-8 (a leading byte-order mark is skipped) and valid JSON, with no member name
+   repeated within an object, and an object; `formatVersion` is 1, `kind` is `simcore-measurement` and
+   `label` is `measurement`. Bytes that are not UTF-8, including a UTF-16 file, are
+   `$: is not valid JSON (…)` like malformed JSON: they are never replaced by U+FFFD and passed.
 2. Every field listed above is present with its type, and no other field is.
 3. `runnerClass` is not empty, and `server.runnerClass` equals it (US7 Independent Test: "the runner
    class").
@@ -411,7 +416,9 @@ no tuning value is set (Principle VI). The zero-allocation tests in
 | `ValidateReportTests.EachProblemIsReported(mutation, expectedLine)` (Theory) | one row per check: a mutation of the fixture (a field removed, an unknown field, an empty runner class, a server runner class that differs, a missing `weapon` benchmark, a missing mode, an unproduced mode without a reason, a raw, brotli or gzip total that does not add up, 9 cold starts, a missing `firstStepMs`, `crossOriginIsolated` false, a missing step kind, a WebAssembly step whose `meanNs` or `p99Ns` is 0, a `p90` below the `median`) gives exactly its `path: problem` line and exit 1. The rows cover every number US7 scenario 2 says the report records: the raw and compressed download sizes, the time to the first completed step and the cost per step |
 | `ValidateReportTests.AnUnproducedModeNeedsOnlyItsReason` | `{"produced": false, "reason": "…"}` for `aot` and `interp-relinked` is valid |
 | `ValidateReportTests.MalformedJsonIsInvalidAndAMissingFileCannotRun` | exit 1 with `$: is not valid JSON (…)`; exit 2 for a missing file |
-| `tests/MmoEngine.SimCore.Tests/Cli/MeasurementReportValidatorTests.EveryOtherCheckReportsItsLine(mutation, expectedLine)` (Theory) | every other check, called directly on one mutation of the fixture each, returns exactly its line; among the rows, `recordedAt`, `commit`, both .NET versions and `server.tool` with one trailing newline each fail their format |
+| `ValidateReportTests.BytesThatAreNotUtf8AreNotValidJson` (Theory), `AUtf8ByteOrderMarkIsSkipped` | the fixture with one 0xFF byte inside `machine.cpuModel`, the same after a UTF-8 byte-order mark, and the fixture as UTF-16 are each exit 1 with exactly one `$: is not valid JSON (…)` line; the fixture after a UTF-8 byte-order mark is valid (check 1) |
+| `tests/MmoEngine.SimCore.Tests/Cli/MeasurementReportValidatorTests.EveryOtherCheckReportsItsLine(mutation, expectedLine)` (Theory) | every other check, called directly on one mutation of the fixture each, returns exactly its line; among the rows, `recordedAt`, `commit`, both .NET versions and `server.tool` with one trailing newline each fail their format, a `server` benchmark's `meanNs` or `p99Ns` of 0 and a missing `movement` or `projectile` benchmark each fail check 5 (a missing `weapon` one is `EachProblemIsReported`'s row), each `build` boolean of the two interpreted modes that does not match its mode fails check 9, two file sizes of 9223372036854775807 give a total line with their exact sum, and `4.0`, `1e2` and `9223372036854775808` are not integers |
+| `MeasurementReportValidatorTests.AProducedAotModeWithEveryBuildFlagAndNodeAotIsValid`, `AProducedAotModeReportsItsLine` (Theory) | the fixture with its `interp-relinked` mode copied to `aot`, `build` all true and `agreement.build` `node-aot`, is valid; each `build` boolean set to false, `agreement.build` `node-interp-relinked` and a null `agreement` each give exactly their line (check 9) |
 | `MeasurementReportValidatorTests.RepeatedMemberMakesTheFileInvalidJson` (Theory) | the fixture with `formatVersion`, or `machine.cpuModel`, written twice with the same value is exactly one `$: is not valid JSON (…)` line naming the member (check 1) |
 | `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithIterationCount(3).WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. Each entry, matched to its report by step and case, has exactly that report's `Mean` as `meanNs`, its `Percentiles.Percentile(99)` as `p99Ns`, its `N` (3) as `iterations` and its `GetBytesAllocatedPerOperation` as `allocatedBytesPerOp`. The job measures three iterations because with `Job.Dry`'s one the 99th percentile equals the mean. It runs in the serial collection |
 | `ServerBenchmarkExportTests.RunExitsZeroWhenItExportedEveryBenchmarkItRan`, `RunExitsOneWhenItWroteNoExport` (Theory), `RunExitsOneWhenAReportHasNoAllocationMeasurement` | step 1's exit code, through the entry point's `Program.Run(args, runnerClass, stderr, createConfig)` and `BenchmarkSwitcher` with the dry run's configuration: 0 when the movement, weapon and projectile benchmarks ran and were exported; 1 with exactly its stderr line when the filter selects nothing (an export left from an earlier run stays as it was), when a directory at the export's path makes the exporter throw, and when a report has no allocation measurement |
