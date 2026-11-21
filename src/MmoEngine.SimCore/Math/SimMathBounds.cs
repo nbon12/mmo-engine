@@ -7,8 +7,9 @@ namespace MmoEngine.SimCore.Math;
 /// against <c>Math.*(double)</c> (and <c>double.SinPi</c>/<c>CosPi</c> for binary angles).
 /// <c>Math/FixedTableBoundsTests</c> checks every in-domain row of the fixed table against these
 /// constants on every pull request, and <c>Math/ExhaustiveSweepTests</c> checks the whole domains when
-/// <c>MMO_EXHAUSTIVE_MATH=1</c>. A bound is never widened past R3's table; a row over its bound is
-/// fixed in the algorithm or the coefficients.
+/// <c>MMO_EXHAUSTIVE_MATH=1</c>. A bound is never widened past R3's table, and
+/// <c>Math/FixedTableBoundsTests.BoundsAreTheResearchR3Values</c> pins each constant to it; a row over
+/// its bound is fixed in the algorithm or the coefficients.
 /// </summary>
 public static class SimMathBounds
 {

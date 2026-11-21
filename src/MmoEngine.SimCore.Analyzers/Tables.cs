@@ -237,6 +237,27 @@ internal static class Tables
     /// <summary>The views of a hash-ordered collection, reported only when their own type is not hash-ordered.</summary>
     public static readonly ImmutableHashSet<string> EnumeratingProperties = Set("Keys", "Values");
 
+    /// <summary>
+    /// The set operations that take another collection and whose result does not depend on its order.
+    /// A hash-ordered collection passed to one of them, declared on a listed type, is not enumerated in
+    /// a way the step can observe (contracts/analyzer-rules.md#hash-ordered-collections-mmo1004).
+    /// </summary>
+    public static readonly ImmutableHashSet<string> OrderInsensitiveSinkMethods = Set(
+        "UnionWith",
+        "IntersectWith",
+        "ExceptWith",
+        "SymmetricExceptWith",
+        "SetEquals",
+        "Overlaps",
+        "IsSubsetOf",
+        "IsSupersetOf",
+        "IsProperSubsetOf",
+        "IsProperSupersetOf",
+        "Union",
+        "Intersect",
+        "Except",
+        "SymmetricExcept");
+
     // ---- MMO1005: ambient time, randomness and hash seeds -------------------------------------
 
     /// <summary>
@@ -378,6 +399,9 @@ internal static class Tables
 
     /// <summary><c>System.Convert</c>, every member of which is MMO1009.</summary>
     public const string ConvertType = "System.Convert";
+
+    /// <summary>The span types a collection expression can target, whose element type is their one type argument.</summary>
+    public static readonly ImmutableHashSet<string> SpanTypes = Set("System.Span`1", "System.ReadOnlySpan`1");
 
     /// <summary>The 128-bit integer types, which a float conversion reaches through a user-defined operator.</summary>
     public static readonly ImmutableHashSet<string> WideIntegerTypes = Set("System.Int128", "System.UInt128");

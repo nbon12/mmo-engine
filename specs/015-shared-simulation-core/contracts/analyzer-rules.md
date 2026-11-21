@@ -18,12 +18,12 @@ Every rule is severity Error, enabled by default, category `Determinism`, and ca
 | MMO1001 | Vector or SIMD type outside the lane-wise allowlist | Any use or declaration of `System.Numerics` `Vector<T>`, `Vector`, `Vector2`, `Vector3`, `Vector4`, `Quaternion`, `Matrix3x2`, `Matrix4x4` or `Plane`, including as a type argument, array element, pointer target, return type, parameter, local or `typeof` operand. Every member of `System.Runtime.Intrinsics` and its sub-namespaces that is not on the [Vector128 allowlist](#vector128-allowlist-mmo1001): the X86, Arm and Wasm ISA classes, `Vector64`, `Vector256`, `Vector512`, `IsHardwareAccelerated`, `IsSupported`, the horizontal `Sum` and `Dot`, and every `*Estimate` and `*Native` member. A `Vector128<T>` whose element type is not `float`. | `Vector128<float>` with the allowlisted members. The core's own scalar types (`Vec3`). |
 | MMO1002 | Platform math outside the allowlist | Static methods of `System.Math`, `System.MathF`, `System.Single`, `System.Double`, `System.Half` and `System.Runtime.InteropServices.NFloat`, and static methods of the generic-math interfaces in `System.Numerics` (so `T.Cos(x)` is caught), that are not on the [math allowlist](#math-allowlist-mmo1002). Invocations, method groups and function pointers (`&MathF.Sin`) all count. The `%` operator (and `%=`) on `float` operands. | The math allowlist, the constants (static properties such as `T.Pi` included), and `nameof(MathF.Sin)`. The operators and conversions these types define, so `(Half)1` reports only MMO1007. |
 | MMO1003 | Fused multiply-add | Any member whose name starts with `FusedMultiply`, or is `MultiplyAddEstimate`, on any type (`Math`, `MathF`, `float`, `Vector128`, `AdvSimd` and the rest), and every member of `System.Runtime.Intrinsics.X86.Fma` and `Fma.X64`. | `a * b + c` written as two float operations. |
-| MMO1004 | Iteration over a hash-ordered collection | Enumerating a [hash-ordered collection](#hash-ordered-collections-mmo1004): `foreach`; `GetEnumerator`, `CopyTo` or `ToArray`; `Keys` or `Values` whose result is not itself hash-ordered; a `..` spread; and any conversion of the collection to a type that is not itself hash-ordered (LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, returning it as `IEnumerable<T>`). | Lookups: `TryGetValue`, `ContainsKey`, `Contains`, the indexer, `Count`, `Keys.Count`. Order-insensitive sinks on hash types (`UnionWith`, a hash type's copy constructor). `SortedDictionary`, `SortedSet`, arrays and `List<T>`. |
+| MMO1004 | Iteration over a hash-ordered collection | Enumerating a [hash-ordered collection](#hash-ordered-collections-mmo1004): `foreach`; `GetEnumerator`, `CopyTo` or `ToArray`; `Keys` or `Values` whose result is not itself hash-ordered; a `..` spread; and any conversion of the collection to a type that is not itself hash-ordered (LINQ receivers, query syntax, `string.Join`, `new List<T>(set)`, `AddRange`, returning it as `IEnumerable<T>`). | Lookups: `TryGetValue`, `ContainsKey`, `Contains`, the indexer, `Count`, `Keys.Count`. [Order-insensitive sinks](#hash-ordered-collections-mmo1004): a listed type's set operations (`UnionWith`, `SetEquals` and the rest) and its own copy constructor. `SortedDictionary`, `SortedSet`, arrays and `List<T>`. |
 | MMO1005 | Ambient time, randomness or a per-process hash seed | The [ambient list](#ambient-time-randomness-and-hash-seeds-mmo1005): wall-clock and monotonic clocks, every timer, all of `System.Random` (seeded too), `Guid.NewGuid`, `RandomNumberGenerator`, and hashing seeded per process (`HashCode`, `string.GetHashCode`, a `GetHashCode` that is not overridden, `RuntimeHelpers.GetHashCode`). | The step number and step length passed in by the caller. The core's seeded spread hash (SplitMix64). `int.GetHashCode()` and other overrides that return the value's bits. |
-| MMO1006 | Lock or blocking synchronization | Every `lock` statement, including on `System.Threading.Lock`. The [blocking list](#locks-and-blocking-mmo1006): `Monitor`, `Mutex`, the semaphores, reader-writer locks, spin primitives, wait handles, `Barrier`, `BlockingCollection`, `Parallel`, `Thread.Sleep`/`Join`/`SpinWait`/`Yield`, `Task.Wait`/`WaitAll`/`WaitAny`/`RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`, `GetResult` on every awaiter, and `[MethodImpl(MethodImplOptions.Synchronized)]`. | `await`, `Interlocked` and `Volatile`; none of them blocks. |
-| MMO1007 | Non-float floating point or platform-sized number | Declarations of `double`, `Half`, `NFloat`, `nint` or `nuint` (fields, properties, events, parameters, return types, locals, type arguments, array elements), and any non-constant expression of those types. An untyped literal in a float expression (`x * 0.5`) is one. | `const double` fields and constant-folded expressions such as `(float)(Math.PI / 180.0)`. `int` and `long` for fixed point and counters. `decimal` is not checked. |
-| MMO1008 | Platform query, conditional compilation or reflection | `#if` and `#elif` directives, active or not. `[Conditional]` declarations and every member of `System.Diagnostics.Debug` and `Trace`. `OperatingSystem`, `RuntimeInformation`, `RuntimeFeature`. Every member of `System.Environment` except the two clocks (MMO1005). `IntPtr.Size`, `UIntPtr.Size`, `BitConverter.IsLittleEndian`. Members of `System.Type`, operators included, every type in `System.Reflection` and its sub-namespaces, `Activator`. Every `dynamic` operation. `[UnsafeAccessor]` declarations. | One code path for every build. `typeof(T)` and `nameof` without member access. |
-| MMO1009 | Float-to-integer or ulong-to-float conversion outside the SimMath helpers | A non-constant conversion, explicit or implicit, `checked` or not, from `float` or `double` to any integer type (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `char`, `Int128`, `UInt128`) or to any enum type (matched by its underlying integer type, so `(Buttons)x` counts), outside the bodies of the three `MmoEngine.SimCore.Math.SimMath` helpers. Every member of `System.Convert`. An invocation of `CreateTruncating`, `CreateSaturating` or `CreateChecked` declared on one of those integer types (`int.CreateSaturating(x)`, `long.CreateTruncating(x)`) whose type argument `TOther` is `float`, `double`, `Half` or `NFloat`. A non-constant conversion from `ulong` to `float`, anywhere in the core, `SimMath` included. | `SimMath.FloorToInt`, `SimMath.RoundToInt` and `SimMath.TruncateToInt`, which saturate before the cast (NaN → 0, ≥ 2^31 → `int.MaxValue`, < −2^31 → `int.MinValue`). Constant casts such as `(int)2.5f`. Integer-to-float conversions from `int`, `uint`, `long`, `short` and `byte`, which round correctly in every build. |
+| MMO1006 | Lock or blocking synchronization | Every `lock` statement, including on `System.Threading.Lock`. The [blocking list](#locks-and-blocking-mmo1006): `Monitor`, `Mutex`, the semaphores, reader-writer locks, spin primitives, wait handles, `Barrier`, `BlockingCollection`, `Parallel`, `Thread.Sleep`/`Join`/`SpinWait`/`Yield`, `Task.Wait`/`WaitAll`/`WaitAny`/`RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`, `GetResult` on every awaiter, and `[MethodImpl(MethodImplOptions.Synchronized)]` on a method, an accessor, a field-like event, a local function or a lambda. | `await`, `Interlocked` and `Volatile`; none of them blocks. |
+| MMO1007 | Non-float floating point or platform-sized number | Declarations of `double`, `Half`, `NFloat`, `nint` or `nuint` (fields, properties, events, parameters, return types, locals, type arguments, array elements), including the parameters and return types of local functions and delegates and the ones a lambda writes out, and any non-constant expression of those types. An untyped literal in a float expression (`x * 0.5`) is one. | `const double` fields and constant-folded expressions such as `(float)(Math.PI / 180.0)`. `int` and `long` for fixed point and counters. `decimal` is not checked. |
+| MMO1008 | Platform query, conditional compilation or reflection | `#if` and `#elif` directives, active or not. `[Conditional]` declarations (methods and local functions) and every member of `System.Diagnostics.Debug` and `Trace`. `OperatingSystem`, `RuntimeInformation`, `RuntimeFeature`. Every member of `System.Environment` except the two clocks (MMO1005). `IntPtr.Size`, `UIntPtr.Size`, `BitConverter.IsLittleEndian`. Members of `System.Type`, operators included, every type in `System.Reflection` and its sub-namespaces, `Activator`. Every `dynamic` operation. `[UnsafeAccessor]` declarations (methods and local functions). | One code path for every build. `typeof(T)` and `nameof` without member access. |
+| MMO1009 | Float-to-integer or ulong-to-float conversion outside the SimMath helpers | A non-constant conversion, explicit or implicit, `checked` or not, from `float` or `double` to any integer type (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `char`, `Int128`, `UInt128`) or to any enum type (matched by its underlying integer type, so `(Buttons)x` counts), outside the bodies of the three `MmoEngine.SimCore.Math.SimMath` helpers. Every member of `System.Convert`. An invocation of `CreateTruncating`, `CreateSaturating` or `CreateChecked` declared on one of those integer types (`int.CreateSaturating(x)`, `long.CreateTruncating(x)`) whose type argument `TOther` is `float`, `double`, `Half` or `NFloat`. A non-constant conversion from `ulong` to `float`, anywhere in the core, `SimMath` included. These conversions count wherever Roslyn makes them without a conversion operation of their own: element by element in a tuple conversion (`((int, int))t`, nested tuples too), from a `foreach` element to its iteration variable (`foreach (int i in floats)`), in a deconstruction (from a tuple or through `Deconstruct`, also in a `foreach`), from a spread's elements to the collection expression's (`float[] f = [.. ulongs]`), from the left operand of `??` to its result, and in the standard conversion on either side of a user-defined operator in any of these. | `SimMath.FloorToInt`, `SimMath.RoundToInt` and `SimMath.TruncateToInt`, which saturate before the cast (NaN → 0, ≥ 2^31 → `int.MaxValue`, < −2^31 → `int.MinValue`). Constant casts such as `(int)2.5f`. Integer-to-float conversions from `int`, `uint`, `long`, `short` and `byte`, which round correctly in every build. |
 
 US3 scenario 1 lists `Vector128.Sum` and `Vector128.Dot` as its horizontal samples. A fused
 `Vector128.FusedMultiplyAdd` belongs to MMO1003 (US3 scenario 3), by the precedence below.
@@ -42,10 +42,17 @@ US3 scenario 1 lists `Vector128.Sum` and `Vector128.Dot` as its horizontal sampl
 - a conversion, including the implicit conversion of a LINQ receiver or an argument: the source text
   of the conversion's syntax, which is the cast expression for an explicit conversion (`(int)x`) and
   the converted expression for an implicit one (`s` in `s.First()`, `u` in `float M(ulong u) => u`);
+- an element conversion with no syntax of its own (MMO1009): for a `foreach`, the iteration variable's
+  declared type (`int` in `foreach (int i in a)`), or the deconstruction as written
+  (`(float p, float q)` in `foreach ((float p, float q) in a)`); for a deconstruction assignment, the
+  deconstructed value (`t` in `(float p, float q) = t`); for `??`, its left operand (`u` in `u ?? f`);
+  for a spread, `..`, as for every spread;
+- a property, indexer or event accessor's `Synchronized` flag (MMO1006): the accessor as
+  `CSharpShortErrorMessageFormat` shows it, for example `C.P.get`;
 - an `#if` or `#elif` directive: the directive keyword, `#if` or `#elif`;
-- a declaration: the declared identifier;
-- anything else (a non-constant `double` expression, a `dynamic` operation, an attribute): the
-  operation's source text.
+- a declaration: the declared identifier, which for a field-like event's accessors is the event's;
+- anything else (a non-constant `double` expression, a `dynamic` operation, an attribute, and a
+  lambda's own `Synchronized` flag or written return type): the operation's source text.
 
 Where `{1}` is a type (MMO1001, MMO1004 and MMO1007), it is the constructed type as
 `ITypeSymbol.ToDisplayString()` shows it, which is the default
@@ -95,7 +102,12 @@ cast to its underlying type.
 
 The diagnostic's location is the operation's syntax: the invocation, member access or conversion
 expression; the `lock` keyword for a `lock` statement; the collection expression for `foreach` and
-spreads; the declared identifier for a declaration; the directive line for `#if`.
+spreads; the declared identifier for a declaration; the directive line for `#if`. The forms with no
+syntax of their own report where their conversion or flag is written: a `foreach` element conversion at
+the declared iteration type (or the deconstruction variables), a deconstruction assignment's and a
+`??`'s at the converted operand, a spread's at its collection expression; an accessor's `Synchronized`
+flag at the accessor keyword (`get`, `set`, `init`, `add`, `remove`), a field-like event's at the
+event's identifier; and a lambda's own finding at the lambda, which has no identifier.
 
 ## Precedence and deduplication
 
@@ -122,7 +134,16 @@ spreads; the declared identifier for a declaration; the directive line for `#if`
   `record R(double X) { public double X { get; init; } = X; }` gives two.
 - **A method's identifier reports one rule**, the first in the precedence order among its return
   type, its `[Conditional]` or `[UnsafeAccessor]` attribute (MMO1008) and its `Synchronized` flag
-  (MMO1006). Its parameters report on their own identifiers.
+  (MMO1006). Its parameters report on their own identifiers. A local function is checked the same way
+  at its identifier, and a lambda or anonymous method at the lambda, where a return type counts only
+  when the lambda writes one and a parameter only when its type is written. A delegate's identifier
+  reports its return type and its parameters report on their own identifiers. An event's identifier
+  reports one rule among its type's MMO1001, the `Synchronized` flag `[method: MethodImpl(…)]` gives a
+  field-like event's accessors (MMO1006), and the rest of its type's rules.
+- **A `foreach`, a spread and a tuple conversion are each one operation.** A `foreach` over a
+  hash-ordered collection whose iteration variable also converts a float reports MMO1004 only, and the
+  conversion shows once the collection is replaced. A tuple conversion or deconstruction reports one
+  MMO1009, with the reason of its first converting element.
 
 ## Allowlists and tables
 
@@ -177,8 +198,13 @@ Everything else on the math host types is MMO1002. Besides the transcendental fu
   [measured];
 - `Round(x, digits)` and `Round(x, digits, mode)`, which scale by powers of ten;
 - `Lerp`, `DegreesToRadians` and `RadiansToDegrees`, whose implementation may change;
-- `IEEERemainder`, `Sign`, `Parse` and `ToString`, which the core does not need;
+- `IEEERemainder`, `Sign` and `Parse`, which the core does not need;
 - float `%`.
+
+Instance members of these types, such as `ToString` and `TryFormat`, are not platform math and are
+outside MMO1002, which covers static methods only. The core formats floats in invariant round-trip
+form for error text (`Vec3.ToString`, `ConfigFields.FormatBound`), and that text is the same in every
+build.
 
 ### Replacement map (MMO1002 messages)
 
@@ -214,6 +240,17 @@ A class derived from one of the listed classes enumerates in the same order, so 
 interface counts only as the expression's own type, so `SortedDictionary`, which implements
 `IDictionary<,>`, and `SortedSet`, which implements `ISet<>`, do not.
 
+The order-insensitive sinks are the only arguments that do not report. A hash-ordered collection
+passed to one of the set operations `UnionWith`, `IntersectWith`, `ExceptWith`, `SymmetricExceptWith`,
+`SetEquals`, `Overlaps`, `IsSubsetOf`, `IsSupersetOf`, `IsProperSubsetOf`, `IsProperSupersetOf`,
+`Union`, `Intersect`, `Except` or `SymmetricExcept`, declared on a listed type (`HashSet<T>`,
+`ISet<T>`, `IReadOnlySet<T>`, `ImmutableHashSet<T>`, `FrozenSet<T>`), or to a listed type's own
+constructor (its copy constructor), is not enumerated in an order the step can observe. Passed to any
+other member it is a conversion like any other and reports: `Add`, `TryAdd` and a collection
+initializer, which can store the set as a value and let a later read enumerate it
+(`new Dictionary<int, IEnumerable<int>> { { 0, set } }`), a `Hashtable`, a derived class's constructor,
+and a set operation of a type that is not listed (`SortedSet<T>.UnionWith`).
+
 ### Ambient time, randomness and hash seeds (MMO1005)
 
 - Whole types: `Stopwatch`, `TimeProvider`, `Random`, `RandomNumberGenerator`, `HashCode`,
@@ -240,7 +277,11 @@ interface counts only as the expression's own type, so `SortedDictionary`, which
   `Task.WaitAll`, `Task.WaitAny`, `Task.RunSynchronously`, `Task<T>.Result`, `ValueTask<T>.Result`,
   and `GetResult` on `TaskAwaiter`, `TaskAwaiter<T>`, `ValueTaskAwaiter`, `ValueTaskAwaiter<T>` and the
   four configured awaiters.
-- Every `lock` statement, and every method whose implementation flags include `Synchronized`.
+- Every `lock` statement, and every method, property, indexer or event accessor, local function and
+  lambda whose implementation flags include `Synchronized`: at the method's or local function's
+  identifier, the accessor's keyword, the lambda, or, for a field-like event whose
+  `[method: MethodImpl(MethodImplOptions.Synchronized)]` sets the flag on both implicit accessors, the
+  event's identifier.
 - A whole type reports on every use (any member, constructor or method group, of it or of a class
   derived from it) and on every declaration whose type is or contains it: a field, property, event,
   parameter, return type or local, so `static readonly Lock L = new();` reports once, at `L`.
@@ -276,13 +317,18 @@ without this exemption the SDK-generated `obj/…/MmoEngine.SimCore.AssemblyInfo
 other `System.Reflection` assembly attributes under an `<auto-generated>` header, would report
 MMO1008 on lines nobody can edit and fail the core's build. The symbol actions still check the
 attributes that change behaviour: `[MethodImpl(MethodImplOptions.Synchronized)]` (MMO1006),
-`[Conditional]` and `[UnsafeAccessor]` (MMO1008).
+`[Conditional]` and `[UnsafeAccessor]` (MMO1008), on members and accessors, and the declaration action
+checks them on local functions and lambdas.
 
 ### Not covered
 
 The agreement suite remains the second line of defence for what the rules cannot see. Known gaps:
 `EqualityComparer<string>.Default.GetHashCode` and other indirect routes to a per-process seed, and
-library code outside the core that the core calls through the BCL. `async` and `await` are allowed,
+library code outside the core that the core calls through the BCL. An order-insensitive sink whose
+comparer treats as equal two elements that the source keeps apart (a case-insensitive set built from a
+case-sensitive one) keeps whichever comes first. A spread's element conversion is checked when the
+collection expression's target is an array, a span or an `IEnumerable<T>`, which every collection type
+the core uses is. `async` and `await` are allowed,
 because they do not block; the core has no reason to use them.
 
 ## Severity and suppression
@@ -365,12 +411,17 @@ Registration:
 - `EnableConcurrentExecution()`.
 - `ConfigureGeneratedCodeAnalysis(Analyze | ReportDiagnostics)`.
 - One `RegisterOperationAction` over Invocation, PropertyReference, FieldReference, MethodReference,
-  EventReference, ObjectCreation, Lock, Loop, Conversion, Spread, VariableDeclarator, Binary and Unary
-  (user-defined operators and float `%`), CompoundAssignment (float `%=`), TypeOf, DefaultValue and the
-  four Dynamic kinds. It returns
-  at once for an operation under an `IAttributeOperation` ([attribute applications](#attribute-applications)).
-- `RegisterSymbolAction` for Field, Property, Method and Event declarations (declared types,
-  `MethodImplementationFlags`, `[Conditional]` and `[UnsafeAccessor]`).
+  EventReference, ObjectCreation, Lock, Loop, Conversion, Spread, Coalesce and DeconstructionAssignment
+  (MMO1009's element conversions), VariableDeclarator, Binary and Unary (user-defined operators and
+  float `%`), CompoundAssignment (float `%=`), TypeOf, DefaultValue and the four Dynamic kinds. It
+  returns at once for an operation under an `IAttributeOperation` ([attribute applications](#attribute-applications)).
+- A second `RegisterOperationAction` over LocalFunction and AnonymousFunction, for the declarations
+  inside a body, which no symbol action sees: a local function's identifier and parameters, as a
+  method's, and a lambda's `Synchronized` flag and written parameter and return types. Its findings
+  are declarations, so they take no part in the per-statement deduplication.
+- `RegisterSymbolAction` for Field, Property, Method, Event and NamedType declarations (declared types,
+  `MethodImplementationFlags` on methods and accessors, `[Conditional]` and `[UnsafeAccessor]`, and a
+  delegate's return and parameter types).
 - `RegisterSyntaxTreeAction` for `#if` and `#elif`.
 
 Matching compares `OriginalDefinition` by metadata name. This avoids `GetTypeByMetadataName`
@@ -463,18 +514,19 @@ conversion, `Keys` on a `SortedDictionary` (allowed) and the positional record p
 | MMO1001 | `Vector3.Dot(new Vector3(x), Vector3.UnitX)`; `Vector<float>.Count`; `Vector128.Sum(a)`; `Vector128.Dot(a, a)`; `Vector128.IsHardwareAccelerated`; `new List<Quaternion>()`; `var v = Matrix4x4.Identity;`; `System.Runtime.Intrinsics.X86.Sse.IsSupported` | `Vector128.Add(a, b) * b - Vector128.Create(1f)`; `x * y + 1f` |
 | MMO1002 | `MathF.Sin(x)`; `float.Atan2(x, 1f)`; `T.Cos(x)` with `T : ITrigonometricFunctions<T>`; the method group `MathF.Tan`; the function pointer `&MathF.Sin`; `MathF.Pow(x, 2f)`; `MathF.ReciprocalSqrtEstimate(x)`; `MathF.Max(x, 0f)`; `MathF.Round(x, 2)`; `x % 2f`; `Math.Clamp(x, 0f, 1f)` outside `SimMath` | `MathF.Sqrt(MathF.Abs(x)) + MathF.Floor(x) + MathF.Round(x) + MathF.Round(x, MidpointRounding.ToZero) + MathF.CopySign(x, -1f) + MathF.PI`; `nameof(MathF.Sin)`; `Math.Max(i, 0) + Math.Clamp(i, 0, 9)`; `float.IsFinite(x) ? BitConverter.SingleToUInt32Bits(x) : 0u` |
 | MMO1003 | `MathF.FusedMultiplyAdd(a, b, c)`; `float.MultiplyAddEstimate(a, a, a)`; `Vector128.FusedMultiplyAdd(a, a, a)`; `System.Runtime.Intrinsics.X86.Fma.MultiplyAdd(a, a, a)` | `a * b + c` |
-| MMO1004 | `foreach` over a `Dictionary<int, int>`; `s.First()` on a `HashSet<int>`; `d.Keys.ToArray()`; `new List<int>(s)`; `[.. s]`; `string.Join(",", s)`; returning an `ImmutableHashSet<int>` as `IEnumerable<int>`; `foreach` over `IReadOnlyDictionary<int, int>.Keys`; `d.Keys.CopyTo(dst, 0)`; `from kv in d select kv.Value` | `d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count`; `foreach` over a `SortedDictionary<int, int>`; `a.UnionWith(b)` on two `HashSet<int>` |
+| MMO1004 | `foreach` over a `Dictionary<int, int>`; `s.First()` on a `HashSet<int>`; `d.Keys.ToArray()`; `new List<int>(s)`; `[.. s]`; `string.Join(",", s)`; returning an `ImmutableHashSet<int>` as `IEnumerable<int>`; `foreach` over `IReadOnlyDictionary<int, int>.Keys`; `d.Keys.CopyTo(dst, 0)`; `from kv in d select kv.Value`; a `HashSet<int>` stored as a `Dictionary<int, IEnumerable<int>>` value by a collection initializer, by `Add` and in a `Hashtable`; a `HashSet<int>` passed to a derived class's constructor | `d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count`; `foreach` over a `SortedDictionary<int, int>`; `a.UnionWith(b)` and `a.SetEquals(b)` on two `HashSet<int>`; `new HashSet<int>(s)` |
 | MMO1005 | `DateTime.Now.Ticks`; `DateTime.UtcNow.Ticks`; `Stopwatch.GetTimestamp()`; `Environment.TickCount`; `new Random(42).Next()`; `Random.Shared.Next()`; `Guid.NewGuid()`; `s.GetHashCode()` on a string; `HashCode.Combine(a, b)`; `TimeProvider.System.GetUtcNow()` | `a.GetHashCode() ^ 17` on an `int`; `step * stepTicks` |
-| MMO1006 | `lock (Gate) { }`; a `static readonly Lock` field; `lock (l)` on a `Lock` parameter (count 2: the parameter and the statement); `t.Wait()`; `t.Result`; `t.GetAwaiter().GetResult()`; `Thread.Sleep(1)`; `Monitor.Enter(typeof(C))`; `[MethodImpl(MethodImplOptions.Synchronized)]`; `Parallel.For(0, a.Length, i => a[i]++)` | `await t`; `Interlocked.Increment(ref x)` |
-| MMO1007 | `(float)(x * 0.5)`; `double M(float x) => x` (count 2); `(int)(nint)a`; `var h = (Half)1;` | `const double Scale = 1.0 / 3.0` used as `x * (float)Scale`; `x * (float)(Math.PI / 180.0)` |
-| MMO1008 | `OperatingSystem.IsBrowser()`; `IntPtr.Size`; `Environment.ProcessorCount`; `typeof(MathF).GetMethod("Sin")`; `d.Foo()` on a `dynamic`; an `#if DEBUG` block; `Debug.Assert(b)`; an `[UnsafeAccessor]` extern method | `object M() => typeof(int);` (no member access on the `Type`) |
-| MMO1009 | `(int)x`; `(byte)(x * 2f)`; `float M(ulong u) => u`; `Convert.ToInt32(x)`; `int.CreateSaturating(x)`; `long.CreateTruncating(x)`; `(DayOfWeek)x`; `(UInt128)x` | `(int)2.5f`; `i * 0.5f`; `(float)(uint)(h >> 40)`; `int.CreateSaturating(l)` with `l` a `long`; `(DayOfWeek)i` with `i` an `int` |
+| MMO1006 | `lock (Gate) { }`; a `static readonly Lock` field; `lock (l)` on a `Lock` parameter (count 2: the parameter and the statement); `t.Wait()`; `t.Result`; `t.GetAwaiter().GetResult()`; `Thread.Sleep(1)`; `Monitor.Enter(typeof(C))`; `[MethodImpl(MethodImplOptions.Synchronized)]` on a method, a getter, a setter, an event adder, a field-like event (`[method:]`), a local function and a lambda; a `Lock` parameter of a local function and of a delegate; `Parallel.For(0, a.Length, i => a[i]++)` | `await t`; `Interlocked.Increment(ref x)`; plain accessors and a plain local function |
+| MMO1007 | `(float)(x * 0.5)`; `double M(float x) => x` (count 2); `(int)(nint)a`; `var h = (Half)1;`; a local function's `double` parameter; `delegate double D(double x)` (count 2); `(double d) => 1f` returned as `Func<double, float>` (count 2: the return type and `d`); `var f = double () => 0;` (count 2: `f` and the written return type) | `const double Scale = 1.0 / 3.0` used as `x * (float)Scale`; `x * (float)(Math.PI / 180.0)`; `x => x * 2f` as `Func<float, float>` |
+| MMO1008 | `OperatingSystem.IsBrowser()`; `IntPtr.Size`; `Environment.ProcessorCount`; `typeof(MathF).GetMethod("Sin")`; `d.Foo()` on a `dynamic`; an `#if DEBUG` block; `Debug.Assert(b)`; an `[UnsafeAccessor]` extern method; a `[Conditional]` local function and an `[UnsafeAccessor]` extern local function | `object M() => typeof(int);` (no member access on the `Type`) |
+| MMO1009 | `(int)x`; `(byte)(x * 2f)`; `float M(ulong u) => u`; `Convert.ToInt32(x)`; `int.CreateSaturating(x)`; `long.CreateTruncating(x)`; `(DayOfWeek)x`; `(UInt128)x`; `foreach (int i in floats)`, `foreach (float f in ulongs)`, `foreach (DayOfWeek d in floats)`, and a `foreach` into a struct whose operator takes `int` or from one whose operator returns `float`; `((int, int))t` with `t` a `(float, float)`, nested and nullable too; `(float, float) M((ulong, ulong) t) => t`; `(float p, float q) = t` with `t` a `(ulong, ulong)`, through `Deconstruct` and an extension `Deconstruct` of `ulong` out parameters, and in a `foreach`; `[.. ulongs]` into a `float[]`, `List<float>`, `IEnumerable<float>` and `Span<float>`; `u ?? f` with `u` a `ulong?`, and with tuples | `(int)2.5f`; `i * 0.5f`; `(float)(uint)(h >> 40)`; `int.CreateSaturating(l)` with `l` a `long`; `(DayOfWeek)i` with `i` an `int`; `foreach (var f in floats)`; `foreach (float f in ints)`; `((float, float))t` with `t` an `(int, int)`; a deconstruction, a spread and `??` from `uint` |
 
 **Other tests in the project:**
 
 | Test | Asserts |
 | --- | --- |
 | `PlatformMathMessageNamesTheReplacement(member, replacement)` (Theory) | every row of the replacement map: for example `MathF.Sin` names `'SimMath.Sin'`, `float.Atan2` names `'SimMath.Atan2'`, `MathF.Max` names `'SimMath.Max'`, `Math.Clamp` outside `SimMath` names `'SimMath.Clamp'`, and `MathF.Pow` gets the fallback text |
+| `FormsWithoutTheirOwnSyntaxReportWhereTheContractSays(member, rule, reportedText, name, text)` (Theory, `RuleTests`) | the forms with no operation or identifier of their own report exactly one diagnostic, at the place [Messages](#messages) gives and with its `{0}`: a `foreach` element conversion at `int` and at `(float p, float q)`, a deconstruction at `t`, a tuple conversion at `((int, int))t`, a spread at `a` named `..`, `??` at `u`; a getter's and an event remover's `Synchronized` at `get` and `remove` named `C.P.get` and `C.E.remove`, a field-like event's at `E`, a local function's at its identifier, a lambda's at the lambda; a `[Conditional]` local function at its identifier |
 | `HashOrderMessagesNameTheOperationAndTheCollection(member, message)` (Theory) | the full MMO1004 message, `'{0}' enumerates '{1}', …`, for the `foreach` over a `Dictionary<int, int>` (`'foreach'`, `'System.Collections.Generic.Dictionary<int, int>'`), `[.. s]` (`'..'`, `'System.Collections.Generic.HashSet<int>'`) and `s.First()` (`'s'`, `'System.Collections.Generic.HashSet<int>'`) |
 | `EveryContractTableEntryIsEnforced(table, rule, count, member)` (Theory, `TableTests`) | one row per entry of every table under [Allowlists and tables](#allowlists-and-tables) and of the MMO1008 and MMO1009 rules: each allowlist member reports nothing, and each named banned member, type or list entry reports exactly its rule, with the same four assertions as `EachSampleProducesExactlyItsRule` |
 | `FusedCallsReportOnlyTheFmaRule(member)` (Theory) | for `MathF.FusedMultiplyAdd`, `Math.FusedMultiplyAdd`, `Vector128.FusedMultiplyAdd` and `Fma.MultiplyAdd`, the diagnostics whose span is the call are exactly one MMO1003; the `double` declarations of the `Math` row report MMO1007 at their own locations |
@@ -498,13 +550,14 @@ conversion, `Keys` on a `SortedDictionary` (allowed) and the positional record p
 | US3.3 fused multiply-add, and no other rule for the same call | MMO1003 rows; `FusedCallsReportOnlyTheFmaRule` |
 | US3.4 hash-ordered iteration | MMO1004 rows; `HashOrderMessagesNameTheOperationAndTheCollection` |
 | US3.5 ambient time and randomness | MMO1005 rows |
-| US3.6 locks, task waits and blocking primitives | MMO1006 rows |
-| US3.7 `double`, `Half`, `nint`, `NFloat`; float-to-integer; `ulong`-to-`float`; platform paths | MMO1007, MMO1009 and MMO1008 rows; `SimMathMayClampAndCastFloats` |
+| US3.6 locks, task waits and blocking primitives | MMO1006 rows; `FormsWithoutTheirOwnSyntaxReportWhereTheContractSays` |
+| US3.7 `double`, `Half`, `nint`, `NFloat`; float-to-integer; `ulong`-to-`float`; platform paths | MMO1007, MMO1009 and MMO1008 rows; `SimMathMayClampAndCastFloats`; `FormsWithoutTheirOwnSyntaxReportWhereTheContractSays` |
 | Independent Test: "build the core itself with the analyzer as an error" | `CoreSourcesHaveNoDeterminismDiagnosticsEvenSuppressedOnes`, `ABuildWithAViolationFails`, and CI's `dotnet build MmoEngine.sln -warnaserror` |
 
 US3 scenario 8 (the trigonometric bounds) is not the analyzer's. Its bound half is
 `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` on the
-server build. Its cross-build half ("identical bits for every input") is the tables check of the
+server build, with `FixedTableBoundsTests.BoundsAreTheResearchR3Values` pinning each `SimMathBounds`
+constant to research.md R3's documented bound. Its cross-build half ("identical bits for every input") is the tables check of the
 agreement runners, `tools/agreement/node/agreement.test.mjs` and `tools/agreement/specs/worker.spec.mjs`,
 with `agreement compare` diffing every row ([wasm-api.md](wasm-api.md#cross-build-tables)). The
 recorded streams alone cannot cover it, because they never call most of `SimMath`.

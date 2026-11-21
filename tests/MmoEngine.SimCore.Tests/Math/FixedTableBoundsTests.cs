@@ -233,6 +233,32 @@ public sealed class FixedTableBoundsTests
     }
 
     /// <summary>
+    /// US3 scenario 8a's "documented error bound" is research.md R3's table, which T164 transcribes into
+    /// <see cref="SimMathBounds"/>. <see cref="EveryInDomainRowIsWithinItsBound"/> reads the bounds from
+    /// those constants, so this pins each constant, found by <paramref name="name"/>, to its R3 value
+    /// <paramref name="documented"/>: widening a bound fails here instead of loosening the bound check
+    /// unnoticed.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(SimMathBounds.ReductionLimit), SimMathBounds.ReductionLimit, 12867f)]
+    [InlineData(nameof(SimMathBounds.SinCosMaxUlp), SimMathBounds.SinCosMaxUlp, 1f)]
+    [InlineData(nameof(SimMathBounds.SinCosLargeMaxUlp), SimMathBounds.SinCosLargeMaxUlp, 2f)]
+    [InlineData(nameof(SimMathBounds.TanMaxUlp), SimMathBounds.TanMaxUlp, 1.5f)]
+    [InlineData(nameof(SimMathBounds.TanLargeMaxUlp), SimMathBounds.TanLargeMaxUlp, 2.5f)]
+    [InlineData(nameof(SimMathBounds.AsinAcosMaxUlp), SimMathBounds.AsinAcosMaxUlp, 1f)]
+    [InlineData(nameof(SimMathBounds.AtanMaxUlp), SimMathBounds.AtanMaxUlp, 1f)]
+    [InlineData(nameof(SimMathBounds.Atan2MaxUlp), SimMathBounds.Atan2MaxUlp, 2f)]
+    [InlineData(nameof(SimMathBounds.SinCosBinaryAngleMaxUlp), SimMathBounds.SinCosBinaryAngleMaxUlp, 1f)]
+    [InlineData(nameof(SimMathBounds.SqrtMaxUlp), SimMathBounds.SqrtMaxUlp, 0.5f)]
+    public void BoundsAreTheResearchR3Values(string name, float actual, float documented)
+    {
+        var field = typeof(SimMathBounds).GetField(name);
+        Assert.NotNull(field);
+        Assert.Equal(actual, Assert.IsType<float>(field.GetRawConstantValue()));
+        Assert.Equal(documented, actual);
+    }
+
+    /// <summary>
     /// The out-of-domain predicate of contracts/wasm-api.md#cross-build-tables, judged from the input alone:
     /// a or b is NaN; a is ±∞ for functions 1 to 4; |a| &gt; 1 for functions 5 and 6; or a &lt; 0 (and not
     /// −0, which compares equal to 0) for function 10.

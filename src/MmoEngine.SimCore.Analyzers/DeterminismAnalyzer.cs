@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using Microsoft.CodeAnalysis;
@@ -13,7 +15,8 @@ namespace MmoEngine.SimCore.Analyzers;
 /// <summary>
 /// The determinism analyzer attached to the shared simulation core only. It enforces the rules of
 /// specs/015-shared-simulation-core/contracts/analyzer-rules.md (MMO1001 to MMO1009), on operations,
-/// on member declarations and on preprocessor directives, in generated code too.
+/// on member, local function, lambda and delegate declarations and on preprocessor directives, in
+/// generated code too.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -45,6 +48,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         OperationKind.Loop,
         OperationKind.Conversion,
         OperationKind.Spread,
+        OperationKind.Coalesce,
+        OperationKind.DeconstructionAssignment,
         OperationKind.VariableDeclarator,
         OperationKind.Binary,
         OperationKind.CompoundAssignment,
@@ -65,7 +70,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         context.EnableConcurrentExecution();
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
         context.RegisterOperationAction(AnalyzeOperation, OperationKinds);
-        context.RegisterSymbolAction(AnalyzeSymbol, SymbolKind.Field, SymbolKind.Property, SymbolKind.Method, SymbolKind.Event);
+        context.RegisterOperationAction(AnalyzeFunctionDeclaration, OperationKind.LocalFunction, OperationKind.AnonymousFunction);
+        context.RegisterSymbolAction(AnalyzeSymbol, SymbolKind.Field, SymbolKind.Property, SymbolKind.Method, SymbolKind.Event, SymbolKind.NamedType);
         context.RegisterSyntaxTreeAction(AnalyzeSyntaxTree);
     }
 
@@ -88,8 +94,9 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// The member declarations: the types of fields (not constants), properties, events, return types
-    /// and parameters, and a method's <c>[Conditional]</c> and <c>[UnsafeAccessor]</c> attributes and
-    /// <c>Synchronized</c> flag.
+    /// and parameters; a method's <c>[Conditional]</c> and <c>[UnsafeAccessor]</c> attributes and
+    /// <c>Synchronized</c> flag; an accessor's <c>Synchronized</c> flag; and a delegate's return and
+    /// parameter types.
     /// </summary>
     private static void AnalyzeSymbol(SymbolAnalysisContext context)
     {
@@ -99,29 +106,60 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             return;
         }
 
+        Action<Diagnostic> report = context.ReportDiagnostic;
         switch (symbol)
         {
             case IFieldSymbol { IsConst: false } field:
-                ReportDeclaration(context, field.Type, field);
+                ReportDeclaration(report, field.Type, field);
                 break;
             case IPropertySymbol property:
                 if (!IsPositionalRecordProperty(property, context.CancellationToken))
                 {
-                    ReportDeclaration(context, property.Type, property);
+                    ReportDeclaration(report, property.Type, property);
                 }
 
-                ReportParameters(context, property.Parameters);
+                ReportParameters(report, property.Parameters, context.CancellationToken);
                 break;
             case IEventSymbol @event:
-                ReportDeclaration(context, @event.Type, @event);
+                Report(report, EventDeclaration(@event));
                 break;
-            case IMethodSymbol method when !IsAccessor(method):
-                if (MethodDeclaration(method) is { } finding)
+            case IMethodSymbol accessor when IsAccessor(accessor):
+                if (IsSynchronized(accessor))
                 {
-                    context.ReportDiagnostic(finding.ToDiagnostic());
+                    report(Diagnostic.Create(Descriptors.Mmo1006, DeclaredLocation(accessor), Display(accessor)));
                 }
 
-                ReportParameters(context, method.Parameters);
+                break;
+            case IMethodSymbol method:
+                Report(report, MethodDeclaration(method, method.ReturnType, DeclaredLocation(method), method.Name));
+                ReportParameters(report, method.Parameters, context.CancellationToken);
+                break;
+            case INamedTypeSymbol { TypeKind: TypeKind.Delegate, DelegateInvokeMethod: { } invoke } @delegate:
+                ReportDeclaration(report, invoke.ReturnType, @delegate);
+                ReportParameters(report, invoke.Parameters, context.CancellationToken);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The declarations inside a body, which no symbol action sees: a local function's identifier and
+    /// parameters, checked as a method's are, and a lambda's or anonymous method's <c>Synchronized</c>
+    /// flag and the parameter and return types its syntax writes out. A lambda has no identifier, so
+    /// its own finding is reported at the lambda.
+    /// </summary>
+    private static void AnalyzeFunctionDeclaration(OperationAnalysisContext context)
+    {
+        Action<Diagnostic> report = context.ReportDiagnostic;
+        switch (context.Operation)
+        {
+            case ILocalFunctionOperation { Symbol: var local }:
+                Report(report, MethodDeclaration(local, local.ReturnType, DeclaredLocation(local), local.Name));
+                ReportParameters(report, local.Parameters, context.CancellationToken);
+                break;
+            case IAnonymousFunctionOperation { Symbol: var lambda, Syntax: var syntax }:
+                var writtenReturnType = syntax is ParenthesizedLambdaExpressionSyntax { ReturnType: not null } ? lambda.ReturnType : null;
+                Report(report, MethodDeclaration(lambda, writtenReturnType, syntax.GetLocation(), syntax.ToString()));
+                ReportParameters(report, lambda.Parameters.Where(p => IsWrittenWithType(p, context.CancellationToken)), context.CancellationToken);
                 break;
         }
     }
@@ -150,21 +188,30 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static void ReportParameters(SymbolAnalysisContext context, ImmutableArray<IParameterSymbol> parameters)
+    private static void ReportParameters(Action<Diagnostic> report, IEnumerable<IParameterSymbol> parameters, CancellationToken cancellationToken)
     {
         foreach (var parameter in parameters)
         {
-            ReportDeclaration(context, parameter.Type, parameter);
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportDeclaration(report, parameter.Type, parameter);
         }
     }
 
-    private static void ReportDeclaration(SymbolAnalysisContext context, ITypeSymbol type, ISymbol declared)
+    private static void ReportDeclaration(Action<Diagnostic> report, ITypeSymbol type, ISymbol declared) =>
+        Report(report, Declaration(type, declared.Name, DeclaredLocation(declared)));
+
+    private static void Report(Action<Diagnostic> report, Finding? finding)
     {
-        if (Declaration(type, declared.Name, DeclaredLocation(declared)) is { } finding)
+        if (finding is { } found)
         {
-            context.ReportDiagnostic(finding.ToDiagnostic());
+            report(found.ToDiagnostic());
         }
     }
+
+    /// <summary>True for a lambda or anonymous method parameter whose type is written in the syntax, not inferred from the delegate type.</summary>
+    private static bool IsWrittenWithType(IParameterSymbol parameter, CancellationToken cancellationToken) =>
+        parameter.DeclaringSyntaxReferences.Length == 1
+        && parameter.DeclaringSyntaxReferences[0].GetSyntax(cancellationToken) is ParameterSyntax { Type: not null };
 
     /// <summary>
     /// True for a record's positional property, which the compiler declares from a primary constructor
@@ -175,7 +222,10 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         property.DeclaringSyntaxReferences.Length == 1
         && property.DeclaringSyntaxReferences[0].GetSyntax(cancellationToken) is ParameterSyntax;
 
-    /// <summary>Property and event accessors are reported on their property or event.</summary>
+    /// <summary>
+    /// Property, indexer and event accessors: their types are reported on their property or event,
+    /// and their own <c>Synchronized</c> flag at the accessor keyword.
+    /// </summary>
     private static bool IsAccessor(IMethodSymbol method) =>
         method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise;
 
@@ -251,30 +301,49 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             ?? NumericExpression(operation);
     }
 
-    /// <summary>The first rule a declaration of type <paramref name="type"/> matches, reported at the declared identifier.</summary>
-    private static Finding? Declaration(ITypeSymbol type, string name, Location location) =>
+    /// <summary>The first rule a declaration of type <paramref name="type"/> matches, reported at the declared identifier; null for no type.</summary>
+    private static Finding? Declaration(ITypeSymbol? type, string name, Location location) =>
         TypeFinding(type, IsBannedVectorType, Descriptors.Mmo1001, name, location)
         ?? TypeFinding(type, IsBlockingType, Descriptors.Mmo1006, name, location)
         ?? TypeFinding(type, IsBannedNumericType, Descriptors.Mmo1007, name, location);
 
     /// <summary>
-    /// The one rule a method declaration reports at its identifier, the first in precedence order: a
-    /// vector return type (MMO1001), a <c>[Conditional]</c> or <c>[UnsafeAccessor]</c> attribute
-    /// (MMO1008), the synchronized implementation flag (MMO1006), then the rest of the return type's
-    /// rules. Its parameters report on their own identifiers.
+    /// The one rule a method, local function or lambda declaration reports at
+    /// <paramref name="location"/>, the first in precedence order: a vector
+    /// <paramref name="returnType"/> (MMO1001), a <c>[Conditional]</c> or <c>[UnsafeAccessor]</c>
+    /// attribute (MMO1008), the synchronized implementation flag (MMO1006), then the rest of the return
+    /// type's rules. A lambda passes its return type only when its syntax writes one. Parameters report
+    /// on their own identifiers.
     /// </summary>
-    private static Finding? MethodDeclaration(IMethodSymbol method)
-    {
-        var location = DeclaredLocation(method);
-        return TypeFinding(method.ReturnType, IsBannedVectorType, Descriptors.Mmo1001, method.Name, location)
+    private static Finding? MethodDeclaration(IMethodSymbol method, ITypeSymbol? returnType, Location location, string name) =>
+        TypeFinding(returnType, IsBannedVectorType, Descriptors.Mmo1001, name, location)
             ?? (HasPlatformPathAttribute(method)
-                ? new Finding(Descriptors.Mmo1008, location, method.Name)
+                ? new Finding(Descriptors.Mmo1008, location, name)
                 : (Finding?)null)
-            ?? ((method.MethodImplementationFlags & MethodImplAttributes.Synchronized) != 0
-                ? new Finding(Descriptors.Mmo1006, location, method.Name)
+            ?? (IsSynchronized(method)
+                ? new Finding(Descriptors.Mmo1006, location, name)
                 : (Finding?)null)
-            ?? Declaration(method.ReturnType, method.Name, location);
+            ?? Declaration(returnType, name, location);
+
+    /// <summary>
+    /// The one rule an event declaration reports at its identifier: a vector type (MMO1001); the
+    /// synchronized flag that <c>[method: MethodImpl(MethodImplOptions.Synchronized)]</c> gives a
+    /// field-like event's accessors, which are implicitly declared and so have no keyword to report at
+    /// (MMO1006); then the rest of its type's rules. The attribute applies to both accessors, so the
+    /// adder carries it.
+    /// </summary>
+    private static Finding? EventDeclaration(IEventSymbol @event)
+    {
+        var location = DeclaredLocation(@event);
+        return TypeFinding(@event.Type, IsBannedVectorType, Descriptors.Mmo1001, @event.Name, location)
+            ?? (@event.AddMethod is { IsImplicitlyDeclared: true } adder && IsSynchronized(adder)
+                ? new Finding(Descriptors.Mmo1006, location, @event.Name)
+                : (Finding?)null)
+            ?? Declaration(@event.Type, @event.Name, location);
     }
+
+    /// <summary>True when <paramref name="method"/>'s implementation flags include <c>Synchronized</c>, so calling it takes a monitor.</summary>
+    private static bool IsSynchronized(IMethodSymbol method) => (method.MethodImplementationFlags & MethodImplAttributes.Synchronized) != 0;
 
     /// <summary>True when <paramref name="method"/> carries <c>[Conditional]</c> or <c>[UnsafeAccessor]</c>.</summary>
     private static bool HasPlatformPathAttribute(IMethodSymbol method)
@@ -291,7 +360,7 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary><paramref name="descriptor"/> at <paramref name="location"/> when <paramref name="type"/> is or contains a type <paramref name="isBanned"/> accepts; <c>{1}</c> is that type.</summary>
-    private static Finding? TypeFinding(ITypeSymbol type, Func<INamedTypeSymbol, bool> isBanned, DiagnosticDescriptor descriptor, string name, Location location) =>
+    private static Finding? TypeFinding(ITypeSymbol? type, Func<INamedTypeSymbol, bool> isBanned, DiagnosticDescriptor descriptor, string name, Location location) =>
         FindType(type, isBanned) is { } found
             ? new Finding(descriptor, location, name, found.ToDisplayString())
             : null;
@@ -534,15 +603,24 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             ? new Finding(Descriptors.Mmo1004, collection.Syntax.GetLocation(), keyword, type.ToDisplayString())
             : null;
 
-    /// <summary>An argument to a hash-ordered type's own method or constructor (<c>UnionWith</c>, a copy constructor), which does not depend on the order.</summary>
+    /// <summary>
+    /// An argument whose order the result does not depend on: the collection passed to a set operation
+    /// (<see cref="Tables.OrderInsensitiveSinkMethods"/>) declared on a listed hash-ordered type, or to a
+    /// listed type's own constructor (its copy constructor). An argument to any other member, such as
+    /// <c>Add</c>, <c>TryAdd</c> or a derived class's constructor, may store or enumerate the collection,
+    /// so its conversion reports.
+    /// </summary>
     private static bool IsOrderInsensitiveSink(IConversionOperation conversion) =>
         conversion.Parent is IArgumentOperation { Parent: var sink }
         && sink switch
         {
-            IInvocationOperation invocation => IsHashOrdered(invocation.TargetMethod.ContainingType),
-            IObjectCreationOperation creation => IsHashOrdered(creation.Type),
+            IInvocationOperation { TargetMethod: var method } => Tables.OrderInsensitiveSinkMethods.Contains(method.Name) && IsListedHashType(method.ContainingType),
+            IObjectCreationOperation { Constructor.ContainingType: var type } => IsListedHashType(type),
             _ => false,
         };
+
+    /// <summary>True for a type of <see cref="Tables.HashOrderedTypes"/> itself, not a class derived from one.</summary>
+    private static bool IsListedHashType(INamedTypeSymbol? type) => type is not null && Tables.HashOrderedTypes.Contains(Tables.FullName(type));
 
     /// <summary>
     /// True for a hash-ordered collection type (<see cref="Tables.HashOrderedTypes"/>) or a class
@@ -594,26 +672,34 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// MMO1009: a non-constant conversion from <c>float</c> or <c>double</c> to an integer or enum type
     /// outside the bodies of SimMath's three saturating helpers; a non-constant <c>ulong</c>-to-<c>float</c>
     /// conversion anywhere; every <c>System.Convert</c> member; and an integer type's <c>Create*</c>
-    /// from a floating-point <c>TOther</c>.
+    /// from a floating-point <c>TOther</c>. Besides conversion operations, it checks the element
+    /// conversions Roslyn makes without an operation of their own: between tuple elements, from a
+    /// <c>foreach</c> element to its iteration variable, in a deconstruction, from a spread's elements
+    /// to the collection's, and from the left operand of <c>??</c> to its result.
     /// </summary>
     private static Finding? FloatConversion(IOperation operation)
     {
-        if (operation is IConversionOperation conversion)
+        var model = operation.SemanticModel;
+        switch (operation)
         {
-            if (conversion.ConstantValue.HasValue || conversion.Operand.Type is not { } source)
-            {
-                return null;
-            }
-
-            var target = conversion.Type;
-            if (IsFloatOrDouble(source) && IsIntegerOrEnum(target) && !IsInsideSimMathIntegerHelper(operation))
-            {
-                return new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), operation.Syntax.ToString(), Tables.FloatToIntegerReason);
-            }
-
-            return Underlying(source).SpecialType == SpecialType.System_UInt64 && IsSingle(target)
-                ? new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), operation.Syntax.ToString(), Tables.UlongToFloatReason)
-                : null;
+            case IConversionOperation conversion:
+                return conversion.ConstantValue.HasValue || conversion.Operand.Type is not { } operandType || conversion.Type is not { } convertedType
+                    ? null
+                    : ConversionFinding(ElementReason(operandType, convertedType, operation, throughOperators: false), operation.Syntax, operation.Syntax.ToString());
+            case IForEachLoopOperation { Syntax: ForEachStatementSyntax statement, LoopControlVariable: IVariableDeclaratorOperation { Symbol: var local } }
+                when model?.GetForEachStatementInfo(statement).ElementType is { } element:
+                return ConversionFinding(ElementReason(element, local.Type, operation, throughOperators: true), statement.Type, statement.Type.ToString());
+            case IForEachLoopOperation { Syntax: ForEachVariableStatementSyntax statement, LoopControlVariable.Type: var variableType }
+                when model?.GetForEachStatementInfo(statement).ElementType is { } element:
+                return ConversionFinding(DeconstructionReason(element, variableType, model.GetDeconstructionInfo(statement), operation), statement.Variable, statement.Variable.ToString());
+            case IDeconstructionAssignmentOperation { Syntax: AssignmentExpressionSyntax syntax, Value: { Type: { } source } value, Target.Type: var target }
+                when model is not null:
+                return ConversionFinding(DeconstructionReason(source, target, model.GetDeconstructionInfo(syntax), operation), value.Syntax, value.Syntax.ToString());
+            case ISpreadOperation { ElementType: { } element, Operand: var collection, Parent.Type: var collectionType }
+                when CollectionElementType(collectionType) is { } target:
+                return ConversionFinding(ElementReason(element, target, operation, throughOperators: true), collection.Syntax, "..");
+            case ICoalesceOperation { Value: { Type: { } source } value, Type: { } target }:
+                return ConversionFinding(ElementReason(source, target, operation, throughOperators: true), value.Syntax, value.Syntax.ToString());
         }
 
         if (ReferencedMember(operation) is not { ContainingType: { } type } member)
@@ -628,6 +714,100 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 && Tables.FloatingPointTypes.Contains(Tables.FullName(other)));
         return banned ? new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), Display(member), Tables.FloatToIntegerReason) : null;
     }
+
+    /// <summary>MMO1009 at <paramref name="syntax"/>, naming it <paramref name="text"/>, when <paramref name="reason"/> is not null.</summary>
+    private static Finding? ConversionFinding(string? reason, SyntaxNode syntax, string text) =>
+        reason is null ? null : new Finding(Descriptors.Mmo1009, syntax.GetLocation(), text, reason);
+
+    /// <summary>
+    /// The first MMO1009 reason a conversion from <paramref name="source"/> to <paramref name="target"/>
+    /// gives, or null. Between two tuple types it pairs the elements, in order and recursively, because
+    /// a tuple conversion converts each element with no operation of its own. With
+    /// <paramref name="throughOperators"/>, a user-defined conversion is also checked through the
+    /// standard conversions on either side of its operator; a conversion operation passes false at the
+    /// top, because Roslyn gives those standard conversions operations of their own.
+    /// </summary>
+    private static string? ElementReason(ITypeSymbol source, ITypeSymbol target, IOperation operation, bool throughOperators)
+    {
+        var from = Underlying(source);
+        var to = Underlying(target);
+        if (from is INamedTypeSymbol { IsTupleType: true } fromTuple && to is INamedTypeSymbol { IsTupleType: true } toTuple)
+        {
+            for (var i = 0; i < fromTuple.TupleElements.Length && i < toTuple.TupleElements.Length; i++)
+            {
+                if (ElementReason(fromTuple.TupleElements[i].Type, toTuple.TupleElements[i].Type, operation, throughOperators: true) is { } reason)
+                {
+                    return reason;
+                }
+            }
+
+            return null;
+        }
+
+        return DirectReason(from, to, operation)
+            ?? (throughOperators
+                && !SymbolEqualityComparer.Default.Equals(from, to)
+                && operation.SemanticModel?.Compilation.ClassifyCommonConversion(from, to) is { IsUserDefined: true, MethodSymbol: { } conversionOperator }
+                    ? DirectReason(from, Underlying(conversionOperator.Parameters[0].Type), operation) ?? DirectReason(Underlying(conversionOperator.ReturnType), to, operation)
+                    : null);
+    }
+
+    /// <summary>MMO1009's reason for one standard conversion between two non-nullable types, or null.</summary>
+    private static string? DirectReason(ITypeSymbol from, ITypeSymbol to, IOperation operation) =>
+        IsFloatOrDouble(from) && IsIntegerOrEnum(to)
+            ? (IsInsideSimMathIntegerHelper(operation) ? null : Tables.FloatToIntegerReason)
+            : (from.SpecialType == SpecialType.System_UInt64 && IsSingle(to) ? Tables.UlongToFloatReason : null);
+
+    /// <summary>
+    /// The first MMO1009 reason in a deconstruction of <paramref name="source"/> into
+    /// <paramref name="target"/>, a tuple type. Each part (one of <c>Deconstruct</c>'s out parameters, or
+    /// one of the tuple's elements) converts to its target element as an element conversion, or is
+    /// deconstructed again when <paramref name="info"/> nests.
+    /// </summary>
+    private static string? DeconstructionReason(ITypeSymbol source, ITypeSymbol? target, DeconstructionInfo info, IOperation operation)
+    {
+        if (info.Nested.IsEmpty)
+        {
+            return target is null ? null : ElementReason(source, target, operation, throughOperators: true);
+        }
+
+        var parts = info.Method is { } deconstruct
+            ? deconstruct.Parameters.Skip(deconstruct.Parameters.Length - info.Nested.Length).Select(p => p.Type).ToImmutableArray()
+            : TupleElementTypes(source);
+        var targets = TupleElementTypes(target);
+        for (var i = 0; i < info.Nested.Length && i < parts.Length && i < targets.Length; i++)
+        {
+            if (DeconstructionReason(parts[i], targets[i], info.Nested[i], operation) is { } reason)
+            {
+                return reason;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The element types of a tuple type, or none for any other type.</summary>
+    private static ImmutableArray<ITypeSymbol> TupleElementTypes(ITypeSymbol? type) =>
+        type is INamedTypeSymbol { IsTupleType: true } tuple
+            ? tuple.TupleElements.Select(e => e.Type).ToImmutableArray()
+            : ImmutableArray<ITypeSymbol>.Empty;
+
+    /// <summary>
+    /// The element type of a collection expression's target type: an array's element type, a span's
+    /// type argument, or the <c>T</c> of the <c>IEnumerable&lt;T&gt;</c> it is or implements; otherwise null.
+    /// </summary>
+    private static ITypeSymbol? CollectionElementType(ITypeSymbol? collection) =>
+        collection is IArrayTypeSymbol array
+            ? array.ElementType
+            : collection is INamedTypeSymbol named
+                ? (Tables.SpanTypes.Contains(Tables.FullName(named))
+                    ? named.TypeArguments[0]
+                    : named.AllInterfaces.Insert(0, named).FirstOrDefault(IsEnumerableOfT)?.TypeArguments[0])
+                : null;
+
+    /// <summary>True for a constructed <c>IEnumerable&lt;T&gt;</c>.</summary>
+    private static bool IsEnumerableOfT(INamedTypeSymbol type) =>
+        type.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T;
 
     /// <summary>True when the method whose body holds <paramref name="operation"/> is one of <c>SimMath.FloorToInt</c>, <c>RoundToInt</c> and <c>TruncateToInt</c>.</summary>
     private static bool IsInsideSimMathIntegerHelper(IOperation operation) =>

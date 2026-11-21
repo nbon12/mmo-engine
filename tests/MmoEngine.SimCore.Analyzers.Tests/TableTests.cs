@@ -24,6 +24,8 @@ public sealed class TableTests
 
     private const string HashOrdered = "Hash-ordered collections";
 
+    private const string OrderInsensitiveSinks = "Order-insensitive sinks";
+
     private const string Ambient = "Ambient time, randomness and hash seeds";
 
     private const string Blocking = "Locks and blocking";
@@ -33,6 +35,10 @@ public sealed class TableTests
     private const string PlatformPaths = "Platform paths";
 
     private const string Conversions = "Conversions";
+
+    /// <summary>The <c>MethodImpl</c> attribute that sets the <c>Synchronized</c> flag, as the samples write it.</summary>
+    private const string Synchronized =
+        "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)]";
 
     /// <summary>
     /// contracts/analyzer-rules.md#vector128-allowlist-mmo1001: the 24 static <c>Vector128</c> members
@@ -266,6 +272,42 @@ public sealed class TableTests
     };
 
     /// <summary>
+    /// contracts/analyzer-rules.md#hash-ordered-collections-mmo1004, order-insensitive sinks: a
+    /// <c>HashSet&lt;int&gt;</c> passed to each set operation of the list, declared on a listed type, or
+    /// to a listed type's copy constructor, reports nothing. Passed to any other member it reports
+    /// MMO1004 once: <c>Add</c>, <c>TryAdd</c> and a collection initializer of a dictionary,
+    /// <c>Add</c> of a set of collections, a <c>Hashtable</c> initializer, a derived class's
+    /// constructor, and a set operation of a type that is not listed (<c>SortedSet</c>).
+    /// </summary>
+    public static TheoryData<string, string, int, string> OrderInsensitiveSinkRows => new()
+    {
+        { OrderInsensitiveSinks, "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.IntersectWith(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.ExceptWith(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.SymmetricExceptWith(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.SetEquals(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.Overlaps(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.IsSubsetOf(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.IsSupersetOf(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.IsProperSubsetOf(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.IsProperSupersetOf(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static ImmutableHashSet<int> M(ImmutableHashSet<int> a, HashSet<int> b) => a.Union(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static ImmutableHashSet<int> M(ImmutableHashSet<int> a, HashSet<int> b) => a.Intersect(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static ImmutableHashSet<int> M(ImmutableHashSet<int> a, HashSet<int> b) => a.Except(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static ImmutableHashSet<int> M(ImmutableHashSet<int> a, HashSet<int> b) => a.SymmetricExcept(b);" },
+        { OrderInsensitiveSinks, "", 0, "public static HashSet<int> M(HashSet<int> s) => new HashSet<int>(s);" },
+        { OrderInsensitiveSinks, "", 0, "public static Dictionary<int, int> M(HashSet<KeyValuePair<int, int>> s) => new Dictionary<int, int>(s);" },
+
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static int M(HashSet<int> s) { var d = new Dictionary<int, IEnumerable<int>>(); d.Add(0, s); return d.Count; }" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static bool M(Dictionary<int, IEnumerable<int>> d, HashSet<int> s) => d.TryAdd(0, s);" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static int M(HashSet<int> s) { var d = new Dictionary<int, IEnumerable<int>> { { 0, s } }; return d.Count; }" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static bool M(HashSet<IEnumerable<int>> h, HashSet<int> s) => h.Add(s);" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static int M(HashSet<int> s) { var t = new System.Collections.Hashtable { { 0, s } }; return t.Count; }" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public sealed class Bag : HashSet<int> { public Bag(IEnumerable<int> e) : base(e) { } } public static Bag M(HashSet<int> s) => new Bag(s);" },
+        { OrderInsensitiveSinks, "MMO1004", 1, "public static void M(SortedSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
+    };
+
+    /// <summary>
     /// contracts/analyzer-rules.md#ambient-time-randomness-and-hash-seeds-mmo1005: one use of each whole
     /// type and of each member of the list reports MMO1005. <c>object.GetHashCode</c> and
     /// <c>ValueType.GetHashCode</c> are called on receivers whose types do not override them.
@@ -301,7 +343,10 @@ public sealed class TableTests
     /// contracts/analyzer-rules.md#locks-and-blocking-mmo1006: one use of each whole type of the list,
     /// <c>Monitor</c> through <c>Parallel</c>, and one row per member, including <c>GetResult</c> on each
     /// of the four awaiters and the four configured awaiters, report MMO1006. A type is used through a
-    /// member or a local's creation, never a parameter, so the use is the row's one diagnostic.
+    /// member or a local's creation, never a parameter, so the use is the row's one diagnostic. The
+    /// <c>Synchronized</c> flag reports once wherever it can be set: on a getter, a setter, an
+    /// <c>init</c> accessor, an indexer getter, an event adder and remover, a field-like event's
+    /// accessors (through <c>[method:]</c>), a local function and a lambda.
     /// </summary>
     public static TheoryData<string, string, int, string> BlockingRows => new()
     {
@@ -343,6 +388,16 @@ public sealed class TableTests
         { Blocking, "MMO1006", 1, "public static int M(Task<int> t) => t.ConfigureAwait(false).GetAwaiter().GetResult();" },
         { Blocking, "MMO1006", 1, "public static void M(ValueTask t) => t.ConfigureAwait(false).GetAwaiter().GetResult();" },
         { Blocking, "MMO1006", 1, "public static int M(ValueTask<int> t) => t.ConfigureAwait(false).GetAwaiter().GetResult();" },
+
+        { Blocking, "MMO1006", 1, "public static int P { " + Synchronized + " get => 1; }" },
+        { Blocking, "MMO1006", 1, "private static int f; public static int P { get => f; " + Synchronized + " set => f = value; }" },
+        { Blocking, "MMO1006", 1, "public sealed class K { public int P { get; " + Synchronized + " init; } }" },
+        { Blocking, "MMO1006", 1, "public sealed class K { public int this[int i] { " + Synchronized + " get => i; } }" },
+        { Blocking, "MMO1006", 1, "public static event Action? E { " + Synchronized + " add { } remove { } }" },
+        { Blocking, "MMO1006", 1, "public static event Action? E { add { } " + Synchronized + " remove { } }" },
+        { Blocking, "MMO1006", 1, "[method: System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)] public static event Action? E; public static void M() => E?.Invoke();" },
+        { Blocking, "MMO1006", 1, "public static void M() { Sync(); " + Synchronized + " static void Sync() { } }" },
+        { Blocking, "MMO1006", 1, "public static Func<int> M() => " + Synchronized + " () => 1;" },
     };
 
     /// <summary>
@@ -367,7 +422,7 @@ public sealed class TableTests
     /// <c>RuntimeFeature</c>, <c>Environment</c>, <c>IntPtr.Size</c>, <c>UIntPtr.Size</c>,
     /// <c>BitConverter.IsLittleEndian</c>, a <c>System.Type</c> member, a <c>System.Reflection</c> type,
     /// <c>Activator</c>, the four <c>dynamic</c> operation kinds and an <c>[UnsafeAccessor]</c>
-    /// declaration.
+    /// declaration; and the two attributes on local functions.
     /// </summary>
     public static TheoryData<string, string, int, string> PlatformPathRows => new()
     {
@@ -391,6 +446,8 @@ public sealed class TableTests
         { PlatformPaths, "MMO1008", 1, "public static object M(dynamic d) => new List<int>(d);" },
         { PlatformPaths, "MMO1008", 1, "public static object M(dynamic d) => d[0];" },
         { PlatformPaths, "MMO1008", 1, "[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] public static extern void Call(object o);" },
+        { PlatformPaths, "MMO1008", 1, "public static void M() { Log(); [Conditional(\"MMO_SAMPLE\")] static void Log() { } }" },
+        { PlatformPaths, "MMO1008", 1, "public static void M(object o) { Call(o); [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] static extern void Call(object o); }" },
     };
 
     /// <summary>
@@ -398,7 +455,10 @@ public sealed class TableTests
     /// parameter to each integer type and to an enum (here one with a <c>byte</c> underlying type), a
     /// <c>checked</c> cast, a <c>System.Convert</c> member, <c>int.CreateTruncating</c>,
     /// <c>int.CreateSaturating</c> and <c>int.CreateChecked</c> of a <c>float</c>, and a non-constant
-    /// <c>ulong</c>-to-<c>float</c> conversion report MMO1009.
+    /// <c>ulong</c>-to-<c>float</c> conversion report MMO1009. So does each element conversion that has
+    /// no conversion operation of its own: a <c>foreach</c> iteration variable (also before a
+    /// user-defined operator), a tuple conversion (explicit and implicit), a deconstruction (of a tuple,
+    /// through <c>Deconstruct</c>, and in a <c>foreach</c>), a spread, and the left operand of <c>??</c>.
     /// </summary>
     public static TheoryData<string, string, int, string> ConversionRows => new()
     {
@@ -420,6 +480,17 @@ public sealed class TableTests
         { Conversions, "MMO1009", 1, "public static int M(float x) => int.CreateSaturating(x);" },
         { Conversions, "MMO1009", 1, "public static int M(float x) => int.CreateChecked(x);" },
         { Conversions, "MMO1009", 1, "public static float M(ulong u) => (float)u;" },
+
+        { Conversions, "MMO1009", 1, "public static int M(float[] a) { var n = 0; foreach (int i in a) n += i; return n; }" },
+        { Conversions, "MMO1009", 1, "public static float M(ulong[] a) { var s = 0f; foreach (float f in a) s += f; return s; }" },
+        { Conversions, "MMO1009", 1, "public readonly struct S { public static explicit operator S(int v) => default; } public static int M(float[] a) { var n = 0; foreach (S s in a) n++; return n; }" },
+        { Conversions, "MMO1009", 1, "public static (int, int) M((float, float) t) => ((int, int))t;" },
+        { Conversions, "MMO1009", 1, "public static (float, float) M((ulong, ulong) t) => t;" },
+        { Conversions, "MMO1009", 1, "public static float M((ulong, ulong) t) { (float p, float q) = t; return p + q; }" },
+        { Conversions, "MMO1009", 1, "public readonly struct V { public void Deconstruct(out ulong x, out ulong y) { x = 1; y = 2; } } public static float M(V v) { (float a, float b) = v; return a + b; }" },
+        { Conversions, "MMO1009", 1, "public static float M((ulong, ulong)[] a) { var s = 0f; foreach ((float p, float q) in a) s += p + q; return s; }" },
+        { Conversions, "MMO1009", 1, "public static float[] M(ulong[] a) => [.. a];" },
+        { Conversions, "MMO1009", 1, "public static float M(ulong? u, float f) => u ?? f;" },
     };
 
     /// <summary>
@@ -435,6 +506,7 @@ public sealed class TableTests
     [MemberData(nameof(MathAllowlistRows))]
     [MemberData(nameof(MathExclusionRows))]
     [MemberData(nameof(HashOrderedRows))]
+    [MemberData(nameof(OrderInsensitiveSinkRows))]
     [MemberData(nameof(AmbientRows))]
     [MemberData(nameof(BlockingRows))]
     [MemberData(nameof(NumericTypeRows))]

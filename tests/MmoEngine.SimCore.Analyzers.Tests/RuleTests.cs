@@ -26,6 +26,18 @@ public sealed class RuleTests
     private const string UlongToFloatReason =
         "converts a 'ulong' to 'float', which the WebAssembly build rounds through 'double' and so can differ by one ulp; narrow it to 'uint' or 'long' first";
 
+    /// <summary>MMO1006's message after <c>'{0}' </c> (contracts/analyzer-rules.md#messages).</summary>
+    private const string BlockingText =
+        "takes a lock or blocks, which gameplay code must not do (constitution Principle II); the core is a pure step function: take state in and return state out";
+
+    /// <summary>MMO1008's message after <c>'{0}' </c> (contracts/analyzer-rules.md#messages).</summary>
+    private const string PlatformPathText =
+        "lets the server and WebAssembly builds take different paths; the core has one code path for every build";
+
+    /// <summary>The <c>MethodImpl</c> attribute that sets the <c>Synchronized</c> flag, as the samples write it.</summary>
+    private const string Synchronized =
+        "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)]";
+
     /// <summary>The path <see cref="SimMathMayClampAndCastFloats"/> compiles its stand-in SimMath under.</summary>
     private const string SimMathPath = "Math/SimMath.cs";
 
@@ -145,6 +157,11 @@ public sealed class RuleTests
         { "MMO1001", 1, "public static int M() => Array.Empty<Vector3>().Length;" },
         { "MMO1001", 1, "public record struct S(Vector2 V);" },
 
+        // Review rows (Phase 5): a local function's parameter (and the call, whose signature holds the
+        // vector) and a delegate's return type are declarations like a method's.
+        { "MMO1001", 2, "public static void M() { L(default); static void L(Vector3 v) { } }" },
+        { "MMO1001", 1, "public delegate Vector3 D();" },
+
         { "", 0, "public static Vector128<float> M(Vector128<float> a, Vector128<float> b) => Vector128.Add(a, b) * b - Vector128.Create(1f);" },
         { "", 0, "public static float M(float x, float y) => x * y + 1f;" },
     };
@@ -215,9 +232,19 @@ public sealed class RuleTests
         // Coverage row (T167): an indexer argument is not an order-insensitive sink.
         { "MMO1004", 1, "public sealed class K { public int this[IEnumerable<int> e] => e.Count(); } public static int M(K k, HashSet<int> s) => k[s];" },
 
+        // Review rows (Phase 5): only a listed type's set operations and copy constructors are
+        // order-insensitive sinks. A set stored as a dictionary value, through a collection initializer,
+        // Add or a Hashtable, or passed to a derived class's constructor, reports.
+        { "MMO1004", 1, "public static int M(HashSet<int> s) { var d = new Dictionary<int, IEnumerable<int>> { { 0, s } }; return d[0].First(); }" },
+        { "MMO1004", 1, "public static int M(HashSet<int> s) { var d = new Dictionary<int, IEnumerable<int>>(); d.Add(0, s); return d[0].First(); }" },
+        { "MMO1004", 1, "public static object? M(HashSet<int> s) { var t = new System.Collections.Hashtable { { 0, s } }; return t[0]; }" },
+        { "MMO1004", 1, "public sealed class Bag : HashSet<int> { public Bag(IEnumerable<int> e) : base(e) { } } public static Bag M(HashSet<int> s) => new Bag(s);" },
+
         { "", 0, "public static int M(Dictionary<int, int> d, int k) => d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count;" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
         { "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
+        { "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.SetEquals(b);" },
+        { "", 0, "public static HashSet<int> M(HashSet<int> s) => new HashSet<int>(s);" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) => d.Keys.First();" },
     };
 
@@ -262,8 +289,22 @@ public sealed class RuleTests
         { "MMO1006", 1, "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)] public static void M() { }" },
         { "MMO1006", 1, "public static void M(int[] a) => Parallel.For(0, a.Length, i => a[i]++);" },
 
+        // Review rows (Phase 5): the Synchronized flag on a getter, a setter, an event adder, a field-like
+        // event's accessors (through [method:]), a local function and a lambda; and a Lock parameter of
+        // a local function and of a delegate.
+        { "MMO1006", 1, "public static int P { " + Synchronized + " get => 1; }" },
+        { "MMO1006", 1, "private static int f; public static int Q { get => f; " + Synchronized + " set => f = value; }" },
+        { "MMO1006", 1, "public static event Action? E { " + Synchronized + " add { } remove { } }" },
+        { "MMO1006", 1, "[method: System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)] public static event Action? E; public static void M() => E?.Invoke();" },
+        { "MMO1006", 1, "public static void M() { Sync(); " + Synchronized + " static void Sync() { } }" },
+        { "MMO1006", 1, "public static Func<int> M() => " + Synchronized + " () => 1;" },
+        { "MMO1006", 1, "public static void M() { L(null!); static void L(Lock l) { } }" },
+        { "MMO1006", 1, "public delegate void D(Lock l);" },
+
         { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
         { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
+        { "", 0, "private static int f; public static int Q { get => f; set => f = value; } public static event Action? E { add { } remove { } }" },
+        { "", 0, "public static int M() { return L(); static int L() => 1; }" },
     };
 
     /// <summary>
@@ -295,8 +336,16 @@ public sealed class RuleTests
         { "MMO1007", 1, "public record R(double X);" },
         { "MMO1007", 2, "public record R(double X) { public double X { get; init; } = X; }" },
 
+        // Review rows (Phase 5): a local function's parameter, a delegate's return type and parameter,
+        // and the parameter and return types a lambda writes out, besides the declarations around them.
+        { "MMO1007", 1, "public static void M() { L(1f); static void L(double v) { } }" },
+        { "MMO1007", 2, "public delegate double D(double x);" },
+        { "MMO1007", 2, "public static Func<double, float> M() => (double d) => 1f;" },
+        { "MMO1007", 2, "public static void M() { var f = double () => 0; }" },
+
         { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
         { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
+        { "", 0, "public static Func<float, float> M() => x => x * 2f;" },
     };
 
     /// <summary>
@@ -315,6 +364,10 @@ public sealed class RuleTests
         { "MMO1008", 1, "public static int M()\n    {\n#if DEBUG\n        return 1;\n#else\n        return 0;\n#endif\n    }" },
         { "MMO1008", 1, "public static void M(bool b) => Debug.Assert(b);" },
         { "MMO1008", 1, "[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] public static extern void Call(object o);" },
+
+        // Review rows (Phase 5): the same attributes on local functions.
+        { "MMO1008", 1, "public static void M() { Log(); [Conditional(\"DEBUG\")] static void Log() { } }" },
+        { "MMO1008", 1, "public static void M(object o) { Call(o); [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] static extern void Call(object o); }" },
 
         { "", 0, "public static object M() => typeof(int);" },
     };
@@ -339,11 +392,44 @@ public sealed class RuleTests
         // Coverage row (T167): a nullable float to a nullable integer.
         { "MMO1009", 1, "public static int? M(float? x) => (int?)x;" },
 
+        // Review rows (Phase 5): the element conversions Roslyn makes without a conversion operation of
+        // their own. A foreach iteration variable (to int, from ulong, to an enum, and around a
+        // user-defined operator on either side); a tuple conversion, explicit, implicit, nested and
+        // nullable; a deconstruction from a tuple, from Deconstruct and from an extension Deconstruct, and
+        // in a foreach; a spread into an array, a List, an IEnumerable and a Span; and the left operand
+        // of ??, alone and in a tuple.
+        { "MMO1009", 1, "public static int M(float[] a) { var s = 0; foreach (int i in a) s += i; return s; }" },
+        { "MMO1009", 1, "public static float M(ulong[] a) { var s = 0f; foreach (float f in a) s += f; return s; }" },
+        { "MMO1009", 1, "public static int M(float[] a) { var s = 0; foreach (DayOfWeek i in a) s++; return s; }" },
+        { "MMO1009", 1, "public readonly struct S { public static explicit operator S(int v) => default; } public static int M(float[] a) { var n = 0; foreach (S s in a) n++; return n; }" },
+        { "MMO1009", 1, "public readonly struct W { public static implicit operator float(W w) => 1f; } public static int M(W[] a) { var n = 0; foreach (int i in a) n += i; return n; }" },
+        { "MMO1009", 1, "public static (int, int) M((float, float) t) => ((int, int))t;" },
+        { "MMO1009", 1, "public static (float, float) M((ulong, ulong) t) => t;" },
+        { "MMO1009", 1, "public static (int, (int, int)) M((float, (float, float)) t) => ((int, (int, int)))t;" },
+        { "MMO1009", 1, "public static (int, int)? M((float, float)? t) => ((int, int)?)t;" },
+        { "MMO1009", 1, "public static float M((ulong, ulong) t) { (float p, float q) = t; return p + q; }" },
+        { "MMO1009", 1, "public readonly struct V { public void Deconstruct(out ulong x, out ulong y) { x = 1; y = 2; } } public static float M(V v) { (float a, float b) = v; return a + b; }" },
+        { "MMO1009", 1, "public static void Deconstruct(this Version v, out ulong a, out ulong b) { a = 1; b = 2; } public static float M(Version v) { (float x, float y) = v; return x + y; }" },
+        { "MMO1009", 1, "public static float M((ulong, ulong)[] a) { var s = 0f; foreach ((float p, float q) in a) s += p + q; return s; }" },
+        { "MMO1009", 1, "public static float M((ulong, (ulong, ulong))[] a) { var s = 0f; foreach ((float p, (float q, var r)) in a) s += p + q; return s; }" },
+        { "MMO1009", 1, "public static float[] M(ulong[] a) => [.. a];" },
+        { "MMO1009", 1, "public static List<float> M(ulong[] a) => [.. a];" },
+        { "MMO1009", 1, "public static IEnumerable<float> M(ulong[] a) => [.. a];" },
+        { "MMO1009", 1, "public static float M(ulong[] a) { Span<float> s = [.. a]; return s[0]; }" },
+        { "MMO1009", 1, "public static float M(ulong? u, float f) => u ?? f;" },
+        { "MMO1009", 1, "public static (float, float) M((ulong, ulong)? u, (float, float) f) => u ?? f;" },
+
         { "", 0, "public static int M() => (int)2.5f;" },
         { "", 0, "public static float M(int i) => i * 0.5f;" },
         { "", 0, "public static float M(ulong h) => (float)(uint)(h >> 40);" },
         { "", 0, "public static int M(long l) => int.CreateSaturating(l);" },
         { "", 0, "public static DayOfWeek M(int i) => (DayOfWeek)i;" },
+        { "", 0, "public static float M(float[] a) { var s = 0f; foreach (var f in a) s += f; return s; }" },
+        { "", 0, "public static float M(int[] a) { var s = 0f; foreach (float f in a) s += f; return s; }" },
+        { "", 0, "public static (float, float) M((int, int) t) => ((float, float))t;" },
+        { "", 0, "public static float M((uint, uint) t) { (float p, float q) = t; return p + q; }" },
+        { "", 0, "public static float[] M(uint[] a) => [.. a];" },
+        { "", 0, "public static float M(uint? u, float f) => u ?? f;" },
     };
 
     /// <summary>
@@ -427,6 +513,31 @@ public sealed class RuleTests
         { "public static int M(float x) => int.CreateSaturating(x);", FloatToIntegerReason },
         { "public static DayOfWeek M(float x) => (DayOfWeek)x;", FloatToIntegerReason },
         { "public static float M(ulong u) => u;", UlongToFloatReason },
+    };
+
+    /// <summary>
+    /// The forms that have no operation, or no identifier, of their own (contracts/analyzer-rules.md#messages):
+    /// the sample, its one rule, the source text its diagnostic covers, and <c>{0}</c> and the text after
+    /// it. An element conversion reports at the declared iteration type, the deconstruction variables,
+    /// the deconstructed value, the spread's collection (named <c>..</c>), the left operand of <c>??</c>
+    /// or the tuple conversion; an accessor's <c>Synchronized</c> flag at its keyword, named as the
+    /// accessor; a field-like event's at the event; a local function's flag or attribute at its
+    /// identifier; and a lambda's at the lambda.
+    /// </summary>
+    public static TheoryData<string, string, string, string, string> PlacementRows => new()
+    {
+        { "public static int M(float[] a) { var s = 0; foreach (int i in a) s += i; return s; }", "MMO1009", "int", "int", FloatToIntegerReason },
+        { "public static float M((ulong, ulong)[] a) { var s = 0f; foreach ((float p, float q) in a) s += p + q; return s; }", "MMO1009", "(float p, float q)", "(float p, float q)", UlongToFloatReason },
+        { "public static float M((ulong, ulong) t) { (float p, float q) = t; return p + q; }", "MMO1009", "t", "t", UlongToFloatReason },
+        { "public static (int, int) M((float, float) t) => ((int, int))t;", "MMO1009", "((int, int))t", "((int, int))t", FloatToIntegerReason },
+        { "public static float[] M(ulong[] a) => [.. a];", "MMO1009", "a", "..", UlongToFloatReason },
+        { "public static float M(ulong? u, float f) => u ?? f;", "MMO1009", "u", "u", UlongToFloatReason },
+        { "public static int P { " + Synchronized + " get => 1; }", "MMO1006", "get", "C.P.get", BlockingText },
+        { "public static event Action? E { add { } " + Synchronized + " remove { } }", "MMO1006", "remove", "C.E.remove", BlockingText },
+        { "[method: System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)] public static event Action? E; public static void M() => E?.Invoke();", "MMO1006", "E", "E", BlockingText },
+        { "public static void M() { Sync(); " + Synchronized + " static void Sync() { } }", "MMO1006", "Sync", "Sync", BlockingText },
+        { "public static Func<int> M() => " + Synchronized + " () => 1;", "MMO1006", Synchronized + " () => 1", Synchronized + " () => 1", BlockingText },
+        { "public static void M() { Log(); [Conditional(\"DEBUG\")] static void Log() { } }", "MMO1008", "Log", "Log", PlatformPathText },
     };
 
     /// <summary>
@@ -625,6 +736,23 @@ public sealed class RuleTests
 
         Assert.EndsWith(reason, message, StringComparison.Ordinal);
         Assert.Equal($"'{ConversionDisplay(result)}' {reason}", message);
+    }
+
+    /// <summary>
+    /// US3.6 and US3.7: a conversion, flag or attribute with no operation or identifier of its own
+    /// reports exactly one diagnostic of its rule, covering exactly <paramref name="reportedText"/>, with
+    /// the message <c>'{0}' …</c> where <c>{0}</c> is <paramref name="name"/> and the rest is
+    /// <paramref name="text"/> (contracts/analyzer-rules.md#messages).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PlacementRows))]
+    public async Task FormsWithoutTheirOwnSyntaxReportWhereTheContractSays(string member, string ruleId, string reportedText, string name, string text)
+    {
+        var result = await AnalyzerHarness.AnalyzeMemberAsync(member);
+        var diagnostic = SingleDiagnostic(result, ruleId);
+
+        Assert.Equal(reportedText, result.Tree.GetText(TestContext.Current.CancellationToken).ToString(diagnostic.Location.SourceSpan));
+        Assert.Equal($"'{name}' {text}", diagnostic.GetMessage(CultureInfo.InvariantCulture));
     }
 
     /// <summary>

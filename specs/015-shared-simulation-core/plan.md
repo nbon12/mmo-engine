@@ -1063,6 +1063,52 @@ The design documents settled these points, which the spec leaves open. They are 
   fails all 258 `MmoEngine.Harness.Tests`, because their ClickHouse fixture needs Docker and there is
   none here. That project is Spec 014's, and this branch does not change it. CI's `.NET` workflow runs
   it on `ubuntu-latest`, which has Docker.
+- **MMO1009 checks the element conversions Roslyn gives no operation of their own (T163, Phase 5
+  review).** The rule looked only at `IConversionOperation` nodes, but a tuple conversion, a `foreach`
+  iteration variable, a deconstruction, a spread and the left operand of `??` convert their elements
+  with no node, so `foreach (int i in floats)`, `((int, int))t`, `(float p, float q) = ulongPair`,
+  `float[] f = [.. ulongs]` and `ulongOrNull ?? f` compiled with no diagnostic. These are the raw
+  conversions the rule exists to stop, so each is now checked element by element (nested tuples too,
+  and the standard conversion on either side of a user-defined operator). Where to report was open:
+  a `foreach` reports at its declared iteration type, or at the deconstruction variables, because that
+  is where the conversion is written; a deconstruction assignment and `??` at the converted operand, as
+  an implicit conversion already does; a spread at its collection expression, named `..`, as every
+  spread is; a tuple conversion at its syntax, once, with its first converting element's reason. A
+  `foreach` stays one operation, so over a hash-ordered collection it reports MMO1004 first. A spread
+  is checked when its target is an array, a span or an `IEnumerable<T>`, which covers every collection
+  type the core uses; contracts/analyzer-rules.md lists the rest under "Not covered".
+- **An order-insensitive sink is a named set operation or a listed type's copy constructor (T161,
+  Phase 5 review).** Every argument to every method or constructor of a hash-ordered type counted as a
+  sink, so `new Dictionary<int, IEnumerable<int>> { { 0, set } }` and `d.Add(0, set)` stored a set
+  whose later enumeration nothing reported. A test on the parameter's type (not a type parameter) would
+  still pass `Hashtable.Add(object, object)`, so the sinks are the 14 set operations of
+  `Tables.OrderInsensitiveSinkMethods` declared on a listed type, and a listed type's own constructor.
+  A derived class's constructor no longer counts, because it may store or enumerate its argument; this
+  is stricter than before, and the core has no such class. A sink whose comparer merges elements the
+  source keeps apart is listed under "Not covered".
+- **Local functions, lambdas and delegates are declarations, and accessors report their own
+  `Synchronized` flag (T162, T163, Phase 5 review).** The symbol actions saw only fields, properties,
+  methods and events, and skipped accessors before reading the flag, so a `[Conditional]`,
+  `[UnsafeAccessor]` or synchronized local function, a synchronized accessor or lambda, and a
+  delegate's `double` signature reported nothing. A second operation action now checks local functions
+  as methods (at the identifier) and lambdas (at the lambda, since it has no identifier: its
+  `Synchronized` flag, and only the parameter and return types its syntax writes, so an inferred `x =>
+  x` does not repeat the delegate type's report). A delegate's return type reports at its identifier.
+  An accessor's flag reports at its keyword, named as the accessor (`C.P.get`); a field-like event's
+  accessors are implicit and share the event's identifier, so the event reports the flag that
+  `[method: MethodImpl(…)]` sets, as part of its one rule. With the review rows,
+  `DeterminismAnalyzer.cs` is at 98.72% line coverage, the same seven defensive lines uncovered.
+- **MMO1002 does not list `ToString` (T154, T160, Phase 5 review).** The contract named `ToString` among
+  the MMO1002 exclusions, but MMO1002 matches static methods only (the T160 decision above) and every
+  `float.ToString` is an instance method; the core also formats floats in invariant round-trip form
+  for error text (`Vec3.ToString`, `ConfigFields.FormatBound`), which is the same in every build. So the
+  entry was dropped, the contract now says instance members are outside MMO1002, and `TableTests` pins
+  every entry the contract still names.
+- **The bound constants are pinned to research R3 (T156, Phase 5 review).** US3.8(a) says "within the
+  documented error bound", and `EveryInDomainRowIsWithinItsBound` reads its bounds from
+  `SimMathBounds`, so widening a constant would loosen the check with every test green; T166's "never
+  widen a bound past the R3 table" was enforced only by review. `BoundsAreTheResearchR3Values` now pins
+  each constant to its R3 value.
 
 ## Delivery
 
