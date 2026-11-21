@@ -131,3 +131,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | fuzz-all-buttons | added: 89ae4d9707d3dc24 | added: 63092789b15a64a8 | |
+
+## 2026-11-21T08:19:17Z
+
+- Reason: First recording of the heat-overheat scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario heat-overheat`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| heat-overheat | added: 48527a5a43ea9195 | added: b735e3b1e7c61c2f | |
