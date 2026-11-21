@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The server build's step benchmarks and the drivers of the zero-allocation tests
+       (specs/015-shared-simulation-core/contracts/measurement-report.md#how-the-report-is-produced, step 1). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore\MmoEngine.SimCore.csproj" />
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Server\MmoEngine.SimCore.Server.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The base configuration, embedded so that SimCoreContent reads no file from disk and the
+         out-of-process toolchain finds it from any working directory. -->
+    <EmbeddedResource Include="..\..\simcore\config\default.json" LogicalName="MmoEngine.SimCore.Benchmarks.default.json" />
+  </ItemGroup>
+</Project>

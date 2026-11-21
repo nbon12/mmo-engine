@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MmoEngine.SimCore.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MmoEngine.SimCore.Analyzers.Tests", "tests\MmoEngine.SimCore.Analyzers.Tests\MmoEngine.SimCore.Analyzers.Tests.csproj", "{CD17FD75-4097-4BF8-B5DD-3BEE42AEF42F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MmoEngine.SimCore.Benchmarks", "benchmarks\MmoEngine.SimCore.Benchmarks\MmoEngine.SimCore.Benchmarks.csproj", "{E780C670-12B8-4602-88EF-67EF43F9E733}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -271,6 +273,18 @@ Global
 		{CD17FD75-4097-4BF8-B5DD-3BEE42AEF42F}.Release|x64.Build.0 = Release|Any CPU
 		{CD17FD75-4097-4BF8-B5DD-3BEE42AEF42F}.Release|x86.ActiveCfg = Release|Any CPU
 		{CD17FD75-4097-4BF8-B5DD-3BEE42AEF42F}.Release|x86.Build.0 = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|x64.Build.0 = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Debug|x86.Build.0 = Debug|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|x64.ActiveCfg = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|x64.Build.0 = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|x86.ActiveCfg = Release|Any CPU
+		{E780C670-12B8-4602-88EF-67EF43F9E733}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -294,5 +308,6 @@ Global
 		{7856CDDF-1EC4-4E65-BCC0-9C2695F7BEBB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{2BD41883-6422-4A2B-A4EB-43BF6C0FBAD0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{CD17FD75-4097-4BF8-B5DD-3BEE42AEF42F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{E780C670-12B8-4602-88EF-67EF43F9E733} = {66320409-64EC-F7C5-3DEF-65E7510DAAD1}
 	EndGlobalSection
 EndGlobal

@@ -7,6 +7,8 @@
          allowed names with MmoEngine.Regionizer.Simulator.Config.EnvironmentNames.Allowed. The core,
          server helpers and CLI never reference the simulator. -->
     <ProjectReference Include="..\..\src\MmoEngine.Regionizer.Simulator\MmoEngine.Regionizer.Simulator.csproj" />
+    <!-- Phase 9: the benchmarks' StepCase drivers and exporter, run by Benchmarks/ and Allocation/StepAllocationTests. -->
+    <ProjectReference Include="..\..\benchmarks\MmoEngine.SimCore.Benchmarks\MmoEngine.SimCore.Benchmarks.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
@@ -14,6 +16,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="CsCheck" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="BenchmarkDotNet" />
   </ItemGroup>
   <ItemGroup>
     <!-- The example report of contracts/measurement-report.md#example, byte for byte, read by

@@ -60,6 +60,7 @@ public static class Program
             ConfigCommand.Create(stdout, stderr, logger),
             ContentCommand.Create(stdout, stderr, logger),
             GoldenCommand.Create(stdout, stderr, logger),
+            MeasureCommand.Create(stdout, logger),
             StreamsCommand.Create(stdout, stderr, logger, runStream),
         };
 

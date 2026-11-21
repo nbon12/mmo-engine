@@ -2554,7 +2554,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
 ### Implementation
 
-- [ ] T247 [US7] Create the benchmark project and its content loader, and reference it from the tests. It adds `SimCoreContent`, which `StepCaseTests.ContentMatchesTheCommittedConfigAndWorld` reads. That test runs with the rest of Phase 9's tests once T248, T249, T251 and T252 have added the types they reference (`StepCase`, `MeasurementReportValidator`, `SimCoreBenchmarkConfig`, `SimCoreMeasurementExporter`, the benchmark classes and `MmoEngine.SimCore.Benchmarks.Program.Run`).
+- [X] T247 [US7] Create the benchmark project and its content loader, and reference it from the tests. It adds `SimCoreContent`, which `StepCaseTests.ContentMatchesTheCommittedConfigAndWorld` reads. That test runs with the rest of Phase 9's tests once T248, T249, T251 and T252 have added the types they reference (`StepCase`, `MeasurementReportValidator`, `SimCoreBenchmarkConfig`, `SimCoreMeasurementExporter`, the benchmark classes and `MmoEngine.SimCore.Benchmarks.Program.Run`).
   - `benchmarks/MmoEngine.SimCore.Benchmarks/MmoEngine.SimCore.Benchmarks.csproj`, shaped like `benchmarks/MmoEngine.Regionizer.Benchmarks/MmoEngine.Regionizer.Benchmarks.csproj`:
     - `OutputType` Exe and `IsPackable` false;
     - a `ProjectReference` to `src/MmoEngine.SimCore` and to `src/MmoEngine.SimCore.Server`;
@@ -2566,12 +2566,13 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `public static class SimCoreContent`, with `BaseConfig` (the embedded `default.json` bound with `SimConfigJson`) and `World` (the CollisionData that `TestWorldGenerator` produces, put through `CollisionFile.Encode` then `CollisionFile.Decode`). Both are created once per process.
     - `Compiled(int hz)`, which returns `CompiledConfig.Create` of `BaseConfig` with `stepRateHz` = hz.
     - It reads no file from disk, so BenchmarkDotNet's out-of-process toolchain finds its content from any working directory.
-- [ ] T248 [US7] Implement `benchmarks/MmoEngine.SimCore.Benchmarks/StepCases.cs`, after T247. Makes T245 and T246 pass, together with the allocation-fix task below.
+  - `benchmarks/MmoEngine.SimCore.Benchmarks/Program.cs`: a minimal `Main` that runs `BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly)`, so the new executable project builds on its own. T252 replaces it with `Run(args, runnerClass, stderr)`.
+- [X] T248 [US7] Implement `benchmarks/MmoEngine.SimCore.Benchmarks/StepCases.cs`, after T247. Makes T245 and T246 pass, together with the allocation-fix task below.
   - Shape: `public sealed class StepCase` with `static Create(string kind, string caseName, int hz)`, `PassLength`, `StepsLeftInPass`, `Restart()`, `Step()` (throws `InvalidOperationException` when the pass has ended), `StepCycling()` (restarts first when the pass has ended; the benchmarks' operation) and `LastResultHash`. An unknown kind or case throws `ArgumentException` naming it.
   - Create builds `ScenarioCatalog.Get(<definition>).Build(SimCoreContent.BaseConfig, SimCoreContent.World, hz)`, using the definition mapping of `StepCaseTests`. It precomputes every input, state and buffer the pass needs at creation, so `Step()` and `Restart()` only copy structs and call the core:
     - movement: character 0's initial `CharacterState` decoded with `StateSerializer`'s reader, and the per-step `InputCommand` (or the neutral input). `Step()` calls `MovementStep.Step` with the arguments Phase 3 defines, against a candidate buffer of `World.MaxQueryCandidates`.
-    - weapon: `rifle-burst`'s initial character and weapons. `Step()` calls `WeaponStep.Step` (Phase 6) with the step's input and a projectile scratch whose count is reset to 0 each step.
-    - projectile: the canonical state of `launcher-arc` after its firing step, read from a `SimWorld` run at creation, and the hitboxes built once with `HitboxBuilder`. `Step()` calls `ProjectileStep.Step` (Phase 7). The pass ends when the projectile is removed.
+    - weapon: `rifle-burst`'s initial character and weapons. `Step()` calls `WeaponStep.Step` (Phase 6) with the step's input and a projectile scratch whose count is reset to 0 each step. The weapons carry over from step to step; the character `WeaponStep` sees is copied from the step's precomputed post-movement character, which a preparation pass of the world's stages 1 to 3 for character 0 gives at creation, so the step's input and character are those the world would use.
+    - projectile: the canonical state of `launcher-arc` after its firing step, read from a `SimWorld` run at creation, and the hitboxes built once with `HitboxBuilder`. `Step()` calls `ProjectileStep.Step` (Phase 7). The pass ends when the projectile is removed. The state's records are decoded with `StateSerializer.ReadLoaded` after its step events are replaced by six zero counts, because the reader of committed states is internal to the core.
     - hitboxBuild: one `flat-run-<hz>hz` pose per step, built into a preallocated span.
     - stateHash: `flat-run-<hz>hz`'s canonical state per step, hashed with `StateHash.Compute`.
     - world: a `SimWorld` with a `CharacterCommand[]` per step. `Restart()` calls `SimWorld.Reset(initialState, matchSalt)`.
@@ -2582,7 +2583,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - projectile: `Projectile Projectile` (the projectile as the last step left it), `ProjectileOutcome LastOutcome`, `ProjectileHit LastHit` and `ExpiryReason LastExpiry` (`ProjectileStep.Step`'s return and its two out values);
     - world: `StepFault LastFault` and `ulong LastStepHash`, the last `StepReport`'s `Fault` and `Hash`.
   - Pass rules the tests check: a new case and a restarted one have `StepsLeftInPass == PassLength`, and each `Step()` lowers it by exactly 1. The movement pass runs the stream's steps from its first, so it is at most the definition's step count. The weapon pass runs every step of `rifle-burst`, so it fires every shot of the world run. The projectile pass runs from the step after the firing step to the step on which the projectile hits or expires, so its length is that step minus the firing step, and every step but its last is `Flying`. The world pass has one step per stream entry, which is `StreamRunner.Run`'s record count.
-- [ ] T249 [P] [US7] Implement `src/MmoEngine.SimCore.Cli/Measure/MeasurementReportValidator.cs`, following every check of contracts/measurement-report.md#what-validate-report-checks over the closed schema of #fields. Makes T243 pass.
+- [X] T249 [P] [US7] Implement `src/MmoEngine.SimCore.Cli/Measure/MeasurementReportValidator.cs`, following every check of contracts/measurement-report.md#what-validate-report-checks over the closed schema of #fields. Makes T243 pass.
   - API: `public static IReadOnlyList<string> Validate(string json)` and `public static IReadOnlyList<string> ValidateServerObject(JsonElement server, string runnerClass)`, both using `System.Text.Json.JsonDocument`.
   - Walk order: each object is walked in the file's member order. After its present members, each missing required member is reported in schema order. Cross-field checks are reported at the end of the object they belong to: runner-class equality, the step coverage of `server.benchmarks`, the mode set, at least one interpreted mode, the download totals and the step kinds.
   - Paths use dot-separated member names and `[i]` indexes. A value in a message is printed as its raw JSON text (`GetRawText`).
@@ -2592,16 +2593,19 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `must be an integer`, `must be a number`, `must be a string`, `must be a boolean`, `must be an object`, `must be an array`, `must be a string or null`, `must be an object or null`
     - `must not be empty`
     - `is <v>; must be <alternatives>`, `is <v>; must match <format>`, `is <v>; must be at least <n>`, `is <v>; must be greater than 0`, `is <v>; must equal runnerClass <v>`, `is <v>; must be at least the median <v>`, `is <v>; the files sum to <n>`, `is <v>; there are <n> files`
-    - `has no <kind> benchmark`, `has no <kind> entry`, `has no <mode> mode`, `has <n> loader entries; must have exactly one, named dotnet.js`
+    - `has no <kind> benchmark`, `has no <kind> entry`, `has no <mode> mode`, `has <n> loader entries; must have exactly one, named dotnet.js`, `has <n> wasmNative entries; must have exactly one`
     - `<v> is not unique`, `<v> is not unique within <step>`
     - `must be null when produced is true`, `must be null for interp-prebuilt`, `no interpreted mode was produced`
     - `$: must be an object`, `$: is not valid JSON (<JsonException message>)`
   - Rules:
     - Runner-class emptiness is checked only at the top level. `server.runnerClass` is checked only for equality.
     - A missing mode is reported only by the mode-set check.
-    - Integers use checked `long` sums.
+    - The download totals are summed exactly, as `Int128`, so no sum of 64-bit sizes wraps and an oversized sum is still a `the files sum to <n>` line.
+    - A member name repeated within an object makes the file invalid JSON (`JsonDocumentOptions.AllowDuplicateProperties` false).
+    - A mode whose `produced` is missing or not a boolean reports only that and its unknown fields.
+    - `build` matches the mode as all false (`interp-prebuilt`), `aot` false and the others true (`interp-relinked`), or all true (`aot`).
     - There is no threshold on any number (Principle VI).
-- [ ] T250 [US7] Implement `src/MmoEngine.SimCore.Cli/Commands/MeasureCommand.cs` and register it in `src/MmoEngine.SimCore.Cli/Program.cs`, following contracts/simcore-cli.md#measure-validate-report, after T249. Makes T242 pass.
+- [X] T250 [US7] Implement `src/MmoEngine.SimCore.Cli/Commands/MeasureCommand.cs` and register it in `src/MmoEngine.SimCore.Cli/Program.cs`, following contracts/simcore-cli.md#measure-validate-report, after T249. Makes T242 pass.
   - The command is `measure validate-report <file>`.
   - Read the file with `FileAccess.Read`. If it is missing or unreadable, exit `CliExitCodes` 2 with nothing on stdout, and log on stderr through `CliLogging` an event naming the path.
   - Otherwise print `MeasurementReportValidator.Validate`'s lines on stdout, one per line, in order. Exit 0 when there are none, else 1. Malformed JSON is exit 1 with its `$: is not valid JSON (...)` line.

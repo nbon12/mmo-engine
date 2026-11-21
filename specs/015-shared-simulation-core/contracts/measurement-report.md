@@ -253,8 +253,8 @@ problem.
 | `runnerClass` | string | `MMO_RUNNER_CLASS`; not empty |
 | `machine` | object | `cpuModel` (not empty; Node's `os.cpus()[0].model`), `logicalCores` (≥ 1), `architecture` (`x64` or `arm64`), `os` (not empty) |
 | `dotnet` | object | `sdkVersion` and `runtimeVersion` (`<major>.<minor>.<patch>`, from the benchmark run), `environment` (`DOTNET_EnableAVX512F` and `DOTNET_TieredPGO`, each the variable's value or `unset`) |
-| `node` | object | `version`, as `process.version` |
-| `chromium` | object | `version`, as Playwright's `browser.version()` |
+| `node` | object | `version` (not empty), as `process.version` |
+| `chromium` | object | `version` (not empty), as Playwright's `browser.version()` |
 | `server` | object | below |
 | `wasm` | object | `modes`, below |
 
@@ -288,9 +288,9 @@ reason. A produced mode has every field below and `reason` null.
 | --- | --- | --- |
 | `produced` | boolean | |
 | `reason` | string or null | the reason when not produced, else null |
-| `build` | object | `aot`, `relinked`, `workload` (booleans that match the mode) |
-| `runtime` | object | `runtimeBuildInfo` (`productVersion`, `gitHash`, `buildConfiguration`, `wasmEnableSIMD`, `wasmEnableExceptionHandling`, `wasmEnableThreads`), the boot manifest's `debugLevel` (must be 0, the publish output) and `globalizationMode`, the `runtimeOptions` used (an array of strings), and `jiterpreter` (true when the jiterpreter options were left at their defaults) |
-| `download.files[]` | array | one entry per file the page downloads: `name`, `group`, `rawBytes`, `brotliBytes`, `gzipBytes` (each > 0) |
+| `build` | object | `aot`, `relinked`, `workload` (booleans that match the mode: all false for `interp-prebuilt`; `aot` false and the other two true for `interp-relinked`; all true for `aot`, which relinks the runtime with the workload) |
+| `runtime` | object | `runtimeBuildInfo` (`productVersion`, `gitHash` and `buildConfiguration`, strings that are not empty, and the booleans `wasmEnableSIMD`, `wasmEnableExceptionHandling`, `wasmEnableThreads`), the boot manifest's `debugLevel` (must be 0, the publish output) and `globalizationMode` (not empty), the `runtimeOptions` used (an array of strings), and `jiterpreter` (true when the jiterpreter options were left at their defaults) |
+| `download.files[]` | array | one entry per file the page downloads: `name` (not empty, unique), `group`, `rawBytes`, `brotliBytes`, `gzipBytes` (each > 0) |
 | `download.files[].group` | string | `loader` (exactly one, `dotnet.js`), `jsModuleNative`, `jsModuleRuntime`, `wasmNative` (exactly one), `coreAssembly`, `assembly`, or `icu` |
 | `download.total` | object | `files` (the entry count), and `rawBytes`, `brotliBytes`, `gzipBytes`, each the exact sum over the files |
 | `startup.coldStarts` | integer | 10 |
@@ -361,8 +361,8 @@ Every check prints one `path: problem` line when it fails, for example
 `wasm.modes.aot.reason: is required when produced is false`. The command exits 0 when there is no
 problem, 1 otherwise.
 
-1. The file is valid JSON and an object; `formatVersion` is 1, `kind` is `simcore-measurement` and
-   `label` is `measurement`.
+1. The file is valid JSON, with no member name repeated within an object, and an object;
+   `formatVersion` is 1, `kind` is `simcore-measurement` and `label` is `measurement`.
 2. Every field listed above is present with its type, and no other field is.
 3. `runnerClass` is not empty, and `server.runnerClass` equals it (US7 Independent Test: "the runner
    class").
@@ -373,7 +373,8 @@ problem, 1 otherwise.
 6. `wasm.modes` has exactly `interp-prebuilt`, `interp-relinked` and `aot` (US7 Independent Test:
    "the build mode").
 7. An unproduced mode has a non-empty `reason` and nothing else (FR-031: "name any mode it could not
-   build").
+   build"). A mode whose `produced` is missing or not a boolean reports only that and its unknown
+   fields, because which fields it needs depends on `produced`.
 8. At least one interpreted mode was produced, because FR-031 requires the interpreted build to be
    measured.
 9. For each produced mode:

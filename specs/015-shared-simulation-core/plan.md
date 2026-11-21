@@ -1643,6 +1643,33 @@ The design documents settled these points, which the spec leaves open. They are 
   unavailable column and the configuration test reads the columns against an empty `Summary`, and the
   missing-runner-class line is written with `WriteLine`. T245's "same `CompiledConfig` bits" also
   compares every compiled weapon and both hitbox layouts, not only the scalar derived values.
+- **The weapon case copies the world's post-movement character each step, and the projectile case reads
+  its firing state through the public reader (T248).** `WeaponStep.Step` reads the character the world's
+  movement stage leaves: its aim and last sequence come from the step's accepted input, and its position
+  places the spawned projectile. Stepping the initial character alone would hand it a stale last sequence
+  and aim whenever a scenario moved or re-aimed, so a preparation pass of stages 1 to 3 for character 0
+  stores each step's input and post-movement character, and `Step()` copies that struct before calling
+  `WeaponStep.Step`; the weapons still carry over from the initial ones. The projectile case reads the
+  state after `launcher-arc`'s firing step from a `SimWorld` run, as T248 says, but the core's reader of
+  committed states is internal, so the case keeps the state's records, replaces its step events with six
+  zero counts and decodes that with `StateSerializer.ReadLoaded`. T248's bullets now say both. The
+  movement case steps its character as T248 says; a check of every step at 20, 30 and 60 Hz found its
+  bits equal to the world's committed character with no negative zero to canonicalise.
+- **`validate-report` sums exactly, refuses repeated members and names a second `wasmNative` (T249).**
+  T249 said checked `long` sums, which throw on overflow and would turn a crafted report into a crash
+  instead of exit 1, so the totals are summed as `Int128` and an oversized sum is reported like any other
+  wrong total. A repeated member name would let one copy hide the other from a closed-schema check, so
+  `JsonDocument` refuses it and the file is `$: is not valid JSON (…)`. Check 9 requires exactly one
+  `wasmNative`, which no message in T249's vocabulary named, so it gains
+  `has <n> wasmNative entries; must have exactly one`. A mode whose `produced` is missing or not a boolean
+  reports only that and its unknown fields, because the fields it needs depend on `produced`. The
+  contract's fields table now states the `build` booleans of each mode (AOT relinks the runtime, so all
+  three are true) and which strings must not be empty (the versions, the runtime's names and the file
+  names), the rules the validator applies beyond T243's rows. T249 and contracts/measurement-report.md
+  say all of this.
+- **T247 adds a minimal benchmark entry point.** An executable project does not build without `Main`, and
+  T252, which writes the real one, comes later, so T247 adds the Regionizer benchmarks' one-line
+  `BenchmarkSwitcher` `Main`, and T252 replaces it.
 
 ## Delivery
 
