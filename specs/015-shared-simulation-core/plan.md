@@ -1495,6 +1495,27 @@ The design documents settled these points, which the spec leaves open. They are 
   lies inside the launcher's configured spread cone around +Z, and that the stored LaunchVelocity is
   that direction times the muzzle speed. "Horizontally" is read as the level aim plus the configured
   spread, because the launcher keeps its default 0.5° spread in this stream, as T212 gives it.
+- **The world-level allocation test fires, hits and expires projectiles (T211, T036, Phase 7 review).**
+  `WorldAllocationTests.StepAllocatesNothing` steps one character with no commands, so nobody fires:
+  stage 5's loop over live projectiles and the hit and expiry writers never ran in a counted batch.
+  T211's "Nothing allocated" therefore had no world-level check before Phase 9's `world/fuzz-all-buttons`
+  row, although T036 called the row the regression that Phases 3, 6 and 7 keep green.
+  `ProjectileAllocationTests` covers only the direct `ProjectileStep.Step` call. The new
+  `StepWithProjectilesAllocatesNothing` row has a shooter fire rifle bursts at a standing target on
+  `ProjectileWorlds.FlatWorld`, using T172's Fire-then-Reload cycle and a preallocated one-entry command
+  array updated in place. It requires every counted batch to hold a shot, a character hit on the target
+  and an expiry, so the clean batch is one that ran them. Two choices in its arrangement need a reason:
+  - The target is 10 m away, not 50 m. At 50 m the rifle's 1.5° spread cone is about 1.3 m in radius,
+    and one counted 60 Hz batch held 84 shots and no character hit. At 10 m every batch at every rate
+    holds at least 22 character hits and 37 expiries.
+  - The rifle's reserve is 65,535 rounds, not the placeholder's 210. The 240 placeholder rounds run out
+    within the first counted batch at 20 Hz, which would leave the later batches, one of which must be
+    the clean one, with nothing to fire. The state's `reserve` is a u16 that the configuration does not
+    bound (contracts/state-serialization.md#weapon-record), so `Reset` accepts it.
+
+  With a one-byte allocation added to the expiry branch of `StepProjectiles`, all three new rows fail
+  and the empty-command rows still pass. T036's bullet now says its row covers the fixed per-step path,
+  and T211 names the new row.
 
 ## Delivery
 
