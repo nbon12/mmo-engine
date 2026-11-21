@@ -49,8 +49,9 @@ Principle IV already requires this. What it means against the moves above:
   IV), and check movement against the physics the server runs: speed, acceleration, collision.
 - **Hit detection.** In a browser there's no client-side anti-cheat to fall back on, so the
   margin decision 5 gives cheaters weighs more than it would natively. Whichever option decision 5
-  picks, design the server so that hit claims, if used, are checked against rewound hitboxes,
-  range, fire rate and line of fire, as the constitution already requires for that option.
+  picks, design the server so that hit claims, if used, are checked against rewound hitboxes
+  (Combat netcode, lag compensation) and against range, fire rate and line of fire, as the
+  constitution already requires for that option.
 
 ## Layer 2: send nothing a cheater could use
 
@@ -129,7 +130,7 @@ the account. Friction scales with privileges, not with joining:
   ranges.
 - **Invites carry trust.** A trusted player's link gives invitees a slightly better start. It
   stops doing so if the people they invite keep getting caught.
-- **Automated guards** (Principle XIII's "guard, not gate"): a kill switch for guest creation per
+- **Automated guards** (Principle XIII's "Automation, not approval"): a kill switch for guest creation per
   source or IP range, an overflow instance for guests when cheating spikes on a continent, and a
   cap on the share of guests per continent.
 
@@ -180,8 +181,10 @@ the server in CI and in the harness:
 
 What doesn't depend on decision 9 can start whenever the relevant feature is specified:
 
-1. Layer 1 and Layer 2 are already required by Principle IV. They land with the combat and
-   delivery features.
+1. Layer 1 and the baseline of Layer 2 (interest-management tiers and caps, closed portals, and
+   no hidden state in snapshots) are already required by Principle IV and land with the combat and
+   delivery features. Occlusion-aware disclosure and coarse audio and minimap go further; their
+   cost comes from load tests (Layer 2).
 2. Record the server-side events Layer 3 needs (shots, aim samples, what each client was sent and
    when) from the start. That data is cheap to record and impossible to recover later.
 3. Keep the codec and integrity checks as swappable modules in the client from its first version.
