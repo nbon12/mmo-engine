@@ -1818,19 +1818,19 @@ Conventions for this phase (they hold for every task below):
   - When: the warm-up and three counted batches of 1,000 calls (`ZeroAllocation.MeasureBatches`, T036) of `WeaponStep.Step(config, salt, step, ref character, weapons, in input, 0, ref nextProjectileId, spawned, shots, out block)` run, with `step` counting up from 1 across all of them. The input cycles every `4 * hz` calls: Fire held for `3 * hz` calls, then Reload held for one call, then nothing. At the start of each cycle the weapons and `nextProjectileId` are set back to their start values (struct copies).
   - Then: the smallest batch allocated exactly 0 bytes, and at least one counted call returned a shot count of 1 or more.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponAllocationTests"` and confirm it fails: it does not compile until `WeaponStep` exists.
-- [ ] T173 [US4] Write failing tests in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (US4.1). Both drive the world through `WeaponRuns`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Weapons.FireTimingTests"` and confirm they fail.
+- [X] T173 [US4] Write failing tests in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (US4.1). Both drive the world through `WeaponRuns`. Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Weapons.FireTimingTests"` and confirm they fail.
   - `FireTimingTests.SevenHundredRpmAtThirtyHzFiresExactly35ShotsInThreeSeconds` (US4.1): `TestConfigs.At(30)` with `weapons[0].roundsPerMinute` 700 and `magazineSize` 100 (heat 0, `maxShotsPerStep` 1, R11 holds since 700 ≤ 1800), slot 0 Ready, Fire held for 90 steps.
     - Exactly 35 shot events in total.
     - After held step k (k = 0 for the first held step), the cumulative shot count == ceil((k + 1) · 700 / 1800) for every k in 0..89.
     - The j-th shot fires on held step floor((j − 1) · 1800 / 700) (0, 2, 5, 7, 10, … for j = 1..5), which is within one step of (j − 1) · 1800/700.
     - No step fires more than one shot.
   - Supporting `FireTimingTests.SixHundredRpmFiresThirtyShotsInThreeSecondsAtEveryRate(int hz)`: the placeholder rifle (magazine 30) held for 3 · hz steps fires exactly 30 shots, on held steps 0, hz/10, 2·hz/10, …, 29·hz/10.
-- [ ] T174 [US4] Write failing test `FireTimingTests.ShotCountNeverDriftsFromTheRateByMoreThanOne(int hz, int rpm)` in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (FR-007). Theory over `TestRates.With(...)` crossing hz 20, 30, 60 with every rpm from 30 to 3600 in steps of 7 (511 values).
+- [X] T174 [US4] Write failing test `FireTimingTests.ShotCountNeverDriftsFromTheRateByMoreThanOne(int hz, int rpm)` in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (FR-007). Theory over `TestRates.With(...)` crossing hz 20, 30, 60 with every rpm from 30 to 3600 in steps of 7 (511 values).
   - Configuration: `TestConfigs.At(hz)` with `weapons[0].roundsPerMinute` = rpm and `maxShotsPerStep` = ceil(rpm / (60 · hz)), the smallest R11 allows.
   - `WeaponStep.Step` is called directly for 60 · hz steps with Fire held. Before each call Magazine is set to `magazineSize`, projectile count to 0 and `nextProjectileId` to 1, so only the accumulator limits shots.
   - Assert at every step k: the cumulative count == ceil((k + 1) · rpm / (60 · hz)), and 0 ≤ FireWait < ShotCost.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~FireTimingTests.ShotCountNeverDriftsFromTheRateByMoreThanOne"` and confirm it fails.
-- [ ] T175 [US4] Write failing test `FireTimingTests.WeaponFasterThanOneStepFiresAtMostMaxShotsPerStepWithoutDrift` in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (edge case: fire interval shorter than one step).
+- [X] T175 [US4] Write failing test `FireTimingTests.WeaponFasterThanOneStepFiresAtMostMaxShotsPerStepWithoutDrift` in `tests/MmoEngine.SimCore.Tests/Weapons/FireTimingTests.cs` (edge case: fire interval shorter than one step).
   - Arrange through `WeaponRuns` at 30 Hz with `weapons[0].roundsPerMinute` 2400, `maxShotsPerStep` 2 and `magazineSize` 1000, Fire held for 90 steps.
   - Assert:
     - no step has more than 2 shot events;
@@ -1839,7 +1839,7 @@ Conventions for this phase (they hold for every task below):
     - the total is 120;
     - the two shots of one step carry consecutive ShotCounter and ProjectileId values and different direction bits.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~FireTimingTests.WeaponFasterThanOneStepFiresAtMostMaxShotsPerStepWithoutDrift"` and confirm it fails.
-- [ ] T176 [US4] Write failing test `WeaponScenarioTests.TwoRoundMagazineFiresTwiceReportsEmptyThenReloadsFromReserve(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.3).
+- [X] T176 [US4] Write failing test `WeaponScenarioTests.TwoRoundMagazineFiresTwiceReportsEmptyThenReloadsFromReserve(int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.3).
   - Given `ScenarioCatalog.Get("reload-and-empty").Build(TestConfigs.Default(), testWorld, hz)`, where `testWorld` is `simcore/content/test-world.mmcd` opened read-only through `RepoPaths` and decoded with `CollisionFile.Decode`.
   - When it is stepped with `WeaponRuns.Run`, assert:
     - exactly 2 shot events in the whole run, at steps 1 and 1 + hz/10;
@@ -1847,7 +1847,7 @@ Conventions for this phase (they hold for every task below):
     - at step hz + 1 (Reload pressed) weapons[0] is Reloading with PhaseSteps == ReloadSteps (40/60/120), with block Reloading;
     - at step hz + 1 + ReloadSteps weapons[0] is Ready with Magazine 30 (min(30 − 0, 210)) and Reserve 180.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.TwoRoundMagazineFiresTwiceReportsEmptyThenReloadsFromReserve"` and confirm it fails.
-- [ ] T177 [US4] Write failing test `WeaponScenarioTests.HeatWeaponOverheatsAndResumesAtTheRecoveryLevel` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.4, a Fact at 30 Hz).
+- [X] T177 [US4] Write failing test `WeaponScenarioTests.HeatWeaponOverheatsAndResumesAtTheRecoveryLevel` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4.4, a Fact at 30 Hz).
   - Given the `heat-overheat` definition built at its own 30 Hz rate and stepped with `WeaponRuns.Run`, assert:
     - shots at exactly steps 1, 4, …, 28 (10 shots), with Heat after the k-th shot == 300,000 · k;
     - after step 28, Heat == 3,000,000 and Phase Overheated;
