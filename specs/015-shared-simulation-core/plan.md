@@ -1406,6 +1406,22 @@ The design documents settled these points, which the spec leaves open. They are 
   `Columns`, `GridCellsZ`, `GridCellsX`) and the 64-triangle cell limit; the grid's edge slabs reach to
   infinity, because the clamped cell function files triangles beyond the playable area in the edge
   cells. T209 and data-model.md#collisionworld now say so.
+- **`launcher-arc` is 1.5 s in all, and the ridge shooter of `shots-at-known-distances` reloads
+  (T212).** T212 gave `launcher-arc` "Fire held for the first step, then no buttons for 1.5 s", which
+  is 1 + 1.5·hz steps: no fixed number of seconds gives that at every rate, the same contradiction
+  `jump-land` had (T105). It is now Fire in the first step and no buttons after it, 1.5 s in all (30,
+  45 and 90 steps), still more than twice the about 0.6 s the arc takes to land. T212 also had
+  shooter 5 fire two class-1 shots from a launcher whose magazine holds one round, which the weapon
+  step cannot do without a reload. Raising the launcher's `magazineSize` in the stream's configuration
+  was rejected, because the row's overrides are zero spread and recoil only. Shooter 5 instead presses
+  Reload at 2.5 s, after its first class-1 shot at 2 s, and fires the clearing shot at 6.5 s, once
+  the 3.5 s reload is done, so the stream ends at 10.5 s, 4 s after its last shot. The definitions
+  whose aims or schedules depend on the configuration (`projectile-hits-hitbox`,
+  `mesh-occludes-shot` and `shots-at-known-distances`) make their characters at Build through
+  `ScenarioDefinition.Planned`, which hands the plan the compiled configuration, the world and
+  `ScenarioPlan.Run` (a `SimWorld` stepped over a candidate schedule), so the point-blank step is
+  found and every shot's outcome checked before the stream is returned. T212 and the
+  contracts/simcore-cli.md rows now say so.
 
 ## Delivery
 

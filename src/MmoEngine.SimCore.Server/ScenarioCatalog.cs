@@ -4,7 +4,9 @@ using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Geometry;
+using MmoEngine.SimCore.Hitboxes;
 using MmoEngine.SimCore.Inputs;
+using MmoEngine.SimCore.Math;
 using MmoEngine.SimCore.Movement;
 using MmoEngine.SimCore.Projectiles;
 using MmoEngine.SimCore.Weapons;
@@ -56,6 +58,52 @@ public static class ScenarioCatalog
     /// <summary><c>reload-and-empty</c>'s initial reserve in slot 0.</summary>
     private const ushort ReloadAndEmptyReserve = 210;
 
+    /// <summary><c>launcher-arc</c>'s match salt.</summary>
+    private const ulong LauncherArcSalt = 0x0015_5CE0_1A0C_0004UL;
+
+    /// <summary><c>projectile-hits-hitbox</c>'s match salt.</summary>
+    private const ulong ProjectileHitsHitboxSalt = 0x0015_5CE0_41B0_0005UL;
+
+    /// <summary><c>mesh-occludes-shot</c>'s match salt.</summary>
+    private const ulong MeshOccludesShotSalt = 0x0015_5CE0_3E5E_0006UL;
+
+    /// <summary><c>shots-at-known-distances</c>'s match salt.</summary>
+    private const ulong ShotsAtKnownDistancesSalt = 0x0015_5CE0_D157_0007UL;
+
+    /// <summary>The rifle's weapon slot, which fires the small-arms class 0.</summary>
+    private const byte RifleSlot = 0;
+
+    /// <summary>The launcher's weapon slot, which fires the heavy class 1.</summary>
+    private const byte LauncherSlot = 1;
+
+    /// <summary>The shooter's ID in the two-character projectile scenarios.</summary>
+    private const uint ShooterId = 1;
+
+    /// <summary>The target's ID in the two-character projectile scenarios.</summary>
+    private const uint TargetId = 2;
+
+    /// <summary>How far the targets of <c>projectile-hits-hitbox</c> and <c>shots-at-known-distances</c> stand in front of their shooter, m.</summary>
+    private const float TargetDistance = 25f;
+
+    /// <summary>
+    /// Binary angle units per radian, 32768 / π rounded to float: an angle in radians times this, through
+    /// <see cref="SimMath.RoundToInt"/>, is the nearest binary angle (65,536 to a turn).
+    /// </summary>
+    private const float UnitsPerRadian = 10430.378f;
+
+    /// <summary>When <c>projectile-hits-hitbox</c>'s target starts holding Crouch, s.</summary>
+    private const double CrouchFromSeconds = 1.5;
+
+    /// <summary>When <c>projectile-hits-hitbox</c>'s target releases Crouch and runs toward the shooter, s.</summary>
+    private const double RunFromSeconds = 3.5;
+
+    /// <summary>
+    /// When <c>projectile-hits-hitbox</c>'s six aimed shots fire, s: Head, Torso and Legs while the target
+    /// stands, then the same while it holds Crouch. Each is 0.5 s after the last, more than the rifle's
+    /// 0.1 s fire interval.
+    /// </summary>
+    private static readonly double[] AimedShotSeconds = [0.0, 0.5, 1.0, 2.0, 2.5, 3.0];
+
     private static readonly ScenarioDefinition[] Definitions = Sorted(
     [
         FlatRun(20),
@@ -73,6 +121,10 @@ public static class ScenarioCatalog
         RifleBurst(),
         ReloadAndEmpty(),
         HeatOverheat(),
+        LauncherArc(),
+        ProjectileHitsHitbox(),
+        MeshOccludesShot(),
+        ShotsAtKnownDistances(),
     ]);
 
     /// <summary>Every scenario's name, in ordinal order.</summary>
@@ -324,6 +376,421 @@ public static class ScenarioCatalog
         HeatOverheatSalt);
 
     /// <summary>
+    /// <c>launcher-arc</c> (US5.1): one character, ID 1, at rest, Grounded and Standing at
+    /// <see cref="TestWorldFeatures.FlatRunStart"/>, aiming at yaw 0 (+Z, along the clear firing lane) and
+    /// pitch 0, with ActiveSlot 1 and the launcher Ready in its initial state. It has a command every step
+    /// (one character, so the stream is batchable), each carrying WeaponSlot 1 so the launcher stays active
+    /// (a slot-0 command would switch to the rifle): Fire in the first step, then no buttons, for 1.5 s in
+    /// all (30, 45 and 90 steps at 20, 30 and 60 Hz), so the heavy projectile reaches the terrain, about
+    /// 0.6 s and 70 to 85 m out, well before the end.
+    /// </summary>
+    private static ScenarioDefinition LauncherArc() => new(
+        "launcher-arc",
+        DefaultStepRateHz,
+        durationSeconds: 1.5,
+        [
+            new ScenarioCharacter(ShooterId, TestWorldGenerator.Features.FlatRunStart, FiringLaneYaw, static time => time.Entry == 0 ? Buttons.Fire : 0)
+            {
+                ActiveSlot = LauncherSlot,
+                WeaponSlot = static _ => LauncherSlot,
+            },
+        ],
+        matchSalt: LauncherArcSalt);
+
+    /// <summary>
+    /// <c>projectile-hits-hitbox</c> (US5.2, US5.6, the layout half of US5.5, Edge cases: point-blank), 8 s:
+    /// the shooter, ID 1, at <see cref="TestWorldFeatures.FlatRunStart"/> and the target, ID 2, 25 m in front
+    /// of it along the firing lane, facing it (yaw 32768), both Standing and Grounded on flat terrain. The
+    /// stream's configuration sets the rifle's <c>spreadHalfAngleDeg</c>, <c>recoilKickPitchDeg</c> and
+    /// <c>recoilKickYawDeg</c> to 0, so each shot flies where it is aimed. The shooter presses Fire for one
+    /// step at 0, 0.5 and 1 s at the target's head, torso and legs centres while it stands, and at 2, 2.5 and
+    /// 3 s at the same parts while it holds Crouch over [1.5 s, 3.5 s); each aim is the binary-angle yaw and
+    /// low-root pitch to the part's centre (<see cref="AimAt"/>). Every rifle shot crosses the whole target
+    /// within one step, whose segment is 10 m or more. From 3.5 s the target releases Crouch and runs toward
+    /// the shooter, and the shooter fires once more at the first step at which its eye lies inside one of the
+    /// target's post-movement hitboxes, found by stepping a <see cref="SimWorld"/> over the schedule
+    /// (<see cref="ScenarioPlan.Run"/>): the point-blank shot. The target holds no button after that step.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">At Build, when no step puts the shooter's eye inside the target's hitboxes, or a shot does not strike its planned part.</exception>
+    private static ScenarioDefinition ProjectileHitsHitbox() => ScenarioDefinition.Planned(
+        "projectile-hits-hitbox",
+        DefaultStepRateHz,
+        durationSeconds: 8.0,
+        PlanProjectileHitsHitbox,
+        ZeroSpreadAndRecoil(RifleSlot),
+        ProjectileHitsHitboxSalt);
+
+    /// <summary>
+    /// <c>mesh-occludes-shot</c> (US5.3), 1 s: the shooter, ID 1, at
+    /// <see cref="TestWorldFeatures.WallShooterStart"/> and the target, ID 2, at
+    /// <see cref="TestWorldFeatures.WallTargetStart"/>, on opposite sides of the wall mesh
+    /// <see cref="TestWorldFeatures.WallMeshId"/>, facing each other, Standing and Grounded. The stream's
+    /// configuration sets the rifle's spread and recoil kick to 0, as <c>projectile-hits-hitbox</c>'s does,
+    /// and the shooter presses Fire in the first step aimed at the target's torso centre (<see cref="AimAt"/>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">At Build, when <see cref="CollisionWorld.SegmentQuery"/> finds no wall triangle first on the line from the shooter's eye to the aimed centre.</exception>
+    private static ScenarioDefinition MeshOccludesShot() => ScenarioDefinition.Planned(
+        "mesh-occludes-shot",
+        DefaultStepRateHz,
+        durationSeconds: 1.0,
+        static plan =>
+        {
+            var features = TestWorldGenerator.Features;
+            var shooterStart = features.WallShooterStart;
+            var targetStart = features.WallTargetStart;
+            var targetYaw = Facing(targetStart, shooterStart);
+            var eye = Eye(plan.Config, shooterStart, Stance.Standing);
+            var torso = PartCentre(plan.Config, targetStart, targetYaw, Stance.Standing, HitboxPart.Torso);
+            var wall = MeshTriangleRange(plan.World, features.WallMeshId);
+            if (!plan.World.SegmentQuery(eye, torso, out var hit) || hit.Kind != HitKind.Mesh || !wall.Contains(hit.TriangleId))
+            {
+                throw new InvalidOperationException($"{plan.Name}: no wall triangle lies first on the line from the shooter's eye {eye} to the target's torso centre {torso}.");
+            }
+
+            var aim = AimAt(plan, eye, torso, RifleSlot);
+            return
+            [
+                new ScenarioCharacter(ShooterId, shooterStart, aim.Yaw, static time => time.Entry == 0 ? Buttons.Fire : 0) { AimPitch = aim.Pitch },
+                new ScenarioCharacter(TargetId, targetStart, targetYaw, static _ => 0),
+            ];
+        },
+        ZeroSpreadAndRecoil(RifleSlot),
+        MeshOccludesShotSalt);
+
+    /// <summary>
+    /// <c>shots-at-known-distances</c> (US5-IT's agreement half), 10.5 s: five characters, Standing and
+    /// Grounded, pressing no movement button. Shooter 1 at <see cref="TestWorldFeatures.FlatRunStart"/> faces
+    /// yaw 0 with target 2 standing 25 m in front of it along +Z in the clear lane; shooter 3 at
+    /// <see cref="TestWorldFeatures.WallShooterStart"/> has target 4 at
+    /// <see cref="TestWorldFeatures.WallTargetStart"/>, behind the wall; and shooter 5 at
+    /// <see cref="TestWorldFeatures.RidgeShotStart"/> faces <see cref="TestWorldFeatures.RidgeShotYaw"/>. Each
+    /// target faces its shooter. The stream's configuration sets <c>spreadHalfAngleDeg</c>,
+    /// <c>recoilKickPitchDeg</c> and <c>recoilKickYawDeg</c> to 0 for both weapon slots. Every shooter starts
+    /// with ActiveSlot 0 and both slots Ready, fires its class-0 shots, switches to slot 1 and fires its
+    /// class-1 shots, each a one-step Fire press. Shooters 1 and 3 fire at the target's torso centre at 0 s
+    /// (rifle) and, after selecting slot 1 at 0.5 s and waiting out the 0.75 s switch, at 1.5 s (launcher).
+    /// Shooter 5 aims where its heading crosses <see cref="TestWorldFeatures.RidgeCrest"/>'s line, 1 m below
+    /// the crest there for a face shot and 1.5 m above it for a clearing shot: rifle face shot at 0 s, rifle
+    /// clearing shot at 0.5 s, slot 1 from 1 s, launcher face shot at 2 s, Reload at 2.5 s (the launcher's
+    /// magazine holds one round), launcher clearing shot at 6.5 s, after the 3.5 s reload. Every press is
+    /// separated from the slot's last shot by more than its fire interval, and the stream ends 4 s after the
+    /// last shot, by which time every projectile has hit or passed its range. Each aim is the binary-angle yaw
+    /// and the class's low-root pitch to the aim point (<see cref="AimAt"/>). Build steps a
+    /// <see cref="SimWorld"/> over the commands and checks every shot's outcome.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">At Build, naming the shot, when a shot's outcome is not its placement's (a Character hit on the target's torso for the flat shots, a Mesh hit on a wall triangle for the wall shots, a Terrain hit short of the crest line for the face shots, no hit before the crest line for the clearing shots), or a projectile is still flying at the last step.</exception>
+    private static ScenarioDefinition ShotsAtKnownDistances() => ScenarioDefinition.Planned(
+        "shots-at-known-distances",
+        DefaultStepRateHz,
+        durationSeconds: 10.5,
+        PlanShotsAtKnownDistances,
+        static config =>
+        {
+            ZeroSpreadAndRecoil(RifleSlot)(config);
+            ZeroSpreadAndRecoil(LauncherSlot)(config);
+        },
+        ShotsAtKnownDistancesSalt);
+
+    /// <summary>The characters of <c>projectile-hits-hitbox</c> at the plan's rate.</summary>
+    private static ScenarioCharacter[] PlanProjectileHitsHitbox(ScenarioPlan plan)
+    {
+        var shooterStart = TestWorldGenerator.Features.FlatRunStart;
+        var targetStart = new Vec3(shooterStart.X, shooterStart.Y, shooterStart.Z + TargetDistance);
+        var targetYaw = Facing(targetStart, shooterStart);
+        var eye = Eye(plan.Config, shooterStart, Stance.Standing);
+        var aims = new ScenarioAim[AimedShotSeconds.Length];
+        var parts = new HitboxPart[AimedShotSeconds.Length];
+        for (var i = 0; i < aims.Length; i++)
+        {
+            var stance = i < HitboxLayout.CapsuleCount ? Stance.Standing : Stance.Crouched;
+            parts[i] = (HitboxPart)(i % HitboxLayout.CapsuleCount);
+            aims[i] = AimAt(plan, eye, PartCentre(plan.Config, targetStart, targetYaw, stance, parts[i]), RifleSlot);
+        }
+
+        ScenarioCharacter[] Characters(int pointBlankEntry) =>
+        [
+            new ScenarioCharacter(
+                ShooterId,
+                shooterStart,
+                aims[0].Yaw,
+                time => time.Entry == pointBlankEntry || Array.Exists(AimedShotSeconds, time.At) ? Buttons.Fire : 0)
+            {
+                AimPitch = aims[0].Pitch,
+                Aim = time => aims[LastStarted(AimedShotSeconds, time)],
+            },
+            new ScenarioCharacter(
+                TargetId,
+                targetStart,
+                targetYaw,
+                time => time.Before(CrouchFromSeconds) ? 0
+                    : time.Before(RunFromSeconds) ? Buttons.Crouch
+                    : time.Entry <= pointBlankEntry ? Buttons.Forward
+                    : 0),
+        ];
+
+        // Run with the target running to the end and no point-blank shot, and find the first step at
+        // which the shooter's eye lies inside one of the target's post-movement hitboxes.
+        var probe = plan.Run(Characters(int.MaxValue));
+        var runFrom = (int)(RunFromSeconds * plan.StepRateHz);
+        var pointBlank = -1;
+        Span<Hitbox> hitboxes = stackalloc Hitbox[HitboxLayout.CapsuleCount];
+        for (var entry = runFrom; entry < probe.Count && pointBlank < 0; entry++)
+        {
+            var shooter = probe[entry].Character(ShooterId);
+            var target = probe[entry].Character(TargetId);
+            var shooterEye = Eye(plan.Config, shooter.Position, shooter.Stance);
+            HitboxBuilder.Build(plan.Config.HitboxLayouts[(int)target.Stance], target.Position, target.AimYaw, hitboxes);
+            foreach (var hitbox in hitboxes)
+            {
+                if (SegmentCapsule.Intersect(shooterEye, shooterEye, hitbox.A, hitbox.B, hitbox.Radius, out _))
+                {
+                    pointBlank = entry;
+                    break;
+                }
+            }
+        }
+
+        if (pointBlank < 0)
+        {
+            throw new InvalidOperationException($"{plan.Name}: at {plan.StepRateHz} Hz no step puts the shooter's eye inside the running target's hitboxes.");
+        }
+
+        var characters = Characters(pointBlank);
+        var hits = plan.Run(characters).SelectMany(step => step.Hits).ToArray();
+        var struck = Array.ConvertAll(hits, hit => hit.Kind == HitKind.Character && hit.TargetId == TargetId ? hit.Hitbox : HitboxPart.None);
+        if (!struck.AsSpan(0, System.Math.Min(struck.Length, parts.Length)).SequenceEqual(parts) || hits.Length != parts.Length + 1 || struck[^1] == HitboxPart.None || hits[^1].T != 0f)
+        {
+            throw new InvalidOperationException(
+                $"{plan.Name}: at {plan.StepRateHz} Hz the shots struck [{string.Join(", ", hits)}]; planned Head, Torso and Legs standing, then crouched, then the point-blank hit.");
+        }
+
+        return characters;
+    }
+
+    /// <summary>The characters of <c>shots-at-known-distances</c> at the plan's rate, with every shot's outcome checked.</summary>
+    private static ScenarioCharacter[] PlanShotsAtKnownDistances(ScenarioPlan plan)
+    {
+        var features = TestWorldGenerator.Features;
+        var flatShooter = features.FlatRunStart;
+        var flatTarget = new Vec3(flatShooter.X, flatShooter.Y, flatShooter.Z + TargetDistance);
+        var crest = features.RidgeCrest;
+        var ridgeShooter = features.RidgeShotStart;
+        var crossing = Crossing(ridgeShooter, features.RidgeShotYaw, crest, plan.Name);
+        var face = new Vec3(crossing.X, crest.From.Y - 1f, crossing.Z);
+        var clearing = new Vec3(crossing.X, crest.From.Y + 1.5f, crossing.Z);
+        var ridgeEye = Eye(plan.Config, ridgeShooter, Stance.Standing);
+        var ridgeAims = new[]
+        {
+            AimAt(plan, ridgeEye, face, RifleSlot),
+            AimAt(plan, ridgeEye, clearing, RifleSlot),
+            AimAt(plan, ridgeEye, face, LauncherSlot),
+            AimAt(plan, ridgeEye, clearing, LauncherSlot),
+        };
+
+        var characters = new List<ScenarioCharacter>();
+        var planned = new List<(uint ShooterId, KnownDistanceShot[] Shots)>();
+        void AddPair(uint shooterId, Vec3 shooterStart, Vec3 targetStart, KnownDistancePlacement placement)
+        {
+            var targetYaw = Facing(targetStart, shooterStart);
+            var eye = Eye(plan.Config, shooterStart, Stance.Standing);
+            var torso = PartCentre(plan.Config, targetStart, targetYaw, Stance.Standing, HitboxPart.Torso);
+            var rifle = AimAt(plan, eye, torso, RifleSlot);
+            var launcher = AimAt(plan, eye, torso, LauncherSlot);
+            characters.Add(new ScenarioCharacter(shooterId, shooterStart, rifle.Yaw, static time => time.At(0.0) || time.At(1.5) ? Buttons.Fire : 0)
+            {
+                AimPitch = rifle.Pitch,
+                Aim = time => time.Before(0.5) ? rifle : launcher,
+                WeaponSlot = static time => time.Before(0.5) ? RifleSlot : LauncherSlot,
+            });
+            characters.Add(new ScenarioCharacter(shooterId + 1, targetStart, targetYaw, static _ => 0));
+            planned.Add((shooterId, [new(RifleSlot, placement, shooterId + 1), new(LauncherSlot, placement, shooterId + 1)]));
+        }
+
+        AddPair(1, flatShooter, flatTarget, KnownDistancePlacement.Flat);
+        AddPair(3, features.WallShooterStart, features.WallTargetStart, KnownDistancePlacement.BehindWall);
+        characters.Add(new ScenarioCharacter(
+            5,
+            ridgeShooter,
+            features.RidgeShotYaw,
+            static time => time.At(0.0) || time.At(0.5) || time.At(2.0) || time.At(6.5) ? Buttons.Fire
+                : time.At(2.5) ? Buttons.Reload
+                : 0)
+        {
+            AimPitch = ridgeAims[0].Pitch,
+            Aim = time => ridgeAims[time.Before(0.5) ? 0 : time.Before(1.0) ? 1 : time.Before(6.5) ? 2 : 3],
+            WeaponSlot = static time => time.Before(1.0) ? RifleSlot : LauncherSlot,
+        });
+        planned.Add((5,
+        [
+            new(RifleSlot, KnownDistancePlacement.RidgeFace, 0),
+            new(RifleSlot, KnownDistancePlacement.RidgeClearing, 0),
+            new(LauncherSlot, KnownDistancePlacement.RidgeFace, 0),
+            new(LauncherSlot, KnownDistancePlacement.RidgeClearing, 0),
+        ]));
+
+        var probe = plan.Run(characters);
+        var wall = MeshTriangleRange(plan.World, features.WallMeshId);
+        var shots = probe.SelectMany(step => step.Shots).ToArray();
+        var hits = probe.SelectMany(step => step.Hits).ToArray();
+        foreach (var (shooterId, shooterShots) in planned)
+        {
+            var fired = Array.FindAll(shots, shot => shot.CharacterId == shooterId);
+            for (var j = 0; j < shooterShots.Length; j++)
+            {
+                var expected = shooterShots[j];
+                var shot = j < fired.Length ? fired[j] : (ShotEvent?)null;
+                var hit = shot is { } s ? Array.FindAll(hits, h => h.ProjectileId == s.ProjectileId) : [];
+                var shortOfCrest = hit.Length == 1 && ShortOfTheLine(hit[0].Point, ridgeShooter, crest);
+                var outcome = shot?.Slot == expected.Slot && hit.Length <= 1 && expected.Placement switch
+                {
+                    KnownDistancePlacement.Flat => hit is [{ Kind: HitKind.Character, Hitbox: HitboxPart.Torso } h0] && h0.TargetId == expected.TargetId,
+                    KnownDistancePlacement.BehindWall => hit is [{ Kind: HitKind.Mesh } h1] && wall.Contains((int)h1.TargetId),
+                    KnownDistancePlacement.RidgeFace => hit is [{ Kind: HitKind.Terrain }] && shortOfCrest,
+                    _ => !shortOfCrest,
+                };
+                if (!outcome)
+                {
+                    throw new InvalidOperationException(
+                        $"{plan.Name}: at {plan.StepRateHz} Hz shooter {shooterId}'s shot {j} ({expected.Placement}, slot {expected.Slot}) is {(shot is null ? "not fired" : shot.ToString())} with hits [{string.Join(", ", hit)}]; it does not end as its placement says.");
+                }
+            }
+        }
+
+        if (probe[^1].ProjectileCount != 0)
+        {
+            throw new InvalidOperationException($"{plan.Name}: at {plan.StepRateHz} Hz {probe[^1].ProjectileCount} projectiles are still flying at the last step.");
+        }
+
+        return [.. characters];
+    }
+
+    /// <summary>The configuration override that sets <c>weapons[slot]</c>'s spread and recoil kick to 0, so its shots fly where they are aimed.</summary>
+    private static Action<SimConfig> ZeroSpreadAndRecoil(byte slot) => config =>
+    {
+        var weapons = config.Weapons ?? throw new ArgumentException("The configuration has no weapons.", nameof(config));
+        var weapon = (slot < weapons.Count ? weapons[slot] : null) ?? throw new ArgumentException($"weapons[{slot}] is missing.", nameof(config));
+        weapon.SpreadHalfAngleDeg = 0f;
+        weapon.RecoilKickPitchDeg = 0f;
+        weapon.RecoilKickYawDeg = 0f;
+    };
+
+    /// <summary>The eye of a character with its feet at <paramref name="feet"/>: the stance's eye height above them, the projectile origin.</summary>
+    private static Vec3 Eye(CompiledConfig config, Vec3 feet, Stance stance) =>
+        new(feet.X, feet.Y + config.HitboxLayouts[(int)stance].EyeHeight, feet.Z);
+
+    /// <summary>The centre of <paramref name="part"/> (its posed A and B's midpoint) of a character at <paramref name="feet"/> with that yaw and stance.</summary>
+    private static Vec3 PartCentre(CompiledConfig config, Vec3 feet, ushort yaw, Stance stance, HitboxPart part)
+    {
+        Span<Hitbox> hitboxes = stackalloc Hitbox[HitboxLayout.CapsuleCount];
+        HitboxBuilder.Build(config.HitboxLayouts[(int)stance], feet, yaw, hitboxes);
+        var hitbox = hitboxes[(int)part];
+        return (hitbox.A + hitbox.B) * 0.5f;
+    }
+
+    /// <summary>The binary-angle yaw that faces <paramref name="to"/> from <paramref name="from"/>, in the X–Z plane.</summary>
+    private static ushort Facing(Vec3 from, Vec3 to) => YawUnits(SimMath.Atan2(to.X - from.X, to.Z - from.Z));
+
+    /// <summary>
+    /// The binary-angle aim from <paramref name="eye"/> at <paramref name="point"/> for <paramref name="slot"/>'s
+    /// weapon, in float with <see cref="SimMath"/>: yaw = Atan2(dx, dz), and pitch the low root of the
+    /// class's closed-form launch angle, θ = Atan2(g·d² + 2·h·v², d·(v² + √(v⁴ − g·(g·d² + 2·h·v²)))) for
+    /// muzzle speed v, g = −2·HalfG, horizontal distance d and rise h, which is
+    /// atan((v² − √(…)) / (g·d)) without its cancellation. Both go through
+    /// <see cref="SimMath.RoundToInt"/> to binary angle units.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The point is out of the weapon's reach.</exception>
+    private static ScenarioAim AimAt(ScenarioPlan plan, Vec3 eye, Vec3 point, byte slot)
+    {
+        var weapon = plan.Config.Weapons[slot];
+        var v2 = weapon.MuzzleSpeed * weapon.MuzzleSpeed;
+        var g = -2f * plan.Config.HalfG[weapon.ProjectileClass];
+        var dx = point.X - eye.X;
+        var dz = point.Z - eye.Z;
+        var d = SimMath.Sqrt((dx * dx) + (dz * dz));
+        var lift = (g * (d * d)) + (2f * ((point.Y - eye.Y) * v2));
+        var discriminant = (v2 * v2) - (g * lift);
+        if (!(discriminant >= 0f))
+        {
+            throw new InvalidOperationException($"{plan.Name}: {point} is out of reach of slot {slot}'s weapon from {eye}.");
+        }
+
+        var pitch = SimMath.Atan2(lift, d * (v2 + SimMath.Sqrt(discriminant)));
+        return new ScenarioAim(YawUnits(SimMath.Atan2(dx, dz)), checked((short)SimMath.RoundToInt(pitch * UnitsPerRadian)));
+    }
+
+    /// <summary>An angle in radians as the nearest binary-angle yaw, wrapped to 0–65535.</summary>
+    private static ushort YawUnits(float radians) => unchecked((ushort)SimMath.RoundToInt(radians * UnitsPerRadian));
+
+    /// <summary>The index of the last of <paramref name="seconds"/> (ascending) that <paramref name="time"/> has reached, or 0 before the first.</summary>
+    private static int LastStarted(double[] seconds, ScenarioTime time)
+    {
+        var last = 0;
+        for (var i = 0; i < seconds.Length; i++)
+        {
+            if (!time.Before(seconds[i]))
+            {
+                last = i;
+            }
+        }
+
+        return last;
+    }
+
+    /// <summary>Where the heading <paramref name="yaw"/> from <paramref name="start"/> crosses <paramref name="line"/>, in the X–Z plane, at the start's height.</summary>
+    /// <exception cref="InvalidOperationException">The heading is parallel to the line.</exception>
+    private static Vec3 Crossing(Vec3 start, ushort yaw, TestWorldLine line, string name)
+    {
+        SimMath.SinCosBinaryAngle(yaw, out var hx, out var hz);
+        var lx = line.To.X - line.From.X;
+        var lz = line.To.Z - line.From.Z;
+        var across = (hx * lz) - (hz * lx);
+        if (across == 0f)
+        {
+            throw new InvalidOperationException($"{name}: the heading {yaw} never crosses the line {line}.");
+        }
+
+        var fx = line.From.X - start.X;
+        var fz = line.From.Z - start.Z;
+        var u = ((fx * lz) - (fz * lx)) / across;
+        return new Vec3(start.X + (u * hx), start.Y, start.Z + (u * hz));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="point"/> lies strictly on <paramref name="shooter"/>'s side of
+    /// <paramref name="line"/>, in the X–Z plane: the 2D cross product of the line's direction with the
+    /// offset from its start has the same non-zero sign for both.
+    /// </summary>
+    private static bool ShortOfTheLine(Vec3 point, Vec3 shooter, TestWorldLine line)
+    {
+        var lx = line.To.X - line.From.X;
+        var lz = line.To.Z - line.From.Z;
+        float Side(Vec3 p) => (lx * (p.Z - line.From.Z)) - (lz * (p.X - line.From.X));
+        return Side(point) * Side(shooter) > 0f;
+    }
+
+    /// <summary>
+    /// The triangle IDs of mesh <paramref name="meshId"/> (contracts/collision-data-format.md#triangle-ids):
+    /// the heightfield triangle count plus the mesh triangles' global indices in file order.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The world has no such mesh.</exception>
+    private static TriangleIdRange MeshTriangleRange(CollisionWorld world, uint meshId)
+    {
+        var first = world.HeightfieldTriangleCount;
+        foreach (var mesh in world.Data.Meshes)
+        {
+            var count = mesh.Indices.Length / 3;
+            if (mesh.MeshId == meshId)
+            {
+                return new TriangleIdRange(first, first + count);
+            }
+
+            first += count;
+        }
+
+        throw new InvalidOperationException($"The collision world has no mesh {meshId}.");
+    }
+
+    /// <summary>
     /// A scenario at the default 30 Hz with one character, ID 1, at rest, Grounded and Standing at
     /// <paramref name="start"/>, holding <paramref name="buttons"/> at <paramref name="yaw"/> at every entry.
     /// </summary>
@@ -352,6 +819,190 @@ public static class ScenarioCatalog
         }
 
         return definitions;
+    }
+
+    /// <summary>Where a <c>shots-at-known-distances</c> shot is aimed, which fixes the outcome Build checks.</summary>
+    private enum KnownDistancePlacement
+    {
+        /// <summary>At the torso of the target 25 m away on flat terrain: a Character hit on its torso.</summary>
+        Flat,
+
+        /// <summary>At the torso of the target behind the wall: a Mesh hit on a wall triangle.</summary>
+        BehindWall,
+
+        /// <summary>1 m below the crest: a Terrain hit short of the crest line.</summary>
+        RidgeFace,
+
+        /// <summary>1.5 m above the crest: no hit before the crest line.</summary>
+        RidgeClearing,
+    }
+
+    /// <summary>One planned <c>shots-at-known-distances</c> shot: the slot it fires from, its placement and the target it aims at (0 for none).</summary>
+    private readonly record struct KnownDistanceShot(byte Slot, KnownDistancePlacement Placement, uint TargetId);
+
+    /// <summary>The triangle IDs from <paramref name="First"/> up to, not including, <paramref name="End"/>.</summary>
+    private readonly record struct TriangleIdRange(int First, int End)
+    {
+        public bool Contains(int id) => id >= First && id < End;
+    }
+}
+
+/// <summary>A command's aim: the yaw (65,536 to a turn, yaw 0 facing +Z) and the pitch (positive up), in binary angle units.</summary>
+/// <param name="Yaw">The aim yaw.</param>
+/// <param name="Pitch">The aim pitch, in [−16384, 16384].</param>
+public readonly record struct ScenarioAim(ushort Yaw, short Pitch);
+
+/// <summary>A character's committed pose after a step: its ID, its feet, its aim yaw and its stance.</summary>
+/// <param name="Id">The character's ID.</param>
+/// <param name="Position">The feet.</param>
+/// <param name="AimYaw">The aim yaw, a binary angle.</param>
+/// <param name="Stance">The stance.</param>
+public readonly record struct ScenarioPose(uint Id, Vec3 Position, ushort AimYaw, Stance Stance);
+
+/// <summary>
+/// One committed step of a <see cref="ScenarioPlan.Run"/>: its number, its shot, hit and expiry events, the
+/// characters' committed poses in ascending ID and the committed projectile count.
+/// </summary>
+public sealed record ScenarioProbeStep(
+    uint Step,
+    IReadOnlyList<ShotEvent> Shots,
+    IReadOnlyList<ProjectileHit> Hits,
+    IReadOnlyList<ExpiryEvent> Expiries,
+    IReadOnlyList<ScenarioPose> Characters,
+    int ProjectileCount)
+{
+    /// <summary>The committed pose of the character with ID <paramref name="id"/>.</summary>
+    /// <exception cref="KeyNotFoundException">The step holds no such character.</exception>
+    public ScenarioPose Character(uint id)
+    {
+        foreach (var pose in Characters)
+        {
+            if (pose.Id == id)
+            {
+                return pose;
+            }
+        }
+
+        throw new KeyNotFoundException($"Step {Step} holds no character {id}.");
+    }
+
+    /// <summary>
+    /// The poses and the projectile count of a committed canonical state, read field by field with
+    /// <see cref="StateFieldReader"/> (each character's <c>id</c>, <c>position</c>, <c>aimYaw</c> and
+    /// <c>stance</c>, which the layout puts in that order).
+    /// </summary>
+    internal static (ScenarioPose[] Characters, int ProjectileCount) Read(ReadOnlySpan<byte> state)
+    {
+        var poses = new List<ScenarioPose>();
+        var projectiles = 0;
+        uint id = 0;
+        float x = 0f, y = 0f, z = 0f;
+        ushort yaw = 0;
+        foreach (var value in StateFieldReader.Read(state).Fields)
+        {
+            var record = value.Field.Record;
+            var name = value.Field.Name;
+            if (record == StateRecordKind.Header && name == "projectileCount")
+            {
+                projectiles = (int)value.Bits;
+            }
+
+            if (record != StateRecordKind.Character)
+            {
+                continue;
+            }
+
+            switch (name)
+            {
+                case "id":
+                    id = value.Bits;
+                    break;
+                case "position.x":
+                    x = BitConverter.UInt32BitsToSingle(value.Bits);
+                    break;
+                case "position.y":
+                    y = BitConverter.UInt32BitsToSingle(value.Bits);
+                    break;
+                case "position.z":
+                    z = BitConverter.UInt32BitsToSingle(value.Bits);
+                    break;
+                case "aimYaw":
+                    yaw = (ushort)value.Bits;
+                    break;
+                case "stance":
+                    poses.Add(new ScenarioPose(id, new Vec3(x, y, z), yaw, (Stance)value.Bits));
+                    break;
+            }
+        }
+
+        return ([.. poses], projectiles);
+    }
+}
+
+/// <summary>
+/// What a planned definition (<see cref="ScenarioDefinition.Planned"/>) makes its characters from at Build:
+/// the scenario's name, the compiled configuration (the base configuration with the definition's overrides
+/// at the build's rate), the collision world, the rate and the step count, and <see cref="Run"/>, which steps
+/// a <see cref="SimWorld"/> over a candidate set of characters so a definition can place a shot by what the
+/// world does, or check its shots' outcomes, before it returns them.
+/// </summary>
+public sealed class ScenarioPlan
+{
+    private readonly ScenarioDefinition _definition;
+    private readonly SimConfig _config;
+
+    internal ScenarioPlan(ScenarioDefinition definition, SimConfig config, CollisionWorld world, int stepRateHz, int stepCount)
+    {
+        _definition = definition;
+        _config = config;
+        Config = CompiledConfig.Create(config);
+        World = world;
+        StepRateHz = stepRateHz;
+        StepCount = stepCount;
+    }
+
+    /// <summary>The scenario's name, for messages.</summary>
+    public string Name => _definition.Name;
+
+    /// <summary>The compiled configuration the stream carries.</summary>
+    public CompiledConfig Config { get; }
+
+    /// <summary>The collision world the stream runs on.</summary>
+    public CollisionWorld World { get; }
+
+    /// <summary>The rate the stream is built at.</summary>
+    public int StepRateHz { get; }
+
+    /// <summary>The stream's entries.</summary>
+    public int StepCount { get; }
+
+    /// <summary>
+    /// The stream these characters give, stepped on a new <see cref="SimWorld"/> reset with its initial state
+    /// and the definition's match salt: one <see cref="ScenarioProbeStep"/> per entry, in order.
+    /// </summary>
+    /// <exception cref="ArgumentException">The characters are empty or an ID repeats.</exception>
+    /// <exception cref="InvalidOperationException">A step faults.</exception>
+    public IReadOnlyList<ScenarioProbeStep> Run(IReadOnlyList<ScenarioCharacter> characters)
+    {
+        var stream = _definition.Assemble(_config, World, StepRateHz, StepCount, ScenarioDefinition.SortedCharacters(characters));
+        var world = new SimWorld(Config, World);
+        world.Reset(stream.InitialState.Span, stream.MatchSalt);
+        var steps = new List<ScenarioProbeStep>(stream.Steps.Count);
+        foreach (var entry in stream.Steps)
+        {
+            var commands = Array.ConvertAll(entry.Commands, command => new CharacterCommand(command.CharacterIndex, command.Command));
+            var report = world.Step(commands);
+            if (report.Fault.Code != StepFaultCode.None)
+            {
+                throw new InvalidOperationException($"{Name}: step {entry.Step} faulted with {report.Fault.Code} at '{report.Fault.Path}'.");
+            }
+
+            var (poses, projectiles) = ScenarioProbeStep.Read(report.State);
+            var events = report.Events;
+            steps.Add(new ScenarioProbeStep(report.Step, events.Shots.ToArray(), events.Hits.ToArray(), events.Expiries.ToArray(), poses, projectiles));
+        }
+
+        return steps;
     }
 }
 
@@ -385,21 +1036,30 @@ public readonly record struct ScenarioTime(int Entry, int StepRateHz)
 
 /// <summary>
 /// One character of a scenario: its ID, where it starts (at rest, Standing, with new weapons unless
-/// <see cref="ArrangeWeapon"/> changes them), whether it starts Grounded (on ground whose normal is
-/// (0, 1, 0)), its aim yaw and pitch for the whole run, and the buttons it holds and the weapon slot it
-/// selects at each entry. Every entry gives it one command.
+/// <see cref="ArrangeWeapon"/> changes them, and slot <see cref="ActiveSlot"/> active), whether it starts
+/// Grounded (on ground whose normal is (0, 1, 0)), its initial aim yaw and pitch, and the aim, the buttons it
+/// holds and the weapon slot it selects at each entry. Every entry gives it one command.
 /// </summary>
 /// <param name="Id">The character's ID; a scenario's IDs are unique.</param>
 /// <param name="Position">The feet, at rest height; usually a <see cref="TestWorldFeatures"/> start.</param>
-/// <param name="AimYaw">The aim yaw of the initial state and of every command.</param>
+/// <param name="AimYaw">The aim yaw of the initial state, and of every command unless <see cref="Aim"/> is set.</param>
 /// <param name="Hold">The buttons held at each entry.</param>
 public sealed record ScenarioCharacter(uint Id, Vec3 Position, ushort AimYaw, Func<ScenarioTime, Buttons> Hold)
 {
     /// <summary>Whether the character starts Grounded; otherwise airborne.</summary>
     public bool Grounded { get; init; } = true;
 
-    /// <summary>The aim pitch of the initial state and of every command, a binary angle; 0 (level) unless set.</summary>
+    /// <summary>
+    /// The aim pitch of the initial state, a binary angle; 0 (level) unless set. It is every command's pitch
+    /// too unless <see cref="Aim"/> is set.
+    /// </summary>
     public short AimPitch { get; init; }
+
+    /// <summary>The aim each entry's command carries; null carries <see cref="AimYaw"/> and <see cref="AimPitch"/> at every entry.</summary>
+    public Func<ScenarioTime, ScenarioAim>? Aim { get; init; }
+
+    /// <summary>The weapon slot active in the initial state; slot 0 unless set.</summary>
+    public byte ActiveSlot { get; init; }
 
     /// <summary>The weapon slot each entry's command selects; null selects slot 0 at every entry.</summary>
     public Func<ScenarioTime, byte>? WeaponSlot { get; init; }
@@ -418,7 +1078,9 @@ public sealed record ScenarioCharacter(uint Id, Vec3 Position, ushort AimYaw, Fu
 /// configuration, its characters and its length in simulated seconds. <see cref="Build"/> makes the
 /// unrecorded stream at any rate, and <see cref="Record"/> runs it through <see cref="StreamRunner"/> for its
 /// expected hashes. A <see cref="Generated"/> definition, such as <c>fuzz-all-buttons</c>, takes its stream
-/// from a generator instead of a character schedule.
+/// from a generator instead of a character schedule, and a <see cref="Planned"/> definition, such as
+/// <c>projectile-hits-hitbox</c>, makes its characters at Build from the compiled configuration and the
+/// world, and may step a <see cref="SimWorld"/> to place or check its shots.
 /// </summary>
 public sealed class ScenarioDefinition
 {
@@ -434,6 +1096,7 @@ public sealed class ScenarioDefinition
     private readonly ScenarioCharacter[] _characters;
     private readonly Action<SimConfig>? _configure;
     private readonly Func<SimConfig, CollisionWorld, int, RecordedStream>? _generate;
+    private readonly Func<ScenarioPlan, IReadOnlyList<ScenarioCharacter>>? _plan;
     private readonly ulong _matchSalt;
 
     /// <summary>
@@ -462,16 +1125,7 @@ public sealed class ScenarioDefinition
             throw new ArgumentException("A scenario's duration is positive.", nameof(durationSeconds));
         }
 
-        _characters = [.. characters];
-        Array.Sort(_characters, static (a, b) => a.Id.CompareTo(b.Id));
-        for (var i = 1; i < _characters.Length; i++)
-        {
-            if (_characters[i - 1].Id == _characters[i].Id)
-            {
-                throw new ArgumentException($"Character ID {_characters[i].Id} repeats.", nameof(characters));
-            }
-        }
-
+        _characters = SortedCharacters(characters);
         Name = name;
         StepRateHz = stepRateHz;
         DurationSeconds = durationSeconds;
@@ -486,6 +1140,23 @@ public sealed class ScenarioDefinition
         StepRateHz = stepRateHz;
         DurationSeconds = durationSeconds;
         _generate = generate;
+    }
+
+    private ScenarioDefinition(
+        string name,
+        int stepRateHz,
+        double durationSeconds,
+        Func<ScenarioPlan, IReadOnlyList<ScenarioCharacter>> plan,
+        Action<SimConfig>? configure,
+        ulong matchSalt)
+    {
+        _characters = [];
+        Name = name;
+        StepRateHz = stepRateHz;
+        DurationSeconds = durationSeconds;
+        _plan = plan;
+        _configure = configure;
+        _matchSalt = matchSalt;
     }
 
     /// <summary>
@@ -505,6 +1176,34 @@ public sealed class ScenarioDefinition
         return new ScenarioDefinition(name, stepRateHz, (double)stepCount / stepRateHz, generate);
     }
 
+    /// <summary>
+    /// A planned definition: <see cref="Build"/> applies <paramref name="configure"/> to a copy of the base
+    /// configuration at the rate, as a scheduled definition does, and takes its characters from
+    /// <paramref name="plan"/>, called with a <see cref="ScenarioPlan"/> of that configuration compiled, the
+    /// world, the rate and the step count, so their positions, aims and schedules can depend on the
+    /// configuration and on what <see cref="ScenarioPlan.Run"/> shows the world doing. Its stream carries
+    /// <paramref name="matchSalt"/>; <see cref="Characters"/> is empty, because the plan places them.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">The name or the plan is null.</exception>
+    /// <exception cref="ArgumentException">The duration is not positive.</exception>
+    public static ScenarioDefinition Planned(
+        string name,
+        int stepRateHz,
+        double durationSeconds,
+        Func<ScenarioPlan, IReadOnlyList<ScenarioCharacter>> plan,
+        Action<SimConfig>? configure = null,
+        ulong matchSalt = DefaultMatchSalt)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(plan);
+        if (!(durationSeconds > 0.0))
+        {
+            throw new ArgumentException("A scenario's duration is positive.", nameof(durationSeconds));
+        }
+
+        return new ScenarioDefinition(name, stepRateHz, durationSeconds, plan, configure, matchSalt);
+    }
+
     /// <summary>The stream's name, and its file name without <c>.mmrs</c>.</summary>
     public string Name { get; }
 
@@ -520,7 +1219,7 @@ public sealed class ScenarioDefinition
     /// </summary>
     public double DurationSeconds { get; }
 
-    /// <summary>The characters, in ascending ID; empty for a generated definition, which places its own.</summary>
+    /// <summary>The characters, in ascending ID; empty for a generated or planned definition, which places its own.</summary>
     public IReadOnlyList<ScenarioCharacter> Characters => _characters;
 
     /// <summary>
@@ -530,10 +1229,13 @@ public sealed class ScenarioDefinition
     /// and <see cref="DurationSeconds"/> × the rate entries, each with one command per character (sequence
     /// numbers from 1, <c>ClientStep</c> equal to the step, the character's aim, and the buttons and weapon
     /// slot its schedule gives), every expected hash 0, seed 0 and the definition's match salt. A generated
-    /// definition returns its generator's stream at the rate instead.
+    /// definition returns its generator's stream at the rate instead, and a planned definition builds the
+    /// same from the characters its plan returns.
     /// </summary>
     /// <exception cref="ArgumentNullException">The configuration or the world is null.</exception>
-    /// <exception cref="ArgumentException">The duration is not a whole number of steps at the rate.</exception>
+    /// <exception cref="ArgumentException">The duration is not a whole number of steps at the rate, or a plan's characters are empty or repeat an ID.</exception>
+    /// <exception cref="ConfigValidationException">A planned definition's configuration is invalid.</exception>
+    /// <exception cref="InvalidOperationException">A planned definition's plan refuses the world or the configuration, such as a shot that does not end as planned.</exception>
     public RecordedStream Build(SimConfig baseConfig, CollisionWorld world, int? stepRateHz = null)
     {
         ArgumentNullException.ThrowIfNull(baseConfig);
@@ -549,24 +1251,64 @@ public sealed class ScenarioDefinition
         config.StepRateHz = rate;
 
         var stepCount = StepCount(rate);
+        var characters = _plan is null
+            ? _characters
+            : SortedCharacters(_plan(new ScenarioPlan(this, config, world, rate, stepCount)));
+        return Assemble(config, world, rate, stepCount, characters);
+    }
+
+    /// <summary>
+    /// The characters in ascending ID, copied.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">The characters are null.</exception>
+    /// <exception cref="ArgumentException">The characters are empty or an ID repeats.</exception>
+    internal static ScenarioCharacter[] SortedCharacters(IReadOnlyList<ScenarioCharacter> characters)
+    {
+        ArgumentNullException.ThrowIfNull(characters);
+        if (characters.Count == 0)
+        {
+            throw new ArgumentException("A scenario has at least one character.", nameof(characters));
+        }
+
+        ScenarioCharacter[] sorted = [.. characters];
+        Array.Sort(sorted, static (a, b) => a.Id.CompareTo(b.Id));
+        for (var i = 1; i < sorted.Length; i++)
+        {
+            if (sorted[i - 1].Id == sorted[i].Id)
+            {
+                throw new ArgumentException($"Character ID {sorted[i].Id} repeats.", nameof(characters));
+            }
+        }
+
+        return sorted;
+    }
+
+    /// <summary>
+    /// The unrecorded stream of <paramref name="characters"/> (in ascending ID) over <paramref name="world"/>
+    /// with <paramref name="config"/>, already overridden and at <paramref name="rate"/>:
+    /// <paramref name="stepCount"/> entries of one command per character, as <see cref="Build"/> describes.
+    /// </summary>
+    internal RecordedStream Assemble(SimConfig config, CollisionWorld world, int rate, int stepCount, ScenarioCharacter[] characters)
+    {
         var steps = new RecordedStep[stepCount];
         for (var k = 0; k < stepCount; k++)
         {
             var step = InitialStep + (uint)k + 1u;
             var time = new ScenarioTime(k, rate);
-            var commands = new RecordedCommand[_characters.Length];
-            for (var c = 0; c < _characters.Length; c++)
+            var commands = new RecordedCommand[characters.Length];
+            for (var c = 0; c < characters.Length; c++)
             {
-                var character = _characters[c];
+                var character = characters[c];
                 var slot = character.WeaponSlot?.Invoke(time) ?? 0;
-                var input = new InputCommand((uint)k + 1u, step, character.Hold(time), character.AimYaw, character.AimPitch, slot);
+                var aim = character.Aim?.Invoke(time) ?? new ScenarioAim(character.AimYaw, character.AimPitch);
+                var input = new InputCommand((uint)k + 1u, step, character.Hold(time), aim.Yaw, aim.Pitch, slot);
                 commands[c] = new RecordedCommand((byte)c, input);
             }
 
             steps[k] = new RecordedStep(step, commands, 0UL);
         }
 
-        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, _matchSalt, world.Checksum, config, InitialState(Name, config, _characters), steps);
+        return new RecordedStream(SimCoreVersion.RulesRevision, rate, seed: 0, _matchSalt, world.Checksum, config, InitialState(Name, config, characters), steps);
     }
 
     /// <summary>
@@ -640,7 +1382,7 @@ public sealed class ScenarioDefinition
     /// The canonical initial state of <paramref name="characters"/>, in ascending ID, for the stream
     /// <paramref name="name"/>: step 0, <c>nextProjectileId</c> 1, the characters at rest (velocity 0,
     /// ground normal (0, 1, 0), Grounded or airborne as each says, Standing, each one's aim yaw and pitch,
-    /// <c>lastSequence</c> 0, slot 0) with <c>input.weaponSlots</c> weapons, each new
+    /// <c>lastSequence</c> 0, each one's <see cref="ScenarioCharacter.ActiveSlot"/>) with <c>input.weaponSlots</c> weapons, each new
     /// (<see cref="WeaponState.New"/>) from its slot's configuration and then changed by the character's
     /// <see cref="ScenarioCharacter.ArrangeWeapon"/>, no projectiles and no events.
     /// <see cref="StreamGenerator"/> builds its initial states here too.
@@ -671,7 +1413,7 @@ public sealed class ScenarioDefinition
                 Stance = Stance.Standing,
                 Flags = character.Grounded ? CharacterFlags.Grounded : 0,
                 LastSequence = 0,
-                ActiveSlot = 0,
+                ActiveSlot = character.ActiveSlot,
                 WeaponCount = (byte)weaponSlots,
             };
             for (var s = 0; s < weaponSlots; s++)
