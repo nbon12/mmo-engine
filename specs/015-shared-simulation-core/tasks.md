@@ -2093,7 +2093,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
   - `StreamConfigEntriesNameTheirRuleTablePaths(string caseName)` over the stream valid cases: the entries' `fieldId`s are strictly ascending, each entry's `path` equals the `Path` of the `ConfigFields.Expand` row (for the stream configuration's weapon and projectile-class counts) with that `fieldId`, and `two-steps` holds exactly 116 entries.
   - Confirm red with `--filter "FullyQualifiedName~GoldenFixtureTests"`.
-- [ ] T217 [US6] Write failing test `GoldenRefusalTests.UnknownVersionIsRefusedNamingTheVersionFoundAndSupported(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs` (US6.2).
+- [X] T217 [US6] Write failing test `GoldenRefusalTests.UnknownVersionIsRefusedNamingTheVersionFoundAndSupported(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs` (US6.2).
   - **Given** the case's committed `.bin`. **When** it is decoded, **then** the error's `Code` is `FormatErrorCode.UnsupportedVersion`, its `Offset` and `Field` equal the case's `expectedError`, and `ToString()` is exactly the message in the table:
 
     | Format, case | Offset | Field | Message |
@@ -2107,7 +2107,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
   - For input rows, `InputCodec.TryDecode` returns false and `command == default(InputCommand)`. For collision and stream rows, `Assert.Throws<CoreFormatException>` on `CollisionFile.Decode` or `RecordedStream.Decode`, so no value is returned.
   - Confirm it fails.
-- [ ] T218 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.MalformedBytesAreRefusedAtTheirOffsetAndFieldWithNoResult(string format, string caseName)` (US6.3), with `[MemberData(nameof(GoldenFixtures.OtherDecodeRefusals), MemberType = typeof(GoldenFixtures))]`. Its 43 rows:
+- [X] T218 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.MalformedBytesAreRefusedAtTheirOffsetAndFieldWithNoResult(string format, string caseName)` (US6.3), with `[MemberData(nameof(GoldenFixtures.OtherDecodeRefusals), MemberType = typeof(GoldenFixtures))]`. Its 43 rows:
   - input: `refuse-empty`, `refuse-format-id`, `refuse-only-format-id`, `refuse-truncated-2`, `refuse-truncated-16`, `refuse-oversized-18`;
   - collision: `unknown-magic`, `header-length`, `short-header`, `truncated`, `trailing-bytes`, `columns-too-few`, `too-many-meshes`, `counts-disagree`, `reserved-nonzero`, `grid-cell-too-small`, `extent-out-of-range`, `non-finite-height`, `height-out-of-range`, `vertex-out-of-range`, `mesh-index-out-of-range`, `crowded-cell`;
   - stream: `unknown-magic`, `header-length`, `short-header`, `truncated`, `trailing-bytes`, `too-many-characters`, `zero-steps`, `config-too-long`, `state-too-long`, `lengths-disagree`, `step-hz-out-of-range`, `step-hz-mismatch`, `config-count-short`, `config-not-ascending`, `config-unknown-field`, `config-missing-field`, `state-character-count`, `state-has-events`, `step-number-gap`, `too-many-commands`, `command-index-out-of-range`.
@@ -2122,7 +2122,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Input rows: `TryDecode` returns false and `command == default(InputCommand)`. Collision and stream rows: `Assert.Throws<CoreFormatException>`, whose `Error` carries those values, and no value is returned.
 
   Confirm it fails.
-- [ ] T219 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.ContractMessagesAreReproducedExactly(string format, string caseName, string message)` (US6.3). It is an `InlineData` Theory: decoding the `.bin` gives a refusal whose `ToString()` equals the contract's message exactly.
+- [X] T219 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.ContractMessagesAreReproducedExactly(string format, string caseName, string message)` (US6.3). It is an `InlineData` Theory: decoding the `.bin` gives a refusal whose `ToString()` equals the contract's message exactly.
 
   | Format, case | Message |
   | --- | --- |
