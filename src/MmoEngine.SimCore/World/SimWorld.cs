@@ -22,10 +22,10 @@ namespace MmoEngine.SimCore.World;
 /// </summary>
 /// <remarks>
 /// The world has one writer, its caller, and takes no locks. Characters join and leave only through
-/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. Stage 1 validates the inputs, stage 2 steps movement and
-/// stage 3 steps weapons, spawning each shot's projectile at the shooter's eye; in this phase the projectile
-/// stage (5) copies the projectiles forward and appends the new ones at their origins, and Phase 7 replaces
-/// its body.
+/// <see cref="Reset(ReadOnlySpan{byte}, ulong)"/>. Stage 1 validates the inputs, stage 2 steps movement,
+/// stage 3 steps weapons, spawning each shot's projectile at the shooter's eye, stage 4 poses the hitboxes
+/// from the post-movement characters, and stage 5 sweeps every projectile, the step's new ones included,
+/// against the collision world and those hitboxes with <see cref="ProjectileStep.Step"/>.
 /// </remarks>
 public sealed class SimWorld
 {
@@ -63,7 +63,9 @@ public sealed class SimWorld
     private readonly Projectile[] _spawned;
     private int _spawnCount;
 
-    // Stage 4: three hitboxes and one bounding sphere per character.
+    // Stage 4: each character's ID, three hitboxes and one bounding sphere, in index order, which stage 5
+    // reads as its ProjectileTargets.
+    private readonly uint[] _characterIds;
     private readonly Hitbox[] _hitboxes;
     private readonly HitboxBounds[] _bounds;
 
@@ -94,7 +96,7 @@ public sealed class SimWorld
     /// the maxima: the current and next characters, weapons (<c>maxCharacters × weaponSlots</c>) and
     /// projectiles; the inputs and rejection reasons; the candidate buffer
     /// <c>int[collision.MaxQueryCandidates((3f * capsuleRadius) + (2f * contactSkin))]</c>; the hitboxes
-    /// (<c>maxCharacters × 3</c>) and bounding spheres; the spawn scratch
+    /// (<c>maxCharacters × 3</c>), bounding spheres and character IDs; the spawn scratch
     /// (<c>Min(maxProjectiles, maxCharacters × MaxShotsPerStepMax)</c>, the most one step can spawn); the six
     /// event buffers; and the <c>byte[MaxStateLength]</c> state buffer. It starts empty: step 0, no
     /// characters, and <c>nextProjectileId</c> 1.
@@ -133,6 +135,7 @@ public sealed class SimWorld
         _rejections = new InputRejection[maxCharacters];
         _candidates = new int[candidateCapacity];
         _spawned = new Projectile[System.Math.Min(maxProjectiles, maxCharacters * config.MaxShotsPerStepMax)];
+        _characterIds = new uint[maxCharacters];
         _hitboxes = new Hitbox[maxCharacters * HitboxesPerCharacter];
         _bounds = new HitboxBounds[maxCharacters];
         _shots = new ShotEvent[maxCharacters * config.MaxShotsPerStepMax];
@@ -320,9 +323,10 @@ public sealed class SimWorld
             return fault;
         }
 
-        StepWeapons(unchecked(_step + 1u));
+        var step = unchecked(_step + 1u);
+        StepWeapons(step);
         BuildHitboxes();
-        StepProjectiles();
+        StepProjectiles(step);
         return default;
     }
 
@@ -467,13 +471,17 @@ public sealed class SimWorld
         }
     }
 
-    /// <summary>Stage 4: each next character's hitboxes and bounding sphere, from its position, aim yaw and stance.</summary>
+    /// <summary>
+    /// Stage 4: each next character's ID, hitboxes and bounding sphere, from its post-movement position, aim
+    /// yaw and stance, in index order.
+    /// </summary>
     private void BuildHitboxes()
     {
         var layouts = Config.HitboxLayouts;
         for (var i = 0; i < _characterCount; i++)
         {
             ref readonly var character = ref _nextCharacters[i];
+            _characterIds[i] = character.Id;
             _bounds[i] = HitboxBuilder.Build(
                 layouts[(int)character.Stance],
                 character.Position,
@@ -483,17 +491,49 @@ public sealed class SimWorld
     }
 
     /// <summary>
-    /// Stage 5: projectiles, in ascending projectile ID. This phase copies the committed projectiles forward
-    /// unchanged and appends stage 3's spawns in order, still at their origins. IDs stay ascending, because
-    /// every new ID exceeds every live one. Phase 7 replaces this body with the projectile step.
+    /// Stage 5: projectiles, in ascending projectile ID (data-model.md#world-step-order). The next projectile
+    /// list is the committed projectiles carried forward, then stage 3's spawns, whose IDs exceed every live
+    /// one, so the list is ascending. Each is stepped by <see cref="ProjectileStep.Step"/> in world step
+    /// <paramref name="step"/> over the collision world and a <see cref="ProjectileTargets"/> over stage 4's
+    /// hitbox scratch, so a projectile fired this step is swept from its origin in this step. A projectile
+    /// that flies on is compacted in place, keeping ascending ID; one that hits adds its hit event and one
+    /// that expires its expiry event, each in ascending projectile ID, and leaves the state.
+    /// <c>nextProjectileId</c> is stage 3's.
     /// </summary>
-    private void StepProjectiles()
+    private void StepProjectiles(uint step)
     {
         _projectiles.AsSpan(0, _projectileCount).CopyTo(_nextProjectiles);
         _spawned.AsSpan(0, _spawnCount).CopyTo(_nextProjectiles.AsSpan(_projectileCount));
-        _nextProjectileCount = _projectileCount + _spawnCount;
+        var total = _projectileCount + _spawnCount;
+        var characters = _characterCount;
+        var targets = new ProjectileTargets(
+            _characterIds.AsSpan(0, characters),
+            _hitboxes.AsSpan(0, characters * HitboxesPerCharacter),
+            _bounds.AsSpan(0, characters));
+        var kept = 0;
         _hitCount = 0;
         _expiryCount = 0;
+        for (var i = 0; i < total; i++)
+        {
+            var projectile = _nextProjectiles[i];
+            switch (ProjectileStep.Step(ref projectile, step, Config, Collision, targets, out var hit, out var expiry))
+            {
+                case ProjectileOutcome.Hit:
+                    _hits[_hitCount] = hit;
+                    _hitCount++;
+                    break;
+                case ProjectileOutcome.Expired:
+                    _expiries[_expiryCount] = new ExpiryEvent { ProjectileId = projectile.Id, Reason = expiry };
+                    _expiryCount++;
+                    break;
+                default:
+                    _nextProjectiles[kept] = projectile;
+                    kept++;
+                    break;
+            }
+        }
+
+        _nextProjectileCount = kept;
     }
 
     /// <summary>

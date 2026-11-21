@@ -1389,6 +1389,23 @@ The design documents settled these points, which the spec leaves open. They are 
   step 1; the clearing class-1 shot lands near z = 102.25 m; the blocked shots meet the front face
   near z = 23.3 m (class 0) and 21.1 m (class 1); and the expiring class-0 shot meets nothing before
   its Range step. T205 now says so.
+- **The segment query walks Z slabs with a margin and tests one signed volume per edge (T209).** T209
+  asked for a 2D grid walk bounded by `Columns + Rows` and for Ericson §5.3.6's segment–triangle test
+  with "inclusive barycentric edges so shared edges are watertight". §5.3.6 derives its third
+  coordinate as d − v − w, which is not the exact negative of the neighbouring triangle's coordinate
+  for the same edge, so on the edges between heightfield cells, each of which is that coordinate's
+  edge in one of its two triangles, a segment could round outside both; and a float grid walk that
+  steps past a cell corner the segment clips skips that cell. Each triangle is instead tested with
+  §5.3.4's three scalar triple products, pq·(pc × pb), pq·(pa × pc) and pq·(pb × pa), each from one
+  edge's two vertices relative to the segment start, all ≥ 0 or all ≤ 0: swapping an edge's vertices
+  negates its product exactly in float, so two triangles that share an edge, with bit-identical
+  vertices, never both reject a segment through it, and t comes from the plane, (n·pa) / (n·pq). The
+  cells are walked slab by slab along Z, with each slab's bounds, its X range and its height range
+  widened by 1/64 m (`QueryWidthMargin`), so rounding can only add cells, and a triangle met again
+  through another cell gives the same t. Every loop is bounded by a clamped cell range (`Rows`,
+  `Columns`, `GridCellsZ`, `GridCellsX`) and the 64-triangle cell limit; the grid's edge slabs reach to
+  infinity, because the clamped cell function files triangles beyond the playable area in the edge
+  cells. T209 and data-model.md#collisionworld now say so.
 
 ## Delivery
 

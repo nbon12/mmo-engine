@@ -183,8 +183,14 @@ Queries, all allocation-free, writing into a caller-supplied span:
   ascending and has no duplicates. Overflowing the span is impossible under a valid configuration; if
   it happens anyway the step refuses (`StepFault.QueryCapacityExceeded`) and never truncates.
 - **Segment query** (projectiles): visits the cells the segment crosses and tests their triangles,
-  keeping the earliest hit with ties to the lower triangle ID. Its work is bounded by the segment's
-  length divided by the cell size.
+  keeping the earliest hit with ties to the lower triangle ID. It walks the heightfield cells, then the
+  grid cells, slab by slab along Z, each slab's bounds, X range and height range widened by 1/64 m, so
+  float rounding only adds cells and never skips one the segment crosses; the grid's edge slabs reach
+  past the playable area, as the clamped cell function does. Each triangle test is double-sided with
+  one signed volume per edge (a scalar triple product of the segment's direction and the edge's two
+  vertices relative to the segment start), all ≥ 0 or all ≤ 0, so an edge belongs to its triangles and
+  a segment through a shared edge never misses both. Its work is bounded by the segment's length
+  divided by the cell size, plus the few cells per slab that the margin adds.
 
 ## Input command
 
@@ -607,7 +613,7 @@ configured maxima and the collision world, so a step allocates nothing (FR-032, 
 | Next state | one copy of the characters, weapons and projectiles | the state the step computes; swapped in at commit |
 | Inputs | one entry per character | the accepted input or the neutral input, and the rejection reason |
 | Candidates | `int[MaxQueryCandidates(widest box)]` | collision query output |
-| Hitboxes | maxCharacters × 3 capsules and maxCharacters bounding spheres | this step's hitboxes |
+| Hitboxes | maxCharacters × 3 capsules, maxCharacters bounding spheres and maxCharacters character IDs | this step's hitboxes, which stage 5 reads as its `ProjectileTargets` |
 | Spawns | `Projectile[Min(maxProjectiles, maxCharacters × the largest maxShotsPerStep)]` and a count | this step's new projectiles, in ID order, which stage 5 appends after the live ones |
 | Events | shots: maxCharacters × the largest `maxShotsPerStep`; hits and expiries: maxProjectiles; input rejections, fire blocks and movement outcomes: maxCharacters | this step's events |
 | State buffer | `byte[]` of the maximum canonical state length | the canonical serialisation that is hashed and reported |
