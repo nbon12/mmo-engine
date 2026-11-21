@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-14
 
-**Status**: Draft
+**Status**: Slice 1 implemented; slice 2 (WebAssembly host, agreement runners, SimCore workflow, measure job) pending
 
 **Input**: User description: "Phase 1, sub-spec 3 (nbon12/mmo-engine#12, section 'Sub-spec 3: Shared
 simulation core'): One C# library that steps character movement, character collision (capsule sweeps
@@ -35,11 +35,8 @@ maintainer asked for Phase 1 to start once Pre-Phase 1 closed (#13 closed 2026-1
 - Q: Does this spec include vehicle physics? → A: No. Vehicle physics engine selection is its own
   later slice of sub-spec 3, with its own spec, so this one stays completable (Principle X). This spec
   leaves an extension point for vehicles but builds none.
-- Q: Which browsers run the agreement suite? → A: Every CI run executes the WebAssembly build in Node
-  and inside a dedicated Web Worker in headless Chromium. Firefox and WebKit run the same Worker suite
-  in the CI job where Playwright installs them. WebAssembly arithmetic on non-NaN floats is fully
-  specified, so engines can't legitimately disagree; running more than one engine catches a runtime or
-  marshalling bug, not an arithmetic one.
+- Q: Which browsers run the agreement suite? → The answer is planned behavior, in
+  [Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main).
 - Q: Is the tick rate fixed at 30 Hz? → A: No. The step length is configuration, validated, and
   defaults to the constitution's 30 Hz starting target. Tests cover 20, 30 and 60 Hz. Open decision 3
   stays open.
@@ -104,39 +101,34 @@ under a ledge) must meet the outcomes acceptance scenarios 2 to 6 state.
 
 ### User Story 2 - The browser build agrees with the server bit for bit (Priority: P1)
 
-An engineer changes the shared core and pushes. CI builds the core for the server and as a WebAssembly
-build, runs every recorded stream through both, and compares the state hash after every step. The
-WebAssembly build runs in Node and inside a Web Worker in a headless browser, through the same batched
-entry point the browser client will call once per frame. If one step disagrees, CI fails and names the
-stream, the first divergent step and the fields that differ.
+An engineer changes the shared core and pushes. The server build runs every recorded stream and
+compares the state hash after every step with the stream's expected hashes, and `agreement compare`
+compares another build's per-step records with the server build's. If one step disagrees, the check
+fails and names the stream, the first divergent step and the fields that differ. The WebAssembly
+build, its runs in Node and in a browser Worker, and the CI job that gates on them are planned for
+slice 2: see [Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main).
 
 **Why this priority**: Bit-exact agreement is the reason the core exists. A single-bit difference
 between builds is a prediction error on every player's screen.
 
-**Independent Test**: Run the agreement suite over every committed stream and a set of generated
-streams from fixed seeds. Every step's hash must match across the server build, the WebAssembly build
-in Node and the WebAssembly build in a browser Worker. Then run it against a core with a deliberate
-one-ulp change in one build and check that the suite fails at the first affected step.
+**Independent Test**: Planned for slice 2 (US2-IT in [Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Acceptance Scenarios**:
 
-1. **Given** every committed recorded stream, **When** the agreement suite runs, **Then** the server
-   build and the WebAssembly build in Node produce identical state hashes at every step.
-2. **Given** the same streams, **When** the WebAssembly build runs inside a dedicated Web Worker in
-   headless Chromium, **Then** it produces the same per-step hashes as the server build.
-3. **Given** generated streams from at least 50 fixed seeds covering every input button and the full
-   aim range, **When** the agreement suite runs, **Then** every step's hash matches across builds.
+Scenarios 1, 2 and 3 are planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+
 4. **Given** a build whose result differs at one step, **When** the agreement suite compares it,
    **Then** the suite fails, and its report names the stream, the first divergent step, and each
    state field that differs with both builds' values in exact bit form.
 5. **Given** a stream recorded with a different core format version, **When** the suite loads it,
    **Then** it refuses the stream with a message naming both versions instead of reporting a
    divergence.
-6. **Given** a frame that queues several input commands, **When** the browser calls the batched step
-   entry point once, **Then** it steps each queued command in order and returns one state and hash per
-   step, the same as stepping them one at a time.
-7. **Given** a pull request that changes the shared core or its recorded streams, **When** CI runs,
-   **Then** the agreement suite runs and its result gates the pull request.
+6. **Given** a frame that queues several input commands, **When** the batched step entry point
+   (`BatchStepper.StepQueued`) is called once on the server build, **Then** it steps each queued
+   command in order and returns one state and hash per step, the same as stepping them one at a time.
+   The browser's call through the WebAssembly build is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+
+Scenario 7 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 ---
 
@@ -182,9 +174,9 @@ allowed sample none. Then build the core itself with the analyzer as an error.
    platform-dependent path (conditional compilation, an operating-system or runtime query,
    reflection), **When** it is built, **Then** the build fails with that rule's diagnostic.
 8. **Given** each of the core's trigonometric and inverse-trigonometric functions, **When** they are
-   evaluated over a fixed table of inputs spanning their domains, **Then** every result is within the
-   documented error bound of the true value, and the server and WebAssembly builds return identical
-   bits for every input.
+   evaluated on the server build over a fixed table of inputs spanning their domains, **Then** every
+   result is within the documented error bound of the true value. The cross-build half (US3.8 (b))
+   is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 ---
 
@@ -200,7 +192,8 @@ spread. Weapon timing must agree before hit detection can, but movement and agre
 
 **Independent Test**: Step a character holding the trigger for every weapon in the test content and
 check each shot's step, direction, recoil and counters against the values the configuration implies.
-Run the same streams through the agreement suite.
+Running the same streams through the agreement suite (US4-IT (b)) is planned for slice 2
+([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Acceptance Scenarios**:
 
@@ -208,8 +201,9 @@ Run the same streams through the agreement suite.
    trigger held for 3 seconds with enough ammunition, **When** it is stepped, **Then** exactly 35
    shots fire, and the fire times never drift from the configured interval by more than one step,
    even though the interval is not a whole number of steps.
-2. **Given** the same match salt, player ID and shot counter, **When** spread is computed in any
-   build, **Then** the shot direction is identical to the bit; **Given** a different shot counter,
+2. **Given** the same match salt, player ID and shot counter, **When** spread is computed on the
+   server build, **Then** the shot direction is identical to the bit every time (the cross-build
+   half, US4.2 (b), is planned for slice 2, in [Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)); **Given** a different shot counter,
    **Then** the direction changes, and over 20,000 consecutive shot counters every direction lies
    within the weapon's configured spread half-angle of the aim, and the directions are spread
    uniformly over that cone (uniform in solid angle: equally likely at every bearing around the aim
@@ -239,7 +233,8 @@ detection and server replay must trace identical paths. It depends on weapon tim
 
 **Independent Test**: Fire projectiles of each class at targets placed at known distances on flat
 terrain, behind walls and over ridges, and check the hit, its location and its step against the
-closed-form ballistic path. Run the same shots through the agreement suite.
+closed-form ballistic path. Running the same shots through the agreement suite (US5-IT (b)) is
+planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Acceptance Scenarios**:
 
@@ -253,9 +248,9 @@ closed-form ballistic path. Run the same shots through the agreement suite.
    **Then** it hits the mesh and not the target.
 4. **Given** a projectile that travels further than its configured maximum range or lifetime, **When**
    it is stepped, **Then** it expires without a hit at the step it passes that limit.
-5. **Given** a character's position, orientation and stance, **When** its hitboxes are built, **Then**
-   every build produces the same hitboxes to the bit, and the hitboxes match the configured layout for
-   that stance.
+5. **Given** a character's position, orientation and stance, **When** its hitboxes are built on the
+   server build, **Then** the hitboxes match the configured layout for that stance. The cross-build
+   half (US5.5 (b)) is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 6. **Given** a projectile so fast that it crosses a whole hitbox within one step, **When** it is
    stepped, **Then** it still reports the hit, because each step sweeps the full segment travelled.
 
@@ -298,26 +293,25 @@ they are pinned.
 
 ### User Story 7 - Each build's cost is measured and recorded (Priority: P3)
 
-An engineer runs the measurement job. It records the server build's cost per movement step, weapon step
-and projectile step, the WebAssembly build's download size, startup time and step cost, for the
-interpreted build and for the ahead-of-time compiled build when the toolchain provides one. Every number
-is recorded as a measurement with its runner class. Steady-state steps allocate no managed memory.
+An engineer runs the server benchmarks. They record the server build's cost per movement step, weapon
+step and projectile step. Every number is recorded as a measurement with its runner class.
+Steady-state steps allocate no managed memory. The measurement job and its WebAssembly measurements
+are planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Why this priority**: Gate 9 decides the WebAssembly build mode from these numbers, and the Phase 1
 sweep needs per-player movement cost. Neither is needed to make the core correct.
 
-**Independent Test**: Run the measurement job on a CI runner and check that its report holds every
-listed measurement with units, the runner class and the build mode, and that the zero-allocation tests
-pass for every step function.
+**Independent Test**: Check that the zero-allocation tests pass for every step function. The
+measurement-job half is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Acceptance Scenarios**:
 
 1. **Given** the server build, **When** the step benchmarks run, **Then** they report the mean and
    p99 cost of one movement step, one weapon step and one projectile step, labeled as measurements
    with the runner class.
-2. **Given** the WebAssembly build, **When** the measurement job runs, **Then** its report records the
-   download size (raw and compressed), the time to the first completed step and the cost per step, for
-   each build mode the toolchain produced, and names any mode it could not produce and why.
+
+Scenario 2 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+
 3. **Given** warmed-up movement, weapon and projectile steps, **When** a further 1,000 steps run,
    **Then** they allocate zero bytes of managed memory.
 
@@ -376,7 +370,8 @@ pass for every step function.
 - **FR-007**: Fire timing MUST accumulate the configured interval exactly, in integer units of time,
   so that the number of shots over any period never drifts from the configured rate by more than one.
 - **FR-008**: Shot spread MUST be a function only of the match salt, the player ID, the shot counter
-  and the weapon's spread configuration, and MUST give the same direction to the bit in every build.
+  and the weapon's spread configuration, and MUST give the same direction to the bit every time on the
+  server build. The "in every build" clause is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **FR-009**: The core MUST provide a projectile step that advances small-arms and heavy projectiles
   along a ballistic path computed in closed form from the launch state and the step number, and
   sweeps the segment travelled in the step against terrain, static meshes and the hitboxes it is given.
@@ -433,16 +428,17 @@ pass for every step function.
 
 **Builds and agreement**
 
-- **FR-024**: The core MUST build for the server (.NET 10 on Linux x64, in process) and as a .NET
-  WebAssembly build that runs in Node and in a dedicated Web Worker.
-- **FR-025**: The WebAssembly build MUST expose a batched step entry point: one call steps every
-  queued input command in order and returns each step's state and hash.
+- **FR-024**: The core MUST build for the server (.NET 10 on Linux x64, in process). The WebAssembly
+  half is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+- **FR-025**: The core MUST provide a batched step entry point (`BatchStepper`): one call steps every
+  queued input command in order and returns each step's state and hash. The WebAssembly build's
+  exports of it are planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **FR-026**: The agreement suite MUST run every committed recorded stream and generated streams from
-  at least 50 fixed seeds through the server build and the WebAssembly build, and MUST fail on the
-  first step whose hash differs, reporting the stream, the step and each differing field in exact bit
-  form.
-- **FR-027**: The agreement suite MUST run in CI on every pull request that changes the core, its
-  analyzer, its recorded streams or its build, and its result MUST gate the pull request.
+  at least 50 fixed seeds through the server build (`streams verify`, `agreement prepare`), and
+  `agreement compare` MUST fail on the first step whose hash differs from the server build's,
+  reporting the stream, the step and each differing field in exact bit form. The WebAssembly half is
+  planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+- **FR-027**: Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **FR-028**: The committed expected hashes MUST change only through a committed regeneration that
   states why, never automatically during a test run.
 
@@ -450,16 +446,14 @@ pass for every step function.
 
 - **FR-029**: Movement, weapon, projectile and hitbox parameters MUST be configuration, validated
   before any step runs. An invalid configuration MUST be refused with an error naming each invalid
-  field, on the server through the constitution's validated options and in the browser build through
-  an equivalent guard.
+  field, on the server through the constitution's validated options. The browser build's equivalent
+  guard is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Measurement**
 
 - **FR-030**: The server build's movement, weapon and projectile steps MUST have benchmarks reporting
   mean and p99 cost per step, labeled as measurements with the runner class.
-- **FR-031**: A measurement job MUST record the WebAssembly build's download size (raw and
-  compressed), time to the first completed step and cost per step, for the interpreted build and for
-  the ahead-of-time build where the toolchain produces one, and MUST name any mode it could not build.
+- **FR-031**: Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **FR-032**: After warm-up, the movement, weapon and projectile steps MUST allocate no managed memory,
   verified by zero-allocation tests in CI.
 
@@ -520,18 +514,25 @@ pass for every step function.
   malformed, oversized and unknown-version data without partial results (FR-020). No authentication or
   authorization: the core is a library.
 - **Observability**: N/A for the library: it does no I/O and logs nothing on the tick path. Step
-  reports carry rejection reason codes for the caller to log. The measurement job writes its report
-  as files.
+  reports carry rejection reason codes for the caller to log. The `simcore` CLI logs Serilog compact
+  JSON on stderr and writes its results on stdout; the server benchmarks write their export as a file.
+  The measurement job (slice 2) writes its report as files.
 - **Licensing and design sources**: No new code dependency beyond MIT or Apache-2.0 packages
-  (System.IO.Hashing is already used; the Roslyn analyzer SDK and the .NET WebAssembly SDK are MIT).
+  (System.IO.Hashing is already used). Slice 1 adds two MIT packages: the Roslyn analyzer SDK
+  (`Microsoft.CodeAnalysis.CSharp` 5.0.0) and `Basic.Reference.Assemblies.Net100` 1.8.14 for the
+  analyzer tests. Slice 2 adds `@playwright/test` (Apache-2.0, CI only); the .NET WebAssembly SDK
+  is MIT.
   Design sources (Rapier's determinism guide, the .NET vectorization guidelines, .NET on Web Workers,
   the IEEE 754 and WebAssembly floating-point specifications, and the published algorithms the core's
   math functions follow) are recorded in `research.md`.
 - **Accessibility**: N/A. No web surface.
 - **Quality gates**: 95% line coverage for changed `src/` files. Theories cover each step length,
   each stance, each button, each analyzer rule, each format's refusal reasons, each weapon and each
-  projectile class. Tests are pure and in-process except the WebAssembly runs, which use unique
-  temporary directories and dynamic ports, so they are safe in parallel and against leftovers.
+  projectile class. Tests are pure and in-process except the `simcore` runs in a fresh child process
+  (`SimcoreCli.RunInFreshProcess`, as US1.7 needs), the analyzer's throwaway build (`BuildTests`) and, in slice 2, the WebAssembly runs. Those
+  use unique temporary directories (and the WebAssembly runs dynamic ports), so they are safe in
+  parallel and against leftovers. Only the zero-allocation tests and the benchmark dry run are serial,
+  each for its stated reason.
   Zero-allocation tests cover every step function.
 - **Executable and living spec**: Every acceptance scenario maps to an automated test named in
   `tasks.md`. At each merge, every scenario, requirement and success criterion this spec states as
@@ -553,20 +554,115 @@ pass for every step function.
 
 ### Measurable Outcomes
 
-- **SC-001**: Every committed recorded stream, at least 10 named movement, weapon and projectile
-  scenarios plus generated streams from 50 seeds, gives identical per-step hashes in the server build,
-  the WebAssembly build in Node and the WebAssembly build in a browser Worker: zero divergent steps.
+- **SC-001**: Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **SC-002**: A deliberate one-ulp change in one build is reported at its first divergent step, never
   only at the end of a stream.
 - **SC-003**: Every analyzer rule fails the build on its violating sample and stays silent on its
   allowed sample, and the core builds with zero analyzer diagnostics.
 - **SC-004**: Each of the core's trigonometric functions stays within its documented error bound over
-  its whole test table, and agrees to the bit across builds.
+  its whole test table on the server build. The cross-build bit half is planned for slice 2
+  ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **SC-005**: Steady-state movement, weapon and projectile steps allocate zero bytes after warm-up.
+- **SC-006**: Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+- **SC-007**: Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+
+## Planned for slice 2: not yet built, no test on main
+
+The items below are planned behavior, not current behavior: none of them has a test on `main` yet.
+Slice 2 (the WebAssembly host, the agreement runners, the SimCore workflow and the measure job) builds
+them with their tests and moves each back to its section (`tasks.md` T316). Each keeps its ID, so the
+Scenario coverage table of `tasks.md` still resolves. Where an item has a server-side half, that half
+stays in its section, stated as built.
+
+### Clarification
+
+- Q: Which browsers run the agreement suite? → A: Every CI run executes the WebAssembly build in Node
+  and inside a dedicated Web Worker in headless Chromium. Firefox and WebKit run the same Worker suite
+  in the CI job where Playwright installs them. WebAssembly arithmetic on non-NaN floats is fully
+  specified, so engines can't legitimately disagree; running more than one engine catches a runtime or
+  marshalling bug, not an arithmetic one.
+
+### User Story 2 items
+
+- **Narrative (WebAssembly sentences)**: CI builds the core for the server and as a WebAssembly build,
+  runs every recorded stream through both, and compares the state hash after every step. The
+  WebAssembly build runs in Node and inside a Web Worker in a headless browser, through the same
+  batched entry point the browser client will call once per frame. If one step disagrees, CI fails.
+- **US2-IT**: Run the agreement suite over every committed stream and a set of generated streams from
+  fixed seeds. Every step's hash must match across the server build, the WebAssembly build in Node and
+  the WebAssembly build in a browser Worker. Then run it against a core with a deliberate one-ulp
+  change in one build and check that the suite fails at the first affected step.
+- **US2.1**: **Given** every committed recorded stream, **When** the agreement suite runs, **Then** the
+  server build and the WebAssembly build in Node produce identical state hashes at every step.
+- **US2.2**: **Given** the same streams, **When** the WebAssembly build runs inside a dedicated Web
+  Worker in headless Chromium, **Then** it produces the same per-step hashes as the server build.
+- **US2.3**: **Given** generated streams from at least 50 fixed seeds covering every input button and
+  the full aim range, **When** the agreement suite runs, **Then** every step's hash matches across
+  builds.
+- **US2.6 (browser call)**: **Given** a frame that queues several input commands, **When** the browser
+  calls the batched step entry point once, **Then** it steps each queued command in order and returns
+  one state and hash per step, the same as stepping them one at a time.
+- **US2.7**: **Given** a pull request that changes the shared core or its recorded streams, **When** CI
+  runs, **Then** the agreement suite runs and its result gates the pull request.
+
+### Cross-build halves of User Stories 3 to 5
+
+- **US3.8 (b)**: **Given** each of the core's trigonometric and inverse-trigonometric functions,
+  **When** they are evaluated over the fixed table, **Then** the server and WebAssembly builds return
+  identical bits for every input.
+- **US4.2 (b)**: **Given** the same match salt, player ID and shot counter, **When** spread is computed
+  in any build, **Then** the shot direction is identical to the bit.
+- **US4-IT (b)**: Run the same weapon streams through the agreement suite.
+- **US5.5 (b)**: **Given** a character's position, orientation and stance, **When** its hitboxes are
+  built, **Then** every build produces the same hitboxes to the bit.
+- **US5-IT (b)**: Run the same shots through the agreement suite.
+
+### User Story 7 items
+
+- **Narrative (WebAssembly sentences)**: The measurement job records the WebAssembly build's download
+  size, startup time and step cost, for the interpreted build and for the ahead-of-time compiled build
+  when the toolchain provides one.
+- **US7-IT (measurement job)**: Run the measurement job on a CI runner and check that its report holds
+  every listed measurement with units, the runner class and the build mode.
+- **US7.2**: **Given** the WebAssembly build, **When** the measurement job runs, **Then** its report
+  records the download size (raw and compressed), the time to the first completed step and the cost
+  per step, for each build mode the toolchain produced, and names any mode it could not produce and
+  why.
+
+### Requirements for slice 2
+
+- **FR-008 (every build)**: Shot spread MUST give the same direction to the bit in every build.
+- **FR-024 (WebAssembly)**: The core MUST build as a .NET WebAssembly build that runs in Node and in a
+  dedicated Web Worker.
+- **FR-025 (WebAssembly)**: The WebAssembly build MUST expose the batched step entry point.
+- **FR-026 (WebAssembly)**: The agreement suite MUST run every committed recorded stream and the
+  generated streams through the WebAssembly build too, and fail on the first step whose hash differs
+  from the server build's.
+- **FR-027**: The agreement suite MUST run in CI on every pull request that changes the core, its
+  analyzer, its recorded streams or its build, and its result MUST gate the pull request.
+- **FR-029 (browser guard)**: An invalid configuration MUST be refused in the browser build through an
+  equivalent guard.
+- **FR-031**: A measurement job MUST record the WebAssembly build's download size (raw and
+  compressed), time to the first completed step and cost per step, for the interpreted build and for
+  the ahead-of-time build where the toolchain produces one, and MUST name any mode it could not build.
+
+### Success criteria for slice 2
+
+- **SC-001**: Every committed recorded stream, at least 10 named movement, weapon and projectile
+  scenarios plus generated streams from 50 seeds, gives identical per-step hashes in the server build,
+  the WebAssembly build in Node and the WebAssembly build in a browser Worker: zero divergent steps.
+- **SC-004 (bit half)**: Each of the core's trigonometric functions agrees to the bit across builds.
 - **SC-006**: The agreement suite, including the browser Worker run, completes in under 10 minutes on
   a CI runner.
 - **SC-007**: The measurement report records the server step costs, and the WebAssembly download size,
   startup time and step cost for each build mode produced, each with its runner class.
+
+### Assumptions for slice 2
+
+- **Browsers in CI.** Headless Chromium runs the Worker suite on every CI run. Firefox and WebKit run it
+  in the CI job when Playwright can install them there. Node runs the WebAssembly build on every run.
+- **Expected hashes (WebAssembly half).** The agreement suite checks the WebAssembly build against both
+  the server's live result and the committed hashes.
 
 ## Assumptions
 
@@ -583,7 +679,8 @@ pass for every step function.
   (`float` multiply-add over a million iterations) gave identical bits in the interpreted WebAssembly
   build under Node and on x64, which is consistent with WebAssembly's fully specified `f32`
   arithmetic. The ahead-of-time build needs the `wasm-tools` workload; where it can't be installed,
-  the measurement report says so (FR-031) and the interpreted build is still measured.
+  the measurement report is to say so (FR-031, planned for slice 2) and the interpreted build is
+  still measured.
 - **Square root.** IEEE 754 requires square root to be correctly rounded, and WebAssembly's `f32.sqrt`
   and x64's `sqrtss` both are, so the core may use the platform square root. Every other
   transcendental function is the core's own.
@@ -614,8 +711,16 @@ pass for every step function.
   range of a modern infantry shooter (run speed 7 m/s, the simulator's infantry ceiling; capsule
   0.4 m radius and 1.8 m standing height; one automatic small arm at 600 rounds per minute; one heavy
   launcher). Game design replaces them; they are configuration, so replacing them changes no code.
-- **Browsers in CI.** Headless Chromium runs the Worker suite on every CI run. Firefox and WebKit run it
-  in the CI job when Playwright can install them there. Node runs the WebAssembly build on every run.
+- **Browsers in CI.** Planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **Expected hashes.** The expected hashes in recorded streams are generated by the server build with a
-  committed regeneration command, and the agreement suite checks the WebAssembly build against both
-  the server's live result and the committed hashes.
+  committed regeneration command (`simcore streams record --reason`), and `simcore streams verify`
+  checks the server build against them. The WebAssembly half is planned for slice 2
+  ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
+- **Older specs.** `specs/013-regionizer-simulator/spec.md` and
+  `specs/014-telemetry-test-harness/spec.md` were checked against this feature, and neither has a
+  statement it supersedes. The core's `SimEnvironment` keeps the simulator's environment names, so
+  013's configuration stays as written. The regionizer keeps its own determinism checks, including its
+  regex banned-API scan (plan.md), and 013's FR-019 (hashes match on the same machine and build)
+  still governs the regionizer simulator: this spec's cross-machine agreement covers the shared core
+  only. Where the two specs touch, as in the determinism rules each states for its own code, each
+  prevails for its own code.

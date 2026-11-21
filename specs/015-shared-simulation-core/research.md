@@ -1059,9 +1059,9 @@ fdlibm documentation was read under its freely-distributable notice.
 
 **New dependencies:**
 
-- `Microsoft.CodeAnalysis.CSharp` 5.0.0 (MIT).
-- `Basic.Reference.Assemblies.Net100` 1.8.14 (MIT).
-- `@playwright/test` 1.63.0 (Apache-2.0, CI only).
+- `Microsoft.CodeAnalysis.CSharp` 5.0.0 (MIT), slice 1, in `Directory.Packages.props`.
+- `Basic.Reference.Assemblies.Net100` 1.8.14 (MIT), slice 1, in `Directory.Packages.props`.
+- `@playwright/test` 1.63.0 (Apache-2.0, CI only), slice 2, in `tools/agreement/package.json`.
 - mpmath and numpy (BSD) are tools only, never linked.
 
 ## Prototype locations

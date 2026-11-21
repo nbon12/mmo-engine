@@ -105,6 +105,8 @@ Expected: one `<name>: match, <steps> steps, final <hash>` line per stream in `s
 
 ## Run the agreement suite
 
+Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
+
 This is what the `agreement` job in `.github/workflows/simcore.yml` runs. Publish the WebAssembly
 build, prepare a work directory, run the build in Node and in browser Workers, then compare.
 
@@ -195,6 +197,8 @@ runner class `local-dev`. The numbers are measurements on this machine only.
 
 ## The measurement report
 
+Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
+
 This builds the report for the prebuilt interpreted build, on a machine without the `wasm-tools`
 workload. It needs the benchmark output above and Playwright's Chromium from the agreement section.
 
@@ -240,6 +244,8 @@ The report's schema and what `validate-report` checks are in
 [contracts/measurement-report.md](contracts/measurement-report.md).
 
 ## Workflow tests
+
+Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
 ```bash
 python3 -m unittest discover -s tests/workflows -v

@@ -14,7 +14,7 @@ namespace MmoEngine.SimCore.Tests.Support;
 /// weapon results out of its <see cref="StepReport"/> as a <see cref="WeaponSnapshot"/>, before the next
 /// step reuses the world's buffers. It makes no assertion of its own: a step that faults throws
 /// <see cref="InvalidOperationException"/> naming the fault's code and field path, so the calling test
-/// fails loudly. It uses no <see cref="System.Random"/> and writes nothing under <c>simcore/</c>.
+/// fails loudly. It uses no random number generator and writes nothing under <c>simcore/</c>.
 /// <para>
 /// <see cref="Create"/> builds a world over <see cref="TestWorlds.Flat"/> (through
 /// <c>CollisionFile.Encode</c> and <c>CollisionFile.Decode</c>) with one character, ID 1, standing and

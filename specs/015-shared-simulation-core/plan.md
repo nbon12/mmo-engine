@@ -1772,6 +1772,12 @@ The design documents settled these points, which the spec leaves open. They are 
   parses without anything able to write. Reading the writers from `ParseResult.InvocationConfiguration`
   inside every action was not chosen: it changes all six command factories and their tests for a
   parse-only caller. T256 says so.
+- **The `Random` audit lists the analyzer's own mentions (T261).** T261's grep was to list only
+  `RuleTests.cs`'s violating samples, but the analyzer cannot ban `System.Random` without naming it:
+  `Tables.cs` holds it in `AmbientTypes`, and `TableTests.cs` pins that entry with its own violating
+  sample. Neither uses a random number generator, so both stay, and T261 lists them. The two other
+  hits were doc comments saying that `StreamGenerator` and `WeaponRuns` use no `System.Random`; they
+  now say "random number generator", so the grep names only the analyzer and its tests.
 
 ## Delivery
 

@@ -19,7 +19,7 @@ namespace MmoEngine.SimCore.Server;
 /// rejection path runs in every build too (US1 scenario 9).
 /// </summary>
 /// <remarks>
-/// The streams are unrecorded (every expected hash 0). There is no <c>System.Random</c>, and every loop is
+/// The streams are unrecorded (every expected hash 0). No random number generator is used, and every loop is
 /// bounded by the step and character counts.
 /// </remarks>
 public static class StreamGenerator
