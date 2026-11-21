@@ -151,3 +151,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | launcher-arc | added: df3040b1a6d2f2b8 | added: 3d950c34ebbce620 | |
+
+## 2026-11-21T08:19:36Z
+
+- Reason: First recording of the mesh-occludes-shot scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario mesh-occludes-shot`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| mesh-occludes-shot | added: 832b5f0ef92bacdc | added: f37fe2bcbbe1e100 | |
