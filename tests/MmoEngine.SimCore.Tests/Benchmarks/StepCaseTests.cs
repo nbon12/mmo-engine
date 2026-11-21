@@ -44,7 +44,7 @@ public sealed class StepCaseTests
     /// <c>stateHash</c> <c>one-character</c> (both <c>flat-run-&lt;hz&gt;hz</c>); and <c>world</c>
     /// <c>fuzz-all-buttons</c> (<c>fuzz-all-buttons</c>).
     /// </summary>
-    public static TheoryData<string, string, int> Cases => TestRates.WithRateLast(
+    public static TheoryData<string, string, int> Cases => TestRates.WithRateLast<string, string>(
         ("movement", "flat-run"),
         ("movement", "wall-slide"),
         ("movement", "corner-wedge"),
@@ -163,10 +163,7 @@ public sealed class StepCaseTests
         var worldShotSteps = new List<uint>();
         foreach (var step in WorldRun(Definition("rifle-hold", hz), hz).Steps)
         {
-            foreach (var _ in step.Shots)
-            {
-                worldShotSteps.Add(step.Step);
-            }
+            worldShotSteps.AddRange(Enumerable.Repeat(step.Step, step.Shots.Count));
         }
 
         Assert.NotEmpty(worldShotSteps);
@@ -198,10 +195,7 @@ public sealed class StepCaseTests
 
         var (firingStep, launch) = Assert.Single(launches);
         var projectileId = launch.ProjectileId;
-        var ends = run.Steps
-            .Where(step => step.Hits.Any(hit => hit.ProjectileId == projectileId) || step.Expiries.Any(expiry => expiry.ProjectileId == projectileId))
-            .ToList();
-        var end = Assert.Single(ends);
+        var end = Assert.Single(run.Steps, worldStep => EndsFlight(worldStep, projectileId));
 
         var stepCase = StepCase.Create("projectile", "launcher-flight", hz);
         var what = $"projectile/launcher-flight at {hz} Hz";
@@ -216,10 +210,12 @@ public sealed class StepCaseTests
             }
         }
 
-        Assert.Equal(end.Step - firingStep, (uint)stepCase.PassLength);
+        Assert.True(
+            stepCase.PassLength == end.Step - firingStep,
+            $"{what}: the pass has {stepCase.PassLength} steps; the world fired at step {firingStep} and its projectile ended at step {end.Step}, {end.Step - firingStep} steps later");
         Assert.Equal(end.Step, stepCase.LastStep);
         Assert.Equal(projectileId, stepCase.Projectile.Id);
-        var hits = end.Hits.Where(hit => hit.ProjectileId == projectileId).ToList();
+        var hits = end.Hits.Where(worldHit => worldHit.ProjectileId == projectileId).ToList();
         if (hits.Count != 0)
         {
             var hit = Assert.Single(hits);
@@ -230,15 +226,15 @@ public sealed class StepCaseTests
         }
         else
         {
-            var expiry = Assert.Single(end.Expiries, expiry => expiry.ProjectileId == projectileId);
+            var expiry = Assert.Single(end.Expiries, worldExpiry => worldExpiry.ProjectileId == projectileId);
             Assert.Equal(ProjectileOutcome.Expired, stepCase.LastOutcome);
             Assert.Equal(expiry.Reason, stepCase.LastExpiry);
         }
     }
 
     /// <summary>
-    /// Given the <c>fuzz-all-buttons</c> world case and <see cref="StreamRunner.Run(ReadOnlySpan{byte}, IReadOnlyList{CollisionWorld}, int)"/>
-    /// of the same built stream, When one pass runs, Then every step's <c>StepReport.Fault.Code</c> is
+    /// Given the <c>fuzz-all-buttons</c> world case and <c>StreamRunner.Run</c> of the same built stream over
+    /// the test world, When one pass runs, Then every step's <c>StepReport.Fault.Code</c> is
     /// <see cref="StepFaultCode.None"/>, and the pass has one step per record, each with the record's step
     /// number and hash.
     /// </summary>
@@ -284,6 +280,28 @@ public sealed class StepCaseTests
         }
 
         Assert.Equal(0, stepCase.StepsLeftInPass);
+    }
+
+    /// <summary>Whether <paramref name="step"/> holds a hit or an expiry of projectile <paramref name="projectileId"/>.</summary>
+    private static bool EndsFlight(ScenarioStep step, uint projectileId)
+    {
+        foreach (var hit in step.Hits)
+        {
+            if (hit.ProjectileId == projectileId)
+            {
+                return true;
+            }
+        }
+
+        foreach (var expiry in step.Expiries)
+        {
+            if (expiry.ProjectileId == projectileId)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The scenario definition a case is built from, at <paramref name="hz"/>.</summary>
