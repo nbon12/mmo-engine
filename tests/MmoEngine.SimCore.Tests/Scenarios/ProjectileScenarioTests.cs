@@ -83,6 +83,42 @@ public sealed class ProjectileScenarioTests
     /// <summary>The bound on a stored position's distance from the double closed form, and on a ground hit's height.</summary>
     private const double PathTolerance = 1e-3;
 
+    /// <summary>The bound on a hit point's distance from the point the double reference predicts.</summary>
+    private const double HitPointTolerance = 1e-3;
+
+    /// <summary>Yaw 32768 faces −Z: a target on the +Z side of the shooter faces it.</summary>
+    private const ushort FacingMinusZ = 32768;
+
+    /// <summary>The aimed shots of <c>projectile-hits-hitbox</c>: Head, Torso and Legs standing, then the same crouched.</summary>
+    private const int AimedShots = 6;
+
+    /// <summary>The index of <c>projectile-hits-hitbox</c>'s point-blank shot and hit, after the aimed ones.</summary>
+    private const int PointBlankShot = AimedShots;
+
+    /// <summary>A target 25 m away on <see cref="ProjectileWorlds.Flat"/>, aimed at its torso centre.</summary>
+    private const string FlatPlacement = "flat";
+
+    /// <summary>A target 25 m away behind <see cref="ProjectileWorlds.Wall"/>'s quad, aimed at its torso centre.</summary>
+    private const string BehindWall = "behind-wall";
+
+    /// <summary>A shot over <see cref="ProjectileWorlds.Ridge"/>'s crest that lands on the ground beyond it.</summary>
+    private const string OverRidgeClear = "over-ridge-clear";
+
+    /// <summary>A shot over <see cref="ProjectileWorlds.Ridge"/>'s crest that stays above the ground until its range runs out.</summary>
+    private const string OverRidgeExpires = "over-ridge-expires";
+
+    /// <summary>A shot aimed low at <see cref="ProjectileWorlds.Ridge"/>, which meets its front face.</summary>
+    private const string OverRidgeBlocked = "over-ridge-blocked";
+
+    /// <summary>A <c>shots-at-known-distances</c> ridge shot aimed 1 m below the crest, which meets the ridge face.</summary>
+    private const string RidgeFace = "ridge-face";
+
+    /// <summary>A <c>shots-at-known-distances</c> ridge shot aimed 1.5 m above the crest, which clears it.</summary>
+    private const string RidgeClearing = "ridge-clearing";
+
+    /// <summary>The target of the flat shots of <c>shots-at-known-distances</c>.</summary>
+    private const uint StreamFlatTargetId = 2;
+
     /// <summary>The shooter's feet: at the origin, so its standing eye is the launch point (0, 1.62, 0).</summary>
     private static readonly Vec3 ShooterFeet = new(0f, 0f, 0f);
 
@@ -91,6 +127,29 @@ public sealed class ProjectileScenarioTests
 
     /// <summary><see cref="StruckPartsMatchTheStancesLayout"/>'s target: 25 m in front of the shooter's feet, along +Z.</summary>
     private static readonly Vec3 TargetFeet = new(0f, 0f, 25f);
+
+    /// <summary>The ridge rows' shooter: 124 m in front of <see cref="ProjectileWorlds.Ridge"/>'s crest, facing +Z.</summary>
+    private static readonly Vec3 RidgeShooterFeet = new(0f, 0f, -100f);
+
+    /// <summary>The character IDs of <c>shots-at-known-distances</c>: shooters 1, 3 and 5, and targets 2 and 4.</summary>
+    private static readonly uint[] KnownDistanceCharacterIds = [1, 2, 3, 4, 5];
+
+    /// <summary>
+    /// The shots of <c>shots-at-known-distances</c>, in each shooter's firing order: shooter 1 (flat) and
+    /// shooter 3 (behind the wall) fire one class-0 then one class-1 shot, and shooter 5 (ridge) fires a face
+    /// shot then a clearing shot with class 0, then the same with class 1.
+    /// </summary>
+    private static readonly PlannedShot[] KnownDistanceShots =
+    [
+        new(1, SmallArms, FlatPlacement),
+        new(1, Heavy, FlatPlacement),
+        new(3, SmallArms, BehindWall),
+        new(3, Heavy, BehindWall),
+        new(5, SmallArms, RidgeFace),
+        new(5, SmallArms, RidgeClearing),
+        new(5, Heavy, RidgeFace),
+        new(5, Heavy, RidgeClearing),
+    ];
 
     /// <summary>
     /// The target yaws of <see cref="StruckPartsMatchTheStancesLayout"/>: facing away from the shooter (0, +Z),
@@ -109,6 +168,22 @@ public sealed class ProjectileScenarioTests
 
     /// <summary>Rows <c>(stance, hz)</c> of <see cref="StruckPartsMatchTheStancesLayout"/>: Standing and Crouched, each at 20, 30 and 60 Hz.</summary>
     public static TheoryData<Stance, int> StanceRows => TestRates.WithRateLast(Stance.Standing, Stance.Crouched);
+
+    /// <summary>
+    /// Rows <c>(classIndex, placement, hz)</c> of <see cref="ShotsAtKnownDistancesHitWhereTheClosedFormPathSays"/>:
+    /// both classes on flat terrain and behind the wall, class 1 over the ridge and landing beyond it, class 0
+    /// over the ridge until its range runs out, and both classes into the ridge's front face, each at 20, 30
+    /// and 60 Hz.
+    /// </summary>
+    public static TheoryData<int, string, int> KnownDistanceRows => TestRates.WithRateLast<int, string>(
+        (SmallArms, FlatPlacement),
+        (Heavy, FlatPlacement),
+        (SmallArms, BehindWall),
+        (Heavy, BehindWall),
+        (Heavy, OverRidgeClear),
+        (SmallArms, OverRidgeExpires),
+        (SmallArms, OverRidgeBlocked),
+        (Heavy, OverRidgeBlocked));
 
     /// <summary>
     /// US5 scenario 1: Given <see cref="ProjectileWorlds.Flat"/>, its owner (ID 1) standing at the origin as
@@ -554,6 +629,600 @@ public sealed class ProjectileScenarioTests
     }
 
     /// <summary>
+    /// US5 scenarios 2 and 6 and the point-blank edge case through the <c>projectile-hits-hitbox</c>
+    /// definition: Given <c>ScenarioCatalog.Get("projectile-hits-hitbox").Build(TestConfigs.At(hz), testWorld, hz)</c>
+    /// over the committed <c>simcore/content/test-world.mmcd</c>, whose initial state holds two characters,
+    /// one of which fires every shot (the shooter) while the other (the target) fires none, When its steps run
+    /// on a <see cref="SimWorld"/>, Then the run fires its seven planned shots, reports no expiry, and its hit
+    /// events in step order are exactly seven hits, one on each shot's projectile in firing order, every one
+    /// with Kind Character and the target's ID, so no hit names the shooter. The first six are the aimed shots:
+    /// they strike Head, Torso and Legs while the target stands, then Head, Torso and Legs while it crouches
+    /// (its committed stance at the hit step). Each aimed hit has 0 &lt; T &lt; 1, and both ends of its
+    /// striking segment p(k) → p(k + 1), for k = hit step − LaunchStep in the contract's float closed form
+    /// from the shot's launch state, lie outside the target's bounding sphere at the hit step (its committed
+    /// feet plus <c>BoundCenterUp</c>, radius <c>BoundRadius</c>), so the projectile crosses a whole hitbox
+    /// within one step. The seventh is the point-blank shot, which starts inside one of the target's hitboxes:
+    /// its hit is reported in the step its shot fires, with T bits 0x00000000.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void ProjectileHitsHitboxStrikesEveryPlannedPart(int hz)
+    {
+        var context = FormattableString.Invariant($"projectile-hits-hitbox, {hz} Hz");
+        var testWorld = CommittedTestWorld.Value;
+        var stream = ScenarioCatalog.Get("projectile-hits-hitbox").Build(TestConfigs.At(hz), testWorld, hz);
+        var config = CompiledConfig.Create(stream.Config);
+        Assert.True(stream.StepHz == hz, FormattableString.Invariant($"{context}: the stream runs at {stream.StepHz} Hz"));
+
+        var run = ScenarioRuns.Run(new SimWorld(config, testWorld), stream);
+
+        AssertNoStepFaulted(run, context);
+        var shots = ShotsOf(run);
+        var (shooterId, targetId) = ShooterAndTarget(run, shots, context);
+        var hits = HitsOf(run);
+        var expiries = run.Steps.SelectMany(step => step.Expiries).ToArray();
+        Assert.True(
+            hits.All(h => h.Hit.Kind != HitKind.Character || h.Hit.TargetId != shooterId),
+            FormattableString.Invariant($"{context}: the run reported hits [{string.Join(", ", hits.Select(h => h.Hit))}]; one names the shooter {shooterId}"));
+        Assert.True(
+            shots.Length == AimedShots + 1,
+            FormattableString.Invariant(
+                $"{context}: the run fired [{string.Join(", ", shots.Select(s => $"step {s.Step.Step}: {s.Shot}"))}]; expected {AimedShots + 1} shots, six aimed and one point-blank"));
+        Assert.True(
+            hits.Length == AimedShots + 1,
+            FormattableString.Invariant(
+                $"{context}: the run reported hits [{string.Join(", ", hits.Select(h => $"step {h.Step.Step}: {h.Hit}"))}]; expected exactly {AimedShots + 1}, one per shot"));
+        Assert.True(expiries.Length == 0, $"{context}: the run reported expiries [{string.Join(", ", expiries)}]; every shot hits the target");
+
+        for (var i = 0; i < hits.Length; i++)
+        {
+            var (shotStep, shot) = shots[i];
+            var (hitStep, hit) = hits[i];
+            var at = FormattableString.Invariant($"{context}, hit {i} at step {hitStep.Step} (shot fired at step {shotStep.Step})");
+            Assert.True(
+                hit.ProjectileId == shot.ProjectileId && hit.Kind == HitKind.Character && hit.TargetId == targetId,
+                FormattableString.Invariant($"{at}: the hit is {hit}; expected the shot's projectile {shot.ProjectileId} on Character {targetId}"));
+            if (i == PointBlankShot)
+            {
+                Assert.True(
+                    hitStep.Step == shotStep.Step && BitConverter.SingleToUInt32Bits(hit.T) == 0u,
+                    FormattableString.Invariant(
+                        $"{at}: the point-blank hit {hit} (T bits {BitConverter.SingleToUInt32Bits(hit.T):x8}) must be reported in its shot's step {shotStep.Step} with T bits 00000000"));
+                continue;
+            }
+
+            var stance = i < Parts.Length ? Stance.Standing : Stance.Crouched;
+            var part = Parts[i % Parts.Length];
+            var committedTarget = CommittedCharacter(hitStep.Characters, targetId, at);
+            Assert.True(
+                hit.Hitbox == part && committedTarget.Stance == stance,
+                FormattableString.Invariant($"{at}: the hit struck {hit.Hitbox} of a {committedTarget.Stance} target; expected {part} while it is {stance}"));
+            Assert.True(
+                0f < hit.T && hit.T < 1f,
+                FormattableString.Invariant($"{at}: the aimed hit's T is {hit.T:R}; expected 0 < T < 1"));
+
+            var launch = Launched(shotStep.Characters, shotStep.Step, shot, config, shotStep.Projectiles, at);
+            var k = hitStep.Step - launch.LaunchStep;
+            var halfG = config.HalfG[launch.Class];
+            var a = ProjectileWorlds.ContractPosition(launch.Origin, launch.LaunchVelocity, halfG, hz, k);
+            var b = ProjectileWorlds.ContractPosition(launch.Origin, launch.LaunchVelocity, halfG, hz, k + 1u);
+            var layout = config.HitboxLayouts[(int)committedTarget.Stance];
+            var feet = committedTarget.Position;
+            var boundCentre = new DVec3(feet.X, feet.Y + (double)layout.BoundCenterUp, feet.Z);
+            foreach (var (name, end) in new[] { ("start", a), ("end", b) })
+            {
+                var fromBound = DVec3.Distance(end, boundCentre);
+                Assert.True(
+                    fromBound > layout.BoundRadius,
+                    FormattableString.Invariant(
+                        $"{at}: the striking segment {k}'s {name} {end} is {fromBound:R} m from the target's bounding sphere centre {boundCentre}, inside its radius {layout.BoundRadius:R}"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// US5's Independent Test, in process: Given the row's world, a configuration whose weapons both have
+    /// <c>spreadHalfAngleDeg</c> 0, and a shooter (ID 1) standing at rest with the row's class's slot active
+    /// and Ready, from a state at step 0, When the shooter presses Fire in step 1 with the binary-angle yaw
+    /// and pitch nearest the row's direction and the world is stepped until the projectile leaves the state,
+    /// Then the run fires exactly that one shot, of the row's class at its default muzzle speed, from the
+    /// standing shooter's eye (1.62 m above its feet). The weapon step sweeps the shot in step 1, segment 0
+    /// included, so a 25 m target is reached at every rate. The rows:
+    /// <list type="bullet">
+    /// <item><c>flat</c>, both classes: <see cref="ProjectileWorlds.Flat"/>, the shooter at the origin facing
+    /// +Z and a target (ID 2) standing 25 m away with yaw 32768, aimed at its torso centre with the class's
+    /// drop compensated by the low-root pitch of the double closed form (<see cref="ProjectileWorlds.AimWithDrop"/>);</item>
+    /// <item><c>behind-wall</c>, both classes: <see cref="ProjectileWorlds.Wall"/> and the same shooter,
+    /// target and aim, so the wall at z = 12.5 m stands in the way;</item>
+    /// <item><c>over-ridge-clear</c>, class 1: <see cref="ProjectileWorlds.Ridge"/>, the shooter at
+    /// (0, 0, −100) facing +Z, pitch 3.5°, which clears the crest and lands on the flat ground beyond it;</item>
+    /// <item><c>over-ridge-expires</c>, class 0: the same, pitch 1.5°, which clears the crest and stays above
+    /// the ground until its range runs out;</item>
+    /// <item><c>over-ridge-blocked</c>, both classes: the same, aimed low (0.5° for class 0, 2.0° for class 1),
+    /// which meets the ridge's front face.</item>
+    /// </list>
+    /// The arrange asserts that the double reference flown from the shot's launch state predicts the row's
+    /// outcome, so no row can pass by comparing two missing hits: Character (target 2, Torso) for <c>flat</c>;
+    /// Mesh on one of <see cref="ProjectileWorlds.WallTriangleIds"/> for <c>behind-wall</c>; Terrain at a z in
+    /// (<see cref="ProjectileWorlds.RidgeCrestZ"/> + 4, <see cref="ProjectileWorlds.GroundHalfExtent"/>)
+    /// within <c>maxRangeM</c> of Origin for <c>over-ridge-clear</c>; Terrain at a z in [20,
+    /// <see cref="ProjectileWorlds.RidgeCrestZ"/>] for <c>over-ridge-blocked</c>; and no hit at or before the
+    /// Range step for <c>over-ridge-expires</c>. For the two ridge-clearing rows the double closed form is
+    /// also above the ridge surface at z = 20, 24 and 28 m. Then, for the hit rows, the hit's kind, target ID
+    /// (character or triangle) and hitbox equal the prediction's, its point is within 1e-3 m of the predicted
+    /// point and its step is the predicted step; no hit or expiry event holds the projectile at another step,
+    /// and no committed state holds it from that step on. For <c>over-ridge-expires</c>, no hit event ever
+    /// holds the projectile, and the expiry events hold it exactly once, as {projectile, Range}, at the step
+    /// that sweeps p(k) → p(k + 1) for the first k with |p(k + 1) − Origin|² &gt; <c>MaxRangeSq[0]</c> in the
+    /// contract's float expressions.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(KnownDistanceRows))]
+    public void ShotsAtKnownDistancesHitWhereTheClosedFormPathSays(int classIndex, string placement, int hz)
+    {
+        var context = FormattableString.Invariant($"class {classIndex} {placement}, {hz} Hz");
+        var raw = TestConfigs.At(hz);
+        foreach (var weapon in raw.Weapons!)
+        {
+            weapon!.SpreadHalfAngleDeg = 0f;
+        }
+
+        var config = CompiledConfig.Create(raw);
+        var slot = SlotFiring(config, classIndex);
+        Assert.True(
+            BitConverter.SingleToUInt32Bits(config.Weapons[slot].VersMax) == 0u,
+            FormattableString.Invariant($"{context}: slot {slot} must fire with no spread; its VersMax is {config.Weapons[slot].VersMax:R}"));
+        var placed = Place(placement, classIndex, config);
+        var shooter = ProjectileWorlds.Shooter(ShooterId, placed.ShooterFeet, yaw: 0, Stance.Standing) with { ActiveSlot = slot };
+        CharacterRecord[] characters = placed.Target is { } target ? [shooter, target] : [shooter];
+        var world = ProjectileWorlds.Start(placed.World, config, TestStates.Build(StateBeforeFire, characters));
+
+        var outcomes = RunUntilTheStateHoldsNoProjectile(
+            world,
+            config.LifetimeSteps[classIndex] + StepsAfterLeaving + 1,
+            FireOnce(placed.AimYaw, placed.AimPitch, slot),
+            context);
+
+        var shots = outcomes.SelectMany(outcome => outcome.Shots.Select(fired => (outcome.Step, Shot: fired))).ToArray();
+        Assert.True(
+            shots.Length == 1 && shots[0].Step == FireStep && shots[0].Shot.CharacterId == ShooterId && shots[0].Shot.Slot == slot,
+            FormattableString.Invariant(
+                $"{context}: the run fired [{string.Join(", ", shots.Select(s => $"step {s.Step}: {s.Shot}"))}]; expected exactly one shot, by character {ShooterId} from slot {slot} at step {FireStep}"));
+        var shot = shots[0].Shot;
+        var fireOutcome = outcomes[0];
+        Assert.True(fireOutcome.Step == FireStep, FormattableString.Invariant($"{context}: the run's first step is {fireOutcome.Step}, not {FireStep}"));
+        var launch = Launched(fireOutcome.Characters, FireStep, shot, config, fireOutcome.Projectiles, context);
+        var eye = ProjectileWorlds.Eye(placed.ShooterFeet, config, Stance.Standing);
+        var speed = ProjectileWorlds.MuzzleSpeed(config, classIndex);
+        Assert.True(
+            launch.Class == classIndex && Bits(launch.Origin) == Bits(eye) && config.Weapons[slot].MuzzleSpeed == speed,
+            FormattableString.Invariant(
+                $"{context}: the shot {launch} must be of class {classIndex} at its default muzzle speed {speed:R} from the standing shooter's eye {eye}"));
+
+        var predicted = ProjectileReference.PredictFirstHit(placed.Data, config, launch, characters, 0);
+        var range = (double)config.Config.ProjectileClasses![classIndex]!.MaxRangeM;
+        uint? expiryStep = null;
+        switch (placement)
+        {
+            case FlatPlacement:
+                Assert.True(
+                    predicted is { Kind: HitKind.Character, TargetId: TargetId, Hitbox: HitboxPart.Torso },
+                    FormattableString.Invariant($"{context}: the double path must first meet target {TargetId}'s torso, not {predicted}"));
+                break;
+            case BehindWall:
+                Assert.True(
+                    predicted is { Kind: HitKind.Mesh } && ProjectileWorlds.WallTriangleIds.Contains(checked((int)predicted.TargetId)),
+                    FormattableString.Invariant(
+                        $"{context}: the double path must first meet one of the wall triangles [{string.Join(", ", ProjectileWorlds.WallTriangleIds)}], not {predicted}"));
+                break;
+            case OverRidgeClear:
+                Assert.True(
+                    predicted is { Kind: HitKind.Terrain }
+                        && predicted.Point.Z > ProjectileWorlds.RidgeCrestZ + 4.0
+                        && predicted.Point.Z < ProjectileWorlds.GroundHalfExtent
+                        && DVec3.Distance(predicted.Point, launch.Origin) <= range,
+                    FormattableString.Invariant(
+                        $"{context}: the double path must clear the ridge and first meet the terrain at a z in ({ProjectileWorlds.RidgeCrestZ + 4.0:R}, {ProjectileWorlds.GroundHalfExtent:R}) within maxRangeM {range:R} of Origin, not {predicted}"));
+                break;
+            case OverRidgeBlocked:
+                Assert.True(
+                    predicted is { Kind: HitKind.Terrain }
+                        && predicted.Point.Z >= ProjectileWorlds.RidgeFrontZ
+                        && predicted.Point.Z <= ProjectileWorlds.RidgeCrestZ,
+                    FormattableString.Invariant(
+                        $"{context}: the double path must first meet the ridge's front face, at a z in [{ProjectileWorlds.RidgeFrontZ:R}, {ProjectileWorlds.RidgeCrestZ:R}], not {predicted}"));
+                break;
+            case OverRidgeExpires:
+                var rangeK = FirstRangeK(config, launch);
+                Assert.True(rangeK.HasValue, FormattableString.Invariant($"{context}: the contract never passes MaxRangeSq[{classIndex}] within LifetimeSteps[{classIndex}]"));
+                expiryStep = launch.LaunchStep + rangeK.Value;
+                Assert.True(
+                    predicted is null || predicted.Step > expiryStep.Value,
+                    FormattableString.Invariant($"{context}: the double path must meet nothing at or before the Range step {expiryStep.Value}, not {predicted}"));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(placement), placement, "Unknown row.");
+        }
+
+        if (placement is OverRidgeClear or OverRidgeExpires)
+        {
+            AssertAboveTheRidge(launch, config, context);
+        }
+
+        if (expiryStep is { } rangeStep)
+        {
+            AssertExpiresWithRangeAt(outcomes, shot.ProjectileId, rangeStep, context);
+            return;
+        }
+
+        AssertHitWhereTheReferenceSays(outcomes, shot.ProjectileId, predicted!, context);
+    }
+
+    /// <summary>
+    /// US5's Independent Test, the shots the agreement suite runs (Phase 11 runs them in WebAssembly): Given
+    /// <c>ScenarioCatalog.Get("shots-at-known-distances").Build(TestConfigs.At(hz), testWorld, hz)</c> over the
+    /// committed <c>simcore/content/test-world.mmcd</c>, whose initial state holds characters 1 to 5, When its
+    /// steps run on a <see cref="SimWorld"/>, Then the run fires exactly eight shots: shooter 1 (flat) and
+    /// shooter 3 (behind the wall) each fire one class-0 then one class-1 shot, and shooter 5 (ridge) fires a
+    /// face shot then a clearing shot with class 0, then the same with class 1. For each shot, its launch state
+    /// is taken from the run, and the arrange first asserts that the double reference flown from it over the
+    /// test world and the other characters' capsules gives the placement's outcome, so no shot can pass by
+    /// comparing two missing hits: Character (target 2, Torso) for the flat shots; Mesh on a triangle of the
+    /// wall mesh for the wall shots; Terrain short of <see cref="TestWorldFeatures.RidgeCrest"/>'s line (on the
+    /// shooter's side of it) for the face shots; and no hit before the crest line for the clearing shots. Then
+    /// the run matches it: for a predicted hit within <c>maxRangeM</c> of Origin, exactly one hit event holds
+    /// the projectile, with the predicted kind, target ID and hitbox, a point within 1e-3 m of the predicted
+    /// point and the predicted step, and no expiry event holds it; otherwise no hit event holds it and exactly
+    /// one expiry event does, {projectile, Range}, at the step that sweeps p(k) → p(k + 1) for the first k with
+    /// |p(k + 1) − Origin|² &gt; <c>MaxRangeSq</c> of the shot's class in the contract's float expressions. The
+    /// run holds no other hit or expiry, no hit names a shooter, and no projectile remains after the last step.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
+    public void ShotsAtKnownDistancesStreamHitsWhereTheReferenceSays(int hz)
+    {
+        var context = FormattableString.Invariant($"shots-at-known-distances, {hz} Hz");
+        var testWorld = CommittedTestWorld.Value;
+        var collisionData = testWorld.Data;
+        var features = TestWorldGenerator.Features;
+        var wallTriangles = MeshTriangleIds(collisionData, features.WallMeshId);
+        Assert.True(wallTriangles.Count > 0, FormattableString.Invariant($"{context}: the test world has no triangle in wall mesh {features.WallMeshId}"));
+        var stream = ScenarioCatalog.Get("shots-at-known-distances").Build(TestConfigs.At(hz), testWorld, hz);
+        var config = CompiledConfig.Create(stream.Config);
+        Assert.True(stream.StepHz == hz, FormattableString.Invariant($"{context}: the stream runs at {stream.StepHz} Hz"));
+
+        var run = ScenarioRuns.Run(new SimWorld(config, testWorld), stream);
+
+        AssertNoStepFaulted(run, context);
+        var characterIds = run.InitialCharacters.Select(c => c.Id).ToArray();
+        Assert.True(
+            characterIds.SequenceEqual(KnownDistanceCharacterIds),
+            FormattableString.Invariant($"{context}: the initial state holds characters [{string.Join(", ", characterIds)}]; expected [{string.Join(", ", KnownDistanceCharacterIds)}]"));
+        var shots = ShotsOf(run);
+        Assert.True(
+            shots.Length == KnownDistanceShots.Length,
+            FormattableString.Invariant(
+                $"{context}: the run fired [{string.Join(", ", shots.Select(s => $"step {s.Step.Step}: {s.Shot}"))}]; expected exactly {KnownDistanceShots.Length} shots"));
+        var shooterIds = KnownDistanceShots.Select(p => p.ShooterId).Distinct().ToArray();
+        var hits = HitsOf(run);
+        var expiries = run.Steps.SelectMany(step => step.Expiries.Select(expiry => (Step: step, Expiry: expiry))).ToArray();
+        var expectedHits = 0;
+        var expectedExpiries = 0;
+        foreach (var shooterId in shooterIds)
+        {
+            var planned = KnownDistanceShots.Where(p => p.ShooterId == shooterId).ToArray();
+            var fired = shots.Where(s => s.Shot.CharacterId == shooterId).ToArray();
+            var firedClasses = fired.Select(s => config.Weapons[s.Shot.Slot].ProjectileClass).ToArray();
+            Assert.True(
+                firedClasses.SequenceEqual(planned.Select(p => p.Class)),
+                FormattableString.Invariant(
+                    $"{context}: shooter {shooterId} fired classes [{string.Join(", ", firedClasses)}]; expected [{string.Join(", ", planned.Select(p => p.Class))}]"));
+
+            for (var j = 0; j < planned.Length; j++)
+            {
+                var (shotStep, shot) = fired[j];
+                var placement = planned[j].Placement;
+                var at = FormattableString.Invariant($"{context}, shooter {shooterId}'s {placement} shot {j} (projectile {shot.ProjectileId}, fired at step {shotStep.Step})");
+                var launch = Launched(shotStep.Characters, shotStep.Step, shot, config, shotStep.Projectiles, at);
+                var predicted = ProjectileReference.PredictFirstHit(collisionData, config, launch, shotStep.Characters, 0);
+                switch (placement)
+                {
+                    case FlatPlacement:
+                        Assert.True(
+                            predicted is { Kind: HitKind.Character, TargetId: StreamFlatTargetId, Hitbox: HitboxPart.Torso },
+                            FormattableString.Invariant($"{at}: the double path must first meet target {StreamFlatTargetId}'s torso, not {predicted}"));
+                        break;
+                    case BehindWall:
+                        Assert.True(
+                            predicted is { Kind: HitKind.Mesh } && wallTriangles.Contains(checked((int)predicted.TargetId)),
+                            FormattableString.Invariant(
+                                $"{at}: the double path must first meet a triangle of wall mesh {features.WallMeshId} [{string.Join(", ", wallTriangles)}], not {predicted}"));
+                        break;
+                    case RidgeFace:
+                        Assert.True(
+                            predicted is { Kind: HitKind.Terrain } && ShortOfTheCrest(predicted.Point, launch.Origin, features.RidgeCrest),
+                            FormattableString.Invariant($"{at}: the double path must first meet the terrain short of the crest line {features.RidgeCrest}, not {predicted}"));
+                        break;
+                    case RidgeClearing:
+                        Assert.True(
+                            predicted is null || !ShortOfTheCrest(predicted.Point, launch.Origin, features.RidgeCrest),
+                            FormattableString.Invariant($"{at}: the double path must meet nothing before the crest line {features.RidgeCrest}, not {predicted}"));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Unknown placement {placement}.");
+                }
+
+                var hitsFor = hits.Where(h => h.Hit.ProjectileId == shot.ProjectileId).ToArray();
+                var expiriesFor = expiries.Where(e => e.Expiry.ProjectileId == shot.ProjectileId).ToArray();
+                var range = (double)config.Config.ProjectileClasses![launch.Class]!.MaxRangeM;
+                if (predicted is not null && DVec3.Distance(predicted.Point, launch.Origin) <= range)
+                {
+                    expectedHits++;
+                    Assert.True(
+                        hitsFor.Length == 1 && expiriesFor.Length == 0,
+                        FormattableString.Invariant(
+                            $"{at}: the run holds hits [{string.Join(", ", hitsFor.Select(h => $"step {h.Step.Step}: {h.Hit}"))}] and expiries [{string.Join(", ", expiriesFor.Select(e => $"step {e.Step.Step}: {e.Expiry}"))}] for the projectile; expected exactly one hit, at step {predicted.Step}, and no expiry"));
+                    var (hitStep, hit) = hitsFor[0];
+                    Assert.True(
+                        hitStep.Step == predicted.Step && hit.Kind == predicted.Kind && hit.TargetId == predicted.TargetId && hit.Hitbox == predicted.Hitbox,
+                        FormattableString.Invariant($"{at}: the hit at step {hitStep.Step} is {hit}; the double reference predicts {predicted}"));
+                    var off = DVec3.Distance(hit.Point, predicted.Point);
+                    Assert.True(
+                        off <= HitPointTolerance,
+                        FormattableString.Invariant($"{at}: the hit point {hit.Point} is {off:R} m from the predicted point {predicted.Point}"));
+                    continue;
+                }
+
+                expectedExpiries++;
+                var rangeK = FirstRangeK(config, launch);
+                Assert.True(rangeK.HasValue, FormattableString.Invariant($"{at}: the contract never passes MaxRangeSq[{launch.Class}] within LifetimeSteps[{launch.Class}]"));
+                var rangeStep = launch.LaunchStep + rangeK.Value;
+                Assert.True(
+                    hitsFor.Length == 0
+                        && expiriesFor.Length == 1
+                        && expiriesFor[0].Step.Step == rangeStep
+                        && expiriesFor[0].Expiry.Reason == ExpiryReason.Range,
+                    FormattableString.Invariant(
+                        $"{at}: the run holds hits [{string.Join(", ", hitsFor.Select(h => $"step {h.Step.Step}: {h.Hit}"))}] and expiries [{string.Join(", ", expiriesFor.Select(e => $"step {e.Step.Step}: {e.Expiry}"))}] for the projectile; expected no hit and one Range expiry at step {rangeStep} (the double reference predicts {predicted})"));
+            }
+        }
+
+        Assert.True(
+            hits.Length == expectedHits && expiries.Length == expectedExpiries,
+            FormattableString.Invariant(
+                $"{context}: the run holds {hits.Length} hits and {expiries.Length} expiries; the shots account for {expectedHits} and {expectedExpiries}"));
+        Assert.True(
+            hits.All(h => h.Hit.Kind != HitKind.Character || !shooterIds.Contains(h.Hit.TargetId)),
+            FormattableString.Invariant($"{context}: the run reported hits [{string.Join(", ", hits.Select(h => h.Hit))}]; one names a shooter [{string.Join(", ", shooterIds)}]"));
+        Assert.True(
+            run.Last.Projectiles.Count == 0,
+            FormattableString.Invariant($"{context}: projectiles [{string.Join(", ", run.Last.Projectiles.Select(p => p.Id))}] remain after the last step {run.Last.Step}"));
+    }
+
+    /// <summary>
+    /// The world, shooter, target and aim of a row of <see cref="ShotsAtKnownDistancesHitWhereTheClosedFormPathSays"/>.
+    /// The flat and wall rows aim at the torso centre of a standing target 25 m away with
+    /// <see cref="ProjectileWorlds.AimWithDrop"/>; the ridge rows aim along +Z at the row's pitch. Both go
+    /// through <see cref="BinaryAim"/> to the nearest binary angles.
+    /// </summary>
+    private static KnownDistancePlacement Place(string placement, int classIndex, CompiledConfig config)
+    {
+        if (placement is FlatPlacement or BehindWall)
+        {
+            var target = ProjectileWorlds.Target(TargetId, TargetFeet, FacingMinusZ, Stance.Standing);
+            var torso = ProjectileReference.LayoutCapsules(Stance.Standing, TargetFeet, FacingMinusZ, config)[(int)HitboxPart.Torso];
+            var eye = ProjectileWorlds.Eye(ShooterFeet, config, Stance.Standing);
+            var speed = ProjectileWorlds.MuzzleSpeed(config, classIndex);
+            var (aimYaw, aimPitch) = BinaryAim(ProjectileWorlds.AimWithDrop(eye, torso.Centre, speed, config.HalfG[classIndex]));
+            return placement == FlatPlacement
+                ? new KnownDistancePlacement(ProjectileWorlds.Flat(), ProjectileWorlds.FlatWorld, ShooterFeet, target, aimYaw, aimPitch)
+                : new KnownDistancePlacement(ProjectileWorlds.Wall(), ProjectileWorlds.WallWorld, ShooterFeet, target, aimYaw, aimPitch);
+        }
+
+        var pitchDegrees = (placement, classIndex) switch
+        {
+            (OverRidgeClear, Heavy) => 3.5,
+            (OverRidgeExpires, SmallArms) => 1.5,
+            (OverRidgeBlocked, SmallArms) => 0.5,
+            (OverRidgeBlocked, Heavy) => 2.0,
+            _ => throw new ArgumentOutOfRangeException(nameof(placement), placement, FormattableString.Invariant($"No ridge row for class {classIndex}.")),
+        };
+        var (yaw, pitch) = BinaryAim(ProjectileWorlds.Direction(0.0, pitchDegrees));
+        return new KnownDistancePlacement(ProjectileWorlds.Ridge(), ProjectileWorlds.RidgeWorld, RidgeShooterFeet, null, yaw, pitch);
+    }
+
+    /// <summary>
+    /// The commands of <see cref="ShotsAtKnownDistancesHitWhereTheClosedFormPathSays"/>: in
+    /// <see cref="FireStep"/> the shooter presses Fire with <paramref name="slot"/> and the given aim. No other
+    /// command is given, so the neutral input keeps every character's aim and stance and releases the trigger.
+    /// </summary>
+    private static Func<uint, CharacterCommand[]> FireOnce(ushort aimYaw, short aimPitch, byte slot) =>
+        step => step == FireStep
+            ? [new CharacterCommand(ShooterIndex, new InputCommand(FireStep, FireStep, Buttons.Fire, aimYaw, aimPitch, slot))]
+            : [];
+
+    /// <summary>The first weapon slot whose weapon fires <paramref name="classIndex"/>.</summary>
+    private static byte SlotFiring(CompiledConfig config, int classIndex)
+    {
+        for (var slot = 0; slot < config.Weapons.Length; slot++)
+        {
+            if (config.Weapons[slot].ProjectileClass == classIndex)
+            {
+                return checked((byte)slot);
+            }
+        }
+
+        Assert.Fail(FormattableString.Invariant($"No weapon slot fires projectile class {classIndex}."));
+        return 0;
+    }
+
+    /// <summary>
+    /// Asserts that the double closed form of <paramref name="launch"/> is above
+    /// <see cref="ProjectileWorlds.Ridge"/>'s surface where it crosses z = 20, 24 and 28 m: the band's front
+    /// edge, its crest and its back edge.
+    /// </summary>
+    private static void AssertAboveTheRidge(Projectile launch, CompiledConfig config, string context)
+    {
+        var origin = (DVec3)launch.Origin;
+        var velocity = (DVec3)launch.LaunchVelocity;
+        var halfG = (double)config.HalfG[launch.Class];
+        Assert.True(velocity.Z > 0.0, FormattableString.Invariant($"{context}: the shot {launch} does not fly toward the ridge, along +Z"));
+        foreach (var z in new[] { (double)ProjectileWorlds.RidgeFrontZ, ProjectileWorlds.RidgeCrestZ, ProjectileWorlds.RidgeBackZ })
+        {
+            var t = (z - origin.Z) / velocity.Z;
+            var height = origin.Y + (velocity.Y * t) + (halfG * t * t);
+            var surface = ProjectileWorlds.RidgeHeightAt(z);
+            Assert.True(
+                height > surface,
+                FormattableString.Invariant($"{context}: the double path is at height {height:R} at z = {z:R}, not above the ridge surface {surface:R}"));
+        }
+    }
+
+    /// <summary>
+    /// Asserts that the run's only event holding <paramref name="projectileId"/> is one hit, at
+    /// <paramref name="predicted"/>'s step, with its kind, target ID and hitbox and a point within
+    /// <see cref="HitPointTolerance"/> of its point, and that no committed state holds the projectile from
+    /// that step on.
+    /// </summary>
+    private static void AssertHitWhereTheReferenceSays(List<StepOutcome> outcomes, uint projectileId, PredictedHit predicted, string context)
+    {
+        Assert.True(
+            outcomes[^1].Step >= predicted.Step,
+            FormattableString.Invariant($"{context}: the run ended at step {outcomes[^1].Step}, before the predicted hit step {predicted.Step}"));
+        ProjectileHit? found = null;
+        foreach (var outcome in outcomes)
+        {
+            var at = FormattableString.Invariant($"{context}, step {outcome.Step} (hit expected at step {predicted.Step})");
+            var hitsFor = outcome.Hits.Where(h => h.ProjectileId == projectileId).ToArray();
+            var expiriesFor = outcome.Expiries.Where(e => e.ProjectileId == projectileId).ToArray();
+            Assert.True(expiriesFor.Length == 0, $"{at}: the step reported expiries [{string.Join(", ", expiriesFor)}] for the projectile; it hits");
+            if (outcome.Step != predicted.Step)
+            {
+                Assert.True(hitsFor.Length == 0, $"{at}: the step reported hits [{string.Join(", ", hitsFor)}] for the projectile");
+            }
+            else
+            {
+                Assert.True(hitsFor.Length == 1, $"{at}: the step reported hits [{string.Join(", ", hitsFor)}] for the projectile; expected exactly one");
+                found = hitsFor[0];
+            }
+
+            if (outcome.Step >= predicted.Step)
+            {
+                Assert.True(
+                    outcome.Projectiles.All(p => p.Id != projectileId),
+                    $"{at}: the committed state holds [{string.Join(", ", outcome.Projectiles.Select(p => p.Id))}] from the hit step on");
+            }
+        }
+
+        Assert.True(found is not null, FormattableString.Invariant($"{context}: the run has no outcome for step {predicted.Step}"));
+        var hit = found.Value;
+        Assert.True(
+            hit.Kind == predicted.Kind && hit.TargetId == predicted.TargetId && hit.Hitbox == predicted.Hitbox,
+            FormattableString.Invariant($"{context}: the hit is {hit}; the double reference predicts {predicted}"));
+        var off = DVec3.Distance(hit.Point, predicted.Point);
+        Assert.True(
+            off <= HitPointTolerance,
+            FormattableString.Invariant($"{context}: the hit point {hit.Point} is {off:R} m from the predicted point {predicted.Point}"));
+    }
+
+    /// <summary>
+    /// Asserts that no hit event ever holds <paramref name="projectileId"/>, and that the expiry events hold it
+    /// exactly once, as {projectile, Range}, at <paramref name="rangeStep"/>.
+    /// </summary>
+    private static void AssertExpiresWithRangeAt(List<StepOutcome> outcomes, uint projectileId, uint rangeStep, string context)
+    {
+        Assert.True(
+            outcomes[^1].Step >= rangeStep,
+            FormattableString.Invariant($"{context}: the run ended at step {outcomes[^1].Step}, before the Range step {rangeStep}"));
+        var expired = 0;
+        foreach (var outcome in outcomes)
+        {
+            var at = FormattableString.Invariant($"{context}, step {outcome.Step} (Range expiry expected at step {rangeStep})");
+            var hitsFor = outcome.Hits.Where(h => h.ProjectileId == projectileId).ToArray();
+            var expiriesFor = outcome.Expiries.Where(e => e.ProjectileId == projectileId).ToArray();
+            Assert.True(hitsFor.Length == 0, $"{at}: the step reported hits [{string.Join(", ", hitsFor)}] for the projectile; it expires without a hit");
+            if (outcome.Step == rangeStep)
+            {
+                Assert.True(
+                    expiriesFor.Length == 1 && expiriesFor[0].Reason == ExpiryReason.Range,
+                    $"{at}: the step reported expiries [{string.Join(", ", expiriesFor)}] for the projectile; expected exactly {{{projectileId}, Range}}");
+                expired++;
+            }
+            else
+            {
+                Assert.True(expiriesFor.Length == 0, $"{at}: the step reported expiries [{string.Join(", ", expiriesFor)}] for the projectile");
+            }
+        }
+
+        Assert.True(expired == 1, FormattableString.Invariant($"{context}: the run has no outcome for the Range step {rangeStep}"));
+    }
+
+    /// <summary>
+    /// The first segment k, below the class's <c>LifetimeSteps</c>, whose end p(k + 1) has
+    /// |p(k + 1) − Origin|² &gt; <c>MaxRangeSq</c> in the contract's float expressions
+    /// (<see cref="ProjectileWorlds.ContractPosition"/> and <see cref="RangeSquared"/>); null when none does.
+    /// </summary>
+    private static uint? FirstRangeK(CompiledConfig config, Projectile launch)
+    {
+        var lifetime = (uint)config.LifetimeSteps[launch.Class];
+        for (var k = 0u; k < lifetime; k++)
+        {
+            var b = ProjectileWorlds.ContractPosition(launch.Origin, launch.LaunchVelocity, config.HalfG[launch.Class], config.StepRateHz, k + 1u);
+            if (RangeSquared(b, launch.Origin) > config.MaxRangeSq[launch.Class])
+            {
+                return k;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>|b − origin|² in float, as <c>((dx·dx) + (dy·dy)) + (dz·dz)</c>.</summary>
+    private static float RangeSquared(Vec3 b, Vec3 origin)
+    {
+        var dx = b.X - origin.X;
+        var dy = b.Y - origin.Y;
+        var dz = b.Z - origin.Z;
+        return ((dx * dx) + (dy * dy)) + (dz * dz);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="point"/> lies strictly on <paramref name="shooter"/>'s side of the crest line,
+    /// in the X–Z plane: the 2D cross product of the line's direction with the offset from its start has the
+    /// same, non-zero sign for both.
+    /// </summary>
+    private static bool ShortOfTheCrest(DVec3 point, DVec3 shooter, TestWorldLine crest)
+    {
+        var dx = (double)crest.To.X - crest.From.X;
+        var dz = (double)crest.To.Z - crest.From.Z;
+        double Side(DVec3 p) => (dx * (p.Z - crest.From.Z)) - (dz * (p.X - crest.From.X));
+        return Side(point) * Side(shooter) > 0.0;
+    }
+
+    /// <summary>
+    /// The shooter and the target of a run of two characters, one of which fires every shot: the shooter is
+    /// the only character that fires, and the target the other.
+    /// </summary>
+    private static (uint ShooterId, uint TargetId) ShooterAndTarget(ScenarioRun run, (ScenarioStep Step, ShotEvent Shot)[] shots, string context)
+    {
+        var shooterIds = shots.Select(s => s.Shot.CharacterId).Distinct().ToArray();
+        var others = run.InitialCharacters.Where(c => !shooterIds.Contains(c.Id)).ToArray();
+        Assert.True(
+            run.InitialCharacters.Count == 2 && shooterIds.Length == 1 && others.Length == 1,
+            FormattableString.Invariant(
+                $"{context}: the initial state holds characters [{string.Join(", ", run.InitialCharacters.Select(c => c.Id))}] and shots come from [{string.Join(", ", shooterIds)}]; expected two characters, one shooter and one target"));
+        return (shooterIds[0], others[0].Id);
+    }
+
+    /// <summary>The committed character with ID <paramref name="id"/>; anything but exactly one fails the test.</summary>
+    private static CharacterState CommittedCharacter(IReadOnlyList<CharacterState> characters, uint id, string context)
+    {
+        var matching = characters.Where(c => c.Id == id).ToArray();
+        Assert.True(matching.Length == 1, FormattableString.Invariant($"{context}: the committed state holds {matching.Length} characters with ID {id}"));
+        return matching[0];
+    }
+
+    /// <summary>
     /// The aim yaw and pitch, in binary angle units (65536 to a turn), nearest to <paramref name="direction"/>:
     /// yaw = atan2(x, z) and pitch = atan2(y, √(x² + z²)), computed in double and rounded to the nearest unit.
     /// Yaw 0 faces +Z and 16384 faces +X, and positive pitch is up, as the weapon step's forward vector
@@ -632,6 +1301,10 @@ public sealed class ProjectileScenarioTests
     /// <summary>Every shot of the run, in step order, with the step that fired it.</summary>
     private static (ScenarioStep Step, ShotEvent Shot)[] ShotsOf(ScenarioRun run) =>
         run.Steps.SelectMany(step => step.Shots.Select(shot => (Step: step, Shot: shot))).ToArray();
+
+    /// <summary>Every hit of the run, in step order and in each step's event order, with the step that reported it.</summary>
+    private static (ScenarioStep Step, ProjectileHit Hit)[] HitsOf(ScenarioRun run) =>
+        run.Steps.SelectMany(step => step.Hits.Select(hit => (Step: step, Hit: hit))).ToArray();
 
     /// <summary>Asserts that no step of the run faulted.</summary>
     private static void AssertNoStepFaulted(ScenarioRun run, string context)
@@ -750,4 +1423,20 @@ public sealed class ProjectileScenarioTests
         IReadOnlyList<ExpiryEvent> Expiries,
         IReadOnlyList<Projectile> Projectiles,
         IReadOnlyList<CharacterState> Characters);
+
+    /// <summary>One planned shot of <c>shots-at-known-distances</c>: its shooter, its projectile class and its placement.</summary>
+    private sealed record PlannedShot(uint ShooterId, int Class, string Placement);
+
+    /// <summary>
+    /// A row of <see cref="ShotsAtKnownDistancesHitWhereTheClosedFormPathSays"/>: the collision data the
+    /// reference reads and the world built from it, the shooter's feet, the target (none for the ridge rows)
+    /// and the binary-angle aim of the shot.
+    /// </summary>
+    private sealed record KnownDistancePlacement(
+        CollisionData Data,
+        CollisionWorld World,
+        Vec3 ShooterFeet,
+        CharacterRecord? Target,
+        ushort AimYaw,
+        short AimPitch);
 }

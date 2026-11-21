@@ -1373,6 +1373,22 @@ The design documents settled these points, which the spec leaves open. They are 
   moves the line by at most about 2.4 mm at 25 m; a double prototype of every row put the first and
   second capsule entries at least 4 mm apart along the line, and struck every part in each stance.
   T203 now says so.
+- **T205's in-process rows fire through the weapon step, as T203's do (Phase 7 red check).** T205
+  names a shooter's eye, a target 25 m away and the 12.5 m wall of `ProjectileWorlds.Wall()`, and
+  ridge pitches in degrees, without saying how the shot is put in flight. An `InFlight` projectile is
+  first swept at segment k = 1 (T186), so at 20 Hz a class-0 shot would never be swept over the target
+  or the wall, and at 30 Hz never over the wall. Each row therefore resets a state at step 0 with both
+  weapons' `spreadHalfAngleDeg` 0 and the shooter's ActiveSlot set to the class's slot (the rifle for
+  class 0, the launcher for class 1, both Ready), and the shooter presses Fire in step 1 with the
+  binary-angle yaw and pitch nearest the row's direction: `ProjectileWorlds.AimWithDrop` to the torso
+  centre for the flat and wall rows, and +Z at the row's pitch for the ridge rows, where 3.5°, 1.5°,
+  0.5° and 2.0° become 637, 273, 91 and 364 units, each within 0.001°. The launch is rebuilt from the
+  shot event and the shooter's committed pose, and checked against the committed projectile, as in
+  T203. A check of every row's arrange against the Phase 6 weapon step, before stage 5 exists, found
+  each prediction as the row states: the class-0 flat shot at 20 Hz meets the torso in segment 0, in
+  step 1; the clearing class-1 shot lands near z = 102.25 m; the blocked shots meet the front face
+  near z = 23.3 m (class 0) and 21.1 m (class 1); and the expiring class-0 shot meets nothing before
+  its Range step. T205 now says so.
 
 ## Delivery
 
