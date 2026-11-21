@@ -1064,11 +1064,12 @@ The design documents settled these points, which the spec leaves open. They are 
   changed since `main`, though, and 12 files of Phases 1 to 3 that this phase does not touch are still
   under 95%. Phase 1's checkpoint and T137's decision already give the slice-wide gate to Phase 10's
   T260. So T167 passes when every file this phase changed is at or above 95% in the gate's table:
-  `Descriptors.cs` and `Tables.cs` at 100%, `DeterminismAnalyzer.cs` at 98.49%, `SimMath.cs` at 97.76%,
-  and `SimMathBounds.cs` with no coverable lines. In this sandbox, `dotnet test MmoEngine.sln` also
-  fails all 258 `MmoEngine.Harness.Tests`, because their ClickHouse fixture needs Docker and there is
-  none here. That project is Spec 014's, and this branch does not change it. CI's `.NET` workflow runs
-  it on `ubuntu-latest`, which has Docker.
+  `Descriptors.cs` and `Tables.cs` at 100%, `DeterminismAnalyzer.cs` at 98.49% (99.26% after the
+  Phase 5 review fixes), `SimMath.cs` at 97.76%, and `SimMathBounds.cs` with no coverable lines. In
+  this sandbox, `dotnet test MmoEngine.sln` also fails all 258 `MmoEngine.Harness.Tests` when no
+  Docker daemon is running, because their ClickHouse fixture needs Docker. That project is Spec 014's,
+  and this branch does not change it. Starting `dockerd` first makes all 258 pass locally (the Phase 5
+  checkpoint run did), and CI's `.NET` workflow runs them on `ubuntu-latest`, which has Docker.
 - **MMO1009 checks the element conversions Roslyn gives no operation of their own (T163, Phase 5
   review).** The rule looked only at `IConversionOperation` nodes, but a tuple conversion, a `foreach`
   iteration variable, a deconstruction, a spread and the left operand of `??` convert their elements
