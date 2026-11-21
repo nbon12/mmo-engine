@@ -1358,6 +1358,21 @@ The design documents settled these points, which the spec leaves open. They are 
   24 m on the line, with the shooter's eye 600/hz m behind z = 15 m. Targets 20 and 24 m from the
   shooter could not share one swept segment at 60 Hz, where a segment is 10 m long, and then the step
   order, not the key, would pick target 9. T197 now says so.
+- **T203 fires its shots through the weapon step, so its target stays 25 m away (Phase 7 red check).**
+  An `InFlight` projectile is first swept at segment k = 1 (T186), and segment 0 of a 600 m/s shot
+  covers the first 30 m at 20 Hz, so a 25 m target would never be swept at that rate; T193 moved its
+  shooter back to 50 m for that reason. T203 instead resets a state at step 0 with the rifle's
+  `spreadHalfAngleDeg` 0, and the shooter presses Fire in step 1 with the binary-angle yaw and pitch
+  nearest `ProjectileWorlds.AimWithDrop`'s direction to the part's centre. The weapon step sweeps
+  segment 0 in that step, so the target stays at the 25 m the task names, and the 20 Hz rows also
+  cover a hit in the step the shot is fired. A shot that hits in its own step is in no committed
+  state, so the test rebuilds the launch from the shot event and the shooter's committed pose (Origin
+  = position + eye height, LaunchVelocity = direction · muzzle speed) and checks it against the
+  committed projectile wherever one exists. The expected part is the one `PredictFirstHit` names from
+  that launch, after the arrange asserts that it names target 2. Rounding the aim to binary angles
+  moves the line by at most about 2.4 mm at 25 m; a double prototype of every row put the first and
+  second capsule entries at least 4 mm apart along the line, and struck every part in each stance.
+  T203 now says so.
 
 ## Delivery
 
