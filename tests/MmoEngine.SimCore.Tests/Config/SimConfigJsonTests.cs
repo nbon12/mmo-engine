@@ -14,6 +14,11 @@ public sealed class SimConfigJsonTests
 {
     private const string InvalidValue = "has an invalid value or is not a known field (";
 
+    /// <summary>The largest file <c>SimConfigJson.Load</c> reads, 1 MiB.</summary>
+    private const long MaxFileLength = 1024 * 1024;
+
+    public static TheoryData<string> FileCases => ["missing-file", "oversized-file", "unreadable-file"];
+
     public static TheoryData<string> JsonCases =>
     [
         "truncated",
@@ -64,6 +69,66 @@ public sealed class SimConfigJsonTests
         {
             Assert.DoesNotContain("\n", error.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("\r", error.Message, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// <c>SimConfigJson.Load</c> refuses a file it cannot bind with one error at <c>config</c> and no
+    /// configuration (contracts/config-rules.md#server): Given (<c>missing-file</c>) a path in a fresh temp
+    /// directory that names no file, (<c>oversized-file</c>) a sparse file of 1 MiB + 1 byte, or
+    /// (<c>unreadable-file</c>) a copy of <c>simcore/config/default.json</c> that another handle holds open
+    /// sharing nothing, When it is loaded, Then the error is exactly <c>config: file '&lt;path&gt;' does not
+    /// exist</c> or <c>config: the file is 1048577 bytes; the limit is 1048576</c>, or starts
+    /// <c>config: file '&lt;path&gt;' cannot be read (</c> and ends with the reason's closing parenthesis.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(FileCases))]
+    public void LoadRefusesAFileItCannotRead(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-load");
+        var path = directory.Combine("config.json");
+        FileStream? hold = null;
+        switch (caseName)
+        {
+            case "missing-file":
+                break;
+            case "oversized-file":
+                using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
+                {
+                    stream.SetLength(MaxFileLength + 1);
+                }
+
+                break;
+            case "unreadable-file":
+                File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
+                hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case.");
+        }
+
+        SimConfigLoad load;
+        using (hold)
+        {
+            load = SimConfigJson.Load(path);
+        }
+
+        Assert.Null(load.Config);
+        var error = Assert.Single(load.Errors);
+        Assert.Equal("config", error.Path);
+        switch (caseName)
+        {
+            case "missing-file":
+                Assert.Equal($"file '{path}' does not exist", error.Message);
+                break;
+            case "oversized-file":
+                Assert.Equal("the file is 1048577 bytes; the limit is 1048576", error.Message);
+                break;
+            default:
+                Assert.StartsWith($"file '{path}' cannot be read (", error.Message, StringComparison.Ordinal);
+                Assert.EndsWith(")", error.Message, StringComparison.Ordinal);
+                Assert.True(error.Message.Length > $"file '{path}' cannot be read ()".Length, $"'{error.Message}' carries no reason.");
+                break;
         }
     }
 

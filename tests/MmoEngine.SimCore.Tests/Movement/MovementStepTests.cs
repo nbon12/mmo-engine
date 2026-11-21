@@ -41,6 +41,12 @@ public sealed class MovementStepTests
     /// </summary>
     private static readonly Vec3 SideFaceStart = new(-95f, 0.01f, -110f);
 
+    public static TheoryData<int> Rates => TestRates.All;
+
+    public static TheoryData<string> PushOutCases => ["overlapping-wall", "slot-narrower-than-the-capsule"];
+
+    public static TheoryData<string> HeadroomBuffers => ["full-buffer", "empty-buffer"];
+
     /// <summary>
     /// Every combination of Forward, Back, Left, Right and Walk (32), crossed with Standing and Crouched:
     /// 64 rows. Crouch itself is not a row: <see cref="MovementStep.WishVelocity"/> takes the stance
@@ -371,6 +377,152 @@ public sealed class MovementStepTests
         }
 
         return data;
+    }
+
+    /// <summary>
+    /// Sub-step 5: airborne, gravity lowers <c>velocity.y</c> by <c>gravityPerStep</c> each step, clamped at
+    /// −<c>maxFallSpeed</c>. Given the placeholders with <c>movement.maxFallSpeed</c> 1 m/s (the rule
+    /// table's minimum) and a character at rest 50 m above <see cref="MovementWorlds.Flat"/>'s floor,
+    /// airborne, When it is stepped 2·hz times with the neutral input, Then after each step
+    /// <c>velocity.y</c> is, bit for bit, the previous value minus <c>gravityPerStep</c> in float, replaced
+    /// by exactly −1 whenever it falls below −1; the clamp acts on at least one step, the last step's
+    /// <c>velocity.y</c> is exactly −1 (0xBF800000), and the character is never grounded.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Rates))]
+    public void FallSpeedIsClampedAtMaxFallSpeed(int hz)
+    {
+        var world = MovementWorlds.Flat();
+        var config = CompiledConfig.Create(TestConfigs.With(c =>
+        {
+            c.StepRateHz = hz;
+            c.Movement!.MaxFallSpeed = 1f;
+        }));
+        var start = world.StartCharacter() with
+        {
+            Position = new Vec3(0f, 50f, MovementWorlds.StartZ),
+            Flags = default,
+        };
+
+        var steps = Idle(world, start, 2 * hz, config);
+
+        var expected = 0f;
+        var clamped = 0;
+        for (var k = 0; k < steps.Length; k++)
+        {
+            expected -= config.GravityPerStep;
+            if (expected < 0f - config.MaxFallSpeed)
+            {
+                expected = 0f - config.MaxFallSpeed;
+                clamped++;
+            }
+
+            var actual = steps[k].After.Velocity.Y;
+            Assert.True(
+                BitConverter.SingleToUInt32Bits(actual) == BitConverter.SingleToUInt32Bits(expected),
+                $"{hz} Hz step {k + 1}: velocity.y is {actual:R}, expected {expected:R} bit for bit");
+            Assert.False(IsGrounded(steps[k].After), $"{hz} Hz step {k + 1}: the falling character is grounded at {steps[k].After.Position}");
+        }
+
+        Assert.True(clamped > 0, $"{hz} Hz: no step reached -maxFallSpeed, so the clamp was not exercised");
+        Assert.Equal(0xBF800000u, BitConverter.SingleToUInt32Bits(steps[^1].After.Velocity.Y));
+    }
+
+    /// <summary>
+    /// The push-out at the start of every sub-move (data-model.md#movement-step): while a triangle is closer
+    /// to the capsule axis than <c>PushOutThreshold</c>, the nearest pushes the capsule out to
+    /// r + contactSkin, at most 4 times, and an overlap left after them reports
+    /// <see cref="MovementOutcome.Stuck"/>. Given (<c>overlapping-wall</c>) a standing character at rest
+    /// with its axis 0.2 m in front of <see cref="MovementWorlds.ThinWall"/> (closer than r = 0.4), When it
+    /// is stepped once with the neutral input, Then it is pushed straight back from the wall: its axis ends
+    /// r + contactSkin (<c>SweepTarget</c>) from the wall's plane within 1e-5 m, its x is unchanged and the
+    /// outcome has no Stuck. Given (<c>slot-narrower-than-the-capsule</c>) the same character midway between
+    /// the two walls of <c>MovementWorlds.Slot(0.6)</c>, 0.3 m from each, When it is stepped once, Then each
+    /// push leaves it overlapping the other wall, and the outcome has Stuck.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PushOutCases))]
+    public void PushOutClearsAnOverlapOrReportsStuck(string caseName)
+    {
+        var config = TestConfigs.Compiled(30);
+        var (world, start) = caseName switch
+        {
+            "overlapping-wall" => (MovementWorlds.ThinWall(), new Vec3(0f, MovementWorlds.ContactSkin, MovementWorlds.FeatureZ - 0.2f)),
+            "slot-narrower-than-the-capsule" => (MovementWorlds.Slot(0.6f), new Vec3(0f, MovementWorlds.ContactSkin, MovementWorlds.StartZ)),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row."),
+        };
+        var character = world.StartCharacter() with { Position = start };
+        foreach (var plane in world.Planes)
+        {
+            Assert.True(
+                plane.SignedDistance(start) < config.PushOutThreshold,
+                $"{caseName}: the start {start} is {plane.SignedDistance(start):R} m from a wall, not inside the push-out threshold {config.PushOutThreshold:R}");
+        }
+
+        var stepped = Step(world, character, Neutral(character), config);
+
+        var stuck = (stepped.Result.Outcome & MovementOutcome.Stuck) != 0;
+        if (caseName == "overlapping-wall")
+        {
+            Assert.False(stuck, $"{caseName}: the push-out reported Stuck; the character ended at {stepped.After.Position}");
+            var distance = world.Plane.SignedDistance(stepped.After.Position);
+            Assert.True(
+                System.Math.Abs(distance - config.SweepTarget) <= 1e-5,
+                $"{caseName}: the axis ended {distance:R} m from the wall, expected r + contactSkin = {config.SweepTarget:R} within 1e-5");
+            Assert.Equal(0u, BitConverter.SingleToUInt32Bits(stepped.After.Position.X));
+        }
+        else
+        {
+            Assert.True(stuck, $"{caseName}: the outcome {stepped.Result.Outcome} has no Stuck; the character ended at {stepped.After.Position}");
+        }
+    }
+
+    /// <summary>
+    /// Sub-step 2 and the query capacity rule (data-model.md#movement-step): standing up needs the headroom
+    /// the standing capsule adds, and a query that overflows the candidate buffer refuses the step with
+    /// <c>QueryCapacityExceeded</c> and leaves the character unchanged. Given a character crouched at rest
+    /// under <c>MovementWorlds.LowLedge(1.5)</c>'s slab (2 m inside its near edge) and Crouch released,
+    /// When it is stepped with (<c>full-buffer</c>) the candidate buffer a <c>SimWorld</c> uses, Then the
+    /// step completes, the character stays crouched and the outcome has
+    /// <see cref="MovementOutcome.HeadroomBlocked"/>; When it is stepped with (<c>empty-buffer</c>) a
+    /// buffer of no elements, Then the headroom query overflows and the result's fault is
+    /// <c>QueryCapacityExceeded</c> with no sub-move or sweep run, and the character is exactly as before.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(HeadroomBuffers))]
+    public void StandingUpUnderALedgeChecksHeadroomAndAnOverflowRefusesTheStep(string buffer)
+    {
+        var world = MovementWorlds.LowLedge(1.5f);
+        var config = TestConfigs.Compiled(30);
+        var before = world.StartCharacter() with
+        {
+            Position = new Vec3(0f, MovementWorlds.ContactSkin, world.FrontEdge + 2f),
+            Stance = Stance.Crouched,
+        };
+        var character = before;
+        var input = Neutral(character);
+        var candidates = buffer switch
+        {
+            "full-buffer" => Candidates(world.World, config),
+            "empty-buffer" => [],
+            _ => throw new ArgumentOutOfRangeException(nameof(buffer), buffer, "Unknown row."),
+        };
+
+        var result = MovementStep.Step(ref character, in input, config, world.World, candidates);
+
+        if (buffer == "full-buffer")
+        {
+            Assert.Equal(StepFaultCode.None, result.Fault);
+            Assert.Equal(Stance.Crouched, character.Stance);
+            Assert.True((result.Outcome & MovementOutcome.HeadroomBlocked) != 0, $"the outcome {result.Outcome} has no HeadroomBlocked");
+        }
+        else
+        {
+            Assert.Equal(StepFaultCode.QueryCapacityExceeded, result.Fault);
+            Assert.Equal(0, result.SubMoves);
+            Assert.Equal(0, result.Sweeps);
+            Assert.Equal(before, character);
+        }
     }
 
     /// <summary>A candidate buffer the size <c>SimWorld</c> uses: <c>MaxQueryCandidates(3·r + 2·contactSkin)</c>.</summary>

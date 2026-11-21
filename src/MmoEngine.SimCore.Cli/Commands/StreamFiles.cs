@@ -54,7 +54,8 @@ internal static class StreamFiles
     /// Appends <paramref name="entry"/> to <c>&lt;outDir&gt;/REGENERATIONS.md</c> in one write. When the log
     /// does not exist, that write creates it with the <c># Stream regenerations</c> heading and the sentence
     /// saying the file is appended by <c>simcore streams record</c>, then the entry. The entry starts on a
-    /// line of its own, after a blank line.
+    /// line of its own, after a blank line, and ends with its own line feed, as every entry
+    /// <c>streams record</c> builds does.
     /// </summary>
     public static void AppendRegenerations(string outDir, string entry)
     {
@@ -73,10 +74,6 @@ internal static class StreamFiles
         }
 
         text.Append('\n').Append(entry);
-        if (!entry.EndsWith('\n'))
-        {
-            text.Append('\n');
-        }
 
         var bytes = Encoding.UTF8.GetBytes(text.ToString());
         using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);

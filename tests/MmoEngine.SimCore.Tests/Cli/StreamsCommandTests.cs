@@ -72,6 +72,9 @@ public sealed class StreamsCommandTests
 
     public static TheoryData<string> RecordKinds => ["changed", "added"];
 
+    /// <summary>The regeneration log before the run: absent, empty, ending without a line feed, or with one.</summary>
+    public static TheoryData<string> LogShapes => ["no-log", "empty-log", "no-final-line-feed", "final-line-feed"];
+
     /// <summary>The present but invalid reasons; the missing one is the <c>[InlineData(null)]</c> row.</summary>
     public static TheoryData<string> InvalidReasons => ["", "   ", new string('a', 501), "a\nb"];
 
@@ -271,6 +274,69 @@ public sealed class StreamsCommandTests
             entry[1..]);
 
         Assert.Equal(differences, Differences(before, Snapshot(sandbox.Root)));
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#regenerationsmd: Given copies of the committed streams, content and
+    /// configuration with <c>stairs-climb.mmrs</c> deleted and the copied <c>REGENERATIONS.md</c>
+    /// (<c>no-log</c>) deleted, (<c>empty-log</c>) emptied, (<c>no-final-line-feed</c>) replaced by
+    /// <c># Old log</c>, a blank line and <c>- an entry without a final line feed</c> with no line feed after
+    /// it, or (<c>final-line-feed</c>) replaced by <c># Old log</c> and a line feed, When
+    /// <c>streams record --scenario stairs-climb --reason "Log shape"</c> runs on the copies, Then it exits 0
+    /// and the log is exactly its old text (for <c>no-log</c>, the <c># Stream regenerations</c> heading, a
+    /// blank line and the sentence saying <c>simcore streams record</c> appends the file), one line feed when
+    /// that text did not end with one, a blank line, and the entry: the UTC heading, a blank line, the
+    /// reason, command and rules revision lines, a blank line, the table header and rule, and the
+    /// <c>stairs-climb</c> row, each line ending with a line feed.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(LogShapes))]
+    public void RecordStartsOrExtendsTheRegenerationLog(string caseName)
+    {
+        const string scenario = "stairs-climb";
+        const string preamble =
+            "# Stream regenerations\n\nThis file is appended by `simcore streams record`; each entry gives the reason and the old and new hashes.\n";
+        using var sandbox = Sandbox.Create($"streams-record-log-{caseName}");
+        var streamBytes = File.ReadAllBytes(sandbox.Stream(scenario));
+        File.Delete(sandbox.Stream(scenario));
+        var prefix = caseName switch
+        {
+            "no-log" => preamble,
+            "empty-log" => string.Empty,
+            "no-final-line-feed" => "# Old log\n\n- an entry without a final line feed\n",
+            "final-line-feed" => "# Old log\n",
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row."),
+        };
+        switch (caseName)
+        {
+            case "no-log":
+                File.Delete(sandbox.LogPath);
+                break;
+            case "no-final-line-feed":
+                File.WriteAllText(sandbox.LogPath, prefix[..^1]);
+                break;
+            default:
+                File.WriteAllText(sandbox.LogPath, prefix);
+                break;
+        }
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(sandbox.RecordArgs("--scenario", scenario, "--reason", "Log shape"));
+
+        Assert.True(exit == 0, $"{caseName}: simcore streams record --scenario {scenario} exited {exit}; stdout: {stdout}; stderr: {stderr}");
+        var log = File.ReadAllText(sandbox.LogPath);
+        var heading = Regex.Match(log, EntryHeadingPattern, RegexOptions.Multiline);
+        Assert.True(heading.Success, $"{caseName}: the log has no ## <UTC> heading: {log}");
+        var row = $"| {scenario} | added: {StreamBytes.Trailer(streamBytes):x16} | added: {RecordedStream.Decode(streamBytes).Steps[^1].ExpectedHash:x16} | |";
+        var expected =
+            prefix + "\n" +
+            heading.Value + "\n\n" +
+            "- Reason: Log shape\n" +
+            $"- Command: `simcore streams record --scenario {scenario}`\n" +
+            $"- Rules revision: {SimCoreVersion.RulesRevision}\n\n" +
+            TableHeader + "\n" +
+            TableRule + "\n" +
+            row + "\n";
+        Assert.Equal(expected, log);
     }
 
     /// <summary>

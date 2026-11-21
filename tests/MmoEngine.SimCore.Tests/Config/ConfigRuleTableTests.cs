@@ -200,6 +200,9 @@ public sealed partial class ConfigRuleTableTests
         "world-and-input-null",
         "weapons-null",
         "standing-null",
+        "hitboxes-null",
+        "crouched-1-null",
+        "crouched-2-b-null",
     ];
 
     public static TheoryData<string> OrderCases => ["field-errors", "relation-errors"];
@@ -706,6 +709,13 @@ public sealed partial class ConfigRuleTableTests
             // A null list counts as a list with no entries: the count message, not "is required".
             "weapons-null" => (c => c.Weapons = null, [new("weapons", "must have between 1 and 8 entries")]),
             "standing-null" => (c => c.Hitboxes!.Standing = null, [new("hitboxes.standing", "must have exactly 3 entries")]),
+
+            // The whole section absent: one error, and no capsule is read.
+            "hitboxes-null" => (c => c.Hitboxes = null, [new("hitboxes", "is required")]),
+
+            // A null capsule is the element's error alone: its points are not read.
+            "crouched-1-null" => (c => c.Hitboxes!.Crouched![1] = null, [new("hitboxes.crouched[1]", "is required")]),
+            "crouched-2-b-null" => (c => c.Hitboxes!.Crouched![2]!.B = null, [new("hitboxes.crouched[2].b", "is required")]),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
         };
     }

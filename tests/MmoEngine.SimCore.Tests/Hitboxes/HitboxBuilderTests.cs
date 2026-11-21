@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Geometry;
 using MmoEngine.SimCore.Hitboxes;
@@ -52,6 +53,16 @@ public sealed class HitboxBuilderTests
             return data;
         }
     }
+
+    /// <summary>The destinations shorter than three hitboxes, and the capsule counts other than three.</summary>
+    public static TheoryData<string, int> RefusedShapes => new()
+    {
+        { "destination", 0 },
+        { "destination", 2 },
+        { "capsules", -1 },
+        { "capsules", 2 },
+        { "capsules", 4 },
+    };
 
     /// <summary>{placeholder, sideways} × {Standing, Crouched}.</summary>
     public static TheoryData<string, Stance> Layouts
@@ -184,6 +195,42 @@ public sealed class HitboxBuilderTests
         }
 
         Assert.True(failures.Count == 0, $"{layoutName} {stance}: {failures.Count} failures; first: {string.Join("; ", failures.Take(5))}");
+    }
+
+    /// <summary>
+    /// Data-model.md#hitbox-layout-and-hitboxes: a layout has exactly three capsules (Head, Torso, Legs) and
+    /// <c>Build</c> writes three hitboxes. Given (<c>destination</c>) a destination of 0 or 2 hitboxes, When
+    /// the placeholder standing layout is built into it, Then it throws an <see cref="ArgumentException"/>
+    /// whose <c>ParamName</c> is <c>destination</c> and whose message is exactly
+    /// <c>The destination holds fewer than three hitboxes. (Parameter 'destination')</c>, and the
+    /// destination keeps its default elements; Given (<c>capsules</c>) a default array (count −1), or 2 or 4
+    /// capsules, When a <see cref="HitboxLayout"/> is constructed from them, Then it throws an
+    /// <see cref="ArgumentException"/> whose <c>ParamName</c> is <c>capsules</c> and whose message is exactly
+    /// <c>A hitbox layout has exactly three capsules: head, torso and legs. (Parameter 'capsules')</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RefusedShapes))]
+    public void RefusesAShortDestinationOrACapsuleCountOtherThanThree(string parameter, int count)
+    {
+        var layout = CompiledConfig.Create(TestConfigs.At(30)).HitboxLayouts[(int)Stance.Standing];
+        ArgumentException thrown;
+        string message;
+        if (parameter == "destination")
+        {
+            var destination = new Hitbox[count];
+            thrown = Assert.Throws<ArgumentException>(() => HitboxBuilder.Build(layout, Position, 0, destination));
+            message = "The destination holds fewer than three hitboxes. (Parameter 'destination')";
+            Assert.All(destination, hitbox => Assert.Equal(default, hitbox));
+        }
+        else
+        {
+            var capsules = count < 0 ? default : ImmutableArray.CreateRange(Enumerable.Repeat(layout.Capsules[0], count));
+            thrown = Assert.Throws<ArgumentException>(() => new HitboxLayout(capsules, layout.BoundCenterUp, layout.BoundRadius, layout.EyeHeight));
+            message = "A hitbox layout has exactly three capsules: head, torso and legs. (Parameter 'capsules')";
+        }
+
+        Assert.Equal(parameter, thrown.ParamName);
+        Assert.Equal(message, thrown.Message);
     }
 
     private static SimConfig LayoutConfig(string layoutName) => layoutName switch

@@ -318,6 +318,32 @@ public static class MovementWorlds
             joins: []);
     }
 
+    /// <summary>
+    /// Two zero-thickness vertical quads parallel to the heading, at x = ±<paramref name="width"/>/2 from
+    /// z = <see cref="StartZ"/> − 4 to <see cref="StartZ"/> + 4, so the start stands midway between them.
+    /// <see cref="MovementWorld.Planes"/> holds the +X wall (normal (−1, 0, 0)) and then the −X wall
+    /// (normal (1, 0, 0)), both facing the start; <see cref="MovementWorld.FootPoint"/> is the +X wall's
+    /// foot beside the start. A slot narrower than the capsule's diameter overlaps the start on both sides.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The width is not positive.</exception>
+    public static MovementWorld Slot(float width)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        var half = width / 2.0;
+        var mesh = new MeshBuilder();
+        mesh.VerticalQuad((half, StartZ - 4.0), (half, StartZ + 4.0));
+        mesh.VerticalQuad((-half, StartZ - 4.0), (-half, StartZ + 4.0));
+        return Create(
+            FlatHeights(),
+            [mesh.Build()],
+            planes: [new WorldPlane(new Vec3(-1f, 0f, 0f), (float)-half), new WorldPlane(new Vec3(1f, 0f, 0f), (float)-half)],
+            topHeight: WallHeight,
+            frontEdge: float.NaN,
+            backEdge: float.NaN,
+            footPoint: new Vec3((float)half, 0f, StartZ),
+            joins: []);
+    }
+
     private static MovementWorld Create(
         float[] heights,
         MeshData[] meshes,

@@ -1778,6 +1778,20 @@ The design documents settled these points, which the spec leaves open. They are 
   sample. Neither uses a random number generator, so both stay, and T261 lists them. The two other
   hits were doc comments saying that `StreamGenerator` and `WeaponRuns` use no `System.Random`; they
   now say "random number generator", so the grep names only the analyzer and its tests.
+- **The regeneration log writer lost a branch no caller can reach (T260).** `StreamFiles.AppendRegenerations`
+  added a line feed after an entry that did not end with one, but its only caller, `streams record`,
+  builds every entry from lines that each end with one, and `StreamWriterTests` keeps tests from
+  calling the writer directly, so no test could reach the branch and the file stayed under 95%. The
+  branch is gone and the method's summary says an entry ends with its own line feed. The three
+  reachable cases (no log, an empty log, a log without a final line feed) are now exercised through
+  the command by `StreamsCommandTests.RecordStartsOrExtendsTheRegenerationLog`, and
+  contracts/simcore-cli.md#regenerationsmd states them.
+- **Two refusals are tested with a file another handle holds open (T260).** `config check` and
+  `SimConfigJson.Load` refuse a file they cannot read, and the top-up needed a file that exists and is
+  small enough but fails to read. A permission bit does not do it, since a test run as root reads
+  anything. The rows instead open the file with `FileShare.None` while the command runs: .NET takes an
+  exclusive lock for that share mode, so the command's own open fails with an `IOException`. The
+  tests clean up through the handle's `Dispose`, so they stay parallel-safe and rerun-safe.
 
 ## Delivery
 
