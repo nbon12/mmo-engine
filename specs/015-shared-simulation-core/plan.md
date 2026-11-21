@@ -1632,6 +1632,17 @@ The design documents settled these points, which the spec leaves open. They are 
   absent list would read as "none supplied" by default. `collision-missing` already writes `[]`, so no
   committed fixture changes. The checks run after the existing `expectedError` and
   `expectedConfigErrors` checks, so those rows keep their messages.
+- **`StepCase` exposes what its last step did, beyond T248's list (T245, T248; Phase 9 red check).**
+  T245 compares the movement, weapon, projectile and world cases with `SimWorld` runs step by step, so
+  the tests read more than `PassLength`, `StepsLeftInPass` and `LastResultHash`: `LastStep` on every
+  kind, `Character` (movement), `LastShotCount` (weapon), `Projectile`, `LastOutcome`, `LastHit` and
+  `LastExpiry` (projectile), and `LastFault` and `LastStepHash` (world), each the value the entry point
+  returned or wrote. They are plain field reads, so they add nothing to the tick path. T248 now lists
+  them with the pass lengths the tests check. The same check found two smaller gaps, which T251 and T252
+  now state: the P99 column must be available for an empty summary, because a column provider drops an
+  unavailable column and the configuration test reads the columns against an empty `Summary`, and the
+  missing-runner-class line is written with `WriteLine`. T245's "same `CompiledConfig` bits" also
+  compares every compiled weapon and both hitbox layouts, not only the scalar derived values.
 
 ## Delivery
 

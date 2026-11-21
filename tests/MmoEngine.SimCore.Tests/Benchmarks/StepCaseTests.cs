@@ -5,6 +5,7 @@ using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Geometry;
+using MmoEngine.SimCore.Hitboxes;
 using MmoEngine.SimCore.Movement;
 using MmoEngine.SimCore.Projectiles;
 using MmoEngine.SimCore.Server;
@@ -366,7 +367,10 @@ public sealed class StepCaseTests
         Assert.Equal(Derived(expected), Derived(actual));
     }
 
-    /// <summary>The compiled values derived from the configuration, one line each, floats as their bits.</summary>
+    /// <summary>
+    /// The compiled values derived from the configuration, one line each, floats as their bits: the general,
+    /// movement and projectile-class values, every compiled weapon and both hitbox layouts.
+    /// </summary>
     private static List<string> Derived(CompiledConfig config)
     {
         var lines = new List<string>
@@ -419,10 +423,59 @@ public sealed class StepCaseTests
             lines.Add(Line($"LifetimeSteps[{i}]", config.LifetimeSteps[i]));
         }
 
+        for (var i = 0; i < config.Weapons.Length; i++)
+        {
+            var weapon = config.Weapons[i];
+            var prefix = string.Create(CultureInfo.InvariantCulture, $"Weapons[{i}].");
+            lines.Add(Line(prefix + "Rpm", weapon.Rpm));
+            lines.Add(Line(prefix + "MaxShotsPerStep", weapon.MaxShotsPerStep));
+            lines.Add(Line(prefix + "FireMode", (int)weapon.FireMode));
+            lines.Add(Line(prefix + "MagazineSize", weapon.MagazineSize));
+            lines.Add(Line(prefix + "ReserveRounds", weapon.ReserveRounds));
+            lines.Add(Line(prefix + "ReloadSteps", weapon.ReloadSteps));
+            lines.Add(Line(prefix + "EquipSteps", weapon.EquipSteps));
+            lines.Add(Line(prefix + "HeatPerShotScaled", weapon.HeatPerShotScaled));
+            lines.Add(Line(prefix + "OverheatThresholdScaled", weapon.OverheatThresholdScaled));
+            lines.Add(Line(prefix + "HeatRecoveryScaled", weapon.HeatRecoveryScaled));
+            lines.Add(Line(prefix + "HeatCooldownPerStep", weapon.HeatCooldownPerStep));
+            lines.Add(Line(prefix + "HeatCooldownDelaySteps", weapon.HeatCooldownDelaySteps));
+            lines.Add(Line(prefix + "SpreadHalfAngleDeg", weapon.SpreadHalfAngleDeg));
+            lines.Add(Line(prefix + "VersMax", weapon.VersMax));
+            lines.Add(Line(prefix + "RecoilKickPitchUnits", weapon.RecoilKickPitchUnits));
+            lines.Add(Line(prefix + "RecoilKickYawUnits", weapon.RecoilKickYawUnits));
+            lines.Add(Line(prefix + "RecoilMaxPitchUnits", weapon.RecoilMaxPitchUnits));
+            lines.Add(Line(prefix + "RecoilMaxYawUnits", weapon.RecoilMaxYawUnits));
+            lines.Add(Line(prefix + "RecoilRecoveryPerStep", weapon.RecoilRecoveryPerStep));
+            lines.Add(Line(prefix + "RecoilRecoveryDelaySteps", weapon.RecoilRecoveryDelaySteps));
+            lines.Add(Line(prefix + "MuzzleSpeed", weapon.MuzzleSpeed));
+            lines.Add(Line(prefix + "ProjectileClass", weapon.ProjectileClass));
+        }
+
+        for (var i = 0; i < config.HitboxLayouts.Length; i++)
+        {
+            var layout = config.HitboxLayouts[i];
+            var prefix = string.Create(CultureInfo.InvariantCulture, $"HitboxLayouts[{i}].");
+            for (var c = 0; c < layout.Capsules.Length; c++)
+            {
+                var capsule = layout.Capsules[c];
+                lines.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{prefix}Capsules[{c}] {Bits(capsule.A)} {Bits(capsule.B)} {Bits(capsule.Radius)}"));
+            }
+
+            lines.Add(Line(prefix + "BoundCenterUp", layout.BoundCenterUp));
+            lines.Add(Line(prefix + "BoundRadius", layout.BoundRadius));
+            lines.Add(Line(prefix + "EyeHeight", layout.EyeHeight));
+        }
+
         return lines;
     }
+
+    private static string Bits(HitboxLocalPoint point) => $"{Bits(point.Fwd)} {Bits(point.Right)} {Bits(point.Up)}";
 
     private static string Line(string name, float value) => $"{name} {Bits(value)}";
 
     private static string Line(string name, int value) => string.Create(CultureInfo.InvariantCulture, $"{name} {value}");
+
+    private static string Line(string name, uint value) => string.Create(CultureInfo.InvariantCulture, $"{name} {value}");
 }
