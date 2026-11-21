@@ -191,3 +191,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | rifle-burst | added: 211b40e5a6aecaf0 | added: 4c0e147fd1431fc0 | |
+
+## 2026-11-21T08:20:10Z
+
+- Reason: First recording of the shots-at-known-distances scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario shots-at-known-distances`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| shots-at-known-distances | added: c352859901282add | added: eaf2b2898e3e7e14 | |
