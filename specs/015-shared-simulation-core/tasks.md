@@ -2045,7 +2045,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
 ### Tests (write first, confirm red)
 
-- [ ] T214 [US6] Write the read-only fixture support `tests/MmoEngine.SimCore.Tests/Support/GoldenFixtures.cs` (static class `GoldenFixtures`, namespace `MmoEngine.SimCore.Tests.Support`) first, because every test below uses it:
+- [X] T214 [US6] Write the read-only fixture support `tests/MmoEngine.SimCore.Tests/Support/GoldenFixtures.cs` (static class `GoldenFixtures`, namespace `MmoEngine.SimCore.Tests.Support`) first, because every test below uses it:
   - `Root` is `RepoPaths.Root` + `simcore/golden`. `Formats` is `["input", "collision", "stream"]`.
   - `ReadBin(string format, string caseName)` returns `byte[]`. `ReadJson(string format, string caseName)` returns a `JsonDocument`. Both open `<format>/<case>.bin` or `.json` through `RepoPaths` with `FileAccess.Read` and never write.
   - `TheoryData<string, string>` members, rows `(format, case)`. They are enumerated from the `.json` files in ordinal order and classified by reading `kind`, `refusedAt` and `expectedError.code` with `JsonDocument`, not with the code under test:
@@ -2054,13 +2054,15 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `DecodeRefusalCases` (refusals with no `refusedAt`);
     - `OtherDecodeRefusals` (decode refusals whose code is neither `UnsupportedVersion` nor `ChecksumMismatch`);
     - `OpenRefusals`.
+  - `ValidCaseNames(string format)` returns a `TheoryData<string>` of one format's valid case names, the rows of `ValidCases` for that format, for T216's one-parameter Theories. `ReadJsonBytes(format, caseName)` returns the `.json`'s UTF-8 bytes, read the same way, for `GoldenJson.Parse(format, "<case>.json", bytes)`.
+  - A `kind` other than `valid` or `refusal`, or a `refusedAt` other than `open` on a refusal, throws while classifying, so no fixture drops out of every Theory unnoticed.
   - `ExpectedError(format, caseName)` returns `(FormatErrorCode Code, long Offset, string Field)`, parsed from `expectedError` with `Enum.Parse<FormatErrorCode>`.
   - `CollisionFixtureWorlds(caseName)` returns an `IReadOnlyList<CollisionWorld>`: `CollisionFile.Decode` of `collision/<name>.bin` for each name in a stream case's `collisionFixtures`.
   - `ContractCaseNames(format)` holds the case names of the contract tables as literals:
     - input, 38 cases: the 29 valid and 9 refusal cases of contracts/input-command-format.md#input-cases;
     - collision, 22 cases: 4 valid and 18 refusal (contracts/collision-data-format.md#golden-fixtures);
     - stream, 32 cases: 4 valid and 28 refusal (contracts/recorded-stream-format.md#golden-fixtures).
-- [ ] T215 [US6] Write failing test `GoldenFixtureTests.EachValidFixtureRoundTripsToItsBytes(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenFixtureTests.cs` (US6.1). It is a `[Theory]` with `[MemberData(nameof(GoldenFixtures.ValidCases), MemberType = typeof(GoldenFixtures))]`.
+- [X] T215 [US6] Write failing test `GoldenFixtureTests.EachValidFixtureRoundTripsToItsBytes(string format, string caseName)` in `tests/MmoEngine.SimCore.Tests/Formats/GoldenFixtureTests.cs` (US6.1). It is a `[Theory]` with `[MemberData(nameof(GoldenFixtures.ValidCases), MemberType = typeof(GoldenFixtures))]`.
   - **Given** each committed valid case. **When** its `.json` is parsed with `GoldenJson.Parse` and encoded (`InputCodec.TryEncode` into a 17-byte buffer, `CollisionFile.Encode(data)` or `RecordedStream.Encode()`), **then** the bytes equal the `.bin` byte for byte.
   - **When** the `.bin` is decoded, **then** every decoded value equals the JSON's:
     - input: `TryDecode` returns true, and the six fields are equal;
@@ -2069,7 +2071,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Re-encoding the decoded value gives the `.bin` again: `TryEncode`, `CollisionFile.Encode(world.Data)` or `stream.Encode()`.
   - For collision and stream cases, the `fileLength` field of the encoded bytes (u64 at offset 8 or 56) and the trailer as x16 equal the JSON's `fileLength` and `checksum`. Stream cases also check `configLength`, `initialStateLength` and `stepsLength` (`two-steps`: 698, 136, 44, `fileLength` 950).
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~GoldenFixtureTests.EachValidFixtureRoundTripsToItsBytes"` and confirm it fails. There are no fixtures and no `GoldenJson` yet.
-- [ ] T216 [US6] In the same file `tests/MmoEngine.SimCore.Tests/Formats/GoldenFixtureTests.cs`, write failing tests (FR-020, FR-023):
+- [X] T216 [US6] In the same file `tests/MmoEngine.SimCore.Tests/Formats/GoldenFixtureTests.cs`, write failing tests (FR-020, FR-023):
   - `EveryContractCaseIsCommitted(string format)`, `[InlineData("input")]`, `[InlineData("collision")]`, `[InlineData("stream")]`:
     - the case names that have both a `.json` and a `.bin` in `simcore/golden/<format>/` equal `GoldenFixtures.ContractCaseNames(format)` exactly (38, 22 and 32 names);
     - the folder holds no other file;

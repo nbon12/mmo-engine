@@ -1516,6 +1516,21 @@ The design documents settled these points, which the spec leaves open. They are 
   With a one-byte allocation added to the expiry branch of `StepProjectiles`, all three new rows fail
   and the empty-command rows still pass. T036's bullet now says its row covers the fixed per-step path,
   and T211 names the new row.
+- **The golden fixture support has two members T214 did not list, and the fixture tests read the JSON
+  without `GoldenJson` (T214-T216).** T216's `InputCasesValidateAsRecorded`,
+  `CollisionCasesHaveTheirDerivedData` and `StreamConfigEntriesNameTheirRuleTablePaths` take only a case
+  name and run over one format's valid cases, but every Theory member T214 listed has `(format, case)`
+  rows. `GoldenFixtures.ValidCaseNames(format)` gives those one-column rows. T215 parses each case with
+  `GoldenJson.Parse(format, "<case>.json", utf8Json)`, and T214 had no way to read a fixture's raw
+  bytes, so `ReadJsonBytes` reads them through `RepoPaths`, read-only. The classification throws on a
+  `kind` other than `valid` or `refusal` and on a `refusedAt` other than `open`, so a mistyped fixture
+  fails loudly instead of dropping out of every Theory. The round-trip and derived-data tests compare the
+  decoded values with the JSON as `JsonDocument` reads it, not with what `GoldenJson` parsed. `golden
+  write` writes each `.bin` from `GoldenJson`'s output, so a parser that misread a field would agree
+  with its own `.bin`. The tests also check the values the contracts pin: all 29 input validation
+  outcomes and their `lastSequence` and `weaponSlots`, the collision file lengths, `tiny-world`'s
+  checksum, `two-steps`' block lengths, negative zero written as `-0.0` in every collision valid case,
+  and each case's `kind` against its contract table.
 
 ## Delivery
 
