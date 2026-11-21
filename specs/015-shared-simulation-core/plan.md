@@ -1762,6 +1762,16 @@ The design documents settled these points, which the spec leaves open. They are 
   means. The bounded read covers `validate-report` only; `config check` and the content loader keep
   their length checks, and this review did not cover them. T249, T250, the contract's check 1, its
   tests table and simcore-cli.md say so.
+- **`CreateRootCommand` takes the writers and the logger (T256).** T256 had `CreateRootCommand()`
+  delegate to `CreateRootCommand(runStream)` and `Run` call that one, but every command's `Create`
+  captures `stdout`, `stderr` and the logger its actions write to, so a tree built without them could
+  not be the one `Run` invokes. The builder is `CreateRootCommand(stdout, stderr, logger, runStream)`,
+  which `Run` calls with its own writers, its run's logger and its `runStream`. `CreateRootCommand(runStream)`
+  builds the same tree over `TextWriter.Null` and Serilog's `Logger.None`, and `CreateRootCommand()`
+  passes it the server build's `StreamRunner`, so the quickstart test parses exactly the tree `Run`
+  parses without anything able to write. Reading the writers from `ParseResult.InvocationConfiguration`
+  inside every action was not chosen: it changes all six command factories and their tests for a
+  parse-only caller. T256 says so.
 
 ## Delivery
 
