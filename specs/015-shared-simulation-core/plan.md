@@ -1674,8 +1674,9 @@ The design documents settled these points, which the spec leaves open. They are 
   report without statistics, but `GcStats.GetBytesAllocatedPerOperation` can also return null (a runtime
   without allocation counters), and the `server` table makes `allocatedBytesPerOp` a required integer.
   Writing null would make the whole export invalid, and throwing would lose every other entry, so such a
-  report is left out like a failed one and `validate-report` names its step if no other case covers it.
-  T251 says so.
+  report is left out like a failed one, and the entry point exits 1 naming it (a later bullet):
+  `validate-report` alone would not notice, because check 5 requires only movement, weapon and
+  projectile. T251 says so.
 - **Phase 9's coverage checkpoint holds its own files, and the gate's exit 0 stays T260's (T254).** The
   checkpoint asked `coverage_gate.py` to exit 0 with every changed `src/*.cs` at 95%, but the gate also
   lists files of Phases 2 to 8 that no Phase 9 task touches (eight were under 95% at T254, among them
@@ -1727,6 +1728,40 @@ The design documents settled these points, which the spec leaves open. They are 
   precision for values no producer can write. New `EveryOtherCheckReportsItsLine` rows pin the bound, and
   the same review pinned the exact `Int128` sum, check 5's `p99Ns` and movement and projectile coverage,
   and every `build` boolean of each mode, including a produced `aot` mode the fixture does not have.
+- **The export and the entry point share one rule for a left-out report (T251, T252, Phase 9 review,
+  second round).** The exporter and `Program.Run` each tested statistics and the allocation
+  measurement on their own, so a third condition added to one could leave a report out of the export
+  while the run still exited 0, and the exporter's doc claimed `validate-report` would name the missing
+  step, which is false for `hitboxBuild` and `stateHash`. `SimCoreMeasurementExporter.TryMeasurements`
+  is now the one rule: it gives the statistics and the allocation, or the reason the report is left
+  out, and the entry point builds its stderr line from that reason. The two lines are unchanged.
+- **A restarted step case reads as a new one (T245, T248, Phase 9 review, second round).**
+  `StepCase.Restart()` left `LastStep` at the previous pass's last step, although it is documented as 0
+  before the first step, so the movement, weapon and projectile `LastResultHash` after a restart hashed
+  the previous step number with the initial state, a state no run holds. `Restart()` now sets it to 0;
+  the drivers already reset every other last-step field. `EachPassRunsItsStepsAndRestartRestoresIt`
+  checks `LastStep` and `LastResultHash` against the new case's.
+- **`validate-report` shows text from the file escaped, refuses unpaired surrogates and caps the file
+  at 1 MiB (T249, T250, Phase 9 review, second round).** Three inputs broke its contract. A member name
+  holding an escaped line feed went into its path raw, so one problem printed as two lines; the
+  member names in paths and the step in `is not unique within <step>` are now written JSON-escaped
+  with the relaxed encoder, which leaves the schema's ASCII names unchanged, while the lookups still
+  compare the unescaped name. A string or member name whose escapes leave an unpaired surrogate,
+  `"\uD800"`, made `GetString` and `Name` throw `InvalidOperationException` out of the walk (or out of
+  `JsonDocument.Parse`'s repeated-member check), and a .NET string holding one made `Parse` throw
+  `ArgumentException`; such text is not Unicode (RFC 8259, section 8.2), so it is now
+  `$: is not valid JSON (…)`, found by one read of every name and string before the walk, which then
+  cannot throw. Comparing with `ValueEquals` was not chosen, because it throws on the same text.
+  `ValidateServerObject` makes the same read and reports `server: is not valid JSON (…)`. Last, the
+  command read the whole file into memory, so a device such as `/dev/zero` ran it out of memory and
+  System.CommandLine's handler turned the crash into exit 1, the code for an invalid report. It now
+  reads at most 1 MiB + 1 bytes, `config check`'s limit and about a hundred times a real report:
+  a longer file is refused from its length before it is read, and a stream without a length once it
+  passes the limit, each with exit 2 and a logged event naming the path. The limit is the command's,
+  not the validator's, because a file that is not a report cannot be checked, which is what exit 2
+  means. The bounded read covers `validate-report` only; `config check` and the content loader keep
+  their length checks, and this review did not cover them. T249, T250, the contract's check 1, its
+  tests table and simcore-cli.md say so.
 
 ## Delivery
 
