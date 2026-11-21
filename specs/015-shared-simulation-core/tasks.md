@@ -2747,7 +2747,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- streams verify`. It prints 19 `<name>: match, <steps> steps, final <x16>` lines and `streams verify: 19 streams, 19 match, 0 diverged, 0 not comparable, 0 refused`, and exits 0.
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- config check simcore/config/default.json`. It prints nothing and exits 0.
   - Then `git status --porcelain simcore/` must be empty and `git diff --exit-code simcore/` must exit 0. If any file changed, find the nondeterminism or stale file in the phase file that owns it (Phase 3 world, Phase 7 fire streams, Phase 8 fixtures) and fix it there. Never commit a regenerated file to make this pass.
-- [ ] T259 Run every dotnet.yml gate locally, with the same commands and flags as `.github/workflows/dotnet.yml`:
+- [X] T259 Run every dotnet.yml gate locally, with the same commands and flags as `.github/workflows/dotnet.yml`:
   - `dotnet restore MmoEngine.sln`
   - `dotnet build MmoEngine.sln -warnaserror --no-restore`
   - `dotnet format MmoEngine.sln --verify-no-changes --no-restore`
@@ -2756,11 +2756,12 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `python3 tools/coverage_gate.py --base origin/main --coverage-dir "$COV"`
 
   Also run `python3 -m unittest discover -s tests/workflows -v`; slice 1 must not break the existing workflow tests. Use a temporary results directory, so no `coverage/` folder is left in the working tree. Record each command and its exit code for the PR description.
-- [ ] T260 Top up coverage from T259's gate table. For every `src/MmoEngine.SimCore*/**/*.cs` row below 95.00% or marked `not in any coverage report`:
+- [X] T260 Top up coverage from T259's gate table. For every `src/MmoEngine.SimCore*/**/*.cs` row below 95.00% or marked `not in any coverage report`:
   - Add the missing tests in the folder that owns the file. Core, Server and Cli files get tests in `tests/MmoEngine.SimCore.Tests/<Folder>/<Subject>Tests.cs`; analyzer files get tests in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs`, `DescriptorTests.cs` or `WiringTests.cs`.
   - The new tests are Theories over the uncovered branches, with exact asserted values: codes, offsets, field paths, messages and exit codes.
   - Never add `[ExcludeFromCodeCoverage]`, a skip or a `.runsettings` exclusion.
   - Rerun `dotnet test` with coverage and `python3 tools/coverage_gate.py --base origin/main --coverage-dir "$COV"` until it exits 0 with every changed `src/*.cs` file listed and at or above 95%.
+  - The T259 run listed 8 of 116 files under 95%: `ConfigCommand.cs` 88.57%, `StreamFiles.cs` 76.08%, `SimConfigJson.cs` 93.05%, `ConfigGuard.cs` 92.10%, `Vec3.cs` 78.26%, `HitboxBuilder.cs` 88.23%, `HitboxLayout.cs` 87.50% and `MovementStep.cs` 92.85%. The top-up added the `unreadable-file` row to `ConfigCommandTests`, `SimConfigJsonTests.LoadRefusesAFileItCannotRead`, three `ShapeCases` rows to `ConfigRuleTableTests`, `Vec3Tests.EqualityAndHashFollowTheComponentBits`, `HitboxBuilderTests.RefusesAShortDestinationOrACapsuleCountOtherThanThree`, `StreamsCommandTests.RecordStartsOrExtendsTheRegenerationLog`, and `MovementStepTests.FallSpeedIsClampedAtMaxFallSpeed`, `PushOutClearsAnOverlapOrReportsStuck` and `StandingUpUnderALedgeChecksHeadroomAndAnOverflowRefusesTheStep` (with `MovementWorlds.Slot`). It removed one unreachable branch of `StreamFiles.AppendRegenerations` (plan.md, Decisions made during implementation). After it the gate exits 0, `all 116 changed file(s) pass`: `MovementStep.cs` 96.42%, `ConfigGuard.cs` 99.12%, and the other six 100%.
 - [ ] T261 Audit the slice-1 tests with commands, fixing every hit in the file it names:
   - `grep -rnE "Skip *=|Assert\.Skip|SkipUnless|SkipWhen" tests/MmoEngine.SimCore.Tests tests/MmoEngine.SimCore.Analyzers.Tests --include=*.cs` lists only `tests/MmoEngine.SimCore.Tests/Math/ExhaustiveSweepTests.cs`.
   - `grep -rnE "new Random\(|Random\.Shared|System\.Random" src/MmoEngine.SimCore* tests/MmoEngine.SimCore* benchmarks/MmoEngine.SimCore* --include=*.cs` lists only the analyzer's own mentions: its banned-type entry `"System.Random"` in `src/MmoEngine.SimCore.Analyzers/Tables.cs`, and its violating samples (and their doc comment) in `tests/MmoEngine.SimCore.Analyzers.Tests/RuleTests.cs` and `tests/MmoEngine.SimCore.Analyzers.Tests/TableTests.cs`. A doc comment elsewhere says "random number generator" instead (plan.md, Decisions made during implementation).
@@ -2768,7 +2769,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `grep -rln "Path.GetTempPath" tests/MmoEngine.SimCore.Tests` lists only `Support/TempDirectories.cs`.
   - The only `[Collection]` definitions with `DisableParallelization = true` are `ZeroAllocationCollection` and the benchmark dry-run collection (slice 2 adds the `SimCoreExportsTests` one). Each has a comment giving its reason.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests` and `dotnet test tests/MmoEngine.SimCore.Analyzers.Tests` twice in a row. Both runs pass, and `git status --porcelain simcore/ specs/` is empty after each, so the suites are rerun-safe and never write under `simcore/`.
-- [ ] T262 Check scope and licenses with commands:
+- [X] T262 Check scope and licenses with commands:
   - **Guarded paths**: `git diff --name-only --no-renames origin/main...HEAD | grep -E '^\.github/|^\.routines/|^\.claude/|^\.specify/memory/constitution\.md$|(^|/)CLAUDE\.md$|^docs/architecture/server-architecture\.md$|^infra/'` prints nothing and exits 1. These are the `GUARDED_PATHS` of `.github/workflows/auto-merge.yml`.
   - **Packages**: `git diff origin/main...HEAD -- Directory.Packages.props` adds exactly two `PackageVersion` lines, `Microsoft.CodeAnalysis.CSharp` 5.0.0 and `Basic.Reference.Assemblies.Net100` 1.8.14, under a comment citing `specs/015-shared-simulation-core/research.md` R5 and their MIT licenses. `research.md`'s "New dependencies" list names the same two for slice 1.
   - **No npm package**: `git diff --name-only origin/main...HEAD -- '*package.json' '*package-lock.json'` is empty.
