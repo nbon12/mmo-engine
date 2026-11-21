@@ -2610,7 +2610,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Read the file with `FileAccess.Read`. If it is missing or unreadable, exit `CliExitCodes` 2 with nothing on stdout, and log on stderr through `CliLogging` an event naming the path.
   - Otherwise print `MeasurementReportValidator.Validate`'s lines on stdout, one per line, in order. Exit 0 when there are none, else 1. Malformed JSON is exit 1 with its `$: is not valid JSON (...)` line.
   - The command writes no file.
-- [ ] T251 [US7] Implement the exporter, the column and the configuration in `benchmarks/MmoEngine.SimCore.Benchmarks/`, following contracts/measurement-report.md#how-the-report-is-produced, step 1, and the `server` table of #fields, after T247. Together with the next task, makes T244's `ConfigCarriesTheExporterP99ColumnMemoryDiagnoserAndJoinedSummary` and `DryRunExportsAValidServerObject` pass.
+- [X] T251 [US7] Implement the exporter, the column and the configuration in `benchmarks/MmoEngine.SimCore.Benchmarks/`, following contracts/measurement-report.md#how-the-report-is-produced, step 1, and the `server` table of #fields, after T247. Together with the next task, makes T244's `ConfigCarriesTheExporterP99ColumnMemoryDiagnoserAndJoinedSummary` and `DryRunExportsAValidServerObject` pass.
   - `P99Column.cs`: `IColumn`, with `Id` and `ColumnName` `P99`. Its value is `report.ResultStatistics.Percentiles.Percentile(99)`, shown in the summary's time unit. `IsAvailable` returns true for every summary, including an empty one: `ConfigCarriesTheExporterP99ColumnMemoryDiagnoserAndJoinedSummary` reads the configuration's columns against an empty `Summary`, and a column provider drops an unavailable column.
   - `SimCoreMeasurementExporter.cs`: `IExporter`, constructed with the runner class. It writes `<summary.ResultsDirectoryPath>/simcore-server-benchmarks.json` with `Utf8JsonWriter`, through a temp file in the same directory and then a rename. The fields, in contract order:
     - `tool`: `BenchmarkDotNet <major.minor.patch>`, from the BenchmarkDotNet assembly's informational version with any `+<commit>` suffix removed;
@@ -2624,9 +2624,9 @@ Every Theory below whose result depends on the step length takes `int hz` from `
       - `iterations`: `Statistics.N`;
       - `allocatedBytesPerOp`: `GcStats.GetBytesAllocatedPerOperation`.
 
-    A benchmark without exactly one category or a `Case` parameter throws `InvalidOperationException` naming it. A report without statistics, meaning a failed benchmark, is left out, so `validate-report` names the missing step.
+    A benchmark without exactly one category or a `Case` parameter throws `InvalidOperationException` naming it. A report without statistics, meaning a failed benchmark, is left out, so `validate-report` names the missing step. So is a report whose `GetBytesAllocatedPerOperation` is null, because `allocatedBytesPerOp` is a required integer.
   - `SimCoreBenchmarkConfig.cs`: `public static IConfig Create(string runnerClass, Job job)`. It returns `ManualConfig.Create(DefaultConfig.Instance)` with `AddJob(job)`, `AddExporter(new SimCoreMeasurementExporter(runnerClass))`, `AddColumn(P99Column.Instance)`, `AddDiagnoser(MemoryDiagnoser.Default)` and `WithOptions(ConfigOptions.JoinSummary)`. Joining the summaries puts every benchmark class in one export file.
-- [ ] T252 [US7] Implement the benchmarks and the entry point in `benchmarks/MmoEngine.SimCore.Benchmarks/`, after T248 and T251. Makes T244 pass, together with the tasks above.
+- [X] T252 [US7] Implement the benchmarks and the entry point in `benchmarks/MmoEngine.SimCore.Benchmarks/`, after T248 and T251. Makes T244 pass, together with the tasks above.
   - Five benchmark classes. Each is public and not sealed, as BenchmarkDotNet's generated code requires. Each runs at 30 Hz, with a `[Params] public string Case` and a `[GlobalSetup]` that calls `StepCase.Create`. The `[Benchmark] public void Step()` calls `StepCycling()`. Each keeps a result field so the work is not eliminated.
     - `MovementBenchmarks.cs`: `[BenchmarkCategory("movement")]`, Case `flat-run`, `wall-slide`, `corner-wedge`.
     - `WeaponBenchmarks.cs`: `[BenchmarkCategory("weapon")]`, `rifle-hold`.
@@ -2638,7 +2638,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - otherwise runs `BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, SimCoreBenchmarkConfig.Create(runnerClass, Job.Default))`;
     - returns 1 when any summary has a critical validation error or a report without statistics, else 0.
   - Must not create `tools/agreement/lib/measure.mjs`, the `measure` job or any WebAssembly measurement.
-- [ ] T253 [US7] Make every `StepAllocationTests` row green. Makes T246 pass.
+- [X] T253 [US7] Make every `StepAllocationTests` row green. Makes T246 pass.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Allocation"`. The per-phase allocation tests (T036, T076, T115, T172 and T199) are already green, so a `StepAllocationTests` row that reports bytes points first at `benchmarks/MmoEngine.SimCore.Benchmarks/StepCases.cs`. Fix it there: `Step()` and `Restart()` only copy precomputed structs and call the core.
   - If a row shows an allocation inside the core that no per-phase test reached (for example a `SimWorld.Step` stage that only `world/fuzz-all-buttons` drives), first add a row reproducing it to that entry point's allocation test class from T036, T076, T115, T172 or T199 and see it fail. Then fix it in the core file that allocates, keeping its phase's rules: no LINQ, lambdas, boxing, `params` arrays, string formatting or per-step `new` on the tick path, and every buffer owned by the world and sized from the `CompiledConfig` maxima.
   - Never lower the warm-up or step count, and never exclude a step from the count.

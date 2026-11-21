@@ -1670,6 +1670,12 @@ The design documents settled these points, which the spec leaves open. They are 
 - **T247 adds a minimal benchmark entry point.** An executable project does not build without `Main`, and
   T252, which writes the real one, comes later, so T247 adds the Regionizer benchmarks' one-line
   `BenchmarkSwitcher` `Main`, and T252 replaces it.
+- **The exporter also leaves out a report without an allocation measurement (T251).** T251 leaves out a
+  report without statistics, but `GcStats.GetBytesAllocatedPerOperation` can also return null (a runtime
+  without allocation counters), and the `server` table makes `allocatedBytesPerOp` a required integer.
+  Writing null would make the whole export invalid, and throwing would lose every other entry, so such a
+  report is left out like a failed one and `validate-report` names its step if no other case covers it.
+  T251 says so.
 
 ## Delivery
 
