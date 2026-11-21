@@ -1589,6 +1589,21 @@ The design documents settled these points, which the spec leaves open. They are 
   `0 cases` and exit 0, so the command refuses it like a missing `--dir`: exit 2,
   `golden write: refused, <format>/: the folder does not exist`, nothing written. The test support
   `GoldenFixtures` already needs all three folders. T237 and the contract's step 1 now list it.
+- **`two-characters`' second character and commands (T240).** T240 and the contract named only the IDs
+  (1 and 4) and which indices have commands. Character 4 is a copy of the worked example's character 1
+  at (−0.5, 0, 0.5), inside `tiny-world`'s playable area, and its commands use slot 1 and yaw 49152, so
+  the fixture pins non-zero bytes the `two-steps` command leaves at 0. The fixture is never run. The
+  contract's table now gives the values.
+- **The Phase 8 coverage rows also go to `GoldenCommandTests` (T241).** T241 named four test classes
+  for missing coverage, but `GoldenCommand.cs` runs only through `GoldenCommandTests`, and
+  `GoldenCase.cs`' recorded outputs (`FileLength`, `Derived`, the stream's block lengths) are read by no
+  Theory row, only by a test that asserts them. So `GoldenCommandTests` gains the refusal rows
+  `encoder-refuses-config` (a stream config with no weapons, which the block's structure allows and the
+  encoder's shape rule refuses), `mutation-refused` and `missing-format-folder`, plus a Fact for a `.bin`
+  that cannot be written. `GoldenJsonTests` gains `KeepsTheRecordedLengthsAndDerivedData` as well as its
+  rows. Steps 2 to 4 of contracts/simcore-cli.md#golden-write now state those refusals. Lines left
+  uncovered need a read failure, a missing `--dir` default (the test helper takes only rooted paths) or a
+  case no parser output reaches.
 
 ## Delivery
 

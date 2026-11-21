@@ -99,9 +99,14 @@ rules](input-command-format.md#shared-fixture-rules). This is the only code that
    whose `base` is not a valid case of the same format exits 2, and nothing is written.
 2. Write each valid case's `.bin` with the core's encoder for its format (`InputCodec.TryEncode`,
    `CollisionFile.Encode`, `RecordedStream.Encode`). An encoder that refuses the values (the
-   collision and stream encoders decode their own output) exits 2, and nothing is written.
-3. Write each refusal case's `.bin` by applying its `mutations` to its base's bytes.
-4. An unchanged `.bin` is not rewritten.
+   collision and stream encoders decode their own output; the stream encoder also refuses a
+   configuration whose shape breaks a rule, such as no weapons) exits 2, and nothing is written.
+3. Write each refusal case's `.bin` by applying its `mutations` to its base's bytes. A mutation that
+   does not fit those bytes (a `truncate` past the end, for example) exits 2, and nothing is written.
+4. An unchanged `.bin` is not rewritten. Every `.bin` is computed before the first write, and each
+   write is atomic. A `.bin` that cannot be written exits 2 with
+   `golden write: refused, <format>/<case>.bin: the file cannot be written (...)`; the files written
+   before it stay written.
 
 The command does not check `expectedError`; the format tests do (US6 scenarios 2 to 5). Output, one
 line per case, then a total:

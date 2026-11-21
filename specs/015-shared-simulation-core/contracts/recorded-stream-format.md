@@ -311,7 +311,7 @@ The base of the refusal cases.
 
 | Case | What it pins |
 | --- | --- |
-| `two-characters` | two characters (IDs 1 and 4); step 1 has commands for indices 0 and 1, step 2 only for index 1 |
+| `two-characters` | two characters (IDs 1 and 4): the worked example state with a copy of character 1's record after it, as ID 4 at (−0.5, 0, 0.5), so `initialStateLength` 248, `stepsLength` 80 and `fileLength` 1098; step 1 has commands for indices 0 and 1 (the `example` command, then sequence 1, client step 100, `Forward`, yaw 49152, slot 1), step 2 only for index 1 (sequence 2, client step 101, `Forward` and `Jump`, yaw 49152, slot 1) |
 | `rejected-command` | a step whose command has buttons `0xFE00`: it decodes, because commands are validated by the world, not the decoder |
 | `seeded` | a generated stream's header: `seed` 7, and a `matchSalt` with the top bit set, both round-tripping as 16 hex digits |
 

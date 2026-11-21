@@ -98,6 +98,9 @@ public sealed class GoldenJsonTests
     private const int StreamHeaderLength = 64;
     private const int TrailerLength = 8;
 
+    /// <summary>The stream header's <c>u32 configLength</c>, followed by <c>initialStateLength</c> and <c>stepsLength</c>.</summary>
+    private const int StreamConfigLengthOffset = 44;
+
     /// <summary>
     /// Malformed values, each <c>(json, expectedMessage)</c>: a valid case with one value broken. The
     /// edited property is written first in the JSON, so each row's display name shows it.
@@ -127,6 +130,50 @@ public sealed class GoldenJsonTests
 
         // An integer that does not fit its field: aimYaw is a u16.
         { Edited(Node(InputExampleJson), "command", root => root["command"]!["aimYaw"] = 65536), "$.command.aimYaw: 65536 is outside [0, 65535]" },
+
+        // An integer written as a string, with a fraction, and beyond 64 bits.
+        { Edited(Node(InputExampleJson), "command", root => root["command"]!["aimYaw"] = "16384"), "$.command.aimYaw: must be an integer" },
+        { Edited(Node(InputExampleJson), "command", root => root["command"]!["aimYaw"] = JsonNode.Parse("1.5")), "$.command.aimYaw: must be an integer" },
+        { Edited(Node(InputExampleJson), "command", root => root["command"]!["aimYaw"] = JsonNode.Parse("18446744073709551616")), "$.command.aimYaw: 18446744073709551616 is outside [0, 65535]" },
+
+        // A formatVersion other than the format's, a field the case's shape does not have, and an enum name that is no member.
+        { Edited(Node(InputExampleJson), "formatVersion", root => root["formatVersion"] = 2), "$.formatVersion: 2 is not 1, the input format's version" },
+        { Edited(Node(InputExampleJson), "extra", root => root["extra"] = 1), "$.extra: is not a field of a valid input case" },
+        { Edited(Node(InputExampleJson), "validate", root => root["validate"]!["expected"] = "Accepted"), "$.validate.expected: \"Accepted\" is not a InputRejection" },
+
+        // Refusal cases: the code None, a refusedAt other than "open", refusedAt on an input case, both expectations, and
+        // configuration errors on a case that is not refused when opened.
+        { Edited(Node(RefuseVersion2Json), "expectedError", root => root["expectedError"]!["code"] = "None"), "$.expectedError.code: None is no refusal" },
+        { Edited(Node(RefuseVersion2Json), "refusedAt", root => root["refusedAt"] = "decode"), "$.refusedAt: must be \"open\"" },
+        { Edited(Node(RefuseVersion2Json), "refusedAt", root => root["refusedAt"] = "open"), "$.refusedAt: only a stream case is refused at open" },
+        { Edited(Node(RefuseVersion2Json), "expectedConfigErrors", root => root["expectedConfigErrors"] = GravityConfigErrors()), "$: a refusal case has expectedError or expectedConfigErrors, not both" },
+        { Edited(Node(ConfigInvalidJson), "expectedConfigErrors", root => root.Remove("refusedAt")), "$.expectedConfigErrors: only a case refused at open has configuration errors" },
+
+        // Mutations: an unknown op, odd hex, a missing argument and an argument the op does not take.
+        { Edited(Node(RefuseVersion2Json), "mutations", root => root["mutations"]![0]!["op"] = "rotate"), "$.mutations[0].op: \"rotate\" is not an op; the ops are truncate, append, write, insert, delete and fixChecksum" },
+        { Edited(Node(RefuseVersion2Json), "mutations", root => root["mutations"]![0]!["hex"] = "0"), "$.mutations[0].hex: must be hex digits, two per byte" },
+        { Edited(Node(RefuseVersion2Json), "mutations", root => root["mutations"]![0]!.AsObject().Remove("offset")), "$.mutations[0].offset: is required for write" },
+        { Edited(Node(RefuseVersion2Json), "mutations", root => root["mutations"]![0]!["length"] = 1), "$.mutations[0].length: is not an argument of write" },
+
+        // Collision counts that disagree with their lists, a vertex that is not a triple, a float value that is a string.
+        { Edited(TinyWorldCase(), "heights", root => root["heights"]!.AsArray().RemoveAt(8)), "$.heights: 8 heights; columns × rows is 9" },
+        { Edited(TinyWorldCase(), "heights", root => root["heights"]![0] = FloatObject("0x00000000", "\"0.0\"")), "$.heights[0].value: must be a number" },
+        { Edited(TinyWorldCase(), "meshCount", root => root["meshCount"] = 2), "$.meshCount: 2 is not the length of meshes, 1" },
+        { Edited(TinyWorldCase(), "meshes", root => root["meshes"]![0]!["vertices"]![0]!.AsArray().RemoveAt(2)), "$.meshes[0].vertices[0]: must be [x, y, z]" },
+        { Edited(TinyWorldCase(), "meshes", root => RemoveLast(root["meshes"]![0]!["indices"]!.AsArray())), "$.meshes[0].indices: 8 indices are not whole triangles" },
+
+        // Stream counts that disagree with their lists.
+        { Edited(SeededStreamCase(), "stepCount", root => root["stepCount"] = 3), "$.stepCount: 3 is not the length of steps, 2" },
+        { Edited(SeededStreamCase(), "characterCount", root => root["characterCount"] = 2), "$.characterCount: 2 is not the initial state's characterCount, 1" },
+        { Edited(SeededStreamCase(), "steps", root => root["steps"]![0]!["commands"] = RepeatedCommand(root, 256)), "$.steps[0].commands: 256 commands; commandCount holds at most 255" },
+
+        // Config entries that break the block's structure (not ascending; input.weaponSlots missing), and a path that is not its field's.
+        { Edited(SeededStreamCase(), "config", root => SwapFirstTwo(root["config"]!.AsArray())), "$.config[1].fieldId: field 0x0001 is not above 0x0002" },
+        { Edited(SeededStreamCase(), "config", root => RemoveLast(root["config"]!.AsArray())), "$.config: input.weaponSlots: field 0x5001 is missing" },
+        { Edited(SeededStreamCase(), "config", root => root["config"]![9]!["path"] = "movement.fallSpeed"), "$.config[9].path: \"movement.fallSpeed\" is not field 0x1007's path \"movement.gravity\"" },
+
+        // State bytes in uppercase hex.
+        { Edited(SeededStreamCase(), "initialStateHex", root => root["initialStateHex"] = root["initialStateHex"]!.GetValue<string>().ToUpperInvariant()), "$.initialStateHex: must be lowercase hex digits, two per byte" },
     };
 
     /// <summary>
@@ -210,12 +257,57 @@ public sealed class GoldenJsonTests
     }
 
     /// <summary>
+    /// Given the seeded stream case and the <c>tiny-world</c> collision case, when each is parsed, then the
+    /// stream case keeps the lengths its JSON records (<c>configLength</c> 698, <c>initialStateLength</c> 136,
+    /// <c>stepsLength</c> 44, <c>fileLength</c> 950), each equal to the header field its encoding writes,
+    /// and the collision case keeps <c>fileLength</c> 188, the length of its encoding, and its
+    /// <c>derived</c> object: 8 heightfield triangles, mesh triangle IDs [8, 9, 10] of which [10] is
+    /// degenerate, and a 1 × 1 grid whose one cell holds [8, 9].
+    /// </summary>
+    [Fact]
+    public void KeepsTheRecordedLengthsAndDerivedData()
+    {
+        var stream = Assert.IsType<StreamValidCase>(Parse(SeededStreamCase().ToJsonString()));
+        Assert.Equal(698L, stream.ConfigLength);
+        Assert.Equal(136L, stream.InitialStateLength);
+        Assert.Equal(44L, stream.StepsLength);
+        Assert.Equal(950L, stream.FileLength);
+        var encoded = stream.EncodeBin();
+        Assert.Equal(stream.FileLength, encoded.Length);
+        Assert.Equal(stream.ConfigLength, BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(StreamConfigLengthOffset)));
+        Assert.Equal(stream.InitialStateLength, BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(StreamConfigLengthOffset + 4)));
+        Assert.Equal(stream.StepsLength, BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(StreamConfigLengthOffset + 8)));
+
+        var collision = Assert.IsType<CollisionValidCase>(Parse(TinyWorldCase().ToJsonString()));
+        Assert.Equal(188L, collision.FileLength);
+        Assert.Equal(collision.FileLength, collision.EncodeBin().Length);
+        var derived = collision.Derived;
+        Assert.Equal(8, derived.HeightfieldTriangleCount);
+        int[] meshTriangleIds = [8, 9, 10];
+        Assert.Equal(meshTriangleIds, derived.MeshTriangleIds);
+        int[] degenerateTriangleIds = [10];
+        Assert.Equal(degenerateTriangleIds, derived.DegenerateTriangleIds);
+        Assert.Equal(1, derived.GridCellsX);
+        Assert.Equal(1, derived.GridCellsZ);
+        int[] cellTriangleIds = [8, 9];
+        Assert.Equal(cellTriangleIds, Assert.Single(derived.Cells));
+    }
+
+    /// <summary>
     /// Given a case with one malformed value, when it is parsed, then it throws
     /// <see cref="GoldenCaseException"/> whose message is exactly <c>&lt;JSON path&gt;: &lt;problem&gt;</c>:
     /// an x16 with uppercase letters, 15 digits or a <c>0x</c> prefix; float <c>bits</c> in lowercase or
-    /// with 7 digits; a float <c>value</c> that does not parse to its bits; a <c>fieldId</c> with 3 digits;
-    /// an unknown <c>kind</c>; a refusal with neither <c>expectedError</c> nor
-    /// <c>expectedConfigErrors</c>; and <c>aimYaw</c> 65536, which does not fit a u16.
+    /// with 7 digits; a float <c>value</c> that does not parse to its bits, or that is a string; a
+    /// <c>fieldId</c> with 3 digits; an unknown <c>kind</c>; a refusal with neither <c>expectedError</c> nor
+    /// <c>expectedConfigErrors</c>, or with both; <c>aimYaw</c> 65536, which does not fit a u16, or written as
+    /// a string, a fraction or a number beyond 64 bits; a <c>formatVersion</c> other than the format's; a
+    /// field the case's shape does not have; an enum name that is no member; the code <c>None</c>; a
+    /// <c>refusedAt</c> other than <c>open</c>, or on an input case; configuration errors on a case that is
+    /// not refused when opened; a mutation with an unknown op, odd hex, a missing argument or one its op
+    /// does not take; collision and stream counts that disagree with their lists (<c>heights</c>,
+    /// <c>meshCount</c>, a vertex that is not a triple, indices that are not whole triangles,
+    /// <c>stepCount</c>, <c>characterCount</c>, 256 commands in a step); config entries that are not
+    /// ascending, that miss a field, or whose <c>path</c> is not their field's; and uppercase state hex.
     /// </summary>
     [Theory]
     [MemberData(nameof(MalformedValues))]
@@ -245,6 +337,34 @@ public sealed class GoldenJsonTests
     }
 
     private static JsonObject Node(string json) => JsonNode.Parse(json)!.AsObject();
+
+    /// <summary><c>config-invalid</c>'s <c>expectedConfigErrors</c>: <c>movement.gravity: must be finite</c>.</summary>
+    private static JsonArray GravityConfigErrors() =>
+        [new JsonObject { ["path"] = "movement.gravity", ["message"] = "must be finite" }];
+
+    /// <summary><paramref name="array"/> without its last element.</summary>
+    private static void RemoveLast(JsonArray array) => array.RemoveAt(array.Count - 1);
+
+    /// <summary><paramref name="array"/> with its first two elements swapped.</summary>
+    private static void SwapFirstTwo(JsonArray array)
+    {
+        var first = array[0]!.DeepClone();
+        array[0] = array[1]!.DeepClone();
+        array[1] = first;
+    }
+
+    /// <summary><paramref name="count"/> copies of step 1's first command of a stream case.</summary>
+    private static JsonArray RepeatedCommand(JsonObject root, int count)
+    {
+        var command = root["steps"]![0]!["commands"]![0]!;
+        var commands = new JsonArray();
+        for (var c = 0; c < count; c++)
+        {
+            commands.Add(command.DeepClone());
+        }
+
+        return commands;
+    }
 
     /// <summary>
     /// <paramref name="root"/> with <paramref name="edit"/> applied, as JSON text with

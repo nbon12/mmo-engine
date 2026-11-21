@@ -120,10 +120,15 @@ public sealed class GoldenCommandTests
     /// says it is an input case; <c>stream/truncated.json</c>'s base is the refusal case
     /// <c>checksum-mismatch</c>, or a case that does not exist; <c>collision/heightfield-only.json</c>'s
     /// <c>cellSize</c> is 0.1, below the 0.25 limit, so <c>CollisionFile.Encode</c> refuses it with
-    /// <c>OutOfRange</c> at 24, <c>cellSize</c>), when <c>simcore golden write</c> runs, then it exits 2;
-    /// stdout's last line starts with <c>golden write: refused, &lt;format&gt;/&lt;case&gt;.json: </c>, naming
-    /// the changed file; an Error event is logged on stderr; and nothing is written: <c>input/example.bin</c>
-    /// is not recreated, and every other file keeps its bytes and last-write time.
+    /// <c>OutOfRange</c> at 24, <c>cellSize</c>; <c>stream/two-steps.json</c>'s config has no weapon entries,
+    /// which the block's structure allows and <c>RecordedStream.Encode</c> refuses, because a configuration
+    /// needs 1 to 8 weapons; <c>stream/truncated.json</c> truncates to 951 bytes, past its base's 950, so its
+    /// mutation cannot be applied; the <c>stream/</c> folder is missing), when <c>simcore golden write</c>
+    /// runs, then it exits 2; stdout's last line starts with
+    /// <c>golden write: refused, &lt;format&gt;/&lt;case&gt;.json: </c>, naming the changed file (or
+    /// <c>stream/</c> for the missing folder), and for the encoder and mutation rows carries the encoder's
+    /// error or the mutation's; an Error event is logged on stderr; and nothing is written:
+    /// <c>input/example.bin</c> is not recreated, and every other file keeps its bytes and last-write time.
     /// </summary>
     [Theory]
     [InlineData("invalid-json")]
@@ -131,6 +136,9 @@ public sealed class GoldenCommandTests
     [InlineData("base-not-valid")]
     [InlineData("missing-base")]
     [InlineData("encoder-refuses")]
+    [InlineData("encoder-refuses-config")]
+    [InlineData("mutation-refused")]
+    [InlineData("missing-format-folder")]
     public void GoldenWriteRefusesAnInvalidCaseAndWritesNothing(string mutationName)
     {
         using var copy = CopyOfGolden($"golden-write-{mutationName}");
@@ -145,9 +153,20 @@ public sealed class GoldenCommandTests
         var lines = Lines(stdout);
         Assert.True(lines.Length > 0, $"{mutationName}: golden write printed nothing on stdout; stderr: {stderr}");
         Assert.StartsWith($"golden write: refused, {changed}: ", lines[^1], StringComparison.Ordinal);
-        if (mutationName == "encoder-refuses")
+        switch (mutationName)
         {
-            Assert.Contains("collision cellSize at offset 24: ", lines[^1], StringComparison.Ordinal);
+            case "encoder-refuses":
+                Assert.Contains("collision cellSize at offset 24: ", lines[^1], StringComparison.Ordinal);
+                break;
+            case "encoder-refuses-config":
+                Assert.EndsWith(": the encoder refuses the case (The configuration is invalid: weapons: must have between 1 and 8 entries)", lines[^1], StringComparison.Ordinal);
+                break;
+            case "mutation-refused":
+                Assert.EndsWith(": mutations[0]: truncate to 951 bytes is past the length 950", lines[^1], StringComparison.Ordinal);
+                break;
+            case "missing-format-folder":
+                Assert.Equal("golden write: refused, stream/: the folder does not exist", lines[^1]);
+                break;
         }
 
         AssertErrorEvent(stderr, mutationName);
@@ -181,6 +200,37 @@ public sealed class GoldenCommandTests
         Assert.False(Directory.Exists(missing), $"the refused golden write created {missing}");
         var entries = Directory.GetFileSystemEntries(root.Path);
         Assert.True(entries.Length == 0, $"the refused golden write created entries in the temp root: {string.Join(", ", entries)}");
+    }
+
+    /// <summary>
+    /// contracts/simcore-cli.md#golden-write (exit 0 or 2): given a copy of <c>simcore/golden/</c> in which
+    /// <c>input/example.bin</c> is a folder, so that case's computed bytes cannot be written there, when
+    /// <c>simcore golden write</c> runs, then it exits 2; stdout's last line starts with
+    /// <c>golden write: refused, input/example.bin: the file cannot be written (</c>; an Error event is logged
+    /// on stderr; the folder is still there; no temporary file is left in <c>input/</c>; and every file keeps
+    /// its bytes and last-write time.
+    /// </summary>
+    [Fact]
+    public void GoldenWriteThatCannotWriteABinExitsTwo()
+    {
+        using var copy = CopyOfGolden("golden-write-unwritable");
+        var example = copy.Combine("input", "example.bin");
+        File.Delete(example);
+        Directory.CreateDirectory(example);
+        var before = Snapshot(copy.Path);
+
+        var (exit, stdout, stderr) = SimcoreCli.Run("golden", "write", "--dir", copy.Path);
+
+        Assert.True(exit == 2, $"simcore golden write exited {exit}, expected 2; stdout: {stdout}; stderr: {stderr}");
+        var lines = Lines(stdout);
+        Assert.True(lines.Length > 0, $"golden write printed nothing on stdout; stderr: {stderr}");
+        Assert.StartsWith("golden write: refused, input/example.bin: the file cannot be written (", lines[^1], StringComparison.Ordinal);
+        AssertErrorEvent(stderr, "an unwritable .bin");
+        Assert.True(Directory.Exists(example), $"the refused golden write removed the folder {example}");
+        var temporary = Directory.GetFiles(copy.Combine("input"), "*.tmp");
+        Assert.True(temporary.Length == 0, $"golden write left temporary files in input/: {string.Join(", ", temporary)}");
+        var differences = Differences(before, Snapshot(copy.Path));
+        Assert.True(differences.Length == 0, $"the refused golden write changed the copy: {string.Join(", ", differences)}");
     }
 
     /// <summary>
@@ -262,6 +312,34 @@ public sealed class GoldenCommandTests
                     root["cellSize"] = JsonNode.Parse("""{ "bits": "0x3DCCCCCD", "value": 0.1 }""");
                 });
                 return "collision/heightfield-only.json";
+
+            case "encoder-refuses-config":
+                // The 42 weapon entries (fieldIds 0x2000 to 0x2FFF) removed: the block keeps its structure, with
+                // weapon slots 0 to N − 1 present for N = 0, and only the configuration's shape rule refuses it.
+                EditCase(copy, "stream", "two-steps", root =>
+                {
+                    var config = Assert.IsType<JsonArray>(root["config"]);
+                    var weapons = config.Where(entry => entry!["fieldId"]!.GetValue<string>().StartsWith("0x2", StringComparison.Ordinal)).ToArray();
+                    Assert.Equal(42, weapons.Length);
+                    foreach (var entry in weapons)
+                    {
+                        config.Remove(entry);
+                    }
+                });
+                return "stream/two-steps.json";
+
+            case "mutation-refused":
+                EditCase(copy, "stream", "truncated", root =>
+                {
+                    var truncate = Assert.IsType<JsonObject>(Assert.Single(Assert.IsType<JsonArray>(root["mutations"])));
+                    Assert.Equal(900, truncate["length"]?.GetValue<int>());
+                    truncate["length"] = 951;
+                });
+                return "stream/truncated.json";
+
+            case "missing-format-folder":
+                Directory.Delete(copy.Combine("stream"), recursive: true);
+                return "stream/";
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(mutationName), mutationName, "no golden write refusal row");
