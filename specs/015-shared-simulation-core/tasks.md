@@ -2137,18 +2137,18 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   | stream, `state-has-events` | `stream initialState.events.expiries.count at offset 890: a loaded state has no events, found 1` |
 
   Confirm it fails.
-- [ ] T220 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.ChecksumMismatchIsRefused(string format, string caseName)` (US6.4), rows `("collision", "checksum-mismatch")` and `("stream", "checksum-mismatch")`.
+- [X] T220 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.ChecksumMismatchIsRefused(string format, string caseName)` (US6.4), rows `("collision", "checksum-mismatch")` and `("stream", "checksum-mismatch")`.
   - **Given** a fixture whose content no longer matches its trailer. **When** it is decoded, **then** `Assert.Throws<CoreFormatException>`, with `Code` `ChecksumMismatch` and field `checksum`:
     - collision: offset 180, and the message is exactly `collision checksum at offset 180: the trailer is 9224e3fa3b3fca9c, the content hashes to <h>`;
     - stream: offset 942, and the message is exactly `stream checksum at offset 942: the trailer is <t>, the content hashes to <h>`.
   - `<h>` is `System.IO.Hashing.XxHash64.HashToUInt64(bin.AsSpan(0, 180 or 942))` as x16, computed in the test. The contract's example prints `20e8d90416fe5a4a` for the collision case. `<t>` is the u64 trailer of `stream/two-steps.bin` as x16.
   - Confirm it fails.
-- [ ] T221 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.StreamWithoutItsCollisionDataIsRefusedBeforeStepZero(string caseName)` (US6.5).
+- [X] T221 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.StreamWithoutItsCollisionDataIsRefusedBeforeStepZero(string caseName)` (US6.5).
   - Rows: `collision-missing`, where `collisionFixtures` is `[]`, and `collision-other`, where it is `["heightfield-only"]`, whose checksum differs from `9224e3fa3b3fca9c`.
   - **Given** the stream `.bin`, which `RecordedStream.Decode` accepts (asserted first). **When** `StreamRunner.Run(bin, GoldenFixtures.CollisionFixtureWorlds(caseName))` is called (the `IReadOnlyList<CollisionWorld>` overload), **then** it throws `CoreFormatException` with `Code` `CollisionDataMissing`, `Offset` 36 and `Field` `collisionChecksum`, and the message is exactly `stream collisionChecksum at offset 36: collision data 9224e3fa3b3fca9c was not supplied`.
   - The exception is the call's only outcome: no record array is returned, and the exception is not a `StepFaultException`, so no step ran.
   - Confirm it fails.
-- [ ] T222 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.OtherOpenRefusalsHappenBeforeStepZero(string caseName)` (US6.5).
+- [X] T222 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.OtherOpenRefusalsHappenBeforeStepZero(string caseName)` (US6.5).
   - `rules-revision`, opened with `["tiny-world"]`: `CoreFormatException` with `RulesRevisionMismatch`, offset 8, field `rulesRevision`, and `Detail` exactly `rules revision 0 in the stream; this core implements rules revision 1`. Open step 2 of `StreamRunner` is Phase 4's.
   - `config-invalid`, opened with `["tiny-world"]`: `ConfigValidationException` whose errors are exactly one, `movement.gravity: must be finite`, equal to the JSON's `expectedConfigErrors`.
   - Both `.bin` files first decode with `RecordedStream.Decode`, because these are open-time refusals.
