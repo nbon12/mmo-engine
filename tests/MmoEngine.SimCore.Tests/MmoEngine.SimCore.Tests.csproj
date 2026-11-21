@@ -15,4 +15,9 @@
     <PackageReference Include="CsCheck" />
     <PackageReference Include="coverlet.collector" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The example report of contracts/measurement-report.md#example, byte for byte, read by
+         Cli/ValidateReportTests and Cli/MeasurementReportValidatorTests from the test output. -->
+    <None Update="Cli/Fixtures/measurement-report.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
