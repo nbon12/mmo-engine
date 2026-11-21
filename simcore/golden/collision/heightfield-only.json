@@ -1,0 +1,35 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "heightfield-only",
+  "kind": "valid",
+  "originX": { "bits": "0xBF800000", "value": -1.0 },
+  "originZ": { "bits": "0xBF800000", "value": -1.0 },
+  "cellSize": { "bits": "0x3F800000", "value": 1.0 },
+  "gridCellSize": { "bits": "0x40800000", "value": 4.0 },
+  "columns": 3,
+  "rows": 3,
+  "meshCount": 0,
+  "heights": [
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x3E800000", "value": 0.25 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x80000000", "value": -0.0 }
+  ],
+  "meshes": [],
+  "fileLength": 92,
+  "checksum": "2ad62af0dcf974d2",
+  "derived": {
+    "heightfieldTriangleCount": 8,
+    "meshTriangleIds": [],
+    "degenerateTriangleIds": [],
+    "gridCellsX": 1,
+    "gridCellsZ": 1,
+    "cells": [[]]
+  }
+}

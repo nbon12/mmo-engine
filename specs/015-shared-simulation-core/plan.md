@@ -1583,6 +1583,12 @@ The design documents settled these points, which the spec leaves open. They are 
   `4098 is above 4097`, `the vertex counts reach 5242880; the limit is 4194304`), as do the extent and
   grid-cell details (`the heightfield ends at x = 8193.5; the limit is 8192`,
   `16384 grid cells along X; the limit is 4096`), which the contract does not pin.
+- **`golden write` also refuses a missing format folder (T237).** T237 and contracts/simcore-cli.md#golden-write
+  listed a missing `--dir` but not a `--dir` without `input/`, `collision/` or `stream/`. Reading a
+  missing folder as no cases would let a mistyped `--dir` (such as `simcore/golden/input`) print
+  `0 cases` and exit 0, so the command refuses it like a missing `--dir`: exit 2,
+  `golden write: refused, <format>/: the folder does not exist`, nothing written. The test support
+  `GoldenFixtures` already needs all three folders. T237 and the contract's step 1 now list it.
 
 ## Delivery
 

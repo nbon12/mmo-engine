@@ -94,9 +94,9 @@ Writes the `.bin` of every case under `<dir>/input/`, `<dir>/collision/` and `<d
 rules](input-command-format.md#shared-fixture-rules). This is the only code that writes the golden
 `.bin` files; the format tests open them read-only.
 
-1. Read every `<case>.json`, in ordinal name order per format. A file that is not valid JSON, a case
-   whose `format` does not match its folder, or a refusal case whose `base` is not a valid case of the
-   same format exits 2, and nothing is written.
+1. Read every `<case>.json`, in ordinal name order per format. A missing `--dir` or format folder, a
+   file that is not valid JSON, a case whose `format` does not match its folder, or a refusal case
+   whose `base` is not a valid case of the same format exits 2, and nothing is written.
 2. Write each valid case's `.bin` with the core's encoder for its format (`InputCodec.TryEncode`,
    `CollisionFile.Encode`, `RecordedStream.Encode`). An encoder that refuses the values (the
    collision and stream encoders decode their own output) exits 2, and nothing is written.

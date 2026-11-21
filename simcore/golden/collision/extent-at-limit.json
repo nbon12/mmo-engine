@@ -1,0 +1,50 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "extent-at-limit",
+  "kind": "valid",
+  "originX": { "bits": "0x45FFF000", "value": 8190.0 },
+  "originZ": { "bits": "0x45FFF000", "value": 8190.0 },
+  "cellSize": { "bits": "0x3F800000", "value": 1.0 },
+  "gridCellSize": { "bits": "0x40800000", "value": 4.0 },
+  "columns": 3,
+  "rows": 3,
+  "meshCount": 1,
+  "heights": [
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x3E800000", "value": 0.25 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x00000000", "value": 0.0 },
+    { "bits": "0x80000000", "value": -0.0 }
+  ],
+  "meshes": [
+    {
+      "meshId": 1,
+      "vertices": [
+        [ { "bits": "0xBF000000", "value": -0.5 }, { "bits": "0x00000000", "value": 0.0 }, { "bits": "0x3F000000", "value": 0.5 } ],
+        [ { "bits": "0x3F000000", "value": 0.5 }, { "bits": "0x00000000", "value": 0.0 }, { "bits": "0x3F000000", "value": 0.5 } ],
+        [ { "bits": "0x3F000000", "value": 0.5 }, { "bits": "0x3F800000", "value": 1.0 }, { "bits": "0x3F000000", "value": 0.5 } ],
+        [ { "bits": "0xBF000000", "value": -0.5 }, { "bits": "0x3F800000", "value": 1.0 }, { "bits": "0x3F000000", "value": 0.5 } ]
+      ],
+      "indices": [
+        0, 1, 2,
+        0, 2, 3,
+        0, 0, 1
+      ]
+    }
+  ],
+  "fileLength": 188,
+  "checksum": "3a747914ce2f955e",
+  "derived": {
+    "heightfieldTriangleCount": 8,
+    "meshTriangleIds": [8, 9, 10],
+    "degenerateTriangleIds": [10],
+    "gridCellsX": 1,
+    "gridCellsZ": 1,
+    "cells": [[8, 9]]
+  }
+}

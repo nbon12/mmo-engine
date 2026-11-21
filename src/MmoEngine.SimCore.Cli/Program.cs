@@ -59,6 +59,7 @@ public static class Program
             AgreementCommand.Create(stdout, stderr, logger),
             ConfigCommand.Create(stdout, stderr, logger),
             ContentCommand.Create(stdout, stderr, logger),
+            GoldenCommand.Create(stdout, stderr, logger),
             StreamsCommand.Create(stdout, stderr, logger, runStream),
         };
 

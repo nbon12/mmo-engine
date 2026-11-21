@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "columns-too-few",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 32, "hex": "01000000" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 32, "field": "columns" }
+}

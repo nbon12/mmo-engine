@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "unknown-magic",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 0, "hex": "4d4d4358" }
+  ],
+  "expectedError": { "code": "UnknownMagic", "offset": 0, "field": "magic" }
+}

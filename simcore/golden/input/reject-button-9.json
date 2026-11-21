@@ -1,0 +1,15 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "reject-button-9",
+  "kind": "valid",
+  "command": {
+    "sequence": 1,
+    "clientStep": 0,
+    "buttons": 512,
+    "aimYaw": 0,
+    "aimPitch": 0,
+    "weaponSlot": 0
+  },
+  "validate": { "lastSequence": 0, "weaponSlots": 2, "expected": "UnknownButtons" }
+}

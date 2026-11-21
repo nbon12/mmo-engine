@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "too-many-meshes",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 40, "hex": "01100000" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 40, "field": "meshCount" }
+}
