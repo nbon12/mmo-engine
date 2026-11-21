@@ -315,9 +315,10 @@ internal static class Tables
     // ---- MMO1006: locks and blocking ----------------------------------------------------------
 
     /// <summary>
-    /// The locks, wait handles, spin primitives and blocking collections every use and declaration of
-    /// which is MMO1006 (contracts/analyzer-rules.md#locks-and-blocking-mmo1006). A class derived from
-    /// one counts too.
+    /// The locks, wait handles, spin primitives, blocking collections, parallel loops and PLINQ every
+    /// use and declaration of which is MMO1006 (contracts/analyzer-rules.md#locks-and-blocking-mmo1006).
+    /// A class derived from one counts too, so the non-generic PLINQ <c>ParallelQuery</c> also covers
+    /// <c>ParallelQuery&lt;T&gt;</c> and <c>OrderedParallelQuery&lt;T&gt;</c>.
     /// </summary>
     public static readonly ImmutableHashSet<string> BlockingTypes = Set(
         "System.Threading.Monitor",
@@ -337,7 +338,9 @@ internal static class Tables
         "System.Threading.CountdownEvent",
         "System.Threading.Barrier",
         "System.Collections.Concurrent.BlockingCollection`1",
-        "System.Threading.Tasks.Parallel");
+        "System.Threading.Tasks.Parallel",
+        "System.Linq.ParallelEnumerable",
+        "System.Linq.ParallelQuery");
 
     /// <summary>The single members that block: thread sleeps and joins, task waits and results, and every awaiter's <c>GetResult</c>.</summary>
     public static readonly ImmutableHashSet<string> BlockingMembers = Set(
@@ -376,8 +379,8 @@ internal static class Tables
     /// <summary>
     /// The types every member of which is MMO1008: <c>Debug</c> and <c>Trace</c>, the platform and
     /// runtime queries, <c>Environment</c> (except its two clocks, which are MMO1005),
-    /// <c>System.Type</c>, <c>Activator</c>, and the native-code routes <c>NativeLibrary</c> and
-    /// <c>Marshal</c>.
+    /// <c>System.Type</c>, <c>Activator</c>, the native-code routes <c>NativeLibrary</c> and
+    /// <c>Marshal</c>, and <c>Unsafe</c>, whose <c>SizeOf</c> and byte offsets depend on the pointer size.
     /// </summary>
     public static readonly ImmutableHashSet<string> PlatformPathTypes = Set(
         "System.Diagnostics.Debug",
@@ -389,7 +392,8 @@ internal static class Tables
         "System.Type",
         "System.Activator",
         "System.Runtime.InteropServices.NativeLibrary",
-        "System.Runtime.InteropServices.Marshal");
+        "System.Runtime.InteropServices.Marshal",
+        "System.Runtime.CompilerServices.Unsafe");
 
     /// <summary>The prefix of every type in System.Reflection and its sub-namespaces, every member of which is MMO1008.</summary>
     public const string ReflectionPrefix = "System.Reflection.";

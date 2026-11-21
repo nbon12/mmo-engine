@@ -34,6 +34,12 @@ public sealed class RuleTests
     private const string PlatformPathText =
         "lets the server and WebAssembly builds take different paths; the core has one code path for every build";
 
+    /// <summary>An <c>#if</c> block with an <c>#else</c> (US3.7, T146): one MMO1008, on the <c>#if</c> line.</summary>
+    private const string IfElseMember = "public static int M()\n    {\n#if DEBUG\n        return 1;\n#else\n        return 0;\n#endif\n    }";
+
+    /// <summary>An <c>#if</c> with an <c>#elif</c>, as <c>TableTests</c> writes it: one MMO1008 per directive.</summary>
+    private const string IfElifMember = "public static int M()\n    {\n#if MMO_A\n        return 1;\n#elif MMO_B\n        return 2;\n#endif\n        return 0;\n    }";
+
     /// <summary>The <c>MethodImpl</c> attribute that sets the <c>Synchronized</c> flag, as the samples write it.</summary>
     private const string Synchronized =
         "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.Synchronized)]";
@@ -312,7 +318,8 @@ public sealed class RuleTests
     /// <summary>
     /// MMO1006 (US3.6): every <c>lock</c> statement, a <c>System.Threading.Lock</c> declaration, task
     /// waits and results, an awaiter's <c>GetResult</c>, <c>Thread.Sleep</c>, <c>Monitor</c>, a
-    /// synchronized method and <c>Parallel</c>; <c>await</c> and <c>Interlocked</c> are allowed.
+    /// synchronized method, <c>Parallel</c> and PLINQ; <c>await</c>, <c>Interlocked</c> and sequential
+    /// LINQ are allowed.
     /// </summary>
     public static TheoryData<string, int, string> BlockingRows => new()
     {
@@ -343,17 +350,24 @@ public sealed class RuleTests
         // itself, but the flag it sets reaches the defining declaration, which reports it once.
         { "MMO1006", 1, "public static partial class N { public static partial void M(); " + Synchronized + " public static partial void M() { } }" },
 
+        // Review rows (Phase 5, third pass): PLINQ blocks the caller on worker tasks and reduces in a
+        // partition order that varies between runs. The outer Sum reports and covers AsParallel; a
+        // ParallelQuery<T> parameter reports as a declaration.
+        { "MMO1006", 1, "public static float M(float[] a) => a.AsParallel().Sum();" },
+        { "MMO1006", 1, "public static void M(ParallelQuery<int> q) { }" },
+
         { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
         { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
         { "", 0, "private static int f; public static int Q { get => f; set => f = value; } public static event Action? E { add { } remove { } }" },
         { "", 0, "public static int M() { return L(); static int L() => 1; }" },
+        { "", 0, "public static float M(float[] a) => a.Sum();" },
     };
 
     /// <summary>
     /// MMO1007 (US3.7): <c>double</c>, <c>Half</c>, <c>nint</c>, <c>nuint</c> and <c>NFloat</c> as an
     /// untyped literal, a conversion, a return type, a field, a property, an event's type argument, a
-    /// pointer target and a parameter; a <c>const double</c> and a constant-folded <c>double</c>
-    /// expression are allowed.
+    /// pointer target, a parameter and a member's type argument; a <c>const double</c>, a
+    /// constant-folded <c>double</c> expression and an <c>int</c> type argument are allowed.
     /// </summary>
     public static TheoryData<string, int, string> NumericTypeRows => new()
     {
@@ -392,9 +406,19 @@ public sealed class RuleTests
         { "MMO1007", 1, "public static partial class N { public static partial double P { get; } public static partial double P { get => 0; } }" },
         { "MMO1007", 1, "public static partial class N { public static partial event Action<double>? E; public static partial event Action<double>? E { add { } remove { } } }" },
 
+        // Review rows (Phase 5, third pass): a banned type reached only through a type argument, of a
+        // generic method (a call and a method group) or of the member's containing type, reports at the
+        // reference even though its result is an int. A constant argument converts to nint with no
+        // diagnostic, and a non-constant one is part of the same call and does not report again.
+        { "MMO1007", 1, "public static int Count<T>(T v) => 1; public static int M() => Count<nint>(40);" },
+        { "MMO1007", 1, "public static int Count<T>(T v) => 1; public static int M(int n) => Count<nint>(n);" },
+        { "MMO1007", 1, "public static int Size<T>() => 0; public static Func<int> M() => Size<double>;" },
+        { "MMO1007", 1, "public static class Box<T> { public static int Count; } public static int M() => Box<double>.Count;" },
+
         { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
         { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
         { "", 0, "public static Func<float, float> M() => x => x * 2f;" },
+        { "", 0, "public static int Count<T>(T v) => 1; public static int M(int n) => Count<int>(n);" },
     };
 
     /// <summary>
@@ -402,7 +426,8 @@ public sealed class RuleTests
     /// <c>Environment</c>, reflection, a <c>dynamic</c> operation, an <c>#if</c> block (one
     /// diagnostic, on the <c>#if</c> line, none for <c>#else</c>), <c>Debug</c>, an
     /// <c>[UnsafeAccessor]</c> declaration and <c>extern</c> declarations (P/Invoke methods and local
-    /// functions, extern accessors); <c>typeof</c> without member access is allowed.
+    /// functions, extern accessors), and the pointer size through <c>Unsafe</c> and <c>Marshal</c>, even
+    /// with a banned type argument (MMO1008, not MMO1007); <c>typeof</c> without member access is allowed.
     /// </summary>
     public static TheoryData<string, int, string> PlatformPathRows => new()
     {
@@ -411,7 +436,7 @@ public sealed class RuleTests
         { "MMO1008", 1, "public static int M() => Environment.ProcessorCount;" },
         { "MMO1008", 1, "public static object? M() => typeof(MathF).GetMethod(\"Sin\");" },
         { "MMO1008", 1, "public static object M(dynamic d) => d.Foo();" },
-        { "MMO1008", 1, "public static int M()\n    {\n#if DEBUG\n        return 1;\n#else\n        return 0;\n#endif\n    }" },
+        { "MMO1008", 1, IfElseMember },
         { "MMO1008", 1, "public static void M(bool b) => Debug.Assert(b);" },
         { "MMO1008", 1, "[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] public static extern void Call(object o);" },
 
@@ -424,6 +449,11 @@ public sealed class RuleTests
         { "MMO1008", 1, "[System.Runtime.InteropServices.DllImport(\"m\")] private static extern float Sinf(float x);" },
         { "MMO1008", 1, "public static float M(float x) { return Sinf(x); [System.Runtime.InteropServices.DllImport(\"m\")] static extern float Sinf(float x); }" },
         { "MMO1008", 1, "public static extern int P { get; }" },
+
+        // Review rows (Phase 5, third pass): the pointer size through generic size queries, which
+        // return 4 on wasm32 and 8 on x64 for a reference type or nint.
+        { "MMO1008", 1, "public static int M() => System.Runtime.CompilerServices.Unsafe.SizeOf<object>();" },
+        { "MMO1008", 1, "public static int M() => System.Runtime.InteropServices.Marshal.SizeOf<nint>();" },
 
         { "", 0, "public static object M() => typeof(int);" },
     };
@@ -617,6 +647,18 @@ public sealed class RuleTests
     };
 
     /// <summary>
+    /// The conditional-compilation members of <see cref="DirectivesReportOnTheirOwnLine"/> and the
+    /// directive keyword each MMO1008 must name, in source order: the <c>#if</c>/<c>#else</c> block of
+    /// <see cref="PlatformPathRows"/> (one, for <c>#if</c>) and the <c>#if</c>/<c>#elif</c> block of
+    /// <c>TableTests</c> (one each).
+    /// </summary>
+    public static TheoryData<string, string[]> DirectiveRows => new()
+    {
+        { IfElseMember, ["#if"] },
+        { IfElifMember, ["#if", "#elif"] },
+    };
+
+    /// <summary>
     /// The generated probe file of <see cref="AttributeApplicationsAreNotReported"/> (after its
     /// generated-code header) and the MMO1008 count it must give: an empty class gives none, so the
     /// attributes report nothing; a method body that reflects over <c>MathF</c> gives one, so the
@@ -684,7 +726,8 @@ public sealed class RuleTests
     }
 
     /// <summary>
-    /// US3.3: a fused call reports the fused-multiply-add rule and no other rule. The diagnostics at the
+    /// US3.3: a fused call fails the build with the fused-multiply-add rule and no other rule. Every
+    /// diagnostic is an Error that is not suppressed, so it fails the build. The diagnostics at the
     /// invocation's span are exactly <c>[MMO1003]</c>; every other diagnostic is MMO1007 on a
     /// <c>double</c> declaration's identifier (the parameter <c>d</c> and the method, for its return
     /// type), one per such declaration, and none lies on the call.
@@ -698,6 +741,11 @@ public sealed class RuleTests
         Assert.True(
             result.CompilerErrors.Count == 0,
             $"The sample must compile:{Environment.NewLine}{AnalyzerHarness.Describe(result.CompilerErrors)}");
+        Assert.All(result.Diagnostics, d =>
+        {
+            Assert.Equal(DiagnosticSeverity.Error, d.Severity);
+            Assert.False(d.IsSuppressed, $"{AnalyzerHarness.Describe(d)} must not be suppressed.");
+        });
 
         var root = result.Tree.GetRoot(cancellationToken);
         var call = Assert.Single(root.DescendantNodes(result.MemberSpan).OfType<InvocationExpressionSyntax>());
@@ -835,6 +883,41 @@ public sealed class RuleTests
 
         Assert.Equal(reportedText, result.Tree.GetText(TestContext.Current.CancellationToken).ToString(diagnostic.Location.SourceSpan));
         Assert.Equal($"'{name}' {text}", diagnostic.GetMessage(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// US3.7, conditional compilation (T146): each <c>#if</c> and <c>#elif</c> reports one MMO1008 on its
+    /// own line, and <c>#else</c> and <c>#endif</c> report nothing. In source order, the diagnostics are
+    /// exactly one MMO1008 per entry of <paramref name="keywords"/>; each lies on a line whose text, less
+    /// its indentation, starts with that keyword and a space, and its message is
+    /// <c>'{keyword}' lets the server and WebAssembly builds take different paths; …</c>
+    /// (contracts/analyzer-rules.md#messages: <c>{0}</c> is the directive keyword).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DirectiveRows))]
+    public async Task DirectivesReportOnTheirOwnLine(string member, string[] keywords)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var result = await AnalyzerHarness.AnalyzeMemberAsync(member);
+        Assert.True(
+            result.CompilerErrors.Count == 0,
+            $"The sample must compile:{Environment.NewLine}{AnalyzerHarness.Describe(result.CompilerErrors)}");
+
+        var diagnostics = result.Diagnostics.OrderBy(d => d.Location.SourceSpan.Start).ToArray();
+        var report = AnalyzerHarness.Describe(diagnostics);
+        Assert.True(
+            Enumerable.Repeat("MMO1008", keywords.Length).SequenceEqual(diagnostics.Select(d => d.Id)),
+            $"Expected {keywords.Length} x 'MMO1008', got:{Environment.NewLine}{report}");
+
+        var lines = result.Tree.GetText(cancellationToken).Lines;
+        for (var i = 0; i < keywords.Length; i++)
+        {
+            var line = lines[diagnostics[i].Location.GetLineSpan().StartLinePosition.Line].ToString().TrimStart();
+            Assert.True(
+                line.StartsWith(keywords[i] + " ", StringComparison.Ordinal),
+                $"{AnalyzerHarness.Describe(diagnostics[i])} must lie on the '{keywords[i]}' line, but its line is '{line}'.");
+            Assert.Equal($"'{keywords[i]}' {PlatformPathText}", diagnostics[i].GetMessage(CultureInfo.InvariantCulture));
+        }
     }
 
     /// <summary>

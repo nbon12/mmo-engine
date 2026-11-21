@@ -1042,7 +1042,8 @@ The design documents settled these points, which the spec leaves open. They are 
   not only calls. MMO1009's SimMath exemption covers the helpers' own bodies, not a lambda or local
   function inside them, which can run without the range checks. A `GetHashCode` call is "not
   overridden" when Roslyn still binds it to `object`'s or `ValueType`'s, since it binds to the
-  receiver type's override when there is one. analyzer-rules.md now says each of these.
+  receiver type's override when there is one. T162, T163 and analyzer-rules.md now say so (tasks.md
+  caught up in the Phase 5 review's third pass).
 - **A positional record parameter reports once (T167).** While adding coverage rows, `record R(double X)`
   gave two identical MMO1007 errors at `X`: one for the primary constructor's parameter and one for
   the property the compiler declares from it at the same identifier. The contract said nothing about
@@ -1164,6 +1165,26 @@ The design documents settled these points, which the spec leaves open. They are 
   signature and the attributes of both parts, so nothing is lost. `RuleTests` pins a
   partial method, property and event, and the contract's precedence section says so. The core has no
   partial members, so the backstop is unchanged.
+- **PLINQ is MMO1006 (T162, Phase 5 review, third pass).** `a.AsParallel().Sum()` reported nothing,
+  though `Parallel` was already banned. A PLINQ terminal operator blocks the caller on worker tasks just
+  as `Parallel` does, and its output order and float reduction order vary between runs, so the sum's
+  rounding varies too. `System.Linq.ParallelEnumerable` and the non-generic `System.Linq.ParallelQuery`
+  join MMO1006's whole types; `ParallelQuery<T>` and `OrderedParallelQuery<T>` derive from the latter,
+  so the existing derived-class rule covers them without entries of their own (which no test could
+  tell apart from the base entry). The core uses no LINQ, so the backstop is unchanged.
+- **Banned numeric types count through type arguments, and `Unsafe` is MMO1008 (T163, Phase 5 review,
+  third pass).** `Unsafe.SizeOf<object>()` and `Unsafe.SizeOf<nint>()` return 4 on wasm32 and 8 on x64
+  and reported nothing, and a generic call such as `Count<nint>(40)` that returns `int` escaped MMO1007,
+  which checked only the expression's own type, against FR-012 and US3 scenario 7 and although the
+  contract's MMO1007 row lists type arguments. MMO1007 now also scans the referenced member's type
+  arguments, a generic method's own and its containing types', as MMO1001 already did for vectors. The
+  containing type itself is left out, so a member of `double` reports through its operands and result
+  rather than once more for its host. Banning all of `Unsafe`, not only `SizeOf`, was a judgment call:
+  one reviewer offered `Unsafe.SizeOf` as the minimum, but `ByteOffset` and `AddByteOffset` also work in
+  native-sized offsets and `As` reinterprets layout, the core compiles with unsafe code off and uses none
+  of the type, and a whole-type entry closes the routes a member list would miss. `Marshal` was already
+  a whole type (second pass), so `Marshal.SizeOf<nint>()` already reported MMO1008, which precedence
+  keeps ahead of MMO1007.
 
 ## Delivery
 

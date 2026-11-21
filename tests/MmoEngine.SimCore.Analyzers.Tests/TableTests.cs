@@ -350,7 +350,9 @@ public sealed class TableTests
 
     /// <summary>
     /// contracts/analyzer-rules.md#locks-and-blocking-mmo1006: one use of each whole type of the list,
-    /// <c>Monitor</c> through <c>Parallel</c>, and one row per member, including <c>GetResult</c> on each
+    /// <c>Monitor</c> through <c>Parallel</c> and PLINQ's <c>ParallelEnumerable</c> and
+    /// <c>ParallelQuery</c> (through a local of its derived <c>ParallelQuery&lt;T&gt;</c> and
+    /// <c>OrderedParallelQuery&lt;T&gt;</c>), and one row per member, including <c>GetResult</c> on each
     /// of the four awaiters and the four configured awaiters, report MMO1006. A type is used through a
     /// member or a local's creation, never a parameter, so the use is the row's one diagnostic. The
     /// <c>Synchronized</c> flag reports once wherever it can be set: on a getter, a setter, an
@@ -377,6 +379,9 @@ public sealed class TableTests
         { Blocking, "MMO1006", 1, "public static void M() { var b = new Barrier(1); }" },
         { Blocking, "MMO1006", 1, "public static void M() { var b = new System.Collections.Concurrent.BlockingCollection<int>(); }" },
         { Blocking, "MMO1006", 1, "public static void M(Action a) => Parallel.Invoke(a);" },
+        { Blocking, "MMO1006", 1, "public static float M(float[] a) => a.AsParallel().Sum();" },
+        { Blocking, "MMO1006", 1, "public static void M() { ParallelQuery<int>? q = null; }" },
+        { Blocking, "MMO1006", 1, "public static void M() { OrderedParallelQuery<int>? q = null; }" },
 
         { Blocking, "MMO1006", 1, "public static void M() => Thread.Sleep(1);" },
         { Blocking, "MMO1006", 1, "public static void M(Thread t) => t.Join();" },
@@ -433,7 +438,8 @@ public sealed class TableTests
     /// <c>Activator</c>, the four <c>dynamic</c> operation kinds and an <c>[UnsafeAccessor]</c>
     /// declaration; the two attributes on local functions; and native code: a <c>[DllImport]</c> method
     /// and local function, an <c>InternalCall</c> extern, an extern accessor, a <c>[LibraryImport]</c>
-    /// partial method (whose implementation part is not extern), <c>NativeLibrary</c> and <c>Marshal</c>.
+    /// partial method (whose implementation part is not extern), <c>NativeLibrary</c>, <c>Marshal</c>
+    /// and <c>Unsafe</c>.
     /// </summary>
     public static TheoryData<string, string, int, string> PlatformPathRows => new()
     {
@@ -466,6 +472,7 @@ public sealed class TableTests
         { PlatformPaths, "MMO1008", 1, "public static partial class N { [System.Runtime.InteropServices.LibraryImport(\"m\")] public static partial float Sinf(float x); public static partial float Sinf(float x) => 0f; }" },
         { PlatformPaths, "MMO1008", 1, "public static bool M(string s) => System.Runtime.InteropServices.NativeLibrary.TryLoad(s, out _);" },
         { PlatformPaths, "MMO1008", 1, "public static int M() => System.Runtime.InteropServices.Marshal.SizeOf<int>();" },
+        { PlatformPaths, "MMO1008", 1, "public static int M() => System.Runtime.CompilerServices.Unsafe.SizeOf<object>();" },
     };
 
     /// <summary>

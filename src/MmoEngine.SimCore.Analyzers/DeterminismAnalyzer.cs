@@ -756,7 +756,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// <summary>
     /// MMO1008: every <c>dynamic</c> operation, and a member, constructor or operator of a platform
     /// query, <c>Debug</c>, <c>Trace</c>, <c>Environment</c> (but its clocks), <c>System.Type</c>,
-    /// <c>Activator</c> or a System.Reflection type, or one of the platform-size members.
+    /// <c>Activator</c>, a System.Reflection type, <c>NativeLibrary</c>, <c>Marshal</c> or
+    /// <c>Unsafe</c>, or one of the platform-size members.
     /// </summary>
     private static Finding? PlatformPath(IOperation operation)
     {
@@ -951,9 +952,10 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// MMO1007: a non-constant expression whose type is, or contains as a type argument, array element
-    /// or pointer target, <c>double</c>, <c>Half</c>, <c>NFloat</c>, <c>nint</c> or <c>nuint</c>. Only
-    /// the expression kinds the analyzer registers count, so a parent that is never reported cannot
-    /// hide a child.
+    /// or pointer target, <c>double</c>, <c>Half</c>, <c>NFloat</c>, <c>nint</c> or <c>nuint</c>, or
+    /// whose referenced member has one in its type arguments (<see cref="BannedNumericTypeArgument"/>),
+    /// so <c>Count&lt;nint&gt;(n)</c> reports although it returns <c>int</c>. Only the expression kinds
+    /// the analyzer registers count, so a parent that is never reported cannot hide a child.
     /// </summary>
     private static Finding? NumericExpression(IOperation operation)
     {
@@ -968,13 +970,49 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             or ICompoundAssignmentOperation
             or IUnaryOperation
             or IDefaultValueOperation;
-        if (!expression || operation.ConstantValue.HasValue || FindType(operation.Type, IsBannedNumericType) is not { } found)
+        if (!expression || operation.ConstantValue.HasValue)
         {
             return null;
         }
 
-        var text = ReferencedMember(operation) is { } member ? Display(member) : operation.Syntax.ToString();
+        var member = ReferencedMember(operation);
+        if ((FindType(operation.Type, IsBannedNumericType) ?? BannedNumericTypeArgument(member)) is not { } found)
+        {
+            return null;
+        }
+
+        var text = member is not null ? Display(member) : operation.Syntax.ToString();
         return new Finding(Descriptors.Mmo1007, operation.Syntax.GetLocation(), text, found.ToDisplayString());
+    }
+
+    /// <summary>
+    /// The first banned numeric type in <paramref name="member"/>'s type arguments: a generic method's
+    /// own, then those of its containing types, outermost last (<c>Foo&lt;double&gt;.Count</c>). The
+    /// containing type itself does not count, so a member of <c>double</c> reports through its operands
+    /// and result, not again for its host.
+    /// </summary>
+    private static ITypeSymbol? BannedNumericTypeArgument(ISymbol? member)
+    {
+        var found = member is IMethodSymbol method ? FirstBannedNumericType(method.TypeArguments) : null;
+        for (var type = member?.ContainingType; found is null && type is not null; type = type.ContainingType)
+        {
+            found = FirstBannedNumericType(type.TypeArguments);
+        }
+
+        return found;
+    }
+
+    private static ITypeSymbol? FirstBannedNumericType(ImmutableArray<ITypeSymbol> types)
+    {
+        foreach (var type in types)
+        {
+            if (FindType(type, IsBannedNumericType) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary><c>double</c>, <c>nint</c>, <c>nuint</c>, <c>Half</c> or <c>NFloat</c>.</summary>
