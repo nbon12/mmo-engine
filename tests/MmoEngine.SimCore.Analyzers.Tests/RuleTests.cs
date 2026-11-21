@@ -30,6 +30,10 @@ public sealed class RuleTests
     private const string BlockingText =
         "takes a lock or blocks, which gameplay code must not do (constitution Principle II); the core is a pure step function: take state in and return state out";
 
+    /// <summary>MMO1007's message after <c>'{0}' uses '{1}'; </c> (contracts/analyzer-rules.md#messages).</summary>
+    private const string NumericTypeText =
+        "the core computes in 'float' only, and in 'int' or 'long' for fixed point and counters, so every build rounds and overflows the same way";
+
     /// <summary>MMO1008's message after <c>'{0}' </c> (contracts/analyzer-rules.md#messages).</summary>
     private const string PlatformPathText =
         "lets the server and WebAssembly builds take different paths; the core has one code path for every build";
@@ -178,6 +182,10 @@ public sealed class RuleTests
         { "MMO1001", 2, "public static void M() { L(default); static void L(Vector3 v) { } }" },
         { "MMO1001", 1, "public delegate Vector3 D();" },
 
+        // Review row (Phase 5, fourth pass): a pattern local is a declaration, reported at its
+        // identifier, besides the member read in a later operation.
+        { "MMO1001", 2, "public static float M(object o) => o is Vector2 v ? v.X : 0f;" },
+
         { "", 0, "public static Vector128<float> M(Vector128<float> a, Vector128<float> b) => Vector128.Add(a, b) * b - Vector128.Create(1f);" },
         { "", 0, "public static float M(float x, float y) => x * y + 1f;" },
     };
@@ -295,8 +303,10 @@ public sealed class RuleTests
     /// <summary>
     /// MMO1005 (US3.5): wall-clock and monotonic clocks, <c>Environment.TickCount</c> (MMO1005, not
     /// MMO1008), all of <c>System.Random</c> (seeded too), <c>Guid.NewGuid</c>, per-process hash seeds
-    /// and <c>TimeProvider</c>; an <c>int</c>'s value-bits <c>GetHashCode</c> and the caller's step
-    /// arithmetic are allowed.
+    /// (a <c>ValueTuple</c>'s hash, which combines through <c>HashCode</c>, and a record class's
+    /// synthesized hash among them) and <c>TimeProvider</c>; an <c>int</c>'s value-bits
+    /// <c>GetHashCode</c>, a <c>Tuple</c>'s hash of <c>int</c>s and the caller's step arithmetic are
+    /// allowed.
     /// </summary>
     public static TheoryData<string, int, string> AmbientRows => new()
     {
@@ -310,8 +320,11 @@ public sealed class RuleTests
         { "MMO1005", 1, "public static int M(string s) => s.GetHashCode();" },
         { "MMO1005", 1, "public static int M(int a, int b) => HashCode.Combine(a, b);" },
         { "MMO1005", 1, "public static DateTimeOffset M() => TimeProvider.System.GetUtcNow();" },
+        { "MMO1005", 1, "public static int M(int a, int b) => (a, b).GetHashCode();" },
+        { "MMO1005", 1, "public sealed record R(int A); public static int M(R r) => r.GetHashCode();" },
 
         { "", 0, "public static int M(int a) => a.GetHashCode() ^ 17;" },
+        { "", 0, "public static int M(int a, int b) => Tuple.Create(a, b).GetHashCode();" },
         { "", 0, "public static long M(long step, long stepTicks) => step * stepTicks;" },
     };
 
@@ -356,6 +369,9 @@ public sealed class RuleTests
         { "MMO1006", 1, "public static float M(float[] a) => a.AsParallel().Sum();" },
         { "MMO1006", 1, "public static void M(ParallelQuery<int> q) { }" },
 
+        // Review row (Phase 5, fourth pass): a pattern local of a lock type is a declaration.
+        { "MMO1006", 1, "public static bool M(object o) => o is Mutex m;" },
+
         { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
         { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
         { "", 0, "private static int f; public static int Q { get => f; set => f = value; } public static event Action? E { add { } remove { } }" },
@@ -366,8 +382,10 @@ public sealed class RuleTests
     /// <summary>
     /// MMO1007 (US3.7): <c>double</c>, <c>Half</c>, <c>nint</c>, <c>nuint</c> and <c>NFloat</c> as an
     /// untyped literal, a conversion, a return type, a field, a property, an event's type argument, a
-    /// pointer target, a parameter and a member's type argument; a <c>const double</c>, a
-    /// constant-folded <c>double</c> expression and an <c>int</c> type argument are allowed.
+    /// pointer target, a parameter, a member's type argument and a local that a pattern, a deconstruction
+    /// or an <c>out</c> argument declares; a <c>const double</c>, a constant-folded <c>double</c>
+    /// expression, an <c>int</c> type argument and pattern and deconstruction locals of allowed types are
+    /// allowed.
     /// </summary>
     public static TheoryData<string, int, string> NumericTypeRows => new()
     {
@@ -415,10 +433,30 @@ public sealed class RuleTests
         { "MMO1007", 1, "public static int Size<T>() => 0; public static Func<int> M() => Size<double>;" },
         { "MMO1007", 1, "public static class Box<T> { public static int Count; } public static int M() => Box<double>.Count;" },
 
+        // Review rows (Phase 5, fourth pass): a local that no declarator declares reports at its
+        // identifier as a declarator's local does: a declaration pattern (in an `is`, a negated `is not`
+        // and a switch arm), a recursive pattern's and a list pattern's designation, a positional
+        // pattern's subpatterns, both forms of deconstruction, a deconstructing `foreach` (with the
+        // array parameter) and an `out var` (with the method's out parameter). A pattern local inside a
+        // declaration that already reports the rule, in the same statement, does not report again.
+        { "MMO1007", 1, "public static float M(object o) => o is double d ? (float)d : 0f;" },
+        { "MMO1007", 1, "public static float M(object o) { if (o is not nint n) return 0f; return n; }" },
+        { "MMO1007", 1, "public static float M(object o) => o switch { double d => (float)d, _ => 0f };" },
+        { "MMO1007", 1, "public static float M(object o) => o is double { } d ? (float)d : 0f;" },
+        { "MMO1007", 1, "public static int M(object o) => o is nint[] and [_, ..] t ? t.Length : 0;" },
+        { "MMO1007", 2, "public static float M(object o) => o is (double a, double b) ? (float)a : 0f;" },
+        { "MMO1007", 2, "public static float M() { var (a, b) = (1.0, 2.0); return (float)a; }" },
+        { "MMO1007", 1, "public static float M() { (double a, var b) = (1.0, 2); return (float)a + b; }" },
+        { "MMO1007", 2, "public static float M((double, int)[] arr) { var s = 0f; foreach (var (a, _) in arr) s += (float)a; return s; }" },
+        { "MMO1007", 2, "public static void Get(out nint v) => v = 0; public static int M() { Get(out var v); return (int)v; }" },
+        { "MMO1007", 1, "public static float M(object o) { double x = o is double d ? d : 0; return (float)x; }" },
+
         { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
         { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
         { "", 0, "public static Func<float, float> M() => x => x * 2f;" },
         { "", 0, "public static int Count<T>(T v) => 1; public static int M(int n) => Count<int>(n);" },
+        { "", 0, "public static float M(object o) => o is float f ? f : (o is double _ ? 1f : 0f);" },
+        { "", 0, "public static float M() { var (p, q) = (1, 2f); return p + q; }" },
     };
 
     /// <summary>
@@ -626,7 +664,8 @@ public sealed class RuleTests
     /// the deconstructed value, the spread's collection (named <c>..</c>), the left operand of <c>??</c>
     /// or the tuple conversion; an accessor's <c>Synchronized</c> flag or <c>extern</c> at its keyword,
     /// named as the accessor; a field-like event's flag at the event; a local function's flag, attribute
-    /// or <c>extern</c> at its identifier; and a lambda's at the lambda.
+    /// or <c>extern</c> at its identifier; a lambda's at the lambda; and a local that a pattern or a
+    /// deconstruction declares, which has no declarator, at its identifier.
     /// </summary>
     public static TheoryData<string, string, string, string, string> PlacementRows => new()
     {
@@ -644,6 +683,8 @@ public sealed class RuleTests
         { "public static void M() { Log(); [Conditional(\"DEBUG\")] static void Log() { } }", "MMO1008", "Log", "Log", PlatformPathText },
         { "public static extern int P { get; }", "MMO1008", "get", "C.P.get", PlatformPathText },
         { "public static float M(float x) { return Sinf(x); [System.Runtime.InteropServices.DllImport(\"m\")] static extern float Sinf(float x); }", "MMO1008", "Sinf", "Sinf", PlatformPathText },
+        { "public static float M(object o) => o is double d ? (float)d : 0f;", "MMO1007", "d", "d", "uses 'double'; " + NumericTypeText },
+        { "public static float M() { (double a, var b) = (1.0, 2); return (float)a + b; }", "MMO1007", "a", "a", "uses 'double'; " + NumericTypeText },
     };
 
     /// <summary>
@@ -869,7 +910,7 @@ public sealed class RuleTests
     }
 
     /// <summary>
-    /// US3.6 and US3.7: a conversion, flag or attribute with no operation or identifier of its own
+    /// US3.6 and US3.7: a conversion, flag, attribute or local with no operation or identifier of its own
     /// reports exactly one diagnostic of its rule, covering exactly <paramref name="reportedText"/>, with
     /// the message <c>'{0}' …</c> where <c>{0}</c> is <paramref name="name"/> and the rest is
     /// <paramref name="text"/> (contracts/analyzer-rules.md#messages).

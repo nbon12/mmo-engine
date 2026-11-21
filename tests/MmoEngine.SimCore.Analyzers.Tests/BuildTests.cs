@@ -32,10 +32,12 @@ public sealed partial class BuildTests
         "error MMO1004: 'foreach' enumerates 'System.Collections.Generic.Dictionary<int, int>', whose order is not defined";
 
     /// <summary>
-    /// An empty <c>Directory.Build.props</c> and <c>Directory.Build.targets</c>, so MSBuild stops its
-    /// upward search in the temp directory and imports nothing above it.
+    /// The whole text of the throwaway build's <c>Directory.Build.props</c> and
+    /// <c>Directory.Build.targets</c>: a project with nothing in it. MSBuild stops its upward search at
+    /// these files in the temp directory and imports nothing above it. They are not empty files, because
+    /// MSBuild refuses a project file with no root element.
     /// </summary>
-    private const string EmptyMsBuildFile = "<Project />\n";
+    private const string EmptyProjectFile = "<Project />\n";
 
     /// <summary>How long the build may run before it is killed with its process tree and the test fails.</summary>
     private static readonly TimeSpan BuildTimeout = TimeSpan.FromMinutes(5);
@@ -52,8 +54,9 @@ public sealed partial class BuildTests
     /// <c>IsAotCompatible</c> set as in the core (so the SDK generates the <c>System.Reflection</c>
     /// assembly attributes) and <c>ImplicitUsings</c> off, attaching
     /// <c>src/MmoEngine.SimCore.Analyzers/bin/&lt;configuration&gt;/netstandard2.0/MmoEngine.SimCore.Analyzers.dll</c>
-    /// with an <c>&lt;Analyzer Include="…" /&gt;</c> item, under an empty <c>Directory.Build.props</c> and
-    /// <c>Directory.Build.targets</c> and a copy of the repository's <c>global.json</c>. Building it exits
+    /// with an <c>&lt;Analyzer Include="…" /&gt;</c> item, under a <c>Directory.Build.props</c> and a
+    /// <c>Directory.Build.targets</c> that each hold only <c>&lt;Project /&gt;</c>, and a copy of the
+    /// repository's <c>global.json</c>. Building it exits
     /// non-zero; exactly one distinct output line is an <c>error MMO####</c>, and it is MMO1004 in
     /// <c>C.cs</c> with the promised message; no output line names both <c>AssemblyInfo.cs</c> and an MMO
     /// rule.
@@ -72,8 +75,8 @@ public sealed partial class BuildTests
         try
         {
             await WriteAsync(directory, ProjectFile, ProjectText(analyzer), cancellationToken);
-            await WriteAsync(directory, "Directory.Build.props", EmptyMsBuildFile, cancellationToken);
-            await WriteAsync(directory, "Directory.Build.targets", EmptyMsBuildFile, cancellationToken);
+            await WriteAsync(directory, "Directory.Build.props", EmptyProjectFile, cancellationToken);
+            await WriteAsync(directory, "Directory.Build.targets", EmptyProjectFile, cancellationToken);
             await WriteAsync(directory, GlobalJsonPath, AnalyzerHarness.ReadRepoText(GlobalJsonPath), cancellationToken);
             await WriteAsync(directory, SourceFile, SampleSource, cancellationToken);
 

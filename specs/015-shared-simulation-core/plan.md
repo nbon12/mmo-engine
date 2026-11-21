@@ -997,6 +997,11 @@ The design documents settled these points, which the spec leaves open. They are 
   `AdvSimd.IsSupported` and `PackedSimd.IsSupported` (MMO1001), and `Vector128.FusedMultiplyAdd` and
   `Vector128.MultiplyAddEstimate`, which report MMO1003 by precedence. T154 now lists them, and T159
   and T160 say that those two rows pass with T160, not T159.
+- **`TableTests`' `Half` and `NFloat` locals use `= default` (T154).** T154 asked for a local of each
+  numeric type with a constant initializer, but C# has no constants of `System.Half` or `NFloat`, so
+  that cannot be written for those two. `default` is the nearest form: it adds no call or conversion
+  that another rule could match, and the local and its initializer are one statement, so each row still
+  reports exactly one MMO1007, at the declaration. T154 now says so.
 - **The exhaustive sweeps write one `SIMMATH` line per function and bound (T157).** T157 asked for
   one line per function, but its format carries a single `(bound <bound>)`, and Sin, Cos, SinCos and
   Tan each have two bounds (|x| ≤ 12867 and above). One line would have to drop a domain's maximum or
@@ -1185,6 +1190,32 @@ The design documents settled these points, which the spec leaves open. They are 
   of the type, and a whole-type entry closes the routes a member list would miss. `Marshal` was already
   a whole type (second pass), so `Marshal.SizeOf<nint>()` already reported MMO1008, which precedence
   keeps ahead of MMO1007.
+- **A local declared by a pattern or a deconstruction is a declaration (T163, Phase 5 review, fourth
+  pass).** Only declarators counted as local declarations, so `o is double d ? (float)d : 0f`,
+  `var (a, b) = (1.0, 2.0)` and `o is not nint n` reported nothing, although the contract says a local
+  reference is covered by its declaration and a `double` read narrowed to `float` reports nowhere else.
+  A third operation action now checks a pattern's designation and a declaration expression's
+  variables (`IsDeclaration` local references, which also cover `out var` and a deconstructing
+  `foreach`) as a declarator's local. Two judgment calls: these locals are deduplicated per statement
+  like a declarator's, so `double x = o is double d ? d : 0;` still reports once, at `x`; and they are
+  reported by their own action rather than inside the pattern operation's single finding, because a
+  declaration pattern already carries MMO1004, and folding both into one finding would let a vector or
+  lock local outrank it against the precedence order. Pattern locals of vector and lock types now
+  report too (MMO1001, MMO1006). The core has no such locals, so the backstop is unchanged.
+- **`ValueTuple` hashes and a record class's synthesized hash are MMO1005 (T162, Phase 5 review,
+  fourth pass).** MMO1005 allowed any `GetHashCode` override, but `ValueTuple<T1, T2>` through the
+  eight-element tuple combine their elements through `HashCode`: `(1, 2).GetHashCode()` printed three
+  different values in three runs here. A record class's synthesized `GetHashCode` mixes in
+  `EqualityContract.GetHashCode()`, a `Type`'s identity hash, which stayed the same across runs but
+  changed when the program hashed one other object first. Both are the seeds the rule names, reached
+  through an override, so ``ValueTuple`2`` to ``ValueTuple`8``'s `GetHashCode` joined
+  `Tables.AmbientMembers` and an implicitly declared `GetHashCode` on a record class reports. Which
+  overrides to cover was a judgment call. One reviewer offered a doc-only fix that names the gap; but
+  these two routes are cheap to match exactly, and a tuple hash is an easy thing to write in a step. A
+  record struct's synthesized hash, `Tuple<…>`'s and a one-element `ValueTuple<T>`'s gave the same
+  value in every run for `int` elements, so they stay allowed; with a `string` element they inherit its
+  seed, which the contract lists under "Not covered" with the other indirect routes, rather than
+  banning every record struct hash.
 
 ## Delivery
 

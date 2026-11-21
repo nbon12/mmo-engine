@@ -294,7 +294,9 @@ internal static class Tables
     /// The single members that read a clock, draw a random value or hash with a per-process seed.
     /// <c>object.GetHashCode</c> and <c>ValueType.GetHashCode</c> are here because Roslyn binds a
     /// <c>GetHashCode</c> call to the receiver type's own override when it has one, so a call that still
-    /// targets one of these two is on a type that does not override it.
+    /// targets one of these two is on a type that does not override it. The <c>ValueTuple</c> overrides
+    /// of two to eight elements combine their elements through <c>HashCode</c>, so <c>(1, 2).GetHashCode()</c>
+    /// differs between processes [measured]; the one-element override returns its element's own hash.
     /// </summary>
     public static readonly ImmutableHashSet<string> AmbientMembers = Set(
         "System.DateTime.Now",
@@ -310,6 +312,13 @@ internal static class Tables
         "System.Object.GetHashCode",
         "System.ValueType.GetHashCode",
         "System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode",
+        "System.ValueTuple`2.GetHashCode",
+        "System.ValueTuple`3.GetHashCode",
+        "System.ValueTuple`4.GetHashCode",
+        "System.ValueTuple`5.GetHashCode",
+        "System.ValueTuple`6.GetHashCode",
+        "System.ValueTuple`7.GetHashCode",
+        "System.ValueTuple`8.GetHashCode",
         "System.Threading.Tasks.Task.Delay");
 
     // ---- MMO1006: locks and blocking ----------------------------------------------------------

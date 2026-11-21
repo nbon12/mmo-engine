@@ -319,7 +319,11 @@ public sealed class TableTests
     /// <summary>
     /// contracts/analyzer-rules.md#ambient-time-randomness-and-hash-seeds-mmo1005: one use of each whole
     /// type and of each member of the list reports MMO1005. <c>object.GetHashCode</c> and
-    /// <c>ValueType.GetHashCode</c> are called on receivers whose types do not override them.
+    /// <c>ValueType.GetHashCode</c> are called on receivers whose types do not override them, the
+    /// <c>ValueTuple</c> hashes on tuples of two to eight elements, and a record class's synthesized
+    /// hash on a record class that declares none. The hashes the list leaves allowed report nothing: a
+    /// record class's own override, a record struct's synthesized hash, a one-element
+    /// <c>ValueTuple</c>'s and a <c>Tuple</c>'s.
     /// </summary>
     public static TheoryData<string, string, int, string> AmbientRows => new()
     {
@@ -345,7 +349,20 @@ public sealed class TableTests
         { Ambient, "MMO1005", 1, "public static int M(object o) => o.GetHashCode();" },
         { Ambient, "MMO1005", 1, "public struct S { } public static int M(S s) => s.GetHashCode();" },
         { Ambient, "MMO1005", 1, "public static int M(object o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a, a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a, a, a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public static int M(int a) => (a, a, a, a, a, a, a, a).GetHashCode();" },
+        { Ambient, "MMO1005", 1, "public sealed record R(int A); public static int M(R r) => r.GetHashCode();" },
         { Ambient, "MMO1005", 1, "public static Task M() => Task.Delay(1);" },
+
+        { Ambient, "", 0, "public sealed record R(int A) { public override int GetHashCode() => A; } public static int M(R r) => r.GetHashCode();" },
+        { Ambient, "", 0, "public record struct S(int A); public static int M(S s) => s.GetHashCode();" },
+        { Ambient, "", 0, "public static int M(int a) => new ValueTuple<int>(a).GetHashCode();" },
+        { Ambient, "", 0, "public static int M(int a) => Tuple.Create(a, a).GetHashCode();" },
     };
 
     /// <summary>

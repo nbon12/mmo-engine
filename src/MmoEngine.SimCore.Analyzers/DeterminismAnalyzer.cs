@@ -15,7 +15,8 @@ namespace MmoEngine.SimCore.Analyzers;
 /// <summary>
 /// The determinism analyzer attached to the shared simulation core only. It enforces the rules of
 /// specs/015-shared-simulation-core/contracts/analyzer-rules.md (MMO1001 to MMO1009), on operations,
-/// on member, local function, lambda and delegate declarations and on preprocessor directives, in
+/// on member, local function, lambda and delegate declarations, on locals however they are declared
+/// (declarators, pattern designations and declaration expressions) and on preprocessor directives, in
 /// generated code too.
 /// </summary>
 /// <remarks>
@@ -73,6 +74,12 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
         context.RegisterOperationAction(AnalyzeOperation, OperationKinds);
         context.RegisterOperationAction(AnalyzeFunctionDeclaration, OperationKind.LocalFunction, OperationKind.AnonymousFunction);
+        context.RegisterOperationAction(
+            AnalyzeLocalDeclaration,
+            OperationKind.DeclarationPattern,
+            OperationKind.RecursivePattern,
+            OperationKind.ListPattern,
+            OperationKind.LocalReference);
         context.RegisterSymbolAction(AnalyzeSymbol, SymbolKind.Field, SymbolKind.Property, SymbolKind.Method, SymbolKind.Event, SymbolKind.NamedType);
         context.RegisterSyntaxTreeAction(AnalyzeSyntaxTree);
     }
@@ -161,6 +168,35 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 ReportParameters(report, lambda.Parameters.Where(p => IsWrittenWithType(p, context.CancellationToken)), context.CancellationToken);
                 break;
         }
+    }
+
+    /// <summary>
+    /// The locals no declarator declares: a declaration, recursive or list pattern's designation
+    /// (<c>o is double d</c>), and the declaration expressions of an <c>out</c> argument, a deconstruction
+    /// and a deconstructing <c>foreach</c> (<c>var (a, b) = …</c>), which reach the analyzer as local
+    /// references with <c>IsDeclaration</c> set. Each is checked as a declarator's local is: its type's
+    /// rule at its identifier, skipped when an enclosing operation in the same statement reports the
+    /// same rule.
+    /// </summary>
+    private static void AnalyzeLocalDeclaration(OperationAnalysisContext context)
+    {
+        var operation = context.Operation;
+        var local = operation switch
+        {
+            IDeclarationPatternOperation pattern => pattern.DeclaredSymbol,
+            IRecursivePatternOperation pattern => pattern.DeclaredSymbol,
+            IListPatternOperation pattern => pattern.DeclaredSymbol,
+            ILocalReferenceOperation { IsDeclaration: true } reference => reference.Local,
+            _ => null,
+        } as ILocalSymbol;
+        if (local is null
+            || Declaration(local.Type, local.Name, DeclaredLocation(local)) is not { } finding
+            || EnclosingOperationMatches(operation, finding.Descriptor.Id))
+        {
+            return;
+        }
+
+        context.ReportDiagnostic(finding.ToDiagnostic());
     }
 
     /// <summary>MMO1008 on every <c>#if</c> and <c>#elif</c> directive of one tree, active or not, at the directive line.</summary>
@@ -595,13 +631,26 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// MMO1005: a member or constructor of a clock, timer, random source or hash-seed type, or one of
     /// the ambient members. A <c>GetHashCode</c> call reports only when it still targets
     /// <c>object</c>'s or <c>ValueType</c>'s, which Roslyn binds only when the receiver's type does not
-    /// override it, and <c>string</c>'s, whose seed is per process.
+    /// override it, <c>string</c>'s, whose seed is per process, a <c>ValueTuple</c>'s of two to eight
+    /// elements, which combines through <c>HashCode</c>, or a record class's synthesized one
+    /// (<see cref="IsSynthesizedRecordClassHash"/>).
     /// </summary>
     private static Finding? Ambient(IOperation operation) =>
         ReferencedMember(operation) is { ContainingType: { } type } member
-        && (IsListedOrDerived(type, Tables.AmbientTypes) || Tables.AmbientMembers.Contains(Tables.MemberKey(member)))
+        && (IsListedOrDerived(type, Tables.AmbientTypes)
+            || Tables.AmbientMembers.Contains(Tables.MemberKey(member))
+            || IsSynthesizedRecordClassHash(member))
             ? new Finding(Descriptors.Mmo1005, operation.Syntax.GetLocation(), Display(member))
             : null;
+
+    /// <summary>
+    /// True for the <c>GetHashCode</c> the compiler writes for a record class. It hashes the record's
+    /// <c>EqualityContract</c>, a <c>System.Type</c>, whose hash is <c>RuntimeHelpers.GetHashCode</c>: an
+    /// identity hash that depends on which objects the thread hashed before. A record struct has no
+    /// <c>EqualityContract</c>; its synthesized hash combines its fields' own hashes.
+    /// </summary>
+    private static bool IsSynthesizedRecordClassHash(ISymbol member) =>
+        member is IMethodSymbol { IsImplicitlyDeclared: true, Name: nameof(GetHashCode), ContainingType: { IsRecord: true, IsValueType: false } };
 
     /// <summary>
     /// MMO1006: every <c>lock</c> statement, at its keyword, and a member or constructor of a lock,
