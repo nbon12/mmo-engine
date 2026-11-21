@@ -141,3 +141,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | heat-overheat | added: 48527a5a43ea9195 | added: b735e3b1e7c61c2f | |
+
+## 2026-11-21T08:19:23Z
+
+- Reason: First recording of the launcher-arc scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario launcher-arc`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| launcher-arc | added: df3040b1a6d2f2b8 | added: 3d950c34ebbce620 | |
