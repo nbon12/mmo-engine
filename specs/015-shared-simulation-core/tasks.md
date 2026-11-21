@@ -2153,13 +2153,13 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `config-invalid`, opened with `["tiny-world"]`: `ConfigValidationException` whose errors are exactly one, `movement.gravity: must be finite`, equal to the JSON's `expectedConfigErrors`.
   - Both `.bin` files first decode with `RecordedStream.Decode`, because these are open-time refusals.
   - Confirm it fails.
-- [ ] T223 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.MutationsReproduceEachRefusalFixture(string format, string caseName)` (FR-023), over `RefusalCases`:
+- [X] T223 [US6] In `tests/MmoEngine.SimCore.Tests/Formats/GoldenRefusalTests.cs`, write failing test `GoldenRefusalTests.MutationsReproduceEachRefusalFixture(string format, string caseName)` (FR-023), over `RefusalCases`:
   - the case's `base` names a valid case of the same format;
   - `GoldenMutations.Apply(format, GoldenFixtures.ReadBin(format, base), parsed.Mutations)` equals the case's `.bin` byte for byte;
   - cases with no mutations (`collision-missing`, `collision-other`) equal their base's bytes.
 
   Confirm red with `--filter "FullyQualifiedName~GoldenRefusalTests"`.
-- [ ] T224 [US6] Write failing test `GoldenCommandTests.GoldenWriteReproducesTheCommittedFixtures` in `tests/MmoEngine.SimCore.Tests/Cli/GoldenCommandTests.cs` (US6-IT).
+- [X] T224 [US6] Write failing test `GoldenCommandTests.GoldenWriteReproducesTheCommittedFixtures` in `tests/MmoEngine.SimCore.Tests/Cli/GoldenCommandTests.cs` (US6-IT).
   - **Given** a copy of `simcore/golden/` in a unique `TempDirectories` directory. The committed files are read with `FileAccess.Read`.
   - **When** `SimcoreCli.Run("golden", "write", "--dir", <copy>)` runs, **then**:
     - exit 0, and stderr holds no Error-level event;
@@ -2169,7 +2169,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - every `.bin` in the copy is byte-identical to the committed one, and its last-write time is unchanged (it was not rewritten);
     - no other file appeared in the copy.
   - Confirm it fails.
-- [ ] T225 [US6] In `tests/MmoEngine.SimCore.Tests/Cli/GoldenCommandTests.cs`, write failing tests:
+- [X] T225 [US6] In `tests/MmoEngine.SimCore.Tests/Cli/GoldenCommandTests.cs`, write failing tests:
   - `GoldenWriteRewritesOnlyChangedCases`. In a temp copy, delete `input/example.bin` and flip byte 20 of `collision/tiny-world.bin`. Then:
     - exit 0;
     - the lines `input/example: written, 17 bytes` and `collision/tiny-world: written, 188 bytes` appear in their ordinal places;

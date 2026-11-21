@@ -7,6 +7,7 @@ using MmoEngine.SimCore.Collision;
 using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Inputs;
+using MmoEngine.SimCore.Server.Golden;
 using MmoEngine.SimCore.Tests.Support;
 
 namespace MmoEngine.SimCore.Tests.Formats;
@@ -18,13 +19,17 @@ namespace MmoEngine.SimCore.Tests.Formats;
 /// result: <c>InputCodec.TryDecode</c> returns false with a <c>default</c> command, and
 /// <c>CollisionFile.Decode</c> and <c>RecordedStream.Decode</c> throw <see cref="CoreFormatException"/>
 /// without returning a value. Each open refusal (<c>"refusedAt": "open"</c>) decodes, and
-/// <see cref="StreamRunner"/> refuses it when it opens it, before any step runs.
+/// <see cref="StreamRunner"/> refuses it when it opens it, before any step runs. Every refusal case's
+/// mutations, applied to its base's <c>.bin</c>, reproduce its own <c>.bin</c>.
 /// </summary>
 /// <remarks>
 /// The fixtures' <c>expectedError</c>s, <c>collisionFixtures</c> and <c>expectedConfigErrors</c> are read
 /// with <see cref="GoldenFixtures"/> and <see cref="JsonDocument"/>, never with <c>GoldenJson</c>, and each
 /// is also compared with the contract's table, held here as literals, so a fixture authored with the wrong
-/// expectation cannot agree with a decoder that is wrong the same way. Every fixture is opened read-only.
+/// expectation cannot agree with a decoder that is wrong the same way. Only
+/// <see cref="MutationsReproduceEachRefusalFixture"/> parses a case with <c>GoldenJson</c>, to hand its
+/// mutations to <c>GoldenMutations.Apply</c>, and it first compares them with the JSON as
+/// <see cref="JsonDocument"/> reads it. Every fixture is opened read-only.
 /// </remarks>
 public sealed class GoldenRefusalTests
 {
@@ -40,6 +45,12 @@ public sealed class GoldenRefusalTests
 
     /// <summary>The length of the collision and stream trailers: a u64 XxHash64.</summary>
     private const int TrailerLength = 8;
+
+    /// <summary>
+    /// The refusal cases with no mutations, whose <c>.bin</c> is exactly their base's: the two open cases
+    /// refused for their missing collision data (contracts/recorded-stream-format.md#refusal-cases).
+    /// </summary>
+    private static readonly string[] NoMutationCases = ["stream/collision-missing", "stream/collision-other"];
 
     /// <summary>
     /// T217's table, keyed <c>&lt;format&gt;/&lt;case&gt;</c>: the offset, field, <c>.bin</c> length and
@@ -378,6 +389,76 @@ public sealed class GoldenRefusalTests
     }
 
     /// <summary>
+    /// FR-023, contracts/input-command-format.md#shared-fixture-rules: given each committed refusal case,
+    /// open refusals included, whose <c>base</c> names a valid case of the same format, when its
+    /// <c>mutations</c>, parsed with <see cref="GoldenJson"/>, are applied in order with
+    /// <see cref="GoldenMutations.Apply"/> to the base's committed <c>.bin</c>, then the result equals the
+    /// case's committed <c>.bin</c> byte for byte. The parsed base and mutations are first compared with
+    /// the JSON's <c>base</c> and <c>mutations</c> as <see cref="JsonDocument"/> reads them, so a parser
+    /// that drops or misreads a mutation cannot agree with itself through <c>golden write</c>. The cases
+    /// with no mutations are exactly <c>collision-missing</c> and <c>collision-other</c>, and each equals
+    /// its base's bytes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(GoldenFixtures.RefusalCases), MemberType = typeof(GoldenFixtures))]
+    public void MutationsReproduceEachRefusalFixture(string format, string caseName)
+    {
+        var label = $"{format}/{caseName}";
+        using var json = GoldenFixtures.ReadJson(format, caseName);
+        var root = json.RootElement;
+        Assert.True(
+            root.TryGetProperty("base", out var baseElement) && baseElement.ValueKind == JsonValueKind.String,
+            $"{label}.json has no string base");
+        var baseName = baseElement.GetString()!;
+        Assert.True(
+            root.TryGetProperty("mutations", out var mutationsElement) && mutationsElement.ValueKind == JsonValueKind.Array,
+            $"{label}.json has no mutations array");
+        var rawMutations = mutationsElement.EnumerateArray().ToArray();
+
+        // Given: the base is a valid case of the same format, and the parsed case holds the JSON's base and mutations.
+        var validNames = GoldenFixtures.ValidCaseNames(format).Select(row => row.Data).ToArray();
+        Assert.True(
+            validNames.Contains(baseName, StringComparer.Ordinal),
+            $"{label}.json's base '{baseName}' is not a valid {format} case; the valid cases are {string.Join(", ", validNames)}");
+        var parsed = Assert.IsType<GoldenRefusalCase>(GoldenJson.Parse(format, caseName + ".json", GoldenFixtures.ReadJsonBytes(format, caseName)));
+        Assert.Equal(format, parsed.Format);
+        Assert.Equal(caseName, parsed.Case);
+        Assert.Equal(GoldenKind.Refusal, parsed.Kind);
+        Assert.Equal(baseName, parsed.Base);
+        Assert.True(
+            parsed.Mutations.Length == rawMutations.Length,
+            $"{label}: GoldenJson parsed {parsed.Mutations.Length} mutations; the JSON holds {rawMutations.Length}");
+        for (var i = 0; i < rawMutations.Length; i++)
+        {
+            AssertMutationMatchesJson(label, i, rawMutations[i], parsed.Mutations[i]);
+        }
+
+        var baseBin = GoldenFixtures.ReadBin(format, baseName);
+        var bin = GoldenFixtures.ReadBin(format, caseName);
+
+        var applied = GoldenMutations.Apply(format, baseBin, parsed.Mutations);
+
+        Assert.True(
+            applied.AsSpan().SequenceEqual(bin),
+            $"{label}: the {parsed.Mutations.Length} mutations applied to {format}/{baseName}.bin ({baseBin.Length} bytes) give {applied.Length} bytes, "
+            + $"which differ from the committed {label}.bin ({bin.Length} bytes){FirstDifference(applied, bin)}");
+
+        var hasNoMutations = rawMutations.Length == 0;
+        var isNoMutationCase = NoMutationCases.Contains(label, StringComparer.Ordinal);
+        Assert.True(
+            hasNoMutations == isNoMutationCase,
+            hasNoMutations
+                ? $"{label}.json has no mutations; only {string.Join(" and ", NoMutationCases)} have none"
+                : $"{label}.json has {rawMutations.Length} mutations; the contract gives it none");
+        if (hasNoMutations)
+        {
+            Assert.True(
+                bin.AsSpan().SequenceEqual(baseBin),
+                $"{label}.bin ({bin.Length} bytes) has no mutations but differs from {format}/{baseName}.bin ({baseBin.Length} bytes){FirstDifference(bin, baseBin)}");
+        }
+    }
+
+    /// <summary>
     /// Runs <paramref name="bin"/> with <see cref="StreamRunner.Run(ReadOnlySpan{byte}, IReadOnlyList{CollisionWorld}, int)"/>
     /// and returns what it threw, asserting that the refusal is the call's only outcome and came before step
     /// zero: an exception was thrown, no record array was returned, and the exception is not a
@@ -469,6 +550,62 @@ public sealed class GoldenRefusalTests
             default:
                 throw new ArgumentOutOfRangeException(nameof(format), format, "no golden format");
         }
+    }
+
+    /// <summary>
+    /// Asserts that mutation <paramref name="index"/> as <see cref="GoldenJson"/> parsed it holds what the
+    /// JSON's object does, read with <see cref="JsonDocument"/>: the same <c>op</c>, and the <c>offset</c>,
+    /// <c>length</c> and <c>hex</c> it gives (each only when the JSON has it; <c>hex</c> compared ignoring
+    /// case, because <see cref="GoldenMutations.Apply"/> parses it case-insensitively).
+    /// </summary>
+    private static void AssertMutationMatchesJson(string label, int index, JsonElement raw, GoldenMutation parsed)
+    {
+        var at = $"{label}.json mutations[{index}]";
+        Assert.True(raw.ValueKind == JsonValueKind.Object, $"{at} is a {raw.ValueKind}, not an object");
+        Assert.True(
+            raw.TryGetProperty("op", out var op) && op.ValueKind == JsonValueKind.String,
+            $"{at} has no string op");
+        Assert.True(parsed.Op == op.GetString(), $"{at}: GoldenJson parsed op '{parsed.Op}'; the JSON holds '{op.GetString()}'");
+        if (raw.TryGetProperty("offset", out var offset))
+        {
+            Assert.True(
+                offset.ValueKind == JsonValueKind.Number && parsed.Offset == offset.GetInt64(),
+                $"{at}: GoldenJson parsed offset {parsed.Offset}; the JSON holds {offset.GetRawText()}");
+        }
+
+        if (raw.TryGetProperty("length", out var length))
+        {
+            Assert.True(
+                length.ValueKind == JsonValueKind.Number && parsed.Length == length.GetInt64(),
+                $"{at}: GoldenJson parsed length {parsed.Length}; the JSON holds {length.GetRawText()}");
+        }
+
+        if (raw.TryGetProperty("hex", out var hex))
+        {
+            Assert.True(
+                hex.ValueKind == JsonValueKind.String && string.Equals(parsed.Hex, hex.GetString(), StringComparison.OrdinalIgnoreCase),
+                $"{at}: GoldenJson parsed hex \"{parsed.Hex}\"; the JSON holds {hex.GetRawText()}");
+        }
+    }
+
+    /// <summary>
+    /// <c>"; the first difference is at offset &lt;n&gt;"</c> with both bytes, or the shorter length when one
+    /// array is a prefix of the other, for a failure message; empty when the arrays are equal.
+    /// </summary>
+    private static string FirstDifference(byte[] actual, byte[] expected)
+    {
+        var common = System.Math.Min(actual.Length, expected.Length);
+        for (var i = 0; i < common; i++)
+        {
+            if (actual[i] != expected[i])
+            {
+                return string.Create(CultureInfo.InvariantCulture, $"; the first difference is at offset {i}: {actual[i]:x2}, expected {expected[i]:x2}");
+            }
+        }
+
+        return actual.Length == expected.Length
+            ? string.Empty
+            : string.Create(CultureInfo.InvariantCulture, $"; one is a prefix of the other, which ends at offset {common}");
     }
 
     /// <summary>One row of T217's table: the offset, field, <c>.bin</c> length and exact message.</summary>
