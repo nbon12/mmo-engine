@@ -121,3 +121,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | slope-limit | cdb5b29fb3f3e5f8 -> ef6eb3374da84868 | c295a0957a79ae2d -> cf23db61b372bf66 | 86 |
+
+## 2026-11-21T08:18:53Z
+
+- Reason: First recording: projectile flight (stage 5) is in the world step
+- Command: `simcore streams record --scenario fuzz-all-buttons`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| fuzz-all-buttons | added: 89ae4d9707d3dc24 | added: 63092789b15a64a8 | |
