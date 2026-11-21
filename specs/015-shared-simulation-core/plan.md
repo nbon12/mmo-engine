@@ -1109,6 +1109,61 @@ The design documents settled these points, which the spec leaves open. They are 
   `SimMathBounds`, so widening a constant would loosen the check with every test green; T166's "never
   widen a bound past the R3 table" was enforced only by review. `BoundsAreTheResearchR3Values` now pins
   each constant to its R3 value.
+- **MMO1009's SimMath exemption is keyed by documentation ID (T147, T163, Phase 5 review, second
+  pass).** It matched any method named `FloorToInt`, `RoundToInt` or `TruncateToInt` in `SimMath`, so a
+  local function with one of those names inside another method, or another overload, could make raw
+  casts. The contract already says the exemption covers the helpers' own bodies, and that one overload
+  is keyed by its documentation comment ID. `Tables.SimMathIntegerHelpers` now holds the three IDs, and
+  the check also requires `MethodKind.Ordinary`; a local function or lambda has no ID anyway.
+- **Generic code cannot route around MMO1009 or float `%` (T160, T163, Phase 5 review, second pass).**
+  `int.CreateSaturating(v)` with a type-parameter `TOther` went unreported, though the caller can bind
+  it to `float`, and `int.CreateSaturating(float.NaN)` was measured to differ between builds; and `a % b` on a
+  type parameter calls `IModulusOperators<,,>.op_Modulus`, not the built-in operator MMO1002 checked.
+  Both report in the generic body, because the binding can be any number of calls away, unless the
+  type parameter is constrained (directly or through another type parameter) to `IBinaryInteger<T>`,
+  which no floating-point type implements. Keeping the `%` half was a judgment call: one reviewer
+  suggested dropping it because float `%` is exact. But research R4 bans float `%` anyway, as unneeded,
+  and the generic route is the same operation. The core has no generic numeric code, so the rule costs
+  nothing, and integer generic `%` stays allowed.
+- **Native code is MMO1008 (T163, Phase 5 review, second pass).** A `[DllImport]` or `InternalCall`
+  `extern` method reported nothing, though it reaches native math (glibc on the server, musl in the
+  browser build) that FR-012 and FR-014 keep out, just as `MathF.Sin` does. Every `extern` declaration
+  (methods, local functions, accessors at their keyword, field-like events at their identifier) and a
+  `[LibraryImport]` declaration, whose partial definition is not `extern`, now report MMO1008, and so
+  does every member of `NativeLibrary` and `Marshal`. `DllImportAttribute` is not a table entry: it
+  requires `extern`, so an entry for it would be redundant, and no test could catch it being dropped.
+  This also closes what was left of the review's accessor finding. The previous pass already reported
+  `Synchronized` accessors, local functions and lambdas, and a `[Conditional]` local function, and
+  `[Conditional]` on an accessor does not compile (CS1667). An `[UnsafeAccessor]` on an `extern`
+  accessor was still silent; now an accessor reports MMO1008 and then MMO1006 at its keyword.
+- **A hash-ordered value that reaches a non-hash-ordered type without a conversion operation still
+  reports (T161, Phase 5 review, second pass).** Three routes did not report: generic inference
+  (`Sum(set)` with `Sum<T>(T e) where T : IEnumerable<int>`), a declaration pattern
+  (`set is IEnumerable<int> e`), and a type parameter constrained to a listed type. A type parameter now
+  counts as hash-ordered through its constraints, and declaration patterns and recursive patterns
+  with a designation are registered. A hash-ordered type argument reports when its type parameter is
+  constrained to a class or interface and to no hash-ordered type. That applies to a generic method's
+  type parameters and to those of a member's containing type (`new Box<HashSet<int>>(set)`). Which type
+  arguments count was a judgment call. Reporting every hash-ordered type argument whose type parameter
+  is not hash-ordered, as one reviewer suggested, would also flag `First()` on a `List<HashSet<int>>`
+  and every `Dictionary<int, HashSet<int>>`, which store and return the set with its own type intact.
+  So an unconstrained type parameter does not report. The remaining gap is an unconstrained `T` that
+  generic code type-tests back into an enumerable. The core has no such code, and the contract lists
+  it under "Not covered". A type test with no designation does not enumerate, so it stays allowed.
+- **The immutable builders, `StringDictionary` and `FrozenSet<T>.Items` are hash-ordered (T161, Phase 5
+  review, second pass).** `ImmutableDictionary<,>.Builder` and `ImmutableHashSet<>.Builder` enumerate
+  in their immutable type's hash order but derive from `object`, so derivation never caught them.
+  `StringDictionary` wraps a `Hashtable` keyed by strings, whose hash is seeded per process. They are
+  listed by name. `FrozenSet<T>.Items` is an `ImmutableArray<T>` in hash order, a view like
+  `FrozenDictionary.Keys`, so `Items` joins `Keys` and `Values` as an enumerating property.
+- **A partial member reports once (T163, Phase 5 review, second pass).** While adding the
+  `[LibraryImport]` row, the declaration reported twice. Roslyn runs the symbol action for both parts
+  of a partial method, property or event, so any partial member with a banned type or attribute
+  reported at both identifiers (a partial `double M(double x)` gave four MMO1007). The symbol action now
+  skips the implementation part (`PartialDefinitionPart` set). The defining declaration has the same
+  signature and the attributes of both parts, so nothing is lost. `RuleTests` pins a
+  partial method, property and event, and the contract's precedence section says so. The core has no
+  partial members, so the backstop is unchanged.
 
 ## Delivery
 

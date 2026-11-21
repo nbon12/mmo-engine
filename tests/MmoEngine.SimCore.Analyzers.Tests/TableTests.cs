@@ -192,7 +192,9 @@ public sealed class TableTests
     /// <summary>
     /// contracts/analyzer-rules.md#math-allowlist-mmo1002: everything else on the math host types, on
     /// <c>MathF</c> where it declares the member and on <c>float</c> where it does not, float <c>%</c>
-    /// and <c>%=</c>, and float <c>Math.Clamp</c> outside <c>SimMath</c> report MMO1002.
+    /// and <c>%=</c> (also through a type parameter that may be a float, while an
+    /// <c>IBinaryInteger&lt;T&gt;</c> <c>%</c> is allowed), and float <c>Math.Clamp</c> outside
+    /// <c>SimMath</c> report MMO1002.
     /// </summary>
     public static TheoryData<string, string, int, string> MathExclusionRows => new()
     {
@@ -234,13 +236,16 @@ public sealed class TableTests
         { MathExclusions, "MMO1002", 1, "public static float M(float x) => x % 2f;" },
         { MathExclusions, "MMO1002", 1, "public static void M(ref float x) { x %= 2f; }" },
         { MathExclusions, "MMO1002", 1, "public static float M(float x) => Math.Clamp(x, 0f, 1f);" },
+        { MathExclusions, "MMO1002", 1, "public static T M<T>(T a, T b) where T : IModulusOperators<T, T, T> => a % b;" },
+        { MathExclusions, "MMO1002", 1, "public static void M<T>(ref T a, T b) where T : IModulusOperators<T, T, T> => a %= b;" },
+        { MathExclusions, "", 0, "public static T M<T>(T a, T b) where T : IBinaryInteger<T> => a % b;" },
     };
 
     /// <summary>
     /// contracts/analyzer-rules.md#hash-ordered-collections-mmo1004: one <c>foreach</c> over each type and
-    /// interface of the list, written with its full namespace, and the enumerating members
-    /// <c>GetEnumerator</c>, <c>CopyTo</c> and <c>ToArray</c> on a <c>HashSet&lt;int&gt;</c>, report
-    /// MMO1004.
+    /// interface of the list, written with its full namespace (the immutable builders and
+    /// <c>StringDictionary</c> included), the enumerating members <c>GetEnumerator</c>, <c>CopyTo</c> and
+    /// <c>ToArray</c> on a <c>HashSet&lt;int&gt;</c>, and <c>FrozenSet&lt;int&gt;.Items</c>, report MMO1004.
     /// </summary>
     public static TheoryData<string, string, int, string> HashOrderedRows => new()
     {
@@ -253,12 +258,15 @@ public sealed class TableTests
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Concurrent.ConcurrentBag<int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Immutable.ImmutableDictionary<int, int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Immutable.ImmutableHashSet<int>") },
+        { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Immutable.ImmutableDictionary<int, int>.Builder") },
+        { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Immutable.ImmutableHashSet<int>.Builder") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Frozen.FrozenDictionary<int, int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Frozen.FrozenSet<int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.ObjectModel.ReadOnlyDictionary<int, int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.ObjectModel.ReadOnlyDictionary<int, int>.KeyCollection") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.ObjectModel.ReadOnlyDictionary<int, int>.ValueCollection") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Specialized.HybridDictionary") },
+        { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Specialized.StringDictionary") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Runtime.CompilerServices.ConditionalWeakTable<object, object>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Generic.IDictionary<int, int>") },
         { HashOrdered, "MMO1004", 1, Foreach("System.Collections.Generic.IReadOnlyDictionary<int, int>") },
@@ -269,6 +277,7 @@ public sealed class TableTests
         { HashOrdered, "MMO1004", 1, "public static System.Collections.Generic.HashSet<int>.Enumerator M(System.Collections.Generic.HashSet<int> s) => s.GetEnumerator();" },
         { HashOrdered, "MMO1004", 1, "public static void M(System.Collections.Generic.HashSet<int> s, int[] a) => s.CopyTo(a);" },
         { HashOrdered, "MMO1004", 1, "public static int[] M(System.Collections.Generic.HashSet<int> s) => s.ToArray();" },
+        { HashOrdered, "MMO1004", 1, "public static int M(System.Collections.Frozen.FrozenSet<int> s) => s.Items[0];" },
     };
 
     /// <summary>
@@ -422,7 +431,9 @@ public sealed class TableTests
     /// <c>RuntimeFeature</c>, <c>Environment</c>, <c>IntPtr.Size</c>, <c>UIntPtr.Size</c>,
     /// <c>BitConverter.IsLittleEndian</c>, a <c>System.Type</c> member, a <c>System.Reflection</c> type,
     /// <c>Activator</c>, the four <c>dynamic</c> operation kinds and an <c>[UnsafeAccessor]</c>
-    /// declaration; and the two attributes on local functions.
+    /// declaration; the two attributes on local functions; and native code: a <c>[DllImport]</c> method
+    /// and local function, an <c>InternalCall</c> extern, an extern accessor, a <c>[LibraryImport]</c>
+    /// partial method (whose implementation part is not extern), <c>NativeLibrary</c> and <c>Marshal</c>.
     /// </summary>
     public static TheoryData<string, string, int, string> PlatformPathRows => new()
     {
@@ -448,6 +459,13 @@ public sealed class TableTests
         { PlatformPaths, "MMO1008", 1, "[System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] public static extern void Call(object o);" },
         { PlatformPaths, "MMO1008", 1, "public static void M() { Log(); [Conditional(\"MMO_SAMPLE\")] static void Log() { } }" },
         { PlatformPaths, "MMO1008", 1, "public static void M(object o) { Call(o); [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] static extern void Call(object o); }" },
+        { PlatformPaths, "MMO1008", 1, "[System.Runtime.InteropServices.DllImport(\"m\")] public static extern float Sinf(float x);" },
+        { PlatformPaths, "MMO1008", 1, "public static float M(float x) { return Sinf(x); [System.Runtime.InteropServices.DllImport(\"m\")] static extern float Sinf(float x); }" },
+        { PlatformPaths, "MMO1008", 1, "[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.InternalCall)] public static extern float S(float x);" },
+        { PlatformPaths, "MMO1008", 1, "public static extern int P { get; }" },
+        { PlatformPaths, "MMO1008", 1, "public static partial class N { [System.Runtime.InteropServices.LibraryImport(\"m\")] public static partial float Sinf(float x); public static partial float Sinf(float x) => 0f; }" },
+        { PlatformPaths, "MMO1008", 1, "public static bool M(string s) => System.Runtime.InteropServices.NativeLibrary.TryLoad(s, out _);" },
+        { PlatformPaths, "MMO1008", 1, "public static int M() => System.Runtime.InteropServices.Marshal.SizeOf<int>();" },
     };
 
     /// <summary>
@@ -455,8 +473,10 @@ public sealed class TableTests
     /// parameter to each integer type and to an enum (here one with a <c>byte</c> underlying type), a
     /// <c>checked</c> cast, a <c>System.Convert</c> member, <c>int.CreateTruncating</c>,
     /// <c>int.CreateSaturating</c> and <c>int.CreateChecked</c> of a <c>float</c>, and a non-constant
-    /// <c>ulong</c>-to-<c>float</c> conversion report MMO1009. So does each element conversion that has
-    /// no conversion operation of its own: a <c>foreach</c> iteration variable (also before a
+    /// <c>ulong</c>-to-<c>float</c> conversion report MMO1009, and so do <c>int.CreateSaturating</c> and
+    /// <c>long.CreateTruncating</c> of a type parameter that may be a float (one constrained to
+    /// <c>IBinaryInteger&lt;T&gt;</c> is allowed). So does each element conversion that has no conversion
+    /// operation of its own: a <c>foreach</c> iteration variable (also before a
     /// user-defined operator), a tuple conversion (explicit and implicit), a deconstruction (of a tuple,
     /// through <c>Deconstruct</c>, and in a <c>foreach</c>), a spread, and the left operand of <c>??</c>.
     /// </summary>
@@ -480,6 +500,9 @@ public sealed class TableTests
         { Conversions, "MMO1009", 1, "public static int M(float x) => int.CreateSaturating(x);" },
         { Conversions, "MMO1009", 1, "public static int M(float x) => int.CreateChecked(x);" },
         { Conversions, "MMO1009", 1, "public static float M(ulong u) => (float)u;" },
+        { Conversions, "MMO1009", 1, "public static int M<T>(T v) where T : INumberBase<T> => int.CreateSaturating(v);" },
+        { Conversions, "MMO1009", 1, "public static long M<T>(T v) where T : INumberBase<T> => long.CreateTruncating(v);" },
+        { Conversions, "", 0, "public static int M<T>(T v) where T : IBinaryInteger<T> => int.CreateSaturating(v);" },
 
         { Conversions, "MMO1009", 1, "public static int M(float[] a) { var n = 0; foreach (int i in a) n += i; return n; }" },
         { Conversions, "MMO1009", 1, "public static float M(ulong[] a) { var s = 0f; foreach (float f in a) s += f; return s; }" },

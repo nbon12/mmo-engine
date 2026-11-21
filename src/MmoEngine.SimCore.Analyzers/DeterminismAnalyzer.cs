@@ -51,6 +51,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         OperationKind.Coalesce,
         OperationKind.DeconstructionAssignment,
         OperationKind.VariableDeclarator,
+        OperationKind.DeclarationPattern,
+        OperationKind.RecursivePattern,
         OperationKind.Binary,
         OperationKind.CompoundAssignment,
         OperationKind.Unary,
@@ -94,14 +96,15 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// The member declarations: the types of fields (not constants), properties, events, return types
-    /// and parameters; a method's <c>[Conditional]</c> and <c>[UnsafeAccessor]</c> attributes and
-    /// <c>Synchronized</c> flag; an accessor's <c>Synchronized</c> flag; and a delegate's return and
-    /// parameter types.
+    /// and parameters; a method's <c>extern</c> modifier, its <c>[Conditional]</c>,
+    /// <c>[UnsafeAccessor]</c> and <c>[LibraryImport]</c> attributes and its <c>Synchronized</c> flag; an
+    /// accessor's <c>extern</c> modifier, attributes and <c>Synchronized</c> flag; and a delegate's
+    /// return and parameter types.
     /// </summary>
     private static void AnalyzeSymbol(SymbolAnalysisContext context)
     {
         var symbol = context.Symbol;
-        if (symbol.IsImplicitlyDeclared)
+        if (symbol.IsImplicitlyDeclared || IsPartialImplementation(symbol))
         {
             return;
         }
@@ -124,11 +127,7 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 Report(report, EventDeclaration(@event));
                 break;
             case IMethodSymbol accessor when IsAccessor(accessor):
-                if (IsSynchronized(accessor))
-                {
-                    report(Diagnostic.Create(Descriptors.Mmo1006, DeclaredLocation(accessor), Display(accessor)));
-                }
-
+                Report(report, AccessorDeclaration(accessor));
                 break;
             case IMethodSymbol method:
                 Report(report, MethodDeclaration(method, method.ReturnType, DeclaredLocation(method), method.Name));
@@ -208,6 +207,19 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    /// <summary>
+    /// True for the implementation part of a partial method, property, event or accessor. Its defining
+    /// declaration has the same signature and the attributes of both parts, so it reports for both, and
+    /// a partial member carries one diagnostic, not one per part.
+    /// </summary>
+    private static bool IsPartialImplementation(ISymbol symbol) => symbol switch
+    {
+        IMethodSymbol method => method.PartialDefinitionPart is not null,
+        IPropertySymbol property => property.PartialDefinitionPart is not null,
+        IEventSymbol @event => @event.PartialDefinitionPart is not null,
+        _ => false,
+    };
+
     /// <summary>True for a lambda or anonymous method parameter whose type is written in the syntax, not inferred from the delegate type.</summary>
     private static bool IsWrittenWithType(IParameterSymbol parameter, CancellationToken cancellationToken) =>
         parameter.DeclaringSyntaxReferences.Length == 1
@@ -224,7 +236,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// Property, indexer and event accessors: their types are reported on their property or event,
-    /// and their own <c>Synchronized</c> flag at the accessor keyword.
+    /// and their own <c>extern</c> modifier, attributes and <c>Synchronized</c> flag at the accessor
+    /// keyword.
     /// </summary>
     private static bool IsAccessor(IMethodSymbol method) =>
         method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise;
@@ -310,14 +323,14 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// <summary>
     /// The one rule a method, local function or lambda declaration reports at
     /// <paramref name="location"/>, the first in precedence order: a vector
-    /// <paramref name="returnType"/> (MMO1001), a <c>[Conditional]</c> or <c>[UnsafeAccessor]</c>
-    /// attribute (MMO1008), the synchronized implementation flag (MMO1006), then the rest of the return
-    /// type's rules. A lambda passes its return type only when its syntax writes one. Parameters report
-    /// on their own identifiers.
+    /// <paramref name="returnType"/> (MMO1001), native code or a platform-path attribute (MMO1008,
+    /// <see cref="IsPlatformPathDeclaration"/>), the synchronized implementation flag (MMO1006), then
+    /// the rest of the return type's rules. A lambda passes its return type only when its syntax writes
+    /// one. Parameters report on their own identifiers.
     /// </summary>
     private static Finding? MethodDeclaration(IMethodSymbol method, ITypeSymbol? returnType, Location location, string name) =>
         TypeFinding(returnType, IsBannedVectorType, Descriptors.Mmo1001, name, location)
-            ?? (HasPlatformPathAttribute(method)
+            ?? (IsPlatformPathDeclaration(method)
                 ? new Finding(Descriptors.Mmo1008, location, name)
                 : (Finding?)null)
             ?? (IsSynchronized(method)
@@ -326,26 +339,53 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             ?? Declaration(returnType, name, location);
 
     /// <summary>
-    /// The one rule an event declaration reports at its identifier: a vector type (MMO1001); the
-    /// synchronized flag that <c>[method: MethodImpl(MethodImplOptions.Synchronized)]</c> gives a
-    /// field-like event's accessors, which are implicitly declared and so have no keyword to report at
-    /// (MMO1006); then the rest of its type's rules. The attribute applies to both accessors, so the
-    /// adder carries it.
+    /// The one rule an event declaration reports at its identifier: a vector type (MMO1001); a
+    /// field-like event's implicitly declared accessors, which have no keyword to report at, being
+    /// <c>extern</c> (MMO1008) or synchronized by <c>[method: MethodImpl(MethodImplOptions.Synchronized)]</c>
+    /// (MMO1006); then the rest of its type's rules. The modifier and the attribute apply to both
+    /// accessors, so the adder carries them.
     /// </summary>
     private static Finding? EventDeclaration(IEventSymbol @event)
     {
         var location = DeclaredLocation(@event);
+        var implicitAdder = @event.AddMethod is { IsImplicitlyDeclared: true } adder ? adder : null;
         return TypeFinding(@event.Type, IsBannedVectorType, Descriptors.Mmo1001, @event.Name, location)
-            ?? (@event.AddMethod is { IsImplicitlyDeclared: true } adder && IsSynchronized(adder)
+            ?? (implicitAdder is not null && IsPlatformPathDeclaration(implicitAdder)
+                ? new Finding(Descriptors.Mmo1008, location, @event.Name)
+                : (Finding?)null)
+            ?? (implicitAdder is not null && IsSynchronized(implicitAdder)
                 ? new Finding(Descriptors.Mmo1006, location, @event.Name)
                 : (Finding?)null)
             ?? Declaration(@event.Type, @event.Name, location);
     }
 
+    /// <summary>
+    /// The one rule an explicitly declared property, indexer or event accessor reports at its keyword,
+    /// named as the accessor (<c>C.P.get</c>): native code or a platform-path attribute (MMO1008), then
+    /// the synchronized flag (MMO1006). Its types report on its property or event.
+    /// </summary>
+    private static Finding? AccessorDeclaration(IMethodSymbol accessor)
+    {
+        var location = DeclaredLocation(accessor);
+        return IsPlatformPathDeclaration(accessor)
+            ? new Finding(Descriptors.Mmo1008, location, Display(accessor))
+            : IsSynchronized(accessor)
+                ? new Finding(Descriptors.Mmo1006, location, Display(accessor))
+                : null;
+    }
+
     /// <summary>True when <paramref name="method"/>'s implementation flags include <c>Synchronized</c>, so calling it takes a monitor.</summary>
     private static bool IsSynchronized(IMethodSymbol method) => (method.MethodImplementationFlags & MethodImplAttributes.Synchronized) != 0;
 
-    /// <summary>True when <paramref name="method"/> carries <c>[Conditional]</c> or <c>[UnsafeAccessor]</c>.</summary>
+    /// <summary>
+    /// True for a declaration MMO1008 reports: an <c>extern</c> method, local function or accessor,
+    /// whose body is native code or a runtime intrinsic that differs between builds (<c>[DllImport]</c>,
+    /// <c>InternalCall</c>, <c>[UnsafeAccessor]</c>), or one carrying a
+    /// <see cref="Tables.PlatformPathAttributes"/> attribute.
+    /// </summary>
+    private static bool IsPlatformPathDeclaration(IMethodSymbol method) => method.IsExtern || HasPlatformPathAttribute(method);
+
+    /// <summary>True when <paramref name="method"/> carries <c>[Conditional]</c>, <c>[UnsafeAccessor]</c> or <c>[LibraryImport]</c>.</summary>
     private static bool HasPlatformPathAttribute(IMethodSymbol method)
     {
         foreach (var attribute in method.GetAttributes())
@@ -473,7 +513,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// MMO1002: a static method of a math host type or of a generic-math interface, as an invocation, a
-    /// method group or a function pointer, unless allowlisted; and float <c>%</c> and <c>%=</c>.
+    /// method group or a function pointer, unless allowlisted; and float <c>%</c> and <c>%=</c>, also
+    /// through a type parameter that may be bound to float (<see cref="IsFloatRemainder"/>).
     /// </summary>
     private static Finding? PlatformMath(IOperation operation)
     {
@@ -483,14 +524,27 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
                 return PlatformMathMethod(invocation.TargetMethod, operation);
             case IMethodReferenceOperation reference:
                 return PlatformMathMethod(reference.Method, operation);
-            case IBinaryOperation { OperatorKind: BinaryOperatorKind.Remainder, OperatorMethod: null } binary when IsSingle(binary.Type):
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.Remainder } binary when IsFloatRemainder(binary.OperatorMethod, binary.LeftOperand.Type):
                 return new Finding(Descriptors.Mmo1002, operation.Syntax.GetLocation(), "%", Tables.MathFallback);
-            case ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Remainder, OperatorMethod: null } compound when IsSingle(compound.Type):
+            case ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Remainder } compound when IsFloatRemainder(compound.OperatorMethod, compound.Target.Type):
                 return new Finding(Descriptors.Mmo1002, operation.Syntax.GetLocation(), "%=", Tables.MathFallback);
             default:
                 return null;
         }
     }
+
+    /// <summary>
+    /// True for a float remainder: the built-in <c>%</c> on a <c>float</c> left operand, or the
+    /// generic-math <c>IModulusOperators</c> operator on a type parameter that may be bound to
+    /// <c>float</c> (<see cref="MayBeFloatingPoint"/>).
+    /// </summary>
+    private static bool IsFloatRemainder(IMethodSymbol? operatorMethod, ITypeSymbol? left) =>
+        operatorMethod is null
+            ? IsSingle(left)
+            : left is ITypeParameterSymbol
+                && operatorMethod.ContainingType is { } host
+                && string.Equals(Tables.FullName(host), Tables.ModulusOperatorsInterface, StringComparison.Ordinal)
+                && MayBeFloatingPoint(left);
 
     private static Finding? PlatformMathMethod(IMethodSymbol method, IOperation operation)
     {
@@ -571,9 +625,12 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// MMO1004: enumerating a hash-ordered collection by <c>foreach</c>, a <c>..</c> spread, an
-    /// enumerating member (<c>GetEnumerator</c>, <c>CopyTo</c>, <c>ToArray</c>, or <c>Keys</c> and
-    /// <c>Values</c> whose result is not hash-ordered), or a conversion to a type that is not
-    /// hash-ordered, except into an order-insensitive sink of a hash-ordered type.
+    /// enumerating member (<c>GetEnumerator</c>, <c>CopyTo</c>, <c>ToArray</c>, or <c>Keys</c>,
+    /// <c>Values</c> and <c>Items</c> whose result is not hash-ordered), or a conversion to a type that
+    /// is not hash-ordered, except into an order-insensitive sink of a hash-ordered type. The two
+    /// routes that reach such a type with no conversion operation count as conversions too: a
+    /// declaration pattern, and a type argument bound to a type parameter that hides the order
+    /// (<see cref="HashOrderedTypeArgument"/>).
     /// </summary>
     private static Finding? HashOrderedEnumeration(IOperation operation)
     {
@@ -592,10 +649,58 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
             case IConversionOperation { Operand.Type: { } source } conversion
                 when IsHashOrdered(source) && !IsHashOrdered(conversion.Type) && !IsOrderInsensitiveSink(conversion):
                 return new Finding(Descriptors.Mmo1004, operation.Syntax.GetLocation(), operation.Syntax.ToString(), source.ToDisplayString());
-            default:
-                return null;
+            case IPatternOperation { InputType: { } input } pattern
+                when pattern is IDeclarationPatternOperation { DeclaredSymbol: not null } or IRecursivePatternOperation { DeclaredSymbol: not null }
+                    && IsHashOrdered(input)
+                    && !IsHashOrdered(pattern.NarrowedType):
+                return new Finding(Descriptors.Mmo1004, operation.Syntax.GetLocation(), operation.Syntax.ToString(), input.ToDisplayString());
         }
+
+        return ReferencedMember(operation) is { } member && HashOrderedTypeArgument(member) is { } argument
+            ? new Finding(Descriptors.Mmo1004, operation.Syntax.GetLocation(), Display(member), argument.ToDisplayString())
+            : null;
     }
+
+    /// <summary>
+    /// The first hash-ordered type argument of <paramref name="member"/>, a generic method's own or one
+    /// of its containing types', whose type parameter hides the order
+    /// (<see cref="HidesHashOrder"/>), or null.
+    /// </summary>
+    private static ITypeSymbol? HashOrderedTypeArgument(ISymbol member)
+    {
+        var found = member is IMethodSymbol method ? HiddenTypeArgument(method.TypeParameters, method.TypeArguments) : null;
+        for (var type = member.ContainingType; found is null && type is not null; type = type.ContainingType)
+        {
+            found = HiddenTypeArgument(type.TypeParameters, type.TypeArguments);
+        }
+
+        return found;
+    }
+
+    private static ITypeSymbol? HiddenTypeArgument(ImmutableArray<ITypeParameterSymbol> parameters, ImmutableArray<ITypeSymbol> arguments)
+    {
+        for (var i = 0; i < parameters.Length && i < arguments.Length; i++)
+        {
+            if (IsHashOrdered(arguments[i]) && HidesHashOrder(parameters[i]))
+            {
+                return arguments[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// True for a type parameter whose code sees its argument as a type that is not hash-ordered: one
+    /// constrained, directly or through another type parameter, to a class or interface
+    /// (<c>where T : IEnumerable&lt;int&gt;</c>), and to no hash-ordered one. An unconstrained type
+    /// parameter (<c>List&lt;T&gt;</c>, <c>Enumerable.First&lt;TSource&gt;</c>) gives its code nothing
+    /// to enumerate the argument through, and each read gets the argument's own type back.
+    /// </summary>
+    private static bool HidesHashOrder(ITypeParameterSymbol parameter) => !IsHashOrdered(parameter) && HasConstraintType(parameter);
+
+    private static bool HasConstraintType(ITypeParameterSymbol parameter) =>
+        parameter.ConstraintTypes.Any(constraint => constraint is not ITypeParameterSymbol other || HasConstraintType(other));
 
     /// <summary>The <c>foreach</c> or spread of <paramref name="collection"/>, reported at the collection expression, when its type is hash-ordered.</summary>
     private static Finding? HashOrderedSource(IOperation collection, string keyword) =>
@@ -624,10 +729,15 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
     /// <summary>
     /// True for a hash-ordered collection type (<see cref="Tables.HashOrderedTypes"/>) or a class
-    /// derived from one. Interfaces count only as themselves.
+    /// derived from one, and for a type parameter constrained to one, directly or through another type
+    /// parameter. Interfaces count only as themselves.
     /// </summary>
-    private static bool IsHashOrdered(ITypeSymbol? type) =>
-        type is INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Interface } named && IsListedOrDerived(named, Tables.HashOrderedTypes);
+    private static bool IsHashOrdered(ITypeSymbol? type) => type switch
+    {
+        INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Interface } named => IsListedOrDerived(named, Tables.HashOrderedTypes),
+        ITypeParameterSymbol parameter => parameter.ConstraintTypes.Any(IsHashOrdered),
+        _ => false,
+    };
 
     /// <summary>True when <paramref name="type"/> or one of its base classes is in <paramref name="listed"/>.</summary>
     private static bool IsListedOrDerived(INamedTypeSymbol? type, ImmutableHashSet<string> listed)
@@ -672,7 +782,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     /// MMO1009: a non-constant conversion from <c>float</c> or <c>double</c> to an integer or enum type
     /// outside the bodies of SimMath's three saturating helpers; a non-constant <c>ulong</c>-to-<c>float</c>
     /// conversion anywhere; every <c>System.Convert</c> member; and an integer type's <c>Create*</c>
-    /// from a floating-point <c>TOther</c>. Besides conversion operations, it checks the element
+    /// from a <c>TOther</c> that is, or may be bound to, a floating-point type
+    /// (<see cref="MayBeFloatingPoint"/>). Besides conversion operations, it checks the element
     /// conversions Roslyn makes without an operation of their own: between tuple elements, from a
     /// <c>foreach</c> element to its iteration variable, in a deconstruction, from a spread's elements
     /// to the collection's, and from the left operand of <c>??</c> to its result.
@@ -709,9 +820,8 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
 
         var banned = string.Equals(Tables.FullName(type), Tables.ConvertType, StringComparison.Ordinal)
             || (member is IMethodSymbol { TypeArguments.Length: 1 } method
-                && method.TypeArguments[0] is INamedTypeSymbol other
                 && Tables.IntegerCreateMethods.Contains(Tables.MemberKey(method))
-                && Tables.FloatingPointTypes.Contains(Tables.FullName(other)));
+                && MayBeFloatingPoint(method.TypeArguments[0]));
         return banned ? new Finding(Descriptors.Mmo1009, operation.Syntax.GetLocation(), Display(member), Tables.FloatToIntegerReason) : null;
     }
 
@@ -809,11 +919,35 @@ public sealed class DeterminismAnalyzer : DiagnosticAnalyzer
     private static bool IsEnumerableOfT(INamedTypeSymbol type) =>
         type.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T;
 
-    /// <summary>True when the method whose body holds <paramref name="operation"/> is one of <c>SimMath.FloorToInt</c>, <c>RoundToInt</c> and <c>TruncateToInt</c>.</summary>
+    /// <summary>
+    /// True when the method whose body holds <paramref name="operation"/> is one of
+    /// <c>SimMath.FloorToInt(float)</c>, <c>RoundToInt(float)</c> and <c>TruncateToInt(float)</c>,
+    /// matched by documentation comment ID. A local function or lambda inside them is the enclosing
+    /// symbol of its own body and has no ID, and another overload has another ID, so neither is exempt.
+    /// </summary>
     private static bool IsInsideSimMathIntegerHelper(IOperation operation) =>
-        operation.SemanticModel?.GetEnclosingSymbol(operation.Syntax.SpanStart) is IMethodSymbol { ContainingType: { } type } method
-        && Tables.SimMathIntegerHelpers.Contains(method.Name)
-        && string.Equals(Tables.FullName(type), Tables.SimMathType, StringComparison.Ordinal);
+        operation.SemanticModel?.GetEnclosingSymbol(operation.Syntax.SpanStart) is IMethodSymbol { MethodKind: MethodKind.Ordinary } method
+        && method.GetDocumentationCommentId() is { } id
+        && Tables.SimMathIntegerHelpers.Contains(id);
+
+    /// <summary>
+    /// True for <c>float</c>, <c>double</c>, <c>Half</c> and <c>NFloat</c>, and for a type parameter
+    /// that could be bound to one: any type parameter not constrained, directly or through another type
+    /// parameter, to <c>IBinaryInteger&lt;T&gt;</c> or an interface that extends it.
+    /// </summary>
+    private static bool MayBeFloatingPoint(ITypeSymbol? type) =>
+        type is ITypeParameterSymbol parameter
+            ? !IsBinaryIntegerConstrained(parameter)
+            : type is INamedTypeSymbol named && Tables.FloatingPointTypes.Contains(Tables.FullName(named));
+
+    private static bool IsBinaryIntegerConstrained(ITypeParameterSymbol parameter) =>
+        parameter.ConstraintTypes.Any(constraint =>
+            constraint is ITypeParameterSymbol other
+                ? IsBinaryIntegerConstrained(other)
+                : constraint is INamedTypeSymbol named && (IsBinaryIntegerInterface(named) || named.AllInterfaces.Any(IsBinaryIntegerInterface)));
+
+    private static bool IsBinaryIntegerInterface(INamedTypeSymbol type) =>
+        string.Equals(Tables.FullName(type), Tables.BinaryIntegerInterface, StringComparison.Ordinal);
 
     /// <summary>
     /// MMO1007: a non-constant expression whose type is, or contains as a type argument, array element

@@ -116,6 +116,15 @@ internal static class Tables
     /// <summary>The namespace of the generic-math interfaces, whose static members are math hosts too (<c>T.Cos(x)</c>).</summary>
     public const string GenericMathNamespace = "System.Numerics";
 
+    /// <summary>The generic-math <c>%</c> operator's interface, whose <c>op_Modulus</c> a type parameter's <c>%</c> and <c>%=</c> call.</summary>
+    public const string ModulusOperatorsInterface = "System.Numerics.IModulusOperators`3";
+
+    /// <summary>
+    /// The generic-math interface no floating-point type implements: a type parameter constrained to it
+    /// is never bound to a float, so its <c>%</c> and an integer <c>Create*</c> from it are allowed.
+    /// </summary>
+    public const string BinaryIntegerInterface = "System.Numerics.IBinaryInteger`1";
+
     /// <summary>The exact or correctly rounded members, and the bit and exponent operations, allowed with <c>float</c> operands.</summary>
     public static readonly ImmutableHashSet<string> FloatOperandMath = Members(
         ["System.Math", "System.MathF", "System.Single"],
@@ -217,13 +226,16 @@ internal static class Tables
         "System.Collections.Concurrent.ConcurrentDictionary`2",
         "System.Collections.Concurrent.ConcurrentBag`1",
         "System.Collections.Immutable.ImmutableDictionary`2",
+        "System.Collections.Immutable.ImmutableDictionary`2+Builder",
         "System.Collections.Immutable.ImmutableHashSet`1",
+        "System.Collections.Immutable.ImmutableHashSet`1+Builder",
         "System.Collections.Frozen.FrozenDictionary`2",
         "System.Collections.Frozen.FrozenSet`1",
         "System.Collections.ObjectModel.ReadOnlyDictionary`2",
         "System.Collections.ObjectModel.ReadOnlyDictionary`2+KeyCollection",
         "System.Collections.ObjectModel.ReadOnlyDictionary`2+ValueCollection",
         "System.Collections.Specialized.HybridDictionary",
+        "System.Collections.Specialized.StringDictionary",
         "System.Runtime.CompilerServices.ConditionalWeakTable`2",
         "System.Collections.Generic.IDictionary`2",
         "System.Collections.Generic.IReadOnlyDictionary`2",
@@ -234,8 +246,11 @@ internal static class Tables
     /// <summary>The instance methods of a hash-ordered collection that enumerate it or copy it out in hash order.</summary>
     public static readonly ImmutableHashSet<string> EnumeratingMethods = Set("GetEnumerator", "CopyTo", "ToArray");
 
-    /// <summary>The views of a hash-ordered collection, reported only when their own type is not hash-ordered.</summary>
-    public static readonly ImmutableHashSet<string> EnumeratingProperties = Set("Keys", "Values");
+    /// <summary>
+    /// The views of a hash-ordered collection (<c>Keys</c>, <c>Values</c>, and <c>FrozenSet&lt;T&gt;.Items</c>,
+    /// an array in hash order), reported only when their own type is not hash-ordered.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> EnumeratingProperties = Set("Keys", "Values", "Items");
 
     /// <summary>
     /// The set operations that take another collection and whose result does not depend on its order.
@@ -361,7 +376,8 @@ internal static class Tables
     /// <summary>
     /// The types every member of which is MMO1008: <c>Debug</c> and <c>Trace</c>, the platform and
     /// runtime queries, <c>Environment</c> (except its two clocks, which are MMO1005),
-    /// <c>System.Type</c> and <c>Activator</c>.
+    /// <c>System.Type</c>, <c>Activator</c>, and the native-code routes <c>NativeLibrary</c> and
+    /// <c>Marshal</c>.
     /// </summary>
     public static readonly ImmutableHashSet<string> PlatformPathTypes = Set(
         "System.Diagnostics.Debug",
@@ -371,7 +387,9 @@ internal static class Tables
         "System.Runtime.CompilerServices.RuntimeFeature",
         "System.Environment",
         "System.Type",
-        "System.Activator");
+        "System.Activator",
+        "System.Runtime.InteropServices.NativeLibrary",
+        "System.Runtime.InteropServices.Marshal");
 
     /// <summary>The prefix of every type in System.Reflection and its sub-namespaces, every member of which is MMO1008.</summary>
     public const string ReflectionPrefix = "System.Reflection.";
@@ -387,15 +405,28 @@ internal static class Tables
         "System.Environment.TickCount",
         "System.Environment.TickCount64");
 
-    /// <summary>The attributes whose declarations are MMO1008: a call that some builds drop, and an accessor that reaches private members.</summary>
+    /// <summary>
+    /// The attributes whose declarations are MMO1008: a call that some builds drop, an accessor that
+    /// reaches private members, and a source-generated P/Invoke, whose partial declaration is not
+    /// <c>extern</c>. Every <c>extern</c> declaration (<c>[DllImport]</c>, <c>InternalCall</c>,
+    /// <c>[UnsafeAccessor]</c>) is MMO1008 by itself.
+    /// </summary>
     public static readonly ImmutableHashSet<string> PlatformPathAttributes = Set(
         "System.Diagnostics.ConditionalAttribute",
-        "System.Runtime.CompilerServices.UnsafeAccessorAttribute");
+        "System.Runtime.CompilerServices.UnsafeAccessorAttribute",
+        "System.Runtime.InteropServices.LibraryImportAttribute");
 
     // ---- MMO1009: float-to-integer and ulong-to-float conversions -----------------------------
 
-    /// <summary>The <c>MmoEngine.SimCore.Math.SimMath</c> methods in whose bodies a float-to-integer conversion is allowed: they saturate first.</summary>
-    public static readonly ImmutableHashSet<string> SimMathIntegerHelpers = Set("FloorToInt", "RoundToInt", "TruncateToInt");
+    /// <summary>
+    /// The <c>MmoEngine.SimCore.Math.SimMath</c> methods in whose bodies a float-to-integer conversion
+    /// is allowed, because they saturate first, by documentation comment ID: another overload, and a
+    /// local function or lambda inside them, which has no ID, are not exempt.
+    /// </summary>
+    public static readonly ImmutableHashSet<string> SimMathIntegerHelpers = Set(
+        "M:MmoEngine.SimCore.Math.SimMath.FloorToInt(System.Single)",
+        "M:MmoEngine.SimCore.Math.SimMath.RoundToInt(System.Single)",
+        "M:MmoEngine.SimCore.Math.SimMath.TruncateToInt(System.Single)");
 
     /// <summary><c>System.Convert</c>, every member of which is MMO1009.</summary>
     public const string ConvertType = "System.Convert";
@@ -408,7 +439,8 @@ internal static class Tables
 
     /// <summary>
     /// The <c>Create*</c> methods of the integer types, MMO1009 when their <c>TOther</c> is one of
-    /// <see cref="FloatingPointTypes"/>: CoreLib implements them with the raw conversion.
+    /// <see cref="FloatingPointTypes"/>, or a type parameter not constrained to
+    /// <see cref="BinaryIntegerInterface"/>: CoreLib implements them with the raw conversion.
     /// </summary>
     public static readonly ImmutableHashSet<string> IntegerCreateMethods = Members(
         [

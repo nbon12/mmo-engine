@@ -47,7 +47,8 @@ public sealed class RuleTests
     /// <summary>
     /// A stand-in <c>MmoEngine.SimCore.Math.SimMath</c>: <c>Clamp</c> through <c>System.Math.Clamp</c>,
     /// the three saturating helpers casting behind a NaN and range check, another method with the same
-    /// raw cast, and a <c>ulong</c>-to-<c>float</c> cast, which no SimMath method may make.
+    /// raw cast, a local function and an overload that share a helper's name and cast without the
+    /// checks, and a <c>ulong</c>-to-<c>float</c> cast, which no SimMath method may make.
     /// </summary>
     private const string SimMathSource = """
         namespace MmoEngine.SimCore.Math
@@ -66,6 +67,15 @@ public sealed class RuleTests
                     float.IsNaN(x) ? 0 : x >= 2147483648f ? int.MaxValue : x < -2147483648f ? int.MinValue : (int)x;
 
                 public static int Other(float x) => (int)x;
+
+                public static int Local(float x)
+                {
+                    return RoundToInt(x);
+
+                    static int RoundToInt(float v) => (int)v;
+                }
+
+                public static int RoundToInt(float x, float s) => (int)(x * s);
 
                 public static float FromBits(ulong u) => (float)u;
             }
@@ -168,8 +178,9 @@ public sealed class RuleTests
 
     /// <summary>
     /// MMO1002 (US3.2): platform math outside the allowlist, as an invocation, a generic-math interface
-    /// call, a method group or a function pointer, and float <c>%</c> and <c>%=</c>; the allowlist, the
-    /// constants, <c>nameof</c>, integer <c>Math</c> and the bit casts are allowed.
+    /// call, a method group or a function pointer, and float <c>%</c> and <c>%=</c>, also through a
+    /// type parameter that may be <c>float</c>; the allowlist, the constants, <c>nameof</c>, integer
+    /// <c>Math</c>, the bit casts and an <c>IBinaryInteger&lt;T&gt;</c> <c>%</c> are allowed.
     /// </summary>
     public static TheoryData<string, int, string> PlatformMathRows => new()
     {
@@ -186,6 +197,12 @@ public sealed class RuleTests
         { "MMO1002", 1, "public static void M(ref float x) { x %= 2f; }" },
         { "MMO1002", 1, "public static float M(float x) => Math.Clamp(x, 0f, 1f);" },
 
+        // Review rows (Phase 5, second pass): `%` and `%=` through a type parameter that may be bound to
+        // float, by the generic-math operator interface; a type parameter constrained to
+        // IBinaryInteger<T> is never a float, so its `%` is allowed (below).
+        { "MMO1002", 1, "public static T M<T>(T a, T b) where T : IModulusOperators<T, T, T> => a % b;" },
+        { "MMO1002", 1, "public static void M<T>(ref T a, T b) where T : IModulusOperators<T, T, T> => a %= b;" },
+
         // Coverage row (T167): a static initializer runs too, and a float field's declaration does not
         // hide the call it holds.
         { "MMO1002", 1, "public static readonly float F = MathF.Sin(1f);" },
@@ -194,6 +211,8 @@ public sealed class RuleTests
         { "", 0, "public static string M() => nameof(MathF.Sin);" },
         { "", 0, "public static int M(int i) => Math.Max(i, 0) + Math.Clamp(i, 0, 9);" },
         { "", 0, "public static uint M(float x) => float.IsFinite(x) ? BitConverter.SingleToUInt32Bits(x) : 0u;" },
+        { "", 0, "public static T M<T>(T a, T b) where T : IBinaryInteger<T> => a % b;" },
+        { "", 0, "public static T M<T, U>(T a, T b) where U : IBinaryInteger<U> where T : U, IModulusOperators<T, T, T> => a % b;" },
     };
 
     /// <summary>
@@ -213,8 +232,10 @@ public sealed class RuleTests
     /// <summary>
     /// MMO1004 (US3.4): enumerating a hash-ordered collection by <c>foreach</c>, LINQ, <c>Keys</c>,
     /// <c>CopyTo</c>, a spread, <c>string.Join</c>, a copy into a list, a return as
-    /// <c>IEnumerable&lt;T&gt;</c> or query syntax; lookups, <c>Count</c>, sorted collections and
-    /// order-insensitive sinks are allowed.
+    /// <c>IEnumerable&lt;T&gt;</c>, query syntax, a declaration pattern or a type argument whose
+    /// constraint is not hash-ordered, also through a type parameter constrained to a hash-ordered type;
+    /// lookups, <c>Count</c>, sorted collections, order-insensitive sinks and unconstrained type
+    /// arguments (<c>List&lt;HashSet&lt;int&gt;&gt;</c>) are allowed.
     /// </summary>
     public static TheoryData<string, int, string> HashOrderRows => new()
     {
@@ -240,12 +261,29 @@ public sealed class RuleTests
         { "MMO1004", 1, "public static object? M(HashSet<int> s) { var t = new System.Collections.Hashtable { { 0, s } }; return t[0]; }" },
         { "MMO1004", 1, "public sealed class Bag : HashSet<int> { public Bag(IEnumerable<int> e) : base(e) { } } public static Bag M(HashSet<int> s) => new Bag(s);" },
 
+        // Review rows (Phase 5, second pass): a hash-ordered value that reaches a type that is not
+        // hash-ordered with no conversion operation. A type argument bound to a type parameter whose
+        // constraint is not hash-ordered (a generic method's, inferred, and a generic type's); a
+        // declaration pattern, in `is` and in a switch case; and a type parameter that is hash-ordered
+        // through its constraint, enumerated by foreach and by LINQ.
+        { "MMO1004", 1, "public static int Sum<T>(T e) where T : IEnumerable<int> { var s = 0; foreach (var x in e) s += x; return s; } public static int M(HashSet<int> h) => Sum(h);" },
+        { "MMO1004", 1, "public sealed class Box<T> where T : IEnumerable<int> { public Box(T items) { } } public static object M(HashSet<int> h) => new Box<HashSet<int>>(h);" },
+        { "MMO1004", 1, "public static int M(HashSet<int> h) { var s = 0; if (h is IEnumerable<int> e) foreach (var x in e) s += x; return s; }" },
+        { "MMO1004", 1, "public static int M(HashSet<int> h) { switch (h) { case IEnumerable<int> e: return e.First(); default: return 0; } }" },
+        { "MMO1004", 1, "public static int M<T>(T d) where T : Dictionary<int, int> { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
+        { "MMO1004", 1, "public static int M<T>(T s) where T : HashSet<int> => s.First();" },
+        { "MMO1004", 1, "public static int M<T, U>(U d) where T : Dictionary<int, int> where U : T { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
+
         { "", 0, "public static int M(Dictionary<int, int> d, int k) => d.TryGetValue(k, out var v) ? v + d.Count : d.Keys.Count;" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
         { "", 0, "public static void M(HashSet<int> a, HashSet<int> b) => a.UnionWith(b);" },
         { "", 0, "public static bool M(HashSet<int> a, HashSet<int> b) => a.SetEquals(b);" },
         { "", 0, "public static HashSet<int> M(HashSet<int> s) => new HashSet<int>(s);" },
         { "", 0, "public static int M(SortedDictionary<int, int> d) => d.Keys.First();" },
+        { "", 0, "public static int M<T>(T d) where T : SortedDictionary<int, int> { var s = 0; foreach (var kv in d) s += kv.Value; return s; }" },
+        { "", 0, "public static int M(HashSet<int> h) => h is HashSet<int> g ? g.Count : 0;" },
+        { "", 0, "public static HashSet<int> M(List<HashSet<int>> l) => l.First();" },
+        { "", 0, "public static object M() => new List<HashSet<int>>();" },
     };
 
     /// <summary>
@@ -301,6 +339,10 @@ public sealed class RuleTests
         { "MMO1006", 1, "public static void M() { L(null!); static void L(Lock l) { } }" },
         { "MMO1006", 1, "public delegate void D(Lock l);" },
 
+        // Review row (Phase 5, second pass): a partial method's implementation part reports nothing
+        // itself, but the flag it sets reaches the defining declaration, which reports it once.
+        { "MMO1006", 1, "public static partial class N { public static partial void M(); " + Synchronized + " public static partial void M() { } }" },
+
         { "", 0, "public static async Task<int> M(Task<int> t) => await t;" },
         { "", 0, "public static int M(ref int x) => Interlocked.Increment(ref x);" },
         { "", 0, "private static int f; public static int Q { get => f; set => f = value; } public static event Action? E { add { } remove { } }" },
@@ -343,6 +385,13 @@ public sealed class RuleTests
         { "MMO1007", 2, "public static Func<double, float> M() => (double d) => 1f;" },
         { "MMO1007", 2, "public static void M() { var f = double () => 0; }" },
 
+        // Review rows (Phase 5, second pass): a partial member reports at its defining declaration only,
+        // so a partial method's return type and parameter report once each, not once per part, and so do
+        // a partial property and a partial event.
+        { "MMO1007", 2, "public static partial class N { public static partial double M(double x); public static partial double M(double x) => x; }" },
+        { "MMO1007", 1, "public static partial class N { public static partial double P { get; } public static partial double P { get => 0; } }" },
+        { "MMO1007", 1, "public static partial class N { public static partial event Action<double>? E; public static partial event Action<double>? E { add { } remove { } } }" },
+
         { "", 0, "private const double Scale = 1.0 / 3.0; public static float M(float x) => x * (float)Scale;" },
         { "", 0, "public static float M(float x) => x * (float)(Math.PI / 180.0);" },
         { "", 0, "public static Func<float, float> M() => x => x * 2f;" },
@@ -351,8 +400,9 @@ public sealed class RuleTests
     /// <summary>
     /// MMO1008 (US3.7): <c>OperatingSystem</c>, <c>IntPtr.Size</c> (MMO1008, not MMO1007),
     /// <c>Environment</c>, reflection, a <c>dynamic</c> operation, an <c>#if</c> block (one
-    /// diagnostic, on the <c>#if</c> line, none for <c>#else</c>), <c>Debug</c> and an
-    /// <c>[UnsafeAccessor]</c> declaration; <c>typeof</c> without member access is allowed.
+    /// diagnostic, on the <c>#if</c> line, none for <c>#else</c>), <c>Debug</c>, an
+    /// <c>[UnsafeAccessor]</c> declaration and <c>extern</c> declarations (P/Invoke methods and local
+    /// functions, extern accessors); <c>typeof</c> without member access is allowed.
     /// </summary>
     public static TheoryData<string, int, string> PlatformPathRows => new()
     {
@@ -369,14 +419,21 @@ public sealed class RuleTests
         { "MMO1008", 1, "public static void M() { Log(); [Conditional(\"DEBUG\")] static void Log() { } }" },
         { "MMO1008", 1, "public static void M(object o) { Call(o); [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"M\")] static extern void Call(object o); }" },
 
+        // Review rows (Phase 5, second pass): native code. A P/Invoke method and local function, and an
+        // extern property accessor, which no attribute need mark.
+        { "MMO1008", 1, "[System.Runtime.InteropServices.DllImport(\"m\")] private static extern float Sinf(float x);" },
+        { "MMO1008", 1, "public static float M(float x) { return Sinf(x); [System.Runtime.InteropServices.DllImport(\"m\")] static extern float Sinf(float x); }" },
+        { "MMO1008", 1, "public static extern int P { get; }" },
+
         { "", 0, "public static object M() => typeof(int);" },
     };
 
     /// <summary>
     /// MMO1009 (US3.7): non-constant float-to-integer and float-to-enum conversions, <c>System.Convert</c>,
-    /// an integer type's <c>Create*</c> from a float, and <c>ulong</c> to <c>float</c>; a constant cast,
-    /// integer-to-float, a <c>ulong</c> narrowed to <c>uint</c> first, <c>Create*</c> from a
-    /// <c>long</c> and an <c>int</c>-to-enum cast are allowed.
+    /// an integer type's <c>Create*</c> from a float or from a type parameter that may be one, and
+    /// <c>ulong</c> to <c>float</c>; a constant cast, integer-to-float, a <c>ulong</c> narrowed to
+    /// <c>uint</c> first, <c>Create*</c> from a <c>long</c> or from an <c>IBinaryInteger&lt;T&gt;</c>
+    /// type parameter, and an <c>int</c>-to-enum cast are allowed.
     /// </summary>
     public static TheoryData<string, int, string> ConversionRows => new()
     {
@@ -419,6 +476,11 @@ public sealed class RuleTests
         { "MMO1009", 1, "public static float M(ulong? u, float f) => u ?? f;" },
         { "MMO1009", 1, "public static (float, float) M((ulong, ulong)? u, (float, float) f) => u ?? f;" },
 
+        // Review rows (Phase 5, second pass): an integer type's Create* whose TOther is a type parameter
+        // that may be bound to float; one constrained to IBinaryInteger<T> is allowed (below).
+        { "MMO1009", 1, "public static int M<T>(T v) where T : INumberBase<T> => int.CreateSaturating(v);" },
+        { "MMO1009", 1, "public static long M<T>(T v) where T : INumberBase<T> => long.CreateTruncating(v);" },
+
         { "", 0, "public static int M() => (int)2.5f;" },
         { "", 0, "public static float M(int i) => i * 0.5f;" },
         { "", 0, "public static float M(ulong h) => (float)(uint)(h >> 40);" },
@@ -430,6 +492,8 @@ public sealed class RuleTests
         { "", 0, "public static float M((uint, uint) t) { (float p, float q) = t; return p + q; }" },
         { "", 0, "public static float[] M(uint[] a) => [.. a];" },
         { "", 0, "public static float M(uint? u, float f) => u ?? f;" },
+        { "", 0, "public static int M<T>(T v) where T : IBinaryInteger<T> => int.CreateSaturating(v);" },
+        { "", 0, "public static int M<T, U>(U v) where T : IBinaryInteger<T> where U : T, INumberBase<U> => int.CreateSaturating(v);" },
     };
 
     /// <summary>
@@ -481,9 +545,11 @@ public sealed class RuleTests
     };
 
     /// <summary>
-    /// The full MMO1004 message (contracts/analyzer-rules.md#messages) for the <c>foreach</c>, spread and
-    /// LINQ-receiver forms: <c>{0}</c> is <c>foreach</c>, <c>..</c> or the converted expression's source
-    /// text, and <c>{1}</c> is the enumerated expression's constructed type, namespace-qualified.
+    /// The full MMO1004 message (contracts/analyzer-rules.md#messages) for the <c>foreach</c>, spread,
+    /// LINQ-receiver, declaration-pattern and generic-call forms: <c>{0}</c> is <c>foreach</c>,
+    /// <c>..</c>, the converted expression's or the pattern's source text, or the called method, and
+    /// <c>{1}</c> is the enumerated expression's constructed type (for a generic call, the hash-ordered
+    /// type argument), namespace-qualified.
     /// </summary>
     public static TheoryData<string, string> HashOrderMessageRows => new()
     {
@@ -498,6 +564,14 @@ public sealed class RuleTests
         {
             "public static int M(HashSet<int> s) => s.First();",
             "'s' enumerates 'System.Collections.Generic.HashSet<int>'" + HashOrderAlternative
+        },
+        {
+            "public static int M(HashSet<int> h) { var s = 0; if (h is IEnumerable<int> e) foreach (var x in e) s += x; return s; }",
+            "'IEnumerable<int> e' enumerates 'System.Collections.Generic.HashSet<int>'" + HashOrderAlternative
+        },
+        {
+            "public static int Sum<T>(T e) where T : IEnumerable<int> { var s = 0; foreach (var x in e) s += x; return s; } public static int M(HashSet<int> h) => Sum(h);",
+            "'C.Sum<HashSet<int>>(HashSet<int>)' enumerates 'System.Collections.Generic.HashSet<int>'" + HashOrderAlternative
         },
     };
 
@@ -520,9 +594,9 @@ public sealed class RuleTests
     /// the sample, its one rule, the source text its diagnostic covers, and <c>{0}</c> and the text after
     /// it. An element conversion reports at the declared iteration type, the deconstruction variables,
     /// the deconstructed value, the spread's collection (named <c>..</c>), the left operand of <c>??</c>
-    /// or the tuple conversion; an accessor's <c>Synchronized</c> flag at its keyword, named as the
-    /// accessor; a field-like event's at the event; a local function's flag or attribute at its
-    /// identifier; and a lambda's at the lambda.
+    /// or the tuple conversion; an accessor's <c>Synchronized</c> flag or <c>extern</c> at its keyword,
+    /// named as the accessor; a field-like event's flag at the event; a local function's flag, attribute
+    /// or <c>extern</c> at its identifier; and a lambda's at the lambda.
     /// </summary>
     public static TheoryData<string, string, string, string, string> PlacementRows => new()
     {
@@ -538,6 +612,8 @@ public sealed class RuleTests
         { "public static void M() { Sync(); " + Synchronized + " static void Sync() { } }", "MMO1006", "Sync", "Sync", BlockingText },
         { "public static Func<int> M() => " + Synchronized + " () => 1;", "MMO1006", Synchronized + " () => 1", Synchronized + " () => 1", BlockingText },
         { "public static void M() { Log(); [Conditional(\"DEBUG\")] static void Log() { } }", "MMO1008", "Log", "Log", PlatformPathText },
+        { "public static extern int P { get; }", "MMO1008", "get", "C.P.get", PlatformPathText },
+        { "public static float M(float x) { return Sinf(x); [System.Runtime.InteropServices.DllImport(\"m\")] static extern float Sinf(float x); }", "MMO1008", "Sinf", "Sinf", PlatformPathText },
     };
 
     /// <summary>
@@ -670,10 +746,12 @@ public sealed class RuleTests
     /// <summary>
     /// US3.7: the per-method exemption. In <c>MmoEngine.SimCore.Math.SimMath</c>, <c>Clamp</c> may call
     /// <c>System.Math.Clamp</c> and the three saturating helpers may cast a float to <c>int</c>, so
-    /// nothing is reported in them; the same raw cast in another SimMath method reports MMO1009, a
+    /// nothing is reported in them; the same raw cast in another SimMath method, in a local function
+    /// named <c>RoundToInt</c> and in a <c>RoundToInt(float, float)</c> overload reports MMO1009 (the
+    /// exemption is keyed by the helpers' documentation IDs, not their names), a
     /// <c>ulong</c>-to-<c>float</c> cast reports MMO1009 even in SimMath, and the clamp and cast in
     /// another type report MMO1002 on the call and MMO1009 on the cast. The diagnostics are exactly
-    /// those four, at those spans.
+    /// those six, at those spans.
     /// </summary>
     [Fact]
     public async Task SimMathMayClampAndCastFloats()
@@ -687,6 +765,8 @@ public sealed class RuleTests
         var simMath = result.Compilation.SyntaxTrees.Single(t => t.FilePath == SimMathPath).GetRoot(cancellationToken);
         var other = result.Compilation.SyntaxTrees.Single(t => t.FilePath == OtherTypePath).GetRoot(cancellationToken);
         var otherCast = Method(simMath, "Other").DescendantNodes().OfType<CastExpressionSyntax>().Single();
+        var localCast = Method(simMath, "Local").DescendantNodes().OfType<CastExpressionSyntax>().Single();
+        var overloadCast = Method(simMath, "RoundToInt", parameterCount: 2).DescendantNodes().OfType<CastExpressionSyntax>().Single();
         var fromBitsCast = Method(simMath, "FromBits").DescendantNodes().OfType<CastExpressionSyntax>().Single();
         var typeMethod = Method(other, "M");
         var typeCast = typeMethod.DescendantNodes().OfType<CastExpressionSyntax>().Single();
@@ -695,6 +775,8 @@ public sealed class RuleTests
         var expected = new (string Path, string Id, TextSpan Span)[]
             {
                 (SimMathPath, "MMO1009", otherCast.Span),
+                (SimMathPath, "MMO1009", localCast.Span),
+                (SimMathPath, "MMO1009", overloadCast.Span),
                 (SimMathPath, "MMO1009", fromBitsCast.Span),
                 (OtherTypePath, "MMO1009", typeCast.Span),
                 (OtherTypePath, "MMO1002", typeCall.Span),
@@ -712,9 +794,9 @@ public sealed class RuleTests
             $"Expected [{string.Join(", ", expected)}], got:{Environment.NewLine}{report}");
         Assert.All(result.Diagnostics, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
 
-        foreach (var helper in new[] { "Clamp", "FloorToInt", "RoundToInt", "TruncateToInt" })
+        foreach (var (helper, parameterCount) in new[] { ("Clamp", 3), ("FloorToInt", 1), ("RoundToInt", 1), ("TruncateToInt", 1) })
         {
-            var span = Method(simMath, helper).Span;
+            var span = Method(simMath, helper, parameterCount).Span;
             Assert.DoesNotContain(
                 result.Diagnostics,
                 d => d.Location.SourceTree?.FilePath == SimMathPath && span.OverlapsWith(d.Location.SourceSpan));
@@ -883,7 +965,9 @@ public sealed class RuleTests
         return Assert.Single(nodes.OfType<ArrowExpressionClauseSyntax>()).Expression.ToString();
     }
 
-    /// <summary>The one method named <paramref name="name"/> under <paramref name="root"/>.</summary>
-    private static MethodDeclarationSyntax Method(SyntaxNode root, string name) =>
-        root.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.Text == name);
+    /// <summary>The one method named <paramref name="name"/> under <paramref name="root"/>, with <paramref name="parameterCount"/> parameters when given.</summary>
+    private static MethodDeclarationSyntax Method(SyntaxNode root, string name, int? parameterCount = null) =>
+        root.DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(m => m.Identifier.Text == name && (parameterCount is null || m.ParameterList.Parameters.Count == parameterCount));
 }
