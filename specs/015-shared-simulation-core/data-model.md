@@ -386,7 +386,7 @@ One per slot per character. The weapon step writes it; it holds no floats.
 | ShotCounter | `u32` | shots this weapon has fired; wraps at 2³²; an input to the spread hash |
 | Magazine | `u16` | ≤ `magazineSize` |
 | Reserve | `u16` | rounds outside the magazine |
-| Heat | `u32` | heat × `stepRateHz`; below OverheatThresholdScaled + HeatPerShotScaled |
+| Heat | `u32` | heat × `stepRateHz`; below OverheatThresholdScaled + HeatPerShotScaled while Overheated, and below OverheatThresholdScaled in every other phase (a shot reaching the threshold overheats the weapon, and Overheated exits at HeatRecoveryScaled, below it) |
 | StepsSinceShot | `u16` | steps since this weapon last fired, saturating at 65535 |
 | RecoilPitch | `i32` | binary angle units, [0, RecoilMaxPitchUnits] |
 | RecoilYaw | `i32` | binary angle units, [−RecoilMaxYawUnits, RecoilMaxYawUnits] |

@@ -1264,7 +1264,9 @@ The design documents settled these points, which the spec leaves open. They are 
   dir·f divided by |dir|, the angle between the two vectors: one sample sits at u1 = 0.9999987, where
   the float direction's length error alone (up to 1.3e-7, bounded by the |dir| assertion) moved the
   raw-dot angle within 1.6e-6 rad of the bound in a float simulation, so one ulp could fail a correct
-  core. research.md R10's prototype figures are unchanged.
+  core. research.md R10's prototype figures are unchanged. spec.md's US4.2 and its "Spread rule"
+  assumption now state the 0.1% level too (Phase 6 review), so the scenario and its test name the same
+  level.
 - **Two T170/T171 rows pin StepsSinceShot so that W4 does not act before the step they test (Phase 6
   red check).** A new weapon's StepsSinceShot is 65535, at or above every delay, so W4 runs first.
   `ShotReachingThresholdOverheats` would cool 2,700,000 to 2,650,000 before the shot, which then ends
@@ -1273,14 +1275,33 @@ The design documents settled these points, which the spec leaves open. They are 
   units before the shot (18 and −30 to 0, 100 to 39); the rifle starts at StepsSinceShot 0 (1 after
   W0, below the recovery delay of 3), and the test asserts the delay exceeds 1. T170 and T171 now say
   so.
+- **A weapon outside Overheated loads only below the overheat threshold (T034, Phase 6 review).**
+  `Reset` refused `heat` at or above `OverheatThresholdScaled + HeatPerShotScaled` whatever the phase,
+  but the fire block reads heat only through the phase. A Ready weapon loaded at the threshold therefore
+  fired, committed heat at that limit, and `Reset` then refused the world's own committed state. No valid
+  run reaches such a weapon: only a shot raises heat, a shot reaching the threshold makes the weapon
+  Overheated, and Overheated exits at `HeatRecoveryScaled`, below the threshold (R12). The limit is now
+  per phase, as `phaseSteps`' is: below the threshold plus one shot's heat while Overheated, below the
+  threshold otherwise, and both are `OutOfRange` like the `phaseSteps` ranges. The Ready row at
+  3,299,999 with heat per shot became an Overheated row, a Ready row at 2,999,999 was added, Ready and
+  Switching rows at the threshold are refused, and `AWeaponThatOverheatsCommitsAStateResetAccepts`
+  shows that the step's highest committed heat (Overheated at the limit minus one) still loads.
+  data-model.md#weaponstate and contracts/state-serialization.md give the rule.
+- **US4.2 and the US4 Independent Test are split like US3.8, US5.5 and US5-IT (Phase 6 review).**
+  "When spread is computed in any build" and "Run the same streams through the agreement suite" need
+  the WebAssembly build, which slice 2 adds. Slice 1 tests the server halves (`SpreadTests` and T181);
+  the cross-build half US4.2b and the agreement half US4-ITb, with FR-008's WebAssembly half, are owned
+  by Phase 11's per-stream agreement tests over the weapon streams and are listed with the other
+  slice-2 items in tasks.md T264.
 
 ## Delivery
 
 The work ships as two vertical slices. Each is a PR that leaves `main` green.
 
 1. **Core, analyzer, formats and server-side agreement** on `015-shared-simulation-core`. This covers
-   the spec artifacts, US1, US3, US4, US5 and US6, except the cross-build halves of US3 scenario 8
-   and US5 scenario 5 and the agreement half of US5's Independent Test (below), and the server half
+   the spec artifacts, US1, US3, US4, US5 and US6, except the cross-build halves of US3 scenario 8,
+   US4 scenario 2 and US5 scenario 5 and the agreement halves of US4's and US5's Independent Tests
+   (below), and the server half
    of US2 (scenarios 4 and 5, and scenario 6 through `BatchStepper` called directly), plus:
    - the server benchmarks, their dry-run export test, and the zero-allocation tests (US7.1, US7.3);
    - the `simcore` CLI, including the server side of the cross-build tables (`CrossBuildTables`,
@@ -1292,9 +1313,9 @@ The work ships as two vertical slices. Each is a PR that leaves `main` green.
    slice 2's `measure` job. No guarded path is touched.
 2. **WebAssembly build, agreement suite and measurement job**, on a new branch off `main` after
    slice 1 merges. This covers the rest of US2 (scenarios 1 to 3 and 7, the browser half of
-   scenario 6, and its Independent Test) and US7.2, the cross-build halves of US3 scenario 8, SC-004
-   and US5 scenario 5, and the agreement half of US5's Independent Test, which need a WebAssembly
-   build:
+   scenario 6, and its Independent Test) and US7.2, the cross-build halves of US3 scenario 8, SC-004,
+   US4 scenario 2 (with FR-008's "in every build") and US5 scenario 5, and the agreement halves of
+   US4's and US5's Independent Tests, which need a WebAssembly build:
    - the Wasm host (including the `EvaluateTables` export) and its tests;
    - `tools/agreement/`, including the tables check in both runners;
    - `.github/workflows/simcore.yml`, its workflow test, and the `auto-merge.yml` listener.

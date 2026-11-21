@@ -97,7 +97,7 @@ The weapon state holds no floats ([research R9](../research.md#r9-weapons)).
 | 8 | 4 | u32 LE | `shotCounter` | shots fired by this weapon; wraps at 2³² |
 | 12 | 2 | u16 LE | `magazine` | ≤ `magazineSize` |
 | 14 | 2 | u16 LE | `reserve` | rounds outside the magazine |
-| 16 | 4 | u32 LE | `heat` | heat × `stepRateHz`; below `OverheatThresholdScaled` + `HeatPerShotScaled` |
+| 16 | 4 | u32 LE | `heat` | heat × `stepRateHz`; below `OverheatThresholdScaled` + `HeatPerShotScaled` while Overheated, and below `OverheatThresholdScaled` in every other phase |
 | 20 | 2 | u16 LE | `stepsSinceShot` | saturates at 65535 |
 | 22 | 4 | i32 LE | `recoilPitch` | binary angle units, [0, `RecoilMaxPitchUnits`] |
 | 26 | 4 | i32 LE | `recoilYaw` | binary angle units, [−`RecoilMaxYawUnits`, `RecoilMaxYawUnits`] |
@@ -325,7 +325,7 @@ run these):
 | `weaponCount` = `input.weaponSlots` | `Inconsistent` | `characters[i].weaponCount` |
 | `position` inside the playable area (the heightfield's X–Z extent) | `OutOfRange` | `characters[i].position.x` or `.z` |
 | grounded: `groundNormal.y` ≥ `CosSlopeLimit`; airborne: `groundNormal` is exactly (0, 1, 0) | `OutOfRange`; `Inconsistent` | `characters[i].groundNormal.y`; `.groundNormal.x` |
-| the rules of the weapon record that need the configuration, in layout order: a holstered weapon is Ready or Overheated; `phaseSteps` in its phase's range; 0 ≤ `fireWait` < `ShotCost`; `magazine` ≤ `magazineSize`; `heat` < `OverheatThresholdScaled` + `HeatPerShotScaled`; the recoil bounds | `Inconsistent` (holstered phase); `OutOfRange` (the others) | that field |
+| the rules of the weapon record that need the configuration, in layout order: a holstered weapon is Ready or Overheated; `phaseSteps` in its phase's range; 0 ≤ `fireWait` < `ShotCost`; `magazine` ≤ `magazineSize`; `heat` < `OverheatThresholdScaled` + `HeatPerShotScaled` while Overheated, and `heat` < `OverheatThresholdScaled` in every other phase; the recoil bounds | `Inconsistent` (holstered phase); `OutOfRange` (the others) | that field |
 | `class` below the number of projectile classes | `OutOfRange` | `projectiles[j].class` |
 
 The message shape is the formats' `"<format> <field> at offset <n>: <detail>"`, for example:
@@ -499,6 +499,7 @@ Tests that pin this contract, in `tests/MmoEngine.SimCore.Tests/`:
 - a property (CsCheck, fixed seed): reading a written state and writing it again gives the same
   bytes;
 - every load refusal in the two tables above, by code and field, and a weapon at either end of
-  each `phaseSteps` range and one below the heat limit loads;
+  each `phaseSteps` range and one below its phase's heat limit loads (one below the threshold outside
+  Overheated, one below the threshold plus one shot's heat while Overheated);
 - the divergence report for a one-ulp change at step k of a stream names step k and the field, with
   both bit patterns (US2 scenario 4, SC-002).

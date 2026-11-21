@@ -567,7 +567,8 @@ public sealed class SimWorld
     /// exactly (0, 1, 0)), its <c>weaponCount</c> against <c>input.weaponSlots</c>, and each weapon (a
     /// holstered weapon is Ready or Overheated, <c>phaseSteps</c> in its phase's range,
     /// 0 ≤ <c>fireWait</c> &lt; <c>ShotCost</c>, <c>magazine</c> ≤ <c>magazineSize</c>, <c>heat</c> below
-    /// the overheat threshold plus one shot's heat, and the recoil bounds); then each projectile's class.
+    /// the overheat threshold, plus one shot's heat while Overheated, and the recoil bounds); then each
+    /// projectile's class.
     /// </summary>
     private void CheckFits(StateSnapshot snapshot, in StateErrorContext context)
     {
@@ -645,7 +646,7 @@ public sealed class SimWorld
     /// <summary>
     /// The weapon record's rules, in layout order: phase (a holstered weapon is Ready or Overheated),
     /// phaseSteps (the range its phase allows, <see cref="PhaseStepsRange"/>), fireWait, magazine, heat
-    /// (below <c>OverheatThresholdScaled + HeatPerShotScaled</c>), recoilPitch and recoilYaw.
+    /// (the limit its phase allows, <see cref="HeatLimit"/>), recoilPitch and recoilYaw.
     /// </summary>
     private void CheckWeapon(WeaponState state, CompiledWeapon weapon, bool holstered, int index, int offset, in StateErrorContext context)
     {
@@ -671,11 +672,12 @@ public sealed class SimWorld
             throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.MagazineField, index, offset + 12, Text($"{state.Magazine} is above magazineSize {weapon.MagazineSize}"));
         }
 
-        // Both terms are at most 6 × 10⁸ (contracts/config-rules.md), so the sum fits in a uint.
-        var heatLimit = weapon.OverheatThresholdScaled + weapon.HeatPerShotScaled;
+        var heatLimit = HeatLimit(state.Phase, weapon);
         if (state.Heat >= heatLimit)
         {
-            throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.HeatField, index, offset + 16, Text($"{state.Heat} is not below the overheat threshold plus one shot's heat, {heatLimit}"));
+            var which = holstered ? "a holstered" : "an active";
+            var limit = state.Phase == WeaponPhase.Overheated ? "the overheat threshold plus one shot's heat" : "the overheat threshold";
+            throw Refusal(context, FormatErrorCode.OutOfRange, StateSerializer.HeatField, index, offset + 16, Text($"{state.Heat} is not below {limit}, {heatLimit}, for {which} {state.Phase} weapon"));
         }
 
         if (state.RecoilPitch < 0 || state.RecoilPitch > weapon.RecoilMaxPitchUnits)
@@ -703,6 +705,20 @@ public sealed class SimWorld
         WeaponPhase.Overheated => (0, holstered ? 0 : weapon.EquipSteps),
         _ => (0, 0),
     };
+
+    /// <summary>
+    /// The <c>heat</c> a committed state can hold in each phase (data-model.md#weaponstate): below
+    /// <c>OverheatThresholdScaled + HeatPerShotScaled</c> while Overheated, because the shot that reaches
+    /// the threshold adds at most one shot's heat; and below <c>OverheatThresholdScaled</c> in every other
+    /// phase, because a shot reaching the threshold makes the weapon Overheated, and Overheated exits only
+    /// at <c>HeatRecoveryScaled</c>, below the threshold (R12). Refusing a weapon outside Overheated at the
+    /// threshold keeps the rule closed under the step: such a weapon would fire once more and commit heat
+    /// at the Overheated limit, which this check refuses. Both terms are at most 6 × 10⁸
+    /// (contracts/config-rules.md), so the sum fits in a uint.
+    /// </summary>
+    private static uint HeatLimit(WeaponPhase phase, CompiledWeapon weapon) => phase == WeaponPhase.Overheated
+        ? weapon.OverheatThresholdScaled + weapon.HeatPerShotScaled
+        : weapon.OverheatThresholdScaled;
 
     private static CoreFormatException OutsideArea(in StateErrorContext context, int ordinal, int index, int offset, float value, float min, float max) =>
         new(new FormatError(

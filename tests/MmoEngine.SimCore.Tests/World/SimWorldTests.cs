@@ -4,7 +4,10 @@ using MmoEngine.SimCore.Config;
 using MmoEngine.SimCore.Formats;
 using MmoEngine.SimCore.Hashing;
 using MmoEngine.SimCore.Inputs;
+using MmoEngine.SimCore.Movement;
+using MmoEngine.SimCore.Projectiles;
 using MmoEngine.SimCore.Tests.Support;
+using MmoEngine.SimCore.Weapons;
 using MmoEngine.SimCore.World;
 
 namespace MmoEngine.SimCore.Tests.World;
@@ -43,7 +46,9 @@ public sealed class SimWorldTests
         "fire-wait-1800",
         "fire-wait-minus-1",
         "heat-3000000",
-        "heat-3300000-heat-per-shot-10000",
+        "ready-heat-3000000-heat-per-shot-10000",
+        "switching-heat-3000000-heat-per-shot-10000",
+        "overheated-heat-3300000-heat-per-shot-10000",
         "recoil-pitch-1093",
         "recoil-yaw-minus-547",
         "holstered-weapon-firing",
@@ -62,7 +67,8 @@ public sealed class SimWorldTests
         "overheated-phase-steps-15",
         "holstered-overheated-phase-steps-0",
         "heat-2999999",
-        "heat-3299999-heat-per-shot-10000",
+        "ready-heat-2999999-heat-per-shot-10000",
+        "overheated-heat-3299999-heat-per-shot-10000",
     ];
 
     /// <summary>
@@ -103,7 +109,8 @@ public sealed class SimWorldTests
     /// the field, at the field's offset from the state's first byte. The placeholders at 30 Hz allow 64
     /// characters, 2 weapon slots, a rifle magazine of 30, a rifle <c>EquipSteps</c> of 15 and
     /// <c>ReloadSteps</c> of 60, <c>ShotCost</c> 1800, a heat limit of 3,000,000 (threshold 100,000 × 30, no
-    /// heat per shot), recoil of at most 1092 pitch and ±546 yaw units, and 2 projectile classes.
+    /// heat per shot; with <c>heatPerShot</c> 10000 it stays 3,000,000 outside Overheated and is 3,300,000
+    /// while Overheated), recoil of at most 1092 pitch and ±546 yaw units, and 2 projectile classes.
     /// </summary>
     [Theory]
     [MemberData(nameof(RefusedStates))]
@@ -124,8 +131,9 @@ public sealed class SimWorldTests
 
     /// <summary>
     /// The weapon rules are not tighter than the contract: a weapon at either end of its phase's
-    /// <c>phaseSteps</c> range, a holstered Overheated weapon with 0, and heat one below the limit (with
-    /// and without heat per shot) load, and the next step commits.
+    /// <c>phaseSteps</c> range, a holstered Overheated weapon with 0, and heat one below its phase's limit
+    /// (a Ready weapon one below the threshold, with and without heat per shot, and an Overheated weapon
+    /// one below the threshold plus one shot's heat) load, and the next step commits.
     /// </summary>
     [Theory]
     [MemberData(nameof(AcceptedWeapons))]
@@ -142,6 +150,61 @@ public sealed class SimWorldTests
         Assert.True(report.Fault.Code == StepFaultCode.None, $"{caseName}: the step after Reset faulted with {report.Fault.Code} at {report.Fault.Path}");
         Assert.Equal(1u, report.Step);
         Assert.Equal(1u, world.CurrentStep);
+    }
+
+    /// <summary>
+    /// The heat rule is closed under the step: given a Ready rifle with <c>heatPerShot</c> 10000 one below
+    /// the threshold (2,999,999 at 30 Hz) and StepsSinceShot 0, so W4 does not cool it first, When one step
+    /// holds Fire, Then one shot fires and the committed weapon is Overheated at 3,299,999, one below the
+    /// Overheated limit, and a fresh world's <c>Reset</c> accepts the committed world (its state written
+    /// again without the step's events, which a loaded state does not carry) and steps it.
+    /// </summary>
+    [Fact]
+    public void AWeaponThatOverheatsCommitsAStateResetAccepts()
+    {
+        var config = CompiledConfig.Create(TestConfigs.With(HeatPerShot10000));
+        var rifle = TestStates.Rifle with { Heat = 2_999_999, StepsSinceShot = 0 };
+        var state = TestStates.Build(0, [TestStates.StandingCharacter(1, 0.5f, 0.5f) with { Weapons = [rifle, TestStates.Launcher] }]);
+        var world = NewWorld(config);
+        world.Reset(state, Salt);
+        Assert.True(
+            config.Weapons[0].HeatCooldownDelaySteps > 1,
+            $"HeatCooldownDelaySteps is {config.Weapons[0].HeatCooldownDelaySteps}, so W4 would cool the rifle before its shot");
+
+        CharacterCommand[] fire = [new CharacterCommand(0, new InputCommand(1, 1, Buttons.Fire, 0, 0, 0))];
+        var report = world.Step(fire);
+
+        Assert.Equal(StepFaultCode.None, report.Fault.Code);
+        Assert.Equal(1, report.Events.Shots.Length);
+        var committed = StateSerializer.ReadCommitted(report.State);
+        Assert.Equal(WeaponPhase.Overheated, committed.Weapons[0].Phase);
+        Assert.Equal(3_299_999u, committed.Weapons[0].Heat);
+
+        CharacterState[] characters = [.. committed.Characters];
+        WeaponState[] weapons = [.. committed.Weapons];
+        Projectile[] projectiles = [.. committed.Projectiles];
+        var buffer = new byte[config.MaxStateLength];
+        var fault = StateSerializer.Write(
+            committed.Step,
+            committed.NextProjectileId,
+            config.WeaponSlots,
+            characters,
+            weapons,
+            projectiles,
+            Span<ShotEvent>.Empty,
+            Span<ProjectileHit>.Empty,
+            ReadOnlySpan<ExpiryEvent>.Empty,
+            ReadOnlySpan<InputRejectionEvent>.Empty,
+            ReadOnlySpan<FireBlockEvent>.Empty,
+            ReadOnlySpan<MovementOutcomeEvent>.Empty,
+            buffer,
+            out var length);
+        Assert.Equal(StepFaultCode.None, fault.Code);
+
+        var reloaded = NewWorld(config);
+        reloaded.Reset(buffer.AsSpan(0, length), Salt);
+        Assert.Equal(1u, reloaded.CurrentStep);
+        Assert.Equal(StepFaultCode.None, reloaded.Step([]).Fault.Code);
     }
 
     /// <summary>
@@ -333,9 +396,12 @@ public sealed class SimWorldTests
                 "characters[0].weapons[1].phaseSteps",
                 TestStates.WeaponOffset(0, 1) + 2),
 
-            // Heat stays below OverheatThresholdScaled + HeatPerShotScaled.
+            // Heat stays below OverheatThresholdScaled (3,000,000) outside Overheated, and below
+            // OverheatThresholdScaled + HeatPerShotScaled (3,300,000 with heat per shot 10000) while Overheated.
             "heat-3000000" => WeaponZero(TestStates.Rifle with { Heat = 3_000_000 }, "heat", 16),
-            "heat-3300000-heat-per-shot-10000" => WeaponZero(TestStates.Rifle with { Heat = 3_300_000 }, "heat", 16) with { Edit = HeatPerShot10000 },
+            "ready-heat-3000000-heat-per-shot-10000" => WeaponZero(TestStates.Rifle with { Heat = 3_000_000 }, "heat", 16) with { Edit = HeatPerShot10000 },
+            "switching-heat-3000000-heat-per-shot-10000" => WeaponZero(TestStates.Rifle with { Phase = 3, PhaseSteps = 1, Heat = 3_000_000 }, "heat", 16) with { Edit = HeatPerShot10000 },
+            "overheated-heat-3300000-heat-per-shot-10000" => WeaponZero(TestStates.Rifle with { Phase = 4, Heat = 3_300_000 }, "heat", 16) with { Edit = HeatPerShot10000 },
             "magazine-31" => new(
                 TestStates.Build(0, [standing with { Weapons = [TestStates.Rifle with { Magazine = 31 }, TestStates.Launcher] }]),
                 null,
@@ -424,7 +490,8 @@ public sealed class SimWorldTests
                 TestStates.Build(0, [standing with { ActiveSlot = 0, Weapons = [TestStates.Rifle, TestStates.Launcher with { Phase = 4 }] }]),
                 null),
             "heat-2999999" => (WithRifle(TestStates.Rifle with { Heat = 2_999_999 }), null),
-            "heat-3299999-heat-per-shot-10000" => (WithRifle(TestStates.Rifle with { Heat = 3_299_999 }), HeatPerShot10000),
+            "ready-heat-2999999-heat-per-shot-10000" => (WithRifle(TestStates.Rifle with { Heat = 2_999_999 }), HeatPerShot10000),
+            "overheated-heat-3299999-heat-per-shot-10000" => (WithRifle(TestStates.Rifle with { Phase = 4, Heat = 3_299_999 }), HeatPerShot10000),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
         };
     }
