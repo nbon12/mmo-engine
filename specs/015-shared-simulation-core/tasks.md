@@ -2390,7 +2390,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - A one-off script outside the repository may generate the long arrays. The committed `.json` is the source.
   - Run `golden write` and commit the `.json` and `.bin` files together.
   - Makes the collision rows of T215, T216, the `GoldenRefusalTests` tasks, T226 and the `encoder-refuses` row of T225 pass.
-- [ ] T240 [US6] Author the 32 stream cases `simcore/golden/stream/<case>.json` from contracts/recorded-stream-format.md#golden-fixtures.
+- [X] T240 [US6] Author the 32 stream cases `simcore/golden/stream/<case>.json` from contracts/recorded-stream-format.md#golden-fixtures.
   - **`two-steps`.**
     - Header values: `rulesRevision` 1, `stepHz` 30, `characterCount` 1, `stepCount` 2, `seed` `0000000000000000`, `matchSalt` `0123456789abcdef`, `collisionChecksum` `9224e3fa3b3fca9c`.
     - `config`: the 116 entries of `simcore/config/default.json` as `{ fieldId, path, valueBits }` in ascending `fieldId`, with entry k at 66 + 6k and `movement.gravity` (`0x1007`) as entry 9.

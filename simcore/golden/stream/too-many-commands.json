@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "too-many-commands",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 902, "hex": "02" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 902, "field": "steps[0].commandCount" }
+}

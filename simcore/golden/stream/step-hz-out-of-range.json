@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "step-hz-out-of-range",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 12, "hex": "0a00" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 12, "field": "stepHz" }
+}

@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "command-index-out-of-range",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 903, "hex": "01" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 903, "field": "steps[0].commands[0].characterIndex" }
+}

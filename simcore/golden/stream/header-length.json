@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "header-length",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 6, "hex": "4800" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 6, "field": "headerLength" }
+}

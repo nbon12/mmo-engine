@@ -1,0 +1,13 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "config-not-ascending",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 66, "hex": "020040000000" },
+    { "op": "write", "offset": 72, "hex": "01001e000000" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 72, "field": "config.entries[1].fieldId" }
+}

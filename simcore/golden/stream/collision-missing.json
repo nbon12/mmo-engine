@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "collision-missing",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [],
+  "refusedAt": "open",
+  "collisionFixtures": [],
+  "expectedError": { "code": "CollisionDataMissing", "offset": 36, "field": "collisionChecksum" }
+}
