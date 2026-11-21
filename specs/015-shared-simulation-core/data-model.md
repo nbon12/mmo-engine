@@ -608,6 +608,7 @@ configured maxima and the collision world, so a step allocates nothing (FR-032, 
 | Inputs | one entry per character | the accepted input or the neutral input, and the rejection reason |
 | Candidates | `int[MaxQueryCandidates(widest box)]` | collision query output |
 | Hitboxes | maxCharacters × 3 capsules and maxCharacters bounding spheres | this step's hitboxes |
+| Spawns | `Projectile[Min(maxProjectiles, maxCharacters × the largest maxShotsPerStep)]` and a count | this step's new projectiles, in ID order, which stage 5 appends after the live ones |
 | Events | shots: maxCharacters × the largest `maxShotsPerStep`; hits and expiries: maxProjectiles; input rejections, fire blocks and movement outcomes: maxCharacters | this step's events |
 | State buffer | `byte[]` of the maximum canonical state length | the canonical serialisation that is hashed and reported |
 
@@ -619,9 +620,9 @@ configured maxima and the collision world, so a step allocates nothing (FR-032, 
 | --- | --- | --- | --- |
 | 1 | Validate inputs | commands, each character's LastSequence, `input.weaponSlots` | per character: the accepted input or the neutral input; input rejection events |
 | 2 | Movement, ascending character ID | current characters, inputs, movement config, collision world | next Position, Velocity, GroundNormal, AimYaw, AimPitch, Stance, Flags, LastSequence; movement outcome events |
-| 3 | Weapons, ascending character ID | next characters (post-movement pose and stance), current weapons, inputs, weapon config, MatchSalt, NextProjectileId, projectile count | next weapons and ActiveSlot; new projectiles appended in ID order; NextProjectileId; shot and fire block events |
+| 3 | Weapons, ascending character ID | next characters (post-movement pose and stance), current weapons, inputs, weapon config, MatchSalt, NextProjectileId, the projectile count plus the projectiles spawned so far this step | next weapons and ActiveSlot; new projectiles in the spawn scratch, in ID order; NextProjectileId; shot and fire block events |
 | 4 | Hitboxes | next characters' Position, AimYaw and Stance; hitbox layouts | hitbox scratch |
-| 5 | Projectiles, ascending projectile ID | current and new projectiles, class config, collision world, hitbox scratch | next projectiles (positions, removals); hit and expiry events |
+| 5 | Projectiles, ascending projectile ID | current projectiles and the spawn scratch, class config, collision world, hitbox scratch | next projectiles (positions, removals); hit and expiry events |
 | 6 | Canonicalise, check, serialise, hash | the next state and its events | −0 rewritten to +0 in place; the first non-finite float stops the step with `StepFault.NonFinite` naming it; the canonical bytes in the state buffer; XxHash64 (seed 0, not chained) of those bytes |
 | 7 | Commit | | Step = n; the next state becomes the current state |
 

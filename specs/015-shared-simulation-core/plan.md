@@ -1293,6 +1293,13 @@ The design documents settled these points, which the spec leaves open. They are 
   the cross-build half US4.2b and the agreement half US4-ITb, with FR-008's WebAssembly half, are owned
   by Phase 11's per-stream agreement tests over the weapon streams and are listed with the other
   slice-2 items in tasks.md T264.
+- **`reload-and-empty` keeps WeaponSlot 1 selected after it releases Fire (T185, Phase 6 review).**
+  T185 said "nothing is held until 4.5 s" after the slot-1 stretch without naming the slot, and the
+  definition already kept slot 1, since a command's WeaponSlot is a selection and not a held button,
+  and going back to slot 0 would start a second switch the scenario does not test. Phase 7 records the
+  stream, so the choice is now written down: T185 and the contracts/simcore-cli.md row state it, and
+  `ReloadAndEmptyStreamReportsReloadingAndSwitchingBlocks` checks that the stream has 4.5 · hz steps
+  and that every step after 4 s holds no button with WeaponSlot 1 and reports no fire block.
 
 ## Delivery
 

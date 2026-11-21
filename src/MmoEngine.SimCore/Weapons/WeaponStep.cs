@@ -14,8 +14,8 @@ namespace MmoEngine.SimCore.Weapons;
 /// timing is an integer accumulator (FR-007): a step adds <c>Rpm</c> fire-rate units and a shot costs
 /// <c>ShotCost</c>, so the shot count never drifts from the configured rate by more than one. Everything is
 /// integer arithmetic apart from the spread direction (<see cref="Spread"/>) and the projectile spawn. The
-/// step is static, holds no state and allocates nothing, and every loop is bounded by the slot count or
-/// <c>MaxShotsPerStep</c>.
+/// step is static, holds no state, throws nothing and allocates nothing, and every loop is bounded by the
+/// slot count or <c>MaxShotsPerStep</c>.
 /// </summary>
 public static class WeaponStep
 {
@@ -55,7 +55,6 @@ public static class WeaponStep
         Span<ShotEvent> shots,
         out FireBlock fireBlock)
     {
-        ArgumentNullException.ThrowIfNull(config);
         var fire = (input.Buttons & Buttons.Fire) != 0;
         var reload = (input.Buttons & Buttons.Reload) != 0;
 

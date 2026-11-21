@@ -573,7 +573,9 @@ public sealed class WeaponScenarioTests
     /// rifle's ReloadSteps (2 · hz), every one of those steps reports exactly <c>[{1, Reloading}]</c>; and
     /// Given WeaponSlot 1 with Fire held from step 3.5 · hz + 1 to 4 · hz, inside the launcher's EquipSteps
     /// (15/23/45), every one of those steps reports exactly <c>[{1, Switching}]</c>. No shot fires in either
-    /// range.
+    /// range. The definition's tail is pinned too, since Phase 7 records this stream: it has 4.5 · hz steps,
+    /// and every step from 4 · hz + 1 to the end holds no button with WeaponSlot 1 still selected and reports
+    /// no fire block.
     /// </summary>
     [Theory]
     [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
@@ -586,6 +588,7 @@ public sealed class WeaponScenarioTests
         var reloadingTo = (3 * hz / 2) + 1;
         var switchingFrom = (7 * hz / 2) + 1;
         var switchingTo = 4 * hz;
+        var lastStep = 9 * hz / 2;
 
         // Given: the rifle still reloads, and the launcher still switches in, throughout each range.
         Assert.Equal(hz, stream.StepHz);
@@ -598,8 +601,8 @@ public sealed class WeaponScenarioTests
             switchingFrom + config.Weapons[1].EquipSteps > switchingTo,
             $"{hz} Hz: the switch at step {switchingFrom} completes by step {switchingTo}");
         Assert.True(
-            stream.Steps.Count >= switchingTo,
-            $"{hz} Hz: the stream has {stream.Steps.Count} steps, too few to reach step {switchingTo}");
+            stream.Steps.Count == lastStep,
+            $"{hz} Hz: the stream has {stream.Steps.Count} steps, expected 4.5 s = {lastStep}");
         var press = CommandAt(stream, reloadPress);
         Assert.True(
             press.Buttons == (Buttons.Fire | Buttons.Reload) && press.WeaponSlot == 0,
@@ -620,6 +623,14 @@ public sealed class WeaponScenarioTests
                 $"{hz} Hz, step {s}: the definition holds {command.Buttons} with WeaponSlot {command.WeaponSlot}; expected Fire with WeaponSlot 1");
         }
 
+        for (var s = switchingTo + 1; s <= lastStep; s++)
+        {
+            var command = CommandAt(stream, s);
+            Assert.True(
+                command.Buttons == NoButtons && command.WeaponSlot == 1,
+                $"{hz} Hz, step {s}: the definition holds {command.Buttons} with WeaponSlot {command.WeaponSlot}; expected no button with WeaponSlot 1 still selected");
+        }
+
         var snapshots = WeaponRuns.Run(stream, TestWorld);
 
         Assert.Equal(stream.Steps.Count, snapshots.Count);
@@ -637,6 +648,16 @@ public sealed class WeaponScenarioTests
             Assert.True(snapshot.Step == (uint)s, $"{hz} Hz: entry {s - 1} reported step {snapshot.Step}, expected {s}");
             Assert.True(snapshot.Shots.Count == 0, $"{hz} Hz, step {s}: {snapshot.Shots.Count} shots while Switching");
             AssertBlocks($"{hz} Hz, step {s} (slot 1 with Fire held while Switching)", snapshot, FireBlock.Switching);
+        }
+
+        for (var s = switchingTo + 1; s <= lastStep; s++)
+        {
+            var snapshot = At(snapshots, s);
+            Assert.True(snapshot.Step == (uint)s, $"{hz} Hz: entry {s - 1} reported step {snapshot.Step}, expected {s}");
+            Assert.True(snapshot.Shots.Count == 0, $"{hz} Hz, step {s}: {snapshot.Shots.Count} shots with Fire released");
+            Assert.True(
+                snapshot.FireBlocks.Count == 0,
+                $"{hz} Hz, step {s} (Fire released): fire blocks [{string.Join(", ", snapshot.FireBlocks)}], expected none");
         }
     }
 

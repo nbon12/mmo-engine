@@ -1886,7 +1886,8 @@ Conventions for this phase (they hold for every task below):
   - Also add `WeaponScenarioTests.ReloadAndEmptyStreamReportsReloadingAndSwitchingBlocks(int hz)`. In the `reload-and-empty` definition at hz:
     - every step from hz + 2 to 1.5 · hz + 1 reports `[{1, Reloading}]`;
     - every step from 3.5 · hz + 1 to 4 · hz (slot 1 with Fire held, inside EquipSteps) reports `[{1, Switching}]`;
-    - no shot fires in either range.
+    - no shot fires in either range;
+    - the stream has 4.5 · hz steps, and every step from 4 · hz + 1 to 4.5 · hz holds no button with WeaponSlot 1 still selected and reports no fire block.
   - Run `dotnet test tests/MmoEngine.SimCore.Tests --filter "FullyQualifiedName~WeaponScenarioTests.FireWhenTheWeaponCannotFireReportsTheReason|FullyQualifiedName~WeaponScenarioTests.ReloadAndEmptyStreamReportsReloadingAndSwitchingBlocks"` and confirm both fail.
 - [X] T181 [US4] Write failing test `WeaponScenarioTests.EveryWeaponFiresOnTheStepsItsConfigurationImplies(int slot, int hz)` in `tests/MmoEngine.SimCore.Tests/Scenarios/WeaponScenarioTests.cs` (US4-IT). Theory crossing slot 0 (rifle, Auto) and slot 1 (launcher, Semi) with 20, 30, 60.
   - Arrange through `WeaponRuns.Create` on `TestConfigs.At(hz)` with ActiveSlot = slot, for 20 · hz steps. Fire is held every step for slot 0 and on even steps only for slot 1. Reload is held on every step whose previous committed Magazine is 0.
@@ -1950,7 +1951,7 @@ Conventions for this phase (they hold for every task below):
 - [X] T185 [US4] Add the definitions `rifle-burst`, `reload-and-empty` and `heat-overheat` to `src/MmoEngine.SimCore.Server/ScenarioCatalog.cs`, keeping `ScenarioCatalog.Names` in ordinal order, per contracts/simcore-cli.md#named-scenario-streams.
   - Common to all three: one character (ID 1), standing and grounded at `TestWorldGenerator.Features.FlatRunStart`, the start the flat-run definitions use, in front of the clear firing lane T101 keeps, with seed 0 and a fixed non-zero match-salt constant per definition. Exactly one command per step for character index 0, with Sequence = step index + 1, so `rifle-burst` is batchable. Durations are in seconds, so each builds at 20, 30 and 60 Hz.
   - `rifle-burst`: the placeholder rifle in slot 0, aim yaw 0 and pitch 2048 (11.25° above the horizon). Fire held for 3 s, then released for 1 s.
-  - `reload-and-empty`: the initial state's weapons[0] has Magazine 2 and Reserve 210. Fire is held for [0, 1 s); one step holds Fire and Reload at 1 s; Fire is held for (1 s, 1.5 s]; nothing is held until 3.5 s; WeaponSlot 1 with Fire is held for [3.5 s, 4 s); nothing is held until 4.5 s.
+  - `reload-and-empty`: the initial state's weapons[0] has Magazine 2 and Reserve 210. Fire is held for [0, 1 s); one step holds Fire and Reload at 1 s; Fire is held for (1 s, 1.5 s]; nothing is held until 3.5 s; WeaponSlot 1 with Fire is held for [3.5 s, 4 s); then no buttons are held until 4.5 s, with WeaponSlot 1 still selected (only Fire is released; the slot does not revert). WeaponSlot is 0 on every step before 3.5 s and 1 from 3.5 s to the end.
   - `heat-overheat`: its own rate is 30 Hz. Slot 0 is the heat test weapon, `heatPerShot` 10000 with every other value the rifle's. Fire is held from step 1 for 2.4 s (72 steps at 30 Hz).
   - Each `Build(baseConfig, world, stepRateHz)` returns an unrecorded `RecordedStream` with expected hashes 0, derived from `baseConfig` (default.json).
   - Do not create any `.mmrs` file and do not run `streams record` for these names: Phase 7 records them because they press Fire. The Phase 3 test that lists known names reads `ScenarioCatalog.Names`, so it stays green.
