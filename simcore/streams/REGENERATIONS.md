@@ -171,3 +171,13 @@ This file is appended by `simcore streams record`; each entry gives the reason a
 | Stream | File hash | Final state hash | First changed step |
 | --- | --- | --- | --- |
 | projectile-hits-hitbox | added: 824803c9feb674e9 | added: bebd1bfc4e86a66e | |
+
+## 2026-11-21T08:19:53Z
+
+- Reason: First recording of the reload-and-empty scenario (spec 015 US5): its shots fly through stage 5
+- Command: `simcore streams record --scenario reload-and-empty`
+- Rules revision: 1
+
+| Stream | File hash | Final state hash | First changed step |
+| --- | --- | --- | --- |
+| reload-and-empty | added: c00adbb3a9f33669 | added: fb8c055cac37c513 | |
