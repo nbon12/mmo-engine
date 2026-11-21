@@ -1792,6 +1792,11 @@ The design documents settled these points, which the spec leaves open. They are 
   anything. The rows instead open the file with `FileShare.None` while the command runs: .NET takes an
   exclusive lock for that share mode, so the command's own open fails with an `IOException`. The
   tests clean up through the handle's `Dispose`, so they stay parallel-safe and rerun-safe.
+- **T258's golden write check names the contract's line (T258).** T258 said every case line of
+  `golden write` ends `unchanged`, but contracts/simcore-cli.md#golden-write gives each case line its
+  byte count after the state (`input/example: unchanged, 17 bytes`), and the command and its tests
+  follow the contract. The command stays as built; T258 now says each line reads
+  `<format>/<case>: unchanged, <bytes> bytes`. The Phase 10 re-run found all 92 lines in that form.
 
 ## Delivery
 

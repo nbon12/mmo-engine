@@ -2742,7 +2742,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Every command is given as `dotnet run --project src/MmoEngine.SimCore.Cli -- <command>`, exactly as quickstart.md writes it, so the command forms stay identical.
 - [X] T258 Check that the committed content reproduces. Run these from the repository root, in order:
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- content generate --out simcore/content/test-world.mmcd`. It prints one `simcore/content/test-world.mmcd: <bytes> bytes, checksum <x16>` line.
-  - `dotnet run --project src/MmoEngine.SimCore.Cli -- golden write --dir simcore/golden`. Every case line ends `unchanged`, and the total line ends `0 written, <n> unchanged`.
+  - `dotnet run --project src/MmoEngine.SimCore.Cli -- golden write --dir simcore/golden`. Every case line reads `<format>/<case>: unchanged, <bytes> bytes` (contracts/simcore-cli.md#golden-write), and the total line ends `0 written, <n> unchanged`.
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- streams record --all --reason "Slice 1 polish: confirm no stream changes"`. It prints 19 `unchanged` lines and `streams record: 19 streams, 0 changed, 0 added, 0 removed, 19 unchanged`, and it does not touch `REGENERATIONS.md`.
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- streams verify`. It prints 19 `<name>: match, <steps> steps, final <x16>` lines and `streams verify: 19 streams, 19 match, 0 diverged, 0 not comparable, 0 refused`, and exits 0.
   - `dotnet run --project src/MmoEngine.SimCore.Cli -- config check simcore/config/default.json`. It prints nothing and exits 0.
