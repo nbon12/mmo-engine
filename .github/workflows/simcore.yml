@@ -22,6 +22,12 @@ name: SimCore
 #              cold starts and step costs in Node and in a Chromium Worker, `simcore measure
 #              validate-report` checks the report's structure, and the report is uploaded as the
 #              simcore-measurement artifact. No measured number is compared with a threshold.
+#              Every step after the toolchain setup has its own timeout-minutes, and the relinked and AOT
+#              publishes bound `dotnet publish` with `timeout`, so a hang in an optional step (the
+#              workload, a publish, the sweeps) is recorded inside the job's 30 minutes instead of
+#              cancelling the job: an unproduced mode with its reason, or a sweep without its summary.
+#              The agreement runs and compare run after an agreement run failed (not after a cancel), so
+#              the job summary and the uploaded report name what disagreed.
 # auto-merge.yml lists this workflow's name in its workflow_run trigger, so a pull request waits for it.
 # tests/workflows/test_simcore_workflow.py pins this file.
 on:
@@ -215,35 +221,44 @@ jobs:
       # The full run (FR-030). Main exits 2 without the runner class and 1 unless this run exported every
       # benchmark it ran, so the export the measure step reads is always this run's.
       - name: Run the server benchmarks
+        timeout-minutes: 15
         run: dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'
 
       # Before the workload, and with the flag the agreement job publishes with, so this mode is the
       # build the agreement job tested as node-interp on any runner image.
       - name: Publish the prebuilt interpreted build
+        timeout-minutes: 5
         run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"
 
-      # A failed install skips the relinked and AOT publishes, and the report records both as not
-      # produced, with this step named as the reason (FR-031).
+      # A failed or timed-out install skips the relinked and AOT publishes, and the report records both
+      # as not produced, with this step named as the reason (FR-031).
       - name: Install the wasm-tools workload
         id: install-workload
+        timeout-minutes: 5
         continue-on-error: true
         run: dotnet workload install wasm-tools
 
       # Each publish records whether it produced its mode, and why not, and exits 0: a mode that cannot
-      # be built is a report entry, not a failed job.
+      # be built is a report entry, not a failed job. `timeout` bounds the publish inside the step, so a
+      # hang is recorded too (exit 124); the step's own bound is only a backstop.
       - name: Publish the relinked interpreted build
         id: publish-relinked
         if: steps.install-workload.outcome == 'success'
+        timeout-minutes: 5
         run: |
           set +e
-          dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/publish/relinked"
+          timeout --kill-after=30s 4m dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/publish/relinked"
           code=$?
           set -e
           if [ "$code" -eq 0 ]; then
             echo "produced=true" >> "$GITHUB_OUTPUT"
           else
             echo "produced=false" >> "$GITHUB_OUTPUT"
-            echo "reason=dotnet publish exited ${code}; see the publish-relinked step log" >> "$GITHUB_OUTPUT"
+            if [ "$code" -eq 124 ]; then
+              echo "reason=dotnet publish did not finish within 4 minutes; see the publish-relinked step log" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=dotnet publish exited ${code}; see the publish-relinked step log" >> "$GITHUB_OUTPUT"
+            fi
           fi
           exit 0
 
@@ -252,37 +267,49 @@ jobs:
       - name: Publish the AOT build
         id: publish-aot
         if: steps.install-workload.outcome == 'success'
+        timeout-minutes: 6
         run: |
           set +e
-          dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$RUNNER_TEMP/publish/aot"
+          timeout --kill-after=30s 5m dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$RUNNER_TEMP/publish/aot"
           code=$?
           set -e
           if [ "$code" -eq 0 ]; then
             echo "produced=true" >> "$GITHUB_OUTPUT"
           else
             echo "produced=false" >> "$GITHUB_OUTPUT"
-            echo "reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log" >> "$GITHUB_OUTPUT"
+            if [ "$code" -eq 124 ]; then
+              echo "reason=dotnet publish -p:RunAOTCompilation=true did not finish within 5 minutes; see the publish-aot step log" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log" >> "$GITHUB_OUTPUT"
+            fi
           fi
           exit 0
 
       # One fresh work directory for the agreement runs, compare and the measurements. AGREEMENT_WORK is
       # what agreement.test.mjs requires at load time.
       - name: Prepare the agreement work directory
+        id: prepare
+        timeout-minutes: 4
         run: |
           WORK="$(mktemp -d "$RUNNER_TEMP/simcore-work.XXXXXX")"
           dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$WORK"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           echo "AGREEMENT_WORK=$WORK" >> "$GITHUB_ENV"
 
+      # The two runs and compare run after an earlier one failed (not after a cancel), as the agreement
+      # job's compare does, so a relinked divergence does not hide the AOT result and compare still
+      # writes the summary and report/. Without a prepared work directory none of them runs.
       - name: Agreement on the relinked build
-        if: steps.publish-relinked.outputs.produced == 'true'
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.publish-relinked.outputs.produced == 'true' }}
+        timeout-minutes: 3
         env:
           AGREEMENT_BUILD: node-interp-relinked
           AGREEMENT_APP: ${{ runner.temp }}/publish/relinked/wwwroot
         run: node --test tools/agreement/node/agreement.test.mjs
 
       - name: Agreement on the AOT build
-        if: steps.publish-aot.outputs.produced == 'true'
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.publish-aot.outputs.produced == 'true' }}
+        timeout-minutes: 3
         env:
           AGREEMENT_BUILD: node-aot
           AGREEMENT_APP: ${{ runner.temp }}/publish/aot/wwwroot
@@ -291,7 +318,8 @@ jobs:
       # The gate for the builds this job produced (research.md R17): any divergence in the relinked or
       # AOT build fails the job. The prebuilt build's gate is the agreement job's.
       - name: Compare the new builds with the server
-        if: steps.publish-relinked.outputs.produced == 'true' || steps.publish-aot.outputs.produced == 'true'
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && (steps.publish-relinked.outputs.produced == 'true' || steps.publish-aot.outputs.produced == 'true') }}
+        timeout-minutes: 3
         env:
           RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}
           AOT_PRODUCED: ${{ steps.publish-aot.outputs.produced }}
@@ -308,6 +336,7 @@ jobs:
       # A measurement, not a gate: each function's maximum error in ulp goes to the job summary, and the
       # fixed trig table in the pull-request tests gates the error bounds (research.md R3).
       - name: Run the exhaustive math sweeps
+        timeout-minutes: 10
         continue-on-error: true
         run: |
           set -o pipefail
@@ -321,20 +350,24 @@ jobs:
           exit "$status"
 
       - name: Install the agreement tools
+        timeout-minutes: 2
         working-directory: tools/agreement
         run: npm ci
 
       # In tools/agreement, so npx runs the lockfile's Playwright and installs the Chromium it launches.
       - name: Install Chromium
+        timeout-minutes: 4
         working-directory: tools/agreement
         run: npx playwright install --with-deps chromium
 
       - name: Test the measurement runner
+        timeout-minutes: 2
         run: node --test tools/agreement/node/measure.test.mjs tools/agreement/node/server.test.mjs
 
       # Each mode is passed exactly once: --mode with its publish folder when it was produced, else
       # --unproduced with its publish step's reason, or the workload's when the publish was skipped.
       - name: Measure the WebAssembly builds
+        timeout-minutes: 8
         env:
           RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}
           RELINKED_REASON: ${{ steps.publish-relinked.outputs.reason }}
@@ -362,9 +395,11 @@ jobs:
       # The measurement gate is structural only: every listed measurement with its unit, the runner
       # class and the build mode (US7 Independent Test, SC-007). No number is compared with a threshold.
       - name: Validate the measurement report
+        timeout-minutes: 2
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- measure validate-report "$RUNNER_TEMP/simcore-measurement.json"
 
       - name: Upload the measurement report
+        timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simcore-measurement
@@ -373,6 +408,7 @@ jobs:
 
       - name: Upload the agreement report
         if: failure()
+        timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simcore-measure-agreement-report

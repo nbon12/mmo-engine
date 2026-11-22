@@ -2134,6 +2134,42 @@ The design documents settled these points, which the spec leaves open. They are 
   T310 now say why the order matters. quickstart.md's second measurement block runs `dotnet clean` after
   the AOT publish, so the section and the agreement section can be run again. That line is no
   `dotnet run` or `dotnet publish` line, so T311's exact line counts do not change.
+- **T297 and T310 (Phase 12 review): the measure job's agreement runs and compare run after a failed
+  agreement run, and the gate's denial is tested.** The three steps used GitHub's implicit `success()`,
+  so a relinked divergence, which fails its `agreement.test.mjs` run, skipped the AOT run and compare.
+  Only compare writes `report/`, so the failure upload then found nothing and the job summary named no
+  divergence. The three now run on `!cancelled() && steps.prepare.outcome == 'success' && <produced>`,
+  as the agreement job's compare runs on `!cancelled()`. The prepare step has `id: prepare`, so a failed
+  or skipped prepare, after which `WORK` is unset, skips them. Compare still exits non-zero for a build
+  that diverged or did not run, so the gate is unchanged. `test_relinked_and_aot_agreement_gates_the_job`
+  only ran the passing path, so `|| true` on any of the three left it green. It now decides each
+  condition with GitHub's status functions (`would_run`: after a failed step, after a cancel, after a
+  failed or skipped prepare), runs each step with its tool exiting 0 and then 1 and asserts the step's
+  exit code is the tool's, and pins that none of the three runs contains `||`.
+- **T310 and T297 (Phase 12 review): every measure step after the toolchain setup has its own bound,
+  and the relinked and AOT publishes bound `dotnet publish` themselves.** The job's 30 minutes was the
+  only bound, and a job that passes it is cancelled. A stalled optional step (the workload install, a
+  publish, the sweeps) then cancelled the job, so FR-031's unproduced record was never written and the
+  `failure()` upload never ran. This is the reasoning of the T290 bullet above. Each step now has its
+  own `timeout-minutes`. A stalled workload install or sweep is then a failed `continue-on-error` step:
+  the publishes are skipped and both modes are recorded with the workload's reason, or the sweep's
+  summary is missing. The publishes have no `continue-on-error`, so a step-level timeout there would
+  fail the job. They run `timeout --kill-after=30s 4m` (relinked) and `5m` (AOT) around
+  `dotnet publish` instead, and record exit 124 as `did not finish within <n> minutes`. The steps' own
+  5 and 6 minutes are only backstops. The bounds are a budget, from runs on this machine (4 cores).
+  The benchmarks took 10 minutes (bound 15), the sweeps 6.5 to 7 minutes plus the test project's build
+  (bound 10), the AOT publish 69 s, the relinked one 13 s, `measure.mjs` 41 s for all three modes
+  (bound 8), and every other step under 10 s. A normal run is then about 23 minutes of the 30. Any one
+  optional step that hangs to its bound adds at most about 4.5 minutes (the AOT publish: its 5 minutes
+  and the kill, against its 69 s), which still fits; two hung publishes in one run would not. A required
+  step fails on its own bound, which is below the job's.
+- **T302 and T309 (Phase 12 review): the entry point's exit codes have a test.** T309 checked once,
+  by hand, that `measure.mjs` exits 2 without `MMO_RUNNER_CLASS`. In CI the class is always set, so
+  nothing ran that path. `'the entry point exits 2 on a usage error and 1 on a failed measurement,
+  writing no report'` now runs `node tools/agreement/lib/measure.mjs` as a child process. It asserts
+  exit 2 with the exact `measure:` line when the class is unset or empty, and exit 1 with the exact
+  line when a produced mode has no `dotnet.js`. That download is read before any Node or Chromium
+  measurement, so no browser is needed. In both cases nothing is written. T309's check now cites it.
 
 ## Delivery
 

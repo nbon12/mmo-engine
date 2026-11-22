@@ -15,8 +15,10 @@ that job depends on:
   and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check;
 - the `measure` job (US7.2, US7-IT, SC-007, FR-030, FR-031): the server benchmarks on the runner class,
   the prebuilt, relinked and AOT publishes in the contract's order, each mode recorded as produced or
-  with its reason, the relinked and AOT agreement gate, the exhaustive trig sweeps that run only there,
-  and the measurement report validated and then uploaded.
+  with its reason (a publish that does not finish within its `timeout` included), the relinked and AOT
+  agreement gate, which fails the job when a runner or compare fails and still reports after a failed
+  run, each step's own bound inside the job's 30 minutes, the exhaustive trig sweeps that run only
+  there, and the measurement report validated and then uploaded.
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
 tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs. The measurement
@@ -33,6 +35,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,25 +113,34 @@ PREBUILT_OUT = "publish/prebuilt"
 WORKLOAD_REASON = "dotnet workload install wasm-tools failed; see the install-workload step log"
 
 # The two modes the job publishes after the workload: the publish step, its id, its output folder under
-# RUNNER_TEMP and the reason line it writes on failure, and the agreement build and step that check it.
+# RUNNER_TEMP, the minutes `timeout` gives its `dotnet publish` and the reason lines it writes when the
+# publish fails or does not finish, and the agreement build and step that check it.
 NEW_MODES = (
     SimpleNamespace(mode="interp-relinked", publish="Publish the relinked interpreted build", publish_id="publish-relinked",
                     out="publish/relinked", build="node-interp-relinked", agreement="Agreement on the relinked build",
-                    aot=False,
-                    reason_line="reason=dotnet publish exited ${code}; see the publish-relinked step log"),
+                    aot=False, bound=4,
+                    reason_line="reason=dotnet publish exited ${code}; see the publish-relinked step log",
+                    timeout_reason_line="reason=dotnet publish did not finish within 4 minutes; see the publish-relinked step log"),
     SimpleNamespace(mode="aot", publish="Publish the AOT build", publish_id="publish-aot",
                     out="publish/aot", build="node-aot", agreement="Agreement on the AOT build",
-                    aot=True,
-                    reason_line="reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log"),
+                    aot=True, bound=5,
+                    reason_line="reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log",
+                    timeout_reason_line=("reason=dotnet publish -p:RunAOTCompilation=true did not finish within 5 minutes;"
+                                         " see the publish-aot step log")),
 )
 
+# The exit status of `timeout` when the command it runs does not finish within its bound.
+TIMEOUT_EXIT = 124
+
 # A stand-in for dotnet, node, npm and npx in the step runs below: it appends its name and arguments to
-# $FAKE_TOOL_LOG as one JSON line, and exits with $FAKE_<NAME>_EXIT (default 0).
+# $FAKE_TOOL_LOG as one JSON line, sleeps $FAKE_<NAME>_SLEEP seconds (default 0) and exits with
+# $FAKE_<NAME>_EXIT (default 0).
 FAKE_TOOL = """#!{python}
-import json, os, sys
+import json, os, sys, time
 name = os.path.basename(sys.argv[0])
 with open(os.environ["FAKE_TOOL_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps([name] + sys.argv[1:]) + "\\n")
+time.sleep(float(os.environ.get("FAKE_" + name.upper() + "_SLEEP", "0")))
 sys.exit(int(os.environ.get("FAKE_" + name.upper() + "_EXIT", "0")))
 """
 FAKE_TOOLS = ("dotnet", "node", "npm", "npx")
@@ -212,6 +224,24 @@ def run_awk(program, text):
 
 def evaluate(expression, context):
     return gh_expr.truthy(gh_expr.Expr(expression, context).evaluate())
+
+
+# GitHub's status check functions. An `if` that calls none of them runs as `success() && (<if>)`.
+STATUS_FUNCTIONS = re.compile(r"\b(success|failure|cancelled|always)\(\s*\)")
+
+
+def would_run(step, steps_context, failed=False, cancelled=False):
+    """Whether GitHub runs `step` after earlier steps left `steps_context`: `failed` says an earlier step
+    failed (without continue-on-error), `cancelled` that the run was cancelled. The step's `if`, or
+    `success()` when it has none, gets the implicit `success() &&` when it calls no status function, and
+    each status function is then decided as GitHub does: success() when nothing failed or was cancelled,
+    failure() when something failed, cancelled() on a cancel, always() always."""
+    text = condition(step) or "success()"
+    if not STATUS_FUNCTIONS.search(text):
+        text = f"success()&&({text})"
+    status = {"success": not failed and not cancelled, "failure": failed, "cancelled": cancelled, "always": True}
+    text = STATUS_FUNCTIONS.sub(lambda m: "true" if status[m.group(1)] else "false", text)
+    return evaluate(text, {"steps": steps_context})
 
 
 def render(template, context):
@@ -345,14 +375,16 @@ def if_else_blocks(script):
     return blocks
 
 
-def run_step(job, name, steps_context=None, env=None, exits=None, setup=None):
+def run_step(job, name, steps_context=None, env=None, exits=None, setup=None, sleeps=None, rewrite=None):
     """Runs one step's `run` under bash as the runner does (`bash --noprofile --norc -eo pipefail`), with a
     temporary RUNNER_TEMP, GITHUB_ENV, GITHUB_OUTPUT and GITHUB_STEP_SUMMARY, and FAKE_TOOL standing in for
     dotnet, node, npm and npx. `${{ }}` in the run and in the step's env is evaluated against the `steps`
     context given, `runner.temp` and the env, as the runner would.
 
     `env(runner_temp)` gives the variables earlier steps appended to $GITHUB_ENV, `exits` maps a tool to
-    its exit code, and `setup(runner_temp, repo)` writes the files earlier steps would have left.
+    its exit code, `sleeps` to the seconds it takes before exiting, and `setup(runner_temp, repo)` writes
+    the files earlier steps would have left. `rewrite(script)`, when given, changes the step's evaluated
+    run before it runs (a test shortens a bound with it).
 
     Returns the step's exit code and stderr, the RUNNER_TEMP and step summary file it ran with, the env it
     was given, each tool call as [tool, *args], the outputs and env variables it appended, and, for each
@@ -392,7 +424,11 @@ def run_step(job, name, steps_context=None, env=None, exits=None, setup=None):
         })
         for tool, code in (exits or {}).items():
             process_env[f"FAKE_{tool.upper()}_EXIT"] = str(code)
+        for tool, seconds in (sleeps or {}).items():
+            process_env[f"FAKE_{tool.upper()}_SLEEP"] = str(seconds)
         script = render(step["run"], context)
+        if rewrite:
+            script = rewrite(script)
         result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
                                 env=process_env, cwd=repo, capture_output=True, text=True, timeout=60)
         appended = parse_github_env(files["github-env"].read_text())
@@ -769,7 +805,9 @@ class MeasureJob(unittest.TestCase):
 
     The numbers themselves are checked by `simcore measure validate-report` in the job, and the runner by
     tools/agreement/node/measure.test.mjs; these tests pin the steps that produce, gate, validate and
-    upload the report. Steps that only decide what to pass on are run under bash with stand-in tools."""
+    upload the report. Steps that only decide what to pass on, and the gate steps, are run under bash with
+    stand-in tools, the gate steps with their tool passing and failing, and their conditions are decided
+    with GitHub's status functions (would_run)."""
 
     def test_measure_job_measures_every_mode_and_validates_the_report(self):
         # The steps of contracts/measurement-report.md#how-the-report-is-produced, in its order.
@@ -934,37 +972,60 @@ class MeasureJob(unittest.TestCase):
 
     def test_relinked_and_aot_agreement_gates_the_job(self):
         prepare_index, prepare = step_named("measure", "Prepare the agreement work directory")
+        self.assertEqual("prepare", prepare.get("id"))
+        self.assertNotIn("if", prepare)
         self.assertIn('echo "AGREEMENT_WORK=$WORK" >> "$GITHUB_ENV"', prepare.get("run", ""))
         # The prepared work directory is the one every later step reads, and `agreement prepare` gets it
         # empty, as it requires.
-        run = run_step("measure", "Prepare the agreement work directory")
-        self.assertEqual(0, run.returncode, run.stderr)
-        work = run.env.get("WORK")
+        prepare_run = run_step("measure", "Prepare the agreement work directory")
+        self.assertEqual(0, prepare_run.returncode, prepare_run.stderr)
+        work = prepare_run.env.get("WORK")
         self.assertIsNotNone(work, "the step must append WORK to $GITHUB_ENV")
-        self.assertEqual(work, run.env.get("AGREEMENT_WORK"))
-        self.assertTrue(work.startswith(run.runner_temp + "/"), work)
-        self.assertIs(True, run.empty_dirs.get("WORK"), "WORK must be a fresh empty directory")
-        prepares = [call for call in run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "prepare"])]
-        self.assertEqual(1, len(prepares), run.calls)
+        self.assertEqual(work, prepare_run.env.get("AGREEMENT_WORK"))
+        self.assertTrue(work.startswith(prepare_run.runner_temp + "/"), work)
+        self.assertIs(True, prepare_run.empty_dirs.get("WORK"), "WORK must be a fresh empty directory")
+        prepares = [call for call in prepare_run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "prepare"])]
+        self.assertEqual(1, len(prepares), prepare_run.calls)
         self.assertTrue(contains_sequence(prepares[0], ["--seeds", "1-50"]), prepares[0])
         self.assertEqual(work, option_value(prepares[0], "--work"))
         for scope in (WORKFLOW.get("env", {}), WORKFLOW["jobs"]["measure"].get("env", {})):
             self.assertNotIn("WORK", scope)
             self.assertNotIn("AGREEMENT_WORK", scope)
 
+        def prepared(runner_temp):
+            os.mkdir(f"{runner_temp}/simcore-work.prepared")
+            return {"WORK": f"{runner_temp}/simcore-work.prepared",
+                    "AGREEMENT_WORK": f"{runner_temp}/simcore-work.prepared"}
+
+        def after_prepare(context, outcome="success"):
+            return {**context, "prepare": {"outcome": outcome, "conclusion": outcome, "outputs": {}}}
+
+        agreement_call = ["node", "--test", "tools/agreement/node/agreement.test.mjs"]
         gates = []
         for mode in NEW_MODES:
             index, step = step_named("measure", mode.agreement)
             gates.append(index)
             with self.subTest(step=mode.agreement):
-                self.assertEqual(f"steps.{mode.publish_id}.outputs.produced=='true'", condition(step))
+                # `!cancelled()`, not the implicit `success()`: the AOT run still runs after the relinked
+                # run diverged, so one build's divergence does not hide whether the other agrees. A failed
+                # or skipped prepare leaves no work directory, so neither runs then.
+                self.assertEqual(f"!cancelled()&&steps.prepare.outcome=='success'&&steps.{mode.publish_id}.outputs.produced=='true'",
+                                 condition(step))
+                self.assertTrue(str(step["if"]).strip().startswith("${{"), step["if"])
                 for produced in ("true", "false", None):
-                    context = {"steps": {mode.publish_id: {"outputs": {} if produced is None else {"produced": produced}}}}
-                    self.assertIs(produced == "true", evaluate(condition(step), context), produced)
+                    for prepare_outcome in ("success", "failure", "skipped"):
+                        for failed, cancelled in ((False, False), (True, False), (False, True)):
+                            outputs = {} if produced is None else {"produced": produced}
+                            context = after_prepare({mode.publish_id: {"outcome": "success", "outputs": outputs}}, prepare_outcome)
+                            with self.subTest(produced=produced, prepare=prepare_outcome, failed=failed, cancelled=cancelled):
+                                self.assertIs(produced == "true" and prepare_outcome == "success" and not cancelled,
+                                              would_run(step, context, failed=failed, cancelled=cancelled))
                 env = step.get("env", {})
                 self.assertEqual(mode.build, env.get("AGREEMENT_BUILD"))
                 self.assertEqual(f"${{{{ runner.temp }}}}/{mode.out}/wwwroot", env.get("AGREEMENT_APP"))
                 self.assertIn("node --test tools/agreement/node/agreement.test.mjs", command(step))
+                self.assertNotIn("||", command(step), "nothing may turn the agreement run's exit code into a pass")
+                self.assertEqual("bash", step.get("shell", "bash"))
                 self.assertNotIn("AGREEMENT_WORK", env)
                 self.assertNotIn("continue-on-error", step)
                 self.assertLess(prepare_index, index)
@@ -975,11 +1036,25 @@ class MeasureJob(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as runner_temp:
                     self.assertEqual(expand(out.group(1), runner_temp) + "/wwwroot",
                                      expand(env.get("AGREEMENT_APP", ""), runner_temp))
+                # The step passes when the runner passes, and fails when the runner fails: a diverged build
+                # fails the job.
+                context = after_prepare(measure_context(PRODUCED, PRODUCED))
+                for code in (0, 1):
+                    with self.subTest(node_exit=code):
+                        run = run_step("measure", mode.agreement, context, env=prepared, exits={"node": code})
+                        self.assertEqual(code, run.returncode, run.stderr)
+                        self.assertEqual([agreement_call], run.calls)
 
         compare_index, compare = step_named("measure", "Compare the new builds with the server")
-        self.assertEqual("steps.publish-relinked.outputs.produced=='true'||steps.publish-aot.outputs.produced=='true'",
+        # It runs after an agreement run failed too (not after a cancel), so its divergence reports reach
+        # the job summary and report/, which the failure upload below carries.
+        self.assertEqual("!cancelled()&&steps.prepare.outcome=='success'&&"
+                         "(steps.publish-relinked.outputs.produced=='true'||steps.publish-aot.outputs.produced=='true')",
                          condition(compare))
+        self.assertTrue(str(compare["if"]).strip().startswith("${{"), compare["if"])
         self.assertIn('agreement compare --work "$WORK" --require "$REQUIRE" --summary "$GITHUB_STEP_SUMMARY"', command(compare))
+        self.assertNotIn("||", command(compare), "nothing may turn compare's exit code into a pass")
+        self.assertEqual("bash", compare.get("shell", "bash"))
         self.assertIn("node-interp-relinked", compare.get("run", ""))
         self.assertIn("node-aot", compare.get("run", ""))
         self.assertNotIn("continue-on-error", compare)
@@ -995,26 +1070,45 @@ class MeasureJob(unittest.TestCase):
                  failed_with("dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log"), None),
                 (SKIPPED, SKIPPED, None)):
             with self.subTest(relinked=relinked[0], aot=aot[0]):
-                context = measure_context(relinked, aot)
-                self.assertIs(required is not None, evaluate(condition(compare), {"steps": context}))
+                context = after_prepare(measure_context(relinked, aot))
+                self.assertIs(required is not None, would_run(compare, context))
+                # After an agreement run failed it still runs; after a cancel, or without a prepared work
+                # directory, it does not.
+                self.assertIs(required is not None, would_run(compare, context, failed=True))
+                self.assertIs(False, would_run(compare, context, cancelled=True))
+                for prepare_outcome in ("failure", "skipped"):
+                    self.assertIs(False, would_run(compare, after_prepare(measure_context(relinked, aot), prepare_outcome)))
                 if required is None:
                     continue
 
-                def prepared(runner_temp):
-                    os.mkdir(f"{runner_temp}/simcore-work.prepared")
-                    return {"WORK": f"{runner_temp}/simcore-work.prepared",
-                            "AGREEMENT_WORK": f"{runner_temp}/simcore-work.prepared"}
-
-                run = run_step("measure", "Compare the new builds with the server", context, env=prepared)
-                self.assertEqual(0, run.returncode, run.stderr)
-                compares = [call for call in run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "compare"])]
-                self.assertEqual(1, len(compares), run.calls)
-                self.assertEqual(run.given["WORK"], option_value(compares[0], "--work"))
-                self.assertEqual(run.summary_path, option_value(compares[0], "--summary"))
-                self.assertCountEqual(required, option_value(compares[0], "--require").split(","))
+                # compare's exit code is the step's: 0 when every required build matched, 1 when one
+                # diverged or did not run.
+                for code in (0, 1):
+                    with self.subTest(dotnet_exit=code):
+                        run = run_step("measure", "Compare the new builds with the server", context, env=prepared,
+                                       exits={"dotnet": code})
+                        self.assertEqual(code, run.returncode, run.stderr)
+                        compares = [call for call in run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "compare"])]
+                        self.assertEqual(1, len(compares), run.calls)
+                        self.assertEqual(1, len(run.calls), run.calls)
+                        self.assertEqual(run.given["WORK"], option_value(compares[0], "--work"))
+                        self.assertEqual(run.summary_path, option_value(compares[0], "--summary"))
+                        self.assertCountEqual(required, option_value(compares[0], "--require").split(","))
 
         for name in (NEW_MODES[0].agreement, NEW_MODES[1].agreement, "Compare the new builds with the server"):
             self.assertNotIn("continue-on-error", step_named("measure", name)[1], name)
+
+        # When an agreement run or compare failed, the job uploads report/, the folder compare writes under
+        # the prepared work directory.
+        upload_index, upload = step_named("measure", "Upload the agreement report")
+        self.assertEqual("failure()", condition(upload))
+        self.assertRegex(upload.get("uses", ""), r"^actions/upload-artifact@[0-9a-f]{40}$")
+        self.assertEqual("simcore-measure-agreement-report", upload["with"]["name"])
+        self.assertGreater(upload_index, compare_index)
+        self.assertIs(True, would_run(upload, {}, failed=True))
+        self.assertIs(False, would_run(upload, {}))
+        self.assertEqual(f"{work}/report/", expand(upload["with"]["path"], prepare_run.runner_temp, prepare_run.env))
+
         # The agreement job's gate still requires only its own builds.
         _, agreement_compare = only_step("agreement", "agreement compare --work")
         self.assertNotIn("node-interp-relinked", json.dumps(agreement_compare))
@@ -1061,6 +1155,65 @@ class MeasureJob(unittest.TestCase):
 
     def test_job_times_out_after_thirty_minutes(self):
         self.assertEqual(30, WORKFLOW["jobs"]["measure"]["timeout-minutes"])
+
+    def test_every_step_after_the_toolchain_setup_has_its_own_bound(self):
+        # A step that hangs fails on its own, or for an optional step is recorded, instead of the job being
+        # cancelled at 30 minutes: an unproduced mode keeps its reason (FR-031), compare still reports and
+        # the failure upload still runs. The optional bounds are a budget (plan.md): the job's normal run
+        # plus the most one hung optional step can add still fits in the 30 minutes.
+        job_bound = WORKFLOW["jobs"]["measure"]["timeout-minutes"]
+        all_job_steps = steps("measure")
+        toolchain = [i for i, step in enumerate(all_job_steps) if step.get("uses", "").startswith(TOOLCHAIN_ACTIONS)]
+        self.assertEqual(list(range(3)), toolchain, "checkout and the two toolchain setups come first")
+        for step in all_job_steps[3:]:
+            with self.subTest(step=step.get("name")):
+                bound = step.get("timeout-minutes")
+                self.assertIsInstance(bound, int, "timeout-minutes is a whole number of minutes")
+                self.assertNotIsInstance(bound, bool)
+                self.assertGreater(bound, 0)
+                self.assertLess(bound, job_bound)
+
+        # The optional steps continue on error, so a hang there is a failed step the job carries on past.
+        for name, bound in (("Install the wasm-tools workload", 5), ("Run the exhaustive math sweeps", 10)):
+            with self.subTest(step=name):
+                _, step = step_named("measure", name)
+                self.assertIs(True, step.get("continue-on-error"))
+                self.assertEqual(bound, step.get("timeout-minutes"))
+
+        # The relinked and AOT publishes have no continue-on-error, so `timeout` bounds `dotnet publish`
+        # inside the step, below the step's own bound: a publish that does not finish is recorded as not
+        # produced, with its reason, and the step exits 0.
+        installed = {"install-workload": {"outcome": "success", "conclusion": "success", "outputs": {}}}
+        for mode in NEW_MODES:
+            _, publish = step_named("measure", mode.publish)
+            bounded = f"timeout --kill-after=30s {mode.bound}m dotnet publish"
+            reason = mode.timeout_reason_line.removeprefix("reason=")
+            with self.subTest(step=mode.publish):
+                # The one line that runs dotnet publish (the others only write its reason) is the bounded one.
+                publishes = [line.strip() for line in command(publish).splitlines()
+                             if re.search(r"\bdotnet publish\b", line) and not line.strip().startswith("echo ")]
+                self.assertEqual(1, len(publishes), publishes)
+                self.assertTrue(publishes[0].startswith(f"{bounded} src/MmoEngine.SimCore.Wasm "), publishes[0])
+                self.assertGreater(publish.get("timeout-minutes"), mode.bound,
+                                   "the step's own bound is the backstop, after `timeout` and its kill")
+                self.assertIn(mode.timeout_reason_line, publish.get("run", ""))
+            # `timeout` exits 124 when the bound ends the publish ...
+            with self.subTest(step=mode.publish, dotnet_exit=TIMEOUT_EXIT):
+                run = run_step("measure", mode.publish, installed, exits={"dotnet": TIMEOUT_EXIT})
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertEqual({"produced": "false", "reason": reason}, run.outputs)
+            # ... and it does end a publish that never finishes: here with the bound shortened to a second.
+            with self.subTest(step=mode.publish, stalled=True):
+                def shorten(script, bounded=bounded):
+                    self.assertEqual(1, script.count(bounded), bounded)
+                    return script.replace(bounded, "timeout --kill-after=1s 1s dotnet publish")
+
+                started = time.monotonic()
+                run = run_step("measure", mode.publish, installed, sleeps={"dotnet": 30}, rewrite=shorten)
+                self.assertLess(time.monotonic() - started, 20, "timeout must end the stalled publish")
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertEqual({"produced": "false", "reason": reason}, run.outputs)
+                self.assertEqual(1, len([call for call in run.calls if call[:2] == ["dotnet", "publish"]]), run.calls)
 
     def test_runner_tests_run_before_the_measurement(self):
         install_index, install = step_named("measure", "Install the agreement tools")

@@ -44,6 +44,10 @@
  *   (contracts/wasm-api.md#one-frame-from-javascript). The result is `{steps, meanNs, p99Ns, samples}`,
  *   one sample per timed call: that call's time per step.
  *
+ * The entry point is run as the `measure` job runs it, `node ../lib/measure.mjs <argv>` in a child process:
+ * a usage error (no `MMO_RUNNER_CLASS`) prints `measure: <message>` on stderr and exits 2, and a
+ * MeasurementError prints `measure: <message>` and exits 1, neither writing `--out`.
+ *
  * Each module is imported inside the tests that need it, so a test fails on its own while its module is
  * missing. Every file a test writes goes into its own `fs.mkdtempSync` directory, removed afterwards; the
  * contract example `tests/MmoEngine.SimCore.Tests/Cli/Fixtures/measurement-report.json` and
@@ -53,6 +57,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -498,6 +503,71 @@ test('arguments need each mode exactly once and the runner class', async (t) => 
     for (const row of validRows) {
         await t.test(row.name, () => {
             assert.deepEqual(parseArgs(row.argv, env), { ...VALID_PATHS, runnerClass: RUNNER_CLASS, modes: row.modes });
+        });
+    }
+});
+
+/** The runner as the `measure` job runs it: `node tools/agreement/lib/measure.mjs <argv>`. */
+const MEASURE_SCRIPT = fileURLToPath(new URL('../lib/measure.mjs', import.meta.url));
+
+test('the entry point exits 2 on a usage error and 1 on a failed measurement, writing no report', async (t) => {
+    // The process environment without the runner class, so each row sets it or leaves it out.
+    const { MMO_RUNNER_CLASS: _ignored, ...withoutClass } = process.env;
+    const rows = [
+        {
+            name: 'MMO_RUNNER_CLASS is unset',
+            env: withoutClass,
+            status: 2,
+            stderr: () => `measure: ${RUNNER_CLASS_MESSAGE}\n`,
+        },
+        {
+            name: 'MMO_RUNNER_CLASS is empty',
+            env: { ...withoutClass, MMO_RUNNER_CLASS: '' },
+            status: 2,
+            stderr: () => `measure: ${RUNNER_CLASS_MESSAGE}\n`,
+        },
+        {
+            // The first produced mode's download is measured first, so an empty publish folder fails the
+            // run before any Node or Chromium measurement starts.
+            name: 'a produced mode has no dotnet.js',
+            env: { ...withoutClass, MMO_RUNNER_CLASS: RUNNER_CLASS },
+            status: 1,
+            stderr: (mode) => {
+                const loader = path.join(mode, 'wwwroot', '_framework', 'dotnet.js');
+                return `measure: cannot read _framework/dotnet.js of ${mode}: ENOENT: no such file or directory, open '${loader}'\n`;
+            },
+        },
+    ];
+
+    for (const row of rows) {
+        await t.test(row.name, (sub) => {
+            const dir = tempDir(sub, 'mmo-measure-entry-');
+            const mode = path.join(dir, 'mode');
+            fs.mkdirSync(mode);
+            const argv = [
+                '--work', path.join(dir, 'work'),
+                '--server-benchmarks', path.join(dir, 'server.json'),
+                '--mode', `interp-prebuilt=${mode}`,
+                '--unproduced', 'interp-relinked=not built here',
+                '--unproduced', 'aot=not built here',
+                '--out', path.join(dir, 'report.json'),
+            ];
+
+            const result = spawnSync(process.execPath, [MEASURE_SCRIPT, ...argv], {
+                cwd: dir,
+                env: row.env,
+                encoding: 'utf8',
+                timeout: 60_000,
+            });
+
+            assert.equal(result.error, undefined, `the runner did not run: ${result.error?.message}`);
+            assert.equal(result.signal, null);
+            assert.equal(result.status, row.status, result.stderr);
+            assert.equal(result.stderr, row.stderr(mode));
+            assert.equal(result.stdout, '');
+            // Neither --out nor its temporary file was written, and nothing else was.
+            assert.deepEqual(fs.readdirSync(dir).sort(), ['mode']);
+            assert.deepEqual(fs.readdirSync(mode), []);
         });
     }
 });

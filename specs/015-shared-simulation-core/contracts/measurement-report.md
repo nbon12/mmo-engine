@@ -39,7 +39,9 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    build has to come first.
 4. **The relinked interpreted build** (the same publish command) and **the AOT build** (with
    `-p:RunAOTCompilation=true`), each only when the workload installed. A mode that cannot be
-   produced is recorded as `{"produced": false, "reason": "…"}`. The AOT build is published last:
+   produced is recorded as `{"produced": false, "reason": "…"}`, and so is one whose publish does not
+   finish within its bound (`timeout` gives the relinked publish 4 minutes and the AOT publish 5), so
+   a hung publish is a report entry, not a cancelled job. The AOT build is published last:
    it leaves the assemblies it compiled, stripped of their IL, in the project's `obj` folder, and an
    interpreted publish after it from the same checkout copies them and stops at boot with
    `MONO interpreter: NIY encountered in method …` [measured].
@@ -48,7 +50,9 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    `AGREEMENT_APP` set to that build's `wwwroot` and `AGREEMENT_WORK` to the prepared work directory), then
    `simcore agreement compare --require` with those builds. The agreement of each build produced
    here, relinked interpreted and AOT, gates the job: a divergence in either is a real divergence
-   between builds ([research.md](../research.md) R17). The prebuilt build's agreement is the
+   between builds ([research.md](../research.md) R17). The AOT run and compare also run after the
+   relinked run failed (not after a cancel), as the `agreement` job's compare does, so the job
+   summary and the uploaded `report/` name what disagreed. The prebuilt build's agreement is the
    `agreement` job's. The measured numbers never gate.
 6. **The WebAssembly measurements**, by `tools/agreement/lib/measure.mjs`:
 
@@ -435,5 +439,6 @@ no tuning value is set (Principle VI). The zero-allocation tests in
 | `ValidateReportTests.TextFromTheFileIsShownEscapedSoEachProblemIsOneLine` (Theory) | an unknown field whose name holds a line feed, or a quote and a backslash, an unknown mode whose name holds a line feed, and two `server` benchmarks with the same case and the step `"x\ny"` each print exactly their lines, with the text escaped, and as many line feeds as problems |
 | `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithIterationCount(3).WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. Each entry, matched to its report by step and case, has exactly that report's `Mean` as `meanNs`, its `Percentiles.Percentile(99)` as `p99Ns`, its `N` (3) as `iterations` and its `GetBytesAllocatedPerOperation` as `allocatedBytesPerOp`. The job measures three iterations because with `Job.Dry`'s one the 99th percentile equals the mean. It runs in the serial collection |
 | `ServerBenchmarkExportTests.RunExitsZeroWhenItExportedEveryBenchmarkItRan`, `RunExitsOneWhenItWroteNoExport` (Theory), `RunExitsOneWhenAReportHasNoAllocationMeasurement` | step 1's exit code, through the entry point's `Program.Run(args, runnerClass, stderr, createConfig)` and `BenchmarkSwitcher` with the dry run's configuration: 0 when the movement, weapon and projectile benchmarks ran and were exported; 1 with exactly its stderr line when the filter selects nothing (an export left from an earlier run stays as it was), when a directory at the export's path makes the exporter throw, and when a report has no allocation measurement |
-| `tools/agreement/node/measure.test.mjs` (`node --test`) | the boot-manifest parser on a fixture `dotnet.js`, the nearest-rank percentile, and the totals |
+| `tools/agreement/node/measure.test.mjs` (`node --test`) | the boot-manifest parser on a fixture `dotnet.js`, the nearest-rank percentile, and the totals; step 6's exit codes, with `node tools/agreement/lib/measure.mjs` run as a child process: 2 and `measure: MMO_RUNNER_CLASS is not set; …` without the runner class, 1 and `measure: cannot read _framework/dotnet.js of …` for a produced mode with no build, and no `--out` written in either |
+| `tests/workflows/test_simcore_workflow.py` `MeasureJob` | the job's steps in this order; each mode passed as produced or with its reason, a publish that `timeout` ended included; the agreement runs and compare failing the job when their tool fails, and still running after an agreement run failed; each step's own bound inside the job's 30 minutes |
 | The `measure` job | runs `validate-report` on the real report on the runner class (US7 Independent Test, SC-007) |
