@@ -37,9 +37,12 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
 3. **The workload.** `dotnet workload install wasm-tools`, continuing on error. With the workload,
    `InvariantGlobalization=true` forces a native relink on every publish [measured], so the prebuilt
    build has to come first.
-4. **The relinked interpreted build** (the same publish command) and **the AOT build** (with
-   `-p:RunAOTCompilation=true`), each only when the workload installed. A mode that cannot be
-   produced is recorded as `{"produced": false, "reason": "…"}`, and so is one whose publish does not
+4. **The relinked interpreted build**, `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o <dir>`,
+   and **the AOT build**, `dotnet publish src/MmoEngine.SimCore.Wasm -c Release
+   -p:RunAOTCompilation=true -o <dir>`, each only when the workload installed. Neither carries step 2's
+   `-p:UsingBrowserRuntimeWorkload=false`, which would keep it on the prebuilt runtime pack: both are
+   meant to use the workload. A mode that cannot be produced is recorded as
+   `{"produced": false, "reason": "…"}`, and so is one whose publish does not
    finish within its bound (`timeout` gives the relinked publish 4 minutes and the AOT publish 5), so
    a hung publish is a report entry, not a cancelled job. The AOT build is published last:
    it leaves the assemblies it compiled, stripped of their IL, in the project's `obj` folder, and an

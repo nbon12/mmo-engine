@@ -17,6 +17,8 @@
  *   `{work, serverBenchmarks, out, runnerClass, modes}`, with each of the three modes `{produced: true,
  *   dir}` or `{produced: false, reason}`.
  * - buildFlags(mode): the report's `build` object for the mode.
+ * - checkStepKinds(steps, what): a half's step costs, unchanged when they are one entry per step kind,
+ *   with its stream, in the report's order; a MeasurementError naming what was given otherwise.
  * - assembleReport(inputs): the whole report from what the entry point gathered:
  *
  *     { runnerClass, env, work,                      // env: GITHUB_SHA and the two DOTNET_ variables
@@ -41,8 +43,9 @@
  *   next n commands to writeCommands(bytes), which places them at the command buffer's start. `now()`
  *   reads a clock whose unit is `unitNs` nanoseconds. `reportBuffer` is the `ReportBuffer()` view; a
  *   call that commits fewer steps than asked reads its stop text from there
- *   (contracts/wasm-api.md#one-frame-from-javascript). The result is `{steps, meanNs, p99Ns, samples}`,
- *   one sample per timed call: that call's time per step.
+ *   (contracts/wasm-api.md#one-frame-from-javascript), and a reset() that does not return 0 (`Ok`) its
+ *   load text. The result is `{steps, meanNs, p99Ns, samples}`, one sample per timed call: that call's
+ *   time per step.
  *
  * The entry point is run as the `measure` job runs it, `node ../lib/measure.mjs <argv>` in a child process:
  * a usage error (no `MMO_RUNNER_CLASS`) prints `measure: <message>` on stderr and exits 2, and a
@@ -580,6 +583,67 @@ test('build flags match the mode', async () => {
     assert.deepEqual(buildFlags('aot'), { aot: true, relinked: true, workload: true });
 });
 
+/** A `steps` entry of a half for one kind and stream. */
+function stepEntryFor(kind, scenario) {
+    return { kind, scenario, batch: 16, steps: 3008, meanNs: 1000, p99Ns: 1000 };
+}
+
+const MOVEMENT = stepEntryFor('movement', 'flat-run-30hz');
+const WEAPON = stepEntryFor('weapon', 'rifle-burst');
+const PROJECTILE = stepEntryFor('projectile', 'launcher-arc');
+const EXPECTED_KINDS = 'expected movement/flat-run-30hz, weapon/rifle-burst, projectile/launcher-arc';
+
+test('each half gives one step entry per kind, in the report order', async (t) => {
+    const { MeasurementError, checkStepKinds } = await import('../lib/measure.mjs');
+    const what = 'aot: chromium steps';
+
+    await t.test('the three kinds in order are returned unchanged', () => {
+        const steps = [MOVEMENT, WEAPON, PROJECTILE];
+        assert.equal(checkStepKinds(steps, what), steps);
+        assert.deepEqual(steps, [MOVEMENT, WEAPON, PROJECTILE]);
+    });
+
+    const refused = [
+        { name: 'none', steps: [], given: 'nothing' },
+        { name: 'two kinds', steps: [MOVEMENT, WEAPON], given: 'movement/flat-run-30hz, weapon/rifle-burst' },
+        {
+            name: 'movement three times',
+            steps: [MOVEMENT, MOVEMENT, MOVEMENT],
+            given: 'movement/flat-run-30hz, movement/flat-run-30hz, movement/flat-run-30hz',
+        },
+        {
+            name: 'the kinds in another order',
+            steps: [WEAPON, MOVEMENT, PROJECTILE],
+            given: 'weapon/rifle-burst, movement/flat-run-30hz, projectile/launcher-arc',
+        },
+        {
+            name: 'a kind with another stream',
+            steps: [MOVEMENT, stepEntryFor('weapon', 'launcher-arc'), PROJECTILE],
+            given: 'movement/flat-run-30hz, weapon/launcher-arc, projectile/launcher-arc',
+        },
+        {
+            name: 'four entries',
+            steps: [MOVEMENT, WEAPON, PROJECTILE, PROJECTILE],
+            given: 'movement/flat-run-30hz, weapon/rifle-burst, projectile/launcher-arc, projectile/launcher-arc',
+        },
+    ];
+    for (const row of refused) {
+        await t.test(row.name, () => {
+            assert.throws(
+                () => checkStepKinds(row.steps, what),
+                exactly(MeasurementError, `${what}: the steps are for ${row.given}; ${EXPECTED_KINDS}`),
+            );
+        });
+    }
+
+    await t.test('a line that is not a list', () => {
+        assert.throws(
+            () => checkStepKinds({ kind: 'movement' }, 'aot: node steps'),
+            exactly(MeasurementError, 'aot: node steps: the steps are not a list'),
+        );
+    });
+});
+
 test('assembled report has exactly the contract fields', async (t) => {
     const { assembleReport } = await import('../lib/measure.mjs');
     const fixture = readReportFixture();
@@ -676,12 +740,18 @@ function memoryView(bytes) {
 }
 
 /**
- * The report buffer after StepQueued(count) committed `committed` steps, as BatchStepper writes it
+ * The report buffer after StepQueued(count) returned `committed`, as BatchStepper writes it
  * (wasm-api.md#report-buffer-layouts): the header, the step records, and a stop entry when fewer than
- * `count` committed.
+ * `count` committed; for a negative code (wasm-api.md#return-codes), the header with zeros.
  */
 function writeReport(report, stepsBefore, count, committed) {
     const view = new DataView(report.buffer, report.byteOffset, report.byteLength);
+    if (committed < 0) {
+        view.setUint32(0, 0, true);
+        view.setUint32(4, 0, true);
+        return;
+    }
+
     view.setUint32(0, committed, true);
     view.setUint32(4, committed * RECORD_LENGTH, true);
     for (let i = 0; i < committed; i++) {
@@ -703,10 +773,21 @@ function writeReport(report, stepsBefore, count, committed) {
 }
 
 /**
+ * The report buffer after a load call or Reset that did not return Ok (wasm-api.md#report-buffer-layouts):
+ * the `u32` text length, then the UTF-8 text, empty for `NotReady`.
+ */
+function writeLoadText(report, text) {
+    const bytes = new TextEncoder().encode(text);
+    new DataView(report.buffer, report.byteOffset, report.byteLength).setUint32(0, bytes.length, true);
+    report.set(bytes, 4);
+}
+
+/**
  * Fake exports for runPasses over a stream of `stepsPerPass` commands, and a fake clock.
  *
  * - Command i of the stream is 17 bytes of value i + 1, so the fake can tell which commands were written.
- * - reset() starts a pass and returns 0 (Ok).
+ * - reset() returns `resetCode(n)` for its n-th call, 0 (Ok) by default. On 0 it starts a pass; on any
+ *   other code it writes `resetText` as the report buffer's load text and starts nothing.
  * - writeCommands(bytes) records the bytes placed at the command buffer's start.
  * - stepQueued(count) checks that the bytes written since the previous call are exactly the pass's next
  *   `count` commands, commits `commit(count)` steps, writes the report buffer, moves the clock by
@@ -717,7 +798,7 @@ function writeReport(report, stepsBefore, count, committed) {
  * `log` counts the resets, lists every call `{count, stepsBefore}` and each pass's counts, and collects
  * anything out of order in `violations`.
  */
-function fakeStepper({ stepsPerPass, nsFor, commit = (count) => count }) {
+function fakeStepper({ stepsPerPass, nsFor, commit = (count) => count, resetCode = () => 0, resetText = '' }) {
     const commands = new Uint8Array(stepsPerPass * COMMAND_SIZE);
     for (let i = 0; i < stepsPerPass; i++) {
         commands.fill(i + 1, i * COMMAND_SIZE, (i + 1) * COMMAND_SIZE);
@@ -754,9 +835,16 @@ function fakeStepper({ stepsPerPass, nsFor, commit = (count) => count }) {
         now: () => clockUs,
         reset() {
             log.resets += 1;
+            written = null;
+            const code = resetCode(log.resets);
+            if (code !== 0) {
+                writeLoadText(report, resetText);
+                position = null;
+                return code;
+            }
+
             log.passes.push([]);
             position = 0;
-            written = null;
             return 0;
         },
         writeCommands(bytes) {
@@ -857,4 +945,62 @@ test('step passes warm up 512 steps, time 3008 and reset before each pass', asyn
             exactly(MeasurementError, `StepQueued(16) committed 15 steps: ${STOP_TEXT}`),
         );
     });
+
+    // A negative return leaves the header with zeros and no stop entry (wasm-api.md#return-codes), so the
+    // message names the code, as wasm-api.md#one-frame-from-javascript does; a return above the count
+    // names both numbers.
+    const otherReturns = [
+        { name: 'NotReady', commit: () => -1, message: 'StepQueued(16) refused the call: -1' },
+        { name: 'CountOutOfRange', commit: () => -2, message: 'StepQueued(16) refused the call: -2' },
+        {
+            name: 'more steps than asked',
+            commit: (count) => count + 1,
+            message: 'StepQueued(16) committed 17 steps, more than it was asked to',
+        },
+    ];
+    for (const row of otherReturns) {
+        await t.test(`a call that returns another number than asked fails naming it: ${row.name}`, async () => {
+            const fake = fakeStepper({ stepsPerPass: 30, nsFor: ({ count }) => 1000 * count, commit: row.commit });
+
+            await assert.rejects(
+                async () => runPasses(passArguments(fake, { stepsPerPass: 30, batch: 16 })),
+                exactly(MeasurementError, row.message),
+            );
+            // The first call failed, and nothing ran after it.
+            assert.equal(fake.log.calls.length, 1);
+            assert.equal(fake.log.resets, 1);
+        });
+    }
+
+    // Reset returns FormatRefused with the format error, or NotReady with no text
+    // (wasm-api.md#return-codes). The second reset fails, so the check runs before every pass, not only
+    // the first.
+    const failedResets = [
+        {
+            name: 'FormatRefused',
+            code: 1,
+            text: 'state characterCount at offset 4: 65 exceeds world.maxCharacters 64',
+            message: 'Reset returned 1: state characterCount at offset 4: 65 exceeds world.maxCharacters 64',
+        },
+        { name: 'NotReady', code: 3, text: '', message: 'Reset returned 3' },
+    ];
+    for (const row of failedResets) {
+        await t.test(`a reset that does not return Ok fails with its code and report text: ${row.name}`, async () => {
+            const fake = fakeStepper({
+                stepsPerPass: 30,
+                nsFor: ({ count }) => 1000 * count,
+                resetCode: (n) => (n === 2 ? row.code : 0),
+                resetText: row.text,
+            });
+
+            await assert.rejects(
+                async () => runPasses(passArguments(fake, { stepsPerPass: 30, batch: 1 })),
+                exactly(MeasurementError, row.message),
+            );
+            assert.deepEqual(fake.log.violations, []);
+            // The first pass ran its 30 steps; no StepQueued ran after the failed reset.
+            assert.equal(fake.log.resets, 2);
+            assert.equal(fake.log.calls.length, 30);
+        });
+    }
 });

@@ -2170,6 +2170,28 @@ The design documents settled these points, which the spec leaves open. They are 
   exit 2 with the exact `measure:` line when the class is unset or empty, and exit 1 with the exact
   line when a produced mode has no `dotnet.js`. That download is read before any Node or Chromium
   measurement, so no browser is needed. In both cases nothing is written. T309's check now cites it.
+- **T300 (Phase 12 review): `dotnet.js` keeps the fixture's bytes.** T300 had the test write
+  `dotnet.js` as the fixture and also gave all nine names `1000 * (i + 1)` bytes of `i & 0xff`.
+  `measureDownload` parses the boot manifest from `dotnet.js`, so the test keeps the fixture there.
+  Only the other eight names get the size pattern, and the test asserts that all nine raw lengths
+  differ. T300 now says so.
+- **T304, T306 and T307 (Phase 12 review): a failed call is named in the form its code allows.** T304
+  gave two message forms, `StepQueued(<n>) committed <m> steps: <stop text>` and `Reset returned
+  <code>: <report text>`. A negative `StepQueued` return leaves the report header with zeros and no stop
+  entry (contracts/wasm-api.md#return-codes), so there is no stop text to name. It throws
+  `StepQueued(<n>) refused the call: <code>`, the form of wasm-api.md#one-frame-from-javascript. A
+  return above `<n>` throws `StepQueued(<n>) committed <m> steps, more than it was asked to`. `Reset
+  returned <code>` leaves out `: <report text>` when the text is empty, as it is for `NotReady`. The
+  cold starts of both halves use the same forms. T304, T306 and T307 now list them. The step-pass
+  test gains a table for each: the negative and over-count returns, and a second `reset()` that returns
+  `FormatRefused` with its text or `NotReady` without one. Before, nothing tested the reset path.
+- **T305 and T309 (Phase 12 review): the step costs are checked kind by kind.** T309 refused a steps
+  page that did not post "one `steps` per kind", but the runner counted the messages, so a Worker that
+  posted movement three times reached the report. Only `validate-report` would then catch it, and the
+  quickstart's local run of `measure.mjs` would not. `checkStepKinds` (T305) now requires one entry per
+  kind of `STEP_KINDS`, with its stream, in that order. It checks the Worker's messages and the
+  `measure-node.mjs steps` line, which nothing had checked. `'each half gives one step entry per kind,
+  in the report order'` tests it without a browser.
 
 ## Delivery
 

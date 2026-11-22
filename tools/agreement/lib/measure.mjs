@@ -29,6 +29,8 @@
  *   their exact sums.
  * - `unproducedMode(reason, mode)`: exactly `{produced: false, reason}`.
  * - `buildFlags(mode)`: the report's `build` object for the mode.
+ * - `checkStepKinds(steps, what)`: a half's step costs, checked to be one entry per kind of `STEP_KINDS`
+ *   (`./passes.mjs`), with its stream, in the report's order.
  * - `assembleReport(inputs)`: the whole report from what the entry point gathered (below).
  * - `UsageError`, and `MeasurementError` re-exported from `./passes.mjs`, so a caller catches the
  *   measurement failures of both modules as one class.
@@ -38,13 +40,14 @@
  *
  * 1. `measureDownload(<dir>)`.
  * 2. Ten Node cold starts, each a fresh `node lib/measure-node.mjs cold-start` process, then one
- *    `measure-node.mjs steps` process for the step costs.
+ *    `measure-node.mjs steps` process for the step costs, whose line `checkStepKinds` checks.
  * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
  *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
  *    `/web/measure.html?run=cold-start` ten times, each in a fresh browser context, then
  *    `?run=steps` once. A `fatal` event, a page that does not finish, or the runtime's console warning
- *    that `.wasm` was not served as `application/wasm` fails the measurement. `crossOriginIsolated` is
- *    true only when every `booted` message says so.
+ *    that `.wasm` was not served as `application/wasm` fails the measurement, and so does a page that
+ *    does not post exactly one `booted` and one `coldStart`, or `steps` messages that `checkStepKinds`
+ *    refuses. `crossOriginIsolated` is true only when every `booted` message says so.
  * 4. Each startup interval summarized with `summarize` (`./passes.mjs`).
  *
  * It then gathers the machine (`os`), the versions (`dotnet --version`, the highest
@@ -259,6 +262,33 @@ export function buildFlags(mode) {
     }
 
     return { ...BUILD_FLAGS[mode] };
+}
+
+/**
+ * Checks that a half's step costs are one entry per step kind, with its stream, in the report's order
+ * (`STEP_KINDS`), so a half that measured one kind twice or another stream cannot reach the report.
+ *
+ * @param {unknown} steps the `steps` entries the half gave: the `measure-node.mjs steps` line, or the
+ *   Worker's `steps` messages
+ * @param {string} what the half, for the error message (`<mode>: node steps`, `<mode>: chromium steps`)
+ * @returns {object[]} `steps`, unchanged
+ * @throws {MeasurementError} `<what>: the steps are not a list`, or `<what>: the steps are for
+ *   <kind>/<scenario>, ...; expected movement/flat-run-30hz, weapon/rifle-burst, projectile/launcher-arc`
+ */
+export function checkStepKinds(steps, what) {
+    if (!Array.isArray(steps)) {
+        throw new MeasurementError(`${what}: the steps are not a list`);
+    }
+
+    const given = steps.map((entry) => `${entry?.kind}/${entry?.scenario}`);
+    const expected = STEP_KINDS.map(({ kind, scenario }) => `${kind}/${scenario}`);
+    if (given.length !== expected.length || given.some((pair, i) => pair !== expected[i])) {
+        throw new MeasurementError(
+            `${what}: the steps are for ${given.length === 0 ? 'nothing' : given.join(', ')}; expected ${expected.join(', ')}`,
+        );
+    }
+
+    return steps;
 }
 
 /**
@@ -617,7 +647,7 @@ async function measureMode(mode, dir, work) {
         nodeColdStarts.push(runNodeHalf(mode, 'cold-start', app, work, `node cold start ${i}`));
     }
 
-    const nodeSteps = runNodeHalf(mode, 'steps', app, work, 'node steps');
+    const nodeSteps = checkStepKinds(runNodeHalf(mode, 'steps', app, work, 'node steps'), `${mode}: node steps`);
     const worker = await measureInChromium(mode, app, work);
 
     return {
@@ -700,10 +730,7 @@ async function measureInChromium(mode, app, work) {
         const what = `${mode}: chromium steps`;
         const events = await runPage(browser, server, 'steps', what);
         booted.push(onlyEvent(events, 'booted', what));
-        const steps = events.filter((event) => event.type === 'steps').map(stepEntry);
-        if (steps.length !== STEP_KINDS.length) {
-            throw new MeasurementError(`${what}: the Worker posted ${steps.length} steps messages, not ${STEP_KINDS.length}`);
-        }
+        const steps = checkStepKinds(events.filter((event) => event?.type === 'steps').map(stepEntry), what);
 
         return {
             version: browser.version(),
