@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using MmoEngine.SimCore.Config;
 
 namespace MmoEngine.SimCore.Server;
@@ -25,7 +26,10 @@ public sealed record SimConfigLoad(SimConfig? Config, IReadOnlyList<ConfigError>
 /// Property names are camelCase and an unknown property is refused. <c>fireMode</c> is a member name,
 /// <c>Auto</c> or <c>Semi</c>. Floats are read straight to binary32 with <see cref="Utf8JsonReader.GetSingle"/>,
 /// which rounds the decimal once, so <c>9.81</c> binds to the bits of the C# literal <c>9.81f</c>. An absent
-/// section or list binds as null, which the guard's shape rules refuse with <c>is required</c>.
+/// section or list binds as null, which the guard's shape rules refuse with <c>is required</c>. An absent
+/// leaf field (an <c>int</c>, a <c>float</c> or <c>fireMode</c>) is refused here, before the guard, with one
+/// <c>&lt;path&gt;: is required</c> per field: it would otherwise bind as 0 or <c>Auto</c> and pass every
+/// rule whose minimum is 0 (issue #71).
 /// </remarks>
 public static class SimConfigJson
 {
@@ -136,6 +140,13 @@ public static class SimConfigJson
             return Fail(RootPath, "must be a JSON object");
         }
 
+        var missing = new List<ConfigError>();
+        FindMissingLeaves(root, SerializerOptions.GetTypeInfo(typeof(SimConfig)), prefix: null, missing);
+        if (missing.Count > 0)
+        {
+            return new SimConfigLoad(null, missing);
+        }
+
         SimConfig? config;
         try
         {
@@ -163,6 +174,48 @@ public static class SimConfigJson
         path = path.TrimStart('.');
         return path.Length == 0 ? RootPath : path;
     }
+
+    /// <summary>
+    /// Adds one <c>&lt;path&gt;: is required</c> to <paramref name="errors"/> for each leaf property (a
+    /// non-nullable value type) of <paramref name="info"/>'s object type that <paramref name="node"/> leaves
+    /// out, recursing into every present object and list element. Nullable properties (sections, lists, list
+    /// elements, capsule points) are skipped, so an absent one binds as null and the guard reports it. A node
+    /// of the wrong JSON kind is left to deserialization, which refuses it with its own error.
+    /// </summary>
+    private static void FindMissingLeaves(JsonNode? node, JsonTypeInfo info, string? prefix, List<ConfigError> errors)
+    {
+        switch (info.Kind)
+        {
+            case JsonTypeInfoKind.Object when node is JsonObject obj:
+                foreach (var property in info.Properties)
+                {
+                    var path = prefix is null ? property.Name : $"{prefix}.{property.Name}";
+                    if (!obj.TryGetPropertyValue(property.Name, out var child))
+                    {
+                        if (IsLeaf(property.PropertyType))
+                        {
+                            errors.Add(new ConfigError(path, "is required"));
+                        }
+
+                        continue;
+                    }
+
+                    FindMissingLeaves(child, SerializerOptions.GetTypeInfo(property.PropertyType), path, errors);
+                }
+
+                break;
+            case JsonTypeInfoKind.Enumerable when node is JsonArray array && info.ElementType is { } elementType:
+                var elementInfo = SerializerOptions.GetTypeInfo(elementType);
+                for (var i = 0; i < array.Count; i++)
+                {
+                    FindMissingLeaves(array[i], elementInfo, string.Create(CultureInfo.InvariantCulture, $"{prefix}[{i}]"), errors);
+                }
+
+                break;
+        }
+    }
+
+    private static bool IsLeaf(Type type) => type.IsValueType && Nullable.GetUnderlyingType(type) is null;
 
     private static string FirstLine(string message)
     {

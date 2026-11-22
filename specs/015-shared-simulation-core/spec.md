@@ -680,6 +680,10 @@ stays in its section, stated as built.
 
 ## Assumptions
 
+- **Every configuration leaf field is required.** No spec text said whether a JSON configuration may
+  omit a scalar field; omitted ones bound as 0 or `Auto` and passed rules whose minimum is 0. Every
+  leaf field is now required, matching the recorded-stream config block and the map loader, and an
+  omitted one is refused as `<path>: is required` (issue #71, `contracts/config-rules.md#shape`).
 - **Scope of this slice.** This spec covers character movement, character collision, weapon timing,
   projectile flight, hitboxes, the three formats, the analyzer, the agreement suite and the
   measurements. Vehicle physics (choosing Bepu, Jolt or Rapier by agreement and cost) is the next
