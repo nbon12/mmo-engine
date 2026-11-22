@@ -29,3 +29,7 @@ __pycache__/
 TestResults/
 BenchmarkDotNet.Artifacts/
 coverage/
+
+# Playwright output of the agreement runner (spec 015)
+tools/agreement/test-results/
+tools/agreement/playwright-report/

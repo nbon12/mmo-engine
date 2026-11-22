@@ -8,12 +8,12 @@ directory. Every expected outcome below is what the command prints or its exit c
 
 - .NET SDK 10.0.100 or a later 10.0.1xx patch (`global.json`). The analyzer's Roslyn pin matches this
   band ([contracts/analyzer-rules.md](contracts/analyzer-rules.md#roslyn-pin)).
-- Node 22 (slice 2, not on main yet), for the agreement and measurement runners that slice 2 adds in
-  tools/agreement/.
+- Node 22, for the agreement and measurement runners in `tools/agreement/`.
 - Python 3 with PyYAML, for the workflow tests.
-- Optional (slice 2, not on main yet): the `wasm-tools` workload, only for the relinked interpreted and
-  AOT builds in [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses
-  the prebuilt runtime, which is the build the gating CI job tests.
+- Optional: the `wasm-tools` workload, only for the relinked interpreted and AOT builds in
+  [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses the prebuilt
+  runtime, which is the build the gating CI job tests; with it, the prebuilt publishes below pass
+  `-p:UsingBrowserRuntimeWorkload=false` to keep that build.
 
 ## Build and test
 
@@ -106,30 +106,41 @@ Expected: one `<name>: match, <steps> steps, final <hash>` line per stream in `s
 
 ## Run the agreement suite
 
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
-
 This is what the `agreement` job in `.github/workflows/simcore.yml` runs. Publish the WebAssembly
 build, prepare a work directory, run the build in Node and in browser Workers, then compare.
 
 ```bash
 APP_OUT="$(mktemp -d)"
 WORK="$(mktemp -d)"
-dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$APP_OUT"
+dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$APP_OUT"
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$WORK"
 ```
 
 Expected: both exit 0, and `prepare` prints
-`prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision <r>`. With the
-`wasm-tools` workload installed, the publish relinks the runtime; the run below still works, but it
-then tests the relinked build rather than the prebuilt one CI's `agreement` job tests.
+`prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision <r>`.
+`-p:UsingBrowserRuntimeWorkload=false` keeps the publish on the prebuilt runtime pack, the build CI's
+`agreement` job tests, even where the `wasm-tools` workload is installed: there,
+`InvariantGlobalization=true` otherwise relinks the runtime, and `-p:WasmBuildNative=false` cannot
+stop it (`WasmBuildNative is required because InvariantGlobalization=true`). On a machine without the
+workload the flag changes nothing. The published `_framework/dotnet.native.*.wasm` is then
+byte-identical to the runtime pack's `dotnet.native.wasm`.
 
 ```bash
-(cd tools/agreement && npm ci && npx playwright install chromium firefox webkit)
+(cd tools/agreement && npm ci && npx playwright install chromium)
 ```
 
-Expected: exit 0. On Linux, `npx playwright install --with-deps chromium firefox webkit` also installs
-the browsers' system libraries, which needs root. Firefox and WebKit are optional: without them,
-`compare` reports those builds `not run`.
+Expected: exit 0. On Linux, `npx playwright install --with-deps chromium` also installs the
+browser's system libraries, which needs root.
+
+Firefox and WebKit are optional:
+
+```bash
+(cd tools/agreement && npx playwright install firefox webkit)
+```
+
+Expected: exit 0 where Playwright can download both browsers (`--with-deps` again adds their system
+libraries). Where it cannot, for example when its download host is blocked, the command exits
+non-zero; skip those browsers, and `compare` reports `firefox-worker` and `webkit-worker` as `not run`.
 
 ```bash
 AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-interp \
@@ -138,21 +149,28 @@ AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-int
   node --test tools/agreement/node/agreement.test.mjs
 ```
 
-Expected: each run passes every test (one per stream, plus the batch, perturbation, refusal and
-cross-build tables checks) and exits 0. The second run has the jiterpreter off.
+Expected: each run passes every test (one per stream, plus the jiterpreter, manifest seeds, batch,
+perturbation, refusal and cross-build tables checks) and exits 0. The manifest seeds check finds the
+50 generated seeds after the 19 committed streams. The second run has the jiterpreter off, and its
+jiterpreter check shows the runtime reports it off.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test)
 ```
 
-Expected: exit 0, with one passing Worker test per browser project. To run Chromium only, the browser
-CI requires:
+This runs every project `tools/agreement/playwright.config.mjs` declares, so it needs all three
+browsers. Expected, once Chromium, Firefox and WebKit are installed: exit 0, with three passing tests
+per browser project: the Worker agreement test (`specs/worker.spec.mjs`) and the two load-refusal tests
+(`specs/worker-load-refusal.spec.mjs`, which run the Worker against a stand-in runtime and need neither
+variable). A project whose browser is not installed fails, and the command exits
+non-zero. Without Firefox and WebKit, run Chromium only, the browser CI requires, as below; to add a
+browser that did install, run the same command with `--project firefox` or `--project webkit`.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium)
 ```
 
-Expected: exit 0, with one passing Worker test.
+Expected: exit 0, with three passing tests: the Worker agreement test and the two load-refusal tests.
 
 ```bash
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK"
@@ -198,16 +216,15 @@ runner class `local-dev`. The numbers are measurements on this machine only.
 
 ## The measurement report
 
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
-
-This builds the report for the prebuilt interpreted build, on a machine without the `wasm-tools`
-workload. It needs the benchmark output above and Playwright's Chromium from the agreement section.
+This builds the report for the prebuilt interpreted build, with or without the `wasm-tools` workload
+(the publish keeps the prebuilt runtime pack, as in the agreement section). It needs the benchmark
+output above and Playwright's Chromium from the agreement section.
 
 ```bash
 export MMO_RUNNER_CLASS=local-dev
 PUBLISH="$(mktemp -d)"
 MWORK="$(mktemp -d)"
-dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$PUBLISH/prebuilt"
+dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$PUBLISH/prebuilt"
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$MWORK"
 node tools/agreement/lib/measure.mjs --work "$MWORK" \
   --server-benchmarks BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json \
@@ -219,8 +236,8 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- measure validate-report "$MWOR
 echo $?   # 0 valid, 1 invalid, 2 unreadable
 ```
 
-Expected: `measure.mjs` exits 0, and `validate-report` prints nothing and exits 0. Without
-`MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
+Expected: `measure.mjs` exits 0, and `validate-report` prints nothing on stdout (stderr holds only its
+log event naming the path) and exits 0. Without `MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
 
 With the workload installed (`dotnet workload install wasm-tools`), the relinked and AOT builds come
 from the publishes below. The block then runs the Node agreement on each build against `$MWORK` and
@@ -230,6 +247,7 @@ compares them with the two builds required. After that, pass the builds to `meas
 ```bash
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$PUBLISH/relinked"
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$PUBLISH/aot"
+dotnet clean src/MmoEngine.SimCore.Wasm -c Release
 AGREEMENT_APP="$PUBLISH/relinked/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-interp-relinked \
   node --test tools/agreement/node/agreement.test.mjs
 AGREEMENT_APP="$PUBLISH/aot/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-aot \
@@ -241,12 +259,16 @@ Expected: every command exits 0, and `compare` prints `match` with `tables match
 `node-interp-relinked` and `node-aot`, `not run` for the builds that did not run, then
 `agreement: match`.
 
+The `dotnet clean` line matters for the next publish. The AOT publish leaves the assemblies it
+compiled, stripped of their IL, in the project's `obj` folder, and an interpreted publish from the
+same checkout afterwards copies them, so that build stops at boot with
+`MONO interpreter: NIY encountered in method …` [measured]. After the clean, the publishes in this
+section and in the agreement section give working builds again.
+
 The report's schema and what `validate-report` checks are in
 [contracts/measurement-report.md](contracts/measurement-report.md).
 
 ## Workflow tests
-
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
 ```bash
 python3 -m unittest discover -s tests/workflows -v
@@ -254,5 +276,12 @@ python3 -m unittest discover -s tests/workflows -v
 
 Expected: every test passes and the command exits 0. `tests/workflows/test_simcore_workflow.py` pins the
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
-the `agreement` job's `timeout-minutes: 10` (SC-006), its three browsers, the `measure` job's steps,
-and the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list.
+the `agreement` job's `timeout-minutes: 10` (SC-006), each step's own bound inside it and the
+optional browsers' shared deadline, its three browsers, the `measure` job's steps (which still run
+the measurement after its agreement gate failed, and validate, show and upload the report it writes,
+with the diverged mode's agreement status `Diverged`, while the failed gate still fails the job; that
+includes a build whose first step of `flat-run-30hz` has another hash than the server's) and their
+bounds inside its `timeout-minutes: 90`, the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run`
+list, that auto-merge's check filter lists a registered `agreement` check run that failed or is pending, and that
+its decision step, run with a stand-in `gh`, does not merge while that check run has failed or is
+still queued or running.

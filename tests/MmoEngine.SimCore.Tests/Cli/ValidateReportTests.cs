@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using MmoEngine.SimCore.Cli.Commands;
 using MmoEngine.SimCore.Server;
 using MmoEngine.SimCore.Tests.Support;
@@ -26,6 +27,17 @@ public sealed class ValidateReportTests
 
         Assert.True(exit == 0, $"validate-report on the contract example exited {exit}, expected 0; stdout: {stdout}; stderr: {stderr}");
         Assert.Equal(string.Empty, stdout);
+
+        // quickstart.md's "The measurement report": stderr holds only the command's log event, which
+        // names the report (contracts/simcore-cli.md: logs are compact JSON with Tool = simcore).
+        var lines = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var line = Assert.Single(lines);
+        using var log = JsonDocument.Parse(line);
+        var root = log.RootElement;
+        Assert.Equal("Validated measurement report {Path}: {ProblemCount} problems", root.GetProperty("@mt").GetString());
+        Assert.Equal(report, root.GetProperty("Path").GetString());
+        Assert.Equal(0, root.GetProperty("ProblemCount").GetInt32());
+        Assert.Equal("simcore", root.GetProperty("Tool").GetString());
     }
 
     /// <summary>One row per mutation that contracts/measurement-report.md#tests lists.</summary>

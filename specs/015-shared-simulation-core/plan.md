@@ -1895,6 +1895,808 @@ The design documents settled these points, which the spec leaves open. They are 
   is left that no log shape reaches, which keeps `StreamFiles.cs` inside the coverage gate. The
   `empty-log` row of `RecordStartsOrExtendsTheRegenerationLog` now expects the heading, and the
   contract's bullet and T107 say so.
+- **T271: the missing host fails the build only with `-warnaserror`.** A `ProjectReference` to a
+  project that does not exist is MSBuild warning `MSB9008`, not an error, and none of T271's support
+  files uses the host, so the plain `dotnet build tests/MmoEngine.SimCore.Wasm.Tests` that T271 named
+  exits 0. With `-warnaserror`, the repo's build rule, it exits 1 on `MSB9008` alone, which is the red
+  T271 wants. T271's command now carries `-warnaserror`. T272's red needs no change: its tests do not
+  compile without `SimCoreExports` and `Program` (`CS0103`).
+- **T271 and T272: the host's tests bind the default config with the server's binder.** T272's
+  "default block" (`LoadConfig` sizing the report buffer to 2,935,060 bytes, and `EvaluateTables`) is
+  `ConfigBlock.Encode` of `simcore/config/default.json`, the block `agreement prepare` writes to
+  `tables/config.bin`. Only `SimConfigJson` in `MmoEngine.SimCore.Server` reads that file, so the test
+  project also references the server project, test-only, and `Support/DefaultConfig.cs` builds the
+  block as slice 1's `TestConfigs.Default()` does. `CommittedStreamInputs` still decodes streams with
+  core APIs only, and the host references only the core. A copy of the JSON as a committed binary block
+  was not chosen: it would be a second source of the default that nothing keeps in step.
+- **T272: the export tests' shape.** `RunStreamReturnsTheServerRecords` is a Theory with one row per
+  case (`flat-run-30hz`, `fuzz-all-buttons`, the perturbation at step 15, and the version-2 copy), as
+  the repo's data-variation rule asks, so there are still seven test methods. In
+  `LoadCallsReturnTheSteppersCodes` the collision world is loaded again, and a `Reset` returns 0, before
+  the NaN-gravity `LoadConfig`, so the `Reset` that then returns 3 is refused because of the failed
+  configuration alone. The rifle-burst salt test takes the first shot step from the server's records,
+  the first whose `events.shots.count` is non-zero. Checked against a contract-exact host in a scratch
+  worktree (not committed; T285 adds it): all ten cases pass, each method also passes alone in its own
+  process, and a host that truncates the salt to 32 bits, ignores `perturbStep`, or returns a 64 KiB
+  report segment each fails the matching test. T272 now lists the reload, the Theory and its rows
+  (Phase 11 review).
+- **T274 and T287: `tables.error.txt` is accepted, and four server rows wait for the served files.**
+  T287 said a PUT name is "never `tables` for `.records` or `.error.txt`", which would refuse
+  `PUT /work/<build>/tables.error.txt`, the fourth form that T274 and contracts/wasm-api.md#served-files
+  accept with 204. The route table is right: `tables` is refused as a stream name, so only
+  `tables.records` is refused, and T287 now says so. T274 also compares the bodies of `/web/worker.mjs`,
+  `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs` with the package's own files, as its
+  "a served file's body equals the file's bytes" asks, and those files come from T289, T288 and T286.
+  So T287 alone turns 19 of T274's 23 tests green, and the other four once those tasks land; T287's
+  "Makes T274 pass" now says that. Placeholder files to get green earlier were not added.
+- **T283 and T290: every Playwright step runs in `tools/agreement`.** T290 put only the three
+  `npx playwright test` steps there. Run from the repository root, where no `npm ci` installed
+  anything, `npx playwright install` would download the latest Playwright and install the browsers
+  that version launches, not the ones the pinned 1.63.0 needs. T283's test asserts
+  `working-directory: tools/agreement` on the install steps too, and T283 and T290 now say so.
+- **T286: pose positions are written as .NET's `"R"` writes a float.** T286 asked for positions in
+  JavaScript's shortest round-trip form and for the same lines as `TablesComparison`, which writes them
+  with `float.ToString("R")`. The two differ for a float that is not a short decimal: JavaScript writes
+  the double of 0.1f as `0.10000000149011612`, .NET writes `0.1`, and .NET switches to `E+XX` notation
+  above max(digits, 9) integer digits or below 10⁻³ (`1E+09`, `1E-05`). The same lines is the
+  requirement the runners and the job report rest on, so `lib/tables.mjs` writes the shortest decimal
+  that reads back as the float, the closest such and the even one on a tie, with .NET's notation rule,
+  compared exactly in BigInt. Checked in scratch against .NET 10 (not committed): `float.ToString("R")`
+  of 401,298 bit patterns (every power of two and its neighbours, every power of ten, 300,000 random
+  patterns, 100,000 short decimals) gives 0 differences, and `TablesComparison.Compare` against
+  `compareTables` over 5,187 one-bit flips of a random 64-row table (unknown function IDs and stances,
+  NaN and extreme positions) gives the same line every time. Every position of the fixed table reads the
+  same either way. T286 now says so.
+- **T288 and T289: where the contract was silent, the runners follow `agreement compare`, and a broken
+  Worker fails at once.** `firstDifferingStep` names the records the build has past the server's last
+  as a difference at the first of them, as `DivergenceReport.CompareBuild` does, so a runner's failure
+  and the job's report name the same step. The Worker's `done.mismatches` counts every stream, batch
+  and tables comparison that did not match, and `done.errors` counts its `error` messages. A batch
+  check that cannot finish (a load call or `StepQueued` returning another code) posts an `error` whose
+  message starts `batch: `. `stream.steps` is the manifest's step count. `page.html` also appends a
+  Worker `error` or `messageerror` event as a `fatal`, because without it a Worker module that fails to
+  load leaves the page waiting until the 5-minute test timeout, with no message; with it, a run against
+  an app root with no `_framework/` failed in under 2 s, naming the import that failed. The
+  configuration also sets `forbidOnly`, so a committed `.only` fails the run. The Worker also posts
+  `fatal` for a `start` with no build or with runtime options, because the agreement Worker boots with
+  the defaults only (the jiterpreter on) and the jiterpreter-off build is a Node run, so a page that
+  asked for other options would get a run that silently ignored them. contracts/wasm-api.md#boot
+  and #worker-playwright now describe the record helpers, the message fields and the page's `fatal`,
+  and T288 and T289 now say so (Phase 11 review).
+- **T280 and T288 (Phase 11 review): the Worker spec checks the bytes the Worker wrote, and the record
+  helpers have their own tests.** T280 asserted US2.2's Then through the Worker's own `match`, which
+  `firstDifferingStep` decides, and checked only that the output files existed, so a helper that
+  ignored the hash or an extra record would have passed it. The spec now reads every
+  `<build>/<stream>.records` after `done` and compares it with `server/<stream>.records` byte for byte,
+  and runs `compareTables` itself on `<build>/tables.bin`; the batch assertion also requires
+  `firstMismatchStep === null`. `tools/agreement/node/runtime.test.mjs` pins `firstDifferingStep`,
+  `readRecords` and `jiterpreterState` with table rows on records built in memory, and the workflow's
+  unit-test step runs it. Checked in scratch (not committed): a Worker that writes one flipped byte into
+  `rifle-burst.records`, or into `tables.bin`, while reporting a match now fails the spec, and a
+  `firstDifferingStep` that ignores the hash, never reports an extra record, or ignores what follows
+  the server's last record fails 1, 3 and 7 rows of runtime.test.mjs.
+- **T290, T283 and T289 (Phase 11 review): every step after the toolchain setup has its own bound, and
+  the optional browsers run last.** The job's `timeout-minutes: 10` was the only bound, and a job that
+  passes it is cancelled, so compare (`!cancelled()`) and the report upload (`failure()`) never ran: a
+  stalled optional Firefox or WebKit install, which came before every required run, could fail the
+  required gate with no summary. Each step after checkout, `setup-dotnet` and `setup-node` now has its
+  own `timeout-minutes` (1 to 5), so a hang is a failed step and compare still reports. The Firefox and
+  WebKit installs (3 minutes each, still `continue-on-error`, so a timed-out install skips only its
+  run) and their runs now come after the Node and Chromium runs. Playwright's test timeout drops from
+  5 minutes to 2, below each Worker step's 3, so Playwright reports a stalled run, with the Worker's
+  events attached, before the step is stopped. The toolchain steps are GitHub's own actions and stay
+  under the job's bound only. Locally the publish and prepare take 13 s, the two Node runs 5.5 s and 7.8 s,
+  and the Chromium run 9 s, so the bounds leave room for a cold runner.
+- **T275 and T288 (Phase 11 review): the jiterpreter-off run checks the runtime's own report.** The
+  runtime ignores a runtime option it does not know without a warning (renamed flags booted with the
+  jiterpreter on, measured), so passing `JITERPRETER_OFF` did not show that `node-interp-nojit` ran
+  without the jiterpreter. `bootRuntime` now also returns `jiterpreter`, read by `jiterpreterState`
+  through the runtime's internal `INTERNAL.jiterpreter_get_options()` right after `create()`, and the
+  Node runner's `'the jiterpreter is on or off as the build says'` asserts it, all on or all off, and
+  writes it to `run.json`. The accessor is internal, but the SDK is pinned by global.json and a missing
+  accessor fails the test by name, so an SDK bump that moves it is caught, not silently passed. The
+  check is a named test, not a throw in `bootRuntime`, so the Worker builds (where the default runs
+  with the jiterpreter on and Firefox and WebKit could not be run here) are unaffected.
+- **T284 (Phase 11 review): auto-merge's own filter is tested on the `agreement` check, and the
+  not-yet-registered race stays an open follow-up.** `test_auto_merge_waits_for_simcore` showed only
+  that auto-merge hears SimCore finish. `test_a_failed_or_pending_agreement_check_holds_the_merge` runs
+  the auto-merge step's `CHECK_RUNS_JQ` and its `failed=` and `pending=` awk lines on check runs named
+  as the `agreement` job is, so a failed run blocks the merge, a queued one holds it, and a rename to a
+  name the filter drops (`auto-merge`, `claude`) fails the test; `auto-merge.yml` is unchanged (T291).
+  What it cannot close: while `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for a check run
+  that has not registered on the head commit yet, as for `Workflow tests` before it. Making `agreement`
+  a required check is an admin-only branch-protection setting, and it first needs the check to report
+  on every pull request, since SimCore's path filter would leave other pull requests waiting on it.
+  T318's open follow-ups carry it.
+- **T287 (Phase 11 review): a Worker PUT replaces the output's other form.** The work directory's
+  error files stand *instead of* the output (contracts/simcore-cli.md#agreement-work-directory), and
+  `agreement compare` reads `<stream>.error.txt` and `tables.error.txt` first. The Node runner's
+  `writeOutput` removes the other form before it writes, but the server only wrote, so a Worker rerun
+  on the same work directory left an earlier error file beside new matching records. Reproduced in
+  scratch: a `chromium-worker/flat-run-30hz.error.txt` left before a Chromium rerun made compare print
+  `chromium-worker: diverged in 1 of 69 streams; first: flat-run-30hz at step 1` and exit 1 while the
+  spec passed. CI always starts from a fresh work directory, so only local reruns were affected. Now,
+  once a PUT's file is renamed into place, the server removes its other form (`<stream>.records` and
+  `<stream>.error.txt`, `tables.bin` and `tables.error.txt`); a write that fails, or a refused PUT,
+  leaves the earlier pair as it was. The same rerun over stale `flat-run-30hz.error.txt` and
+  `tables.error.txt` now leaves neither, and compare prints `chromium-worker: match, 69 streams, 17192
+  steps, tables match`. Clearing `<build>/` in the spec's `beforeAll` was not chosen: the server would
+  still not hold the rule itself, and it would differ from the Node runner's per-file rule. Five
+  server.test.mjs rows pin it (four fail against the old server), and T274, T287 and
+  contracts/wasm-api.md#served-files now say so.
+- **T281 (Phase 11 review): only the path filter narrows the triggers.** The test checked the `paths`
+  lists, but a `branches`, `branches-ignore`, `types` or `paths-ignore` key added to `pull_request`
+  would have stopped pull requests to main that change the core from running the suite while it stayed
+  green. It now asserts `pull_request`'s keys are exactly `paths` and `push`'s exactly `branches` and
+  `paths` (each such key, added to a copy of the triggers, fails it), and T281 says so. The set of
+  events is not pinned, so a later `workflow_dispatch`, which narrows nothing, stays possible.
+- **T291 (Phase 11 review): the auto-merge header no longer calls `Workflow tests` the only CI.** That
+  sentence predates this slice, was already untrue (`.NET` and `Harness` run on pull requests), and
+  read as a contradiction once the same paragraph named SimCore. The opening now says no pull request
+  workflow is a required check, which is why `REQUIRE_CHECKS` is off, and that `.NET` and `Harness` are
+  not in the `workflow_run` list yet. Adding them would change the list beyond T291's one entry, so the
+  list, `GUARDED_PATHS` and `REQUIRE_CHECKS` are unchanged, and the gap is an open follow-up in T317's
+  description and T318's patch notes.
+- **T287 and T274 (Phase 11 review): the server's error answers are in the contract, and a PUT checks
+  its build folder's real path.** The server answered 500 when it could not write a file, and gave every
+  403, 404 and 500 a one-line `text/plain; charset=utf-8` body, while
+  contracts/wasm-api.md#served-files named only 204 and 403 for a PUT and its content-type row read as
+  covering every answer. The behaviour is kept and written down: a write failure is a server fault, and
+  answering it 403 would tell the runner its request was refused. The content-type row now covers
+  served files only. Separately, GET checked the real path of what it served but PUT did not, so a
+  `<work>/chromium-worker` symlinked to a folder outside the work root took a 204 and the file landed
+  outside (reproduced in review). PUT now creates the build folder when missing, resolves its real path
+  and refuses with 403 unless it is inside the work root's real path, then writes into that real path;
+  the body has been read to its end by then, so the client still gets the 403. A dangling symlink fails
+  the `mkdir` and is a 500, which writes nothing either. server.test.mjs gains the symlink row (it fails
+  against the previous server) and a table of a 403, a 404 and a 500 (a build folder that is a regular
+  file) asserting the body and its type; every refused-PUT row now also checks that nothing was written
+  anywhere in the case directory outside the app and work roots. The contract's Layer and Tests tables
+  now name `lib/server.mjs`, `web/page.html`, `specs/worker.spec.mjs` and `node/server.test.mjs`.
+  `tests/workflows/test_simcore_workflow.py` is not added there: this contract does not specify the
+  workflow, and tasks.md (T281 to T284) and quickstart.md already cite that test where the workflow is
+  described.
+- **T290, T285, T288 and T292 (Phase 11 review): the prebuilt publish passes
+  `-p:UsingBrowserRuntimeWorkload=false`.** With the `wasm-tools` workload installed, as it is here,
+  `InvariantGlobalization=true` makes every publish relink the runtime, so the local T285, T288, T289 and
+  T292 runs recorded as `node-interp` and `chromium-worker` tested a relinked `dotnet.native.wasm`, not
+  the runtime pack's that CI's `agreement` job tests (`cmp` shows the two differ).
+  `-p:WasmBuildNative=false` cannot stop it (`WasmBuildNative is required because
+  InvariantGlobalization=true`). `UsingBrowserRuntimeWorkload` is the property the workload manifest
+  computes from whether the workload is installed, so passing `false` gives a machine with the workload
+  exactly what a runner without it gets: no relink, and a `dotnet.native.*.wasm` byte-identical to the
+  10.0.15 runtime pack's. The flag is now in simcore.yml's publish step, so `node-interp` means the
+  prebuilt runtime pack on any runner image, and `test_prebuilt_wasm_is_published_before_any_workload`
+  asserts it. The same command is in quickstart.md's agreement section and its measurement section's
+  prebuilt publish, in T285, T288, T292 and T315, and in agreement.test.mjs's Run comment. The relinked
+  and AOT publishes, which need the workload, do not carry it. T292 was rerun on the prebuilt publish:
+  both Node builds pass 90 of 90 tests, the Chromium Worker spec passes, and `agreement compare` prints
+  `match, 69 streams, 17192 steps, tables match` for `node-interp`, `node-interp-nojit` and
+  `chromium-worker` and exits 0.
+- **T297 and T310: the measure job's prebuilt publish carries `-p:UsingBrowserRuntimeWorkload=false`
+  too.** T297, T310 and the measurement contract's step 2 named the prebuilt publish without the flag,
+  while the decision above put it in quickstart.md's measurement section and said `node-interp` means the
+  prebuilt runtime pack on any runner image. Publishing before the workload install is enough on today's
+  runner image, but on an image that ships `wasm-tools` the publish would relink, and the report's
+  `interp-prebuilt` mode would record `relinked: false` for a relinked build that the `agreement` job
+  never tested. So the step runs the agreement job's command, `dotnet publish src/MmoEngine.SimCore.Wasm
+  -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"`, before the
+  workload as before. `test_prebuilt_build_is_published_before_the_workload` asserts the whole command,
+  and T297, T310 and contracts/measurement-report.md step 2 say the same. The relinked and AOT publishes
+  still leave the flag off, which `test_unproduced_modes_are_recorded_with_their_reason` asserts.
+- **T302, T304, T305 and T309: the measurement runner's interfaces are the ones the tests pin.** The
+  tasks left four interfaces open or at odds. T304's `runPasses` signature had no way to reach the report
+  buffer it reads the stop text from, so it takes `reportBuffer` (the `ReportBuffer()` view), and the
+  tasks now say what `reset`, `writeCommands`, `now`/`unitNs` and `samples` are. T305 did not give
+  `assembleReport`'s inputs, while T302 builds the report "from fixed inputs" including the machine and
+  versions, so `assembleReport` reads neither `process.env` nor `os`: the entry point gathers `machine`,
+  `versions`, `env` and `server` and passes them in, and the tests can set `GITHUB_SHA` and the
+  `DOTNET_` variables without touching the process. T302 has `parseArgs` return `{exitCode: 2, message}`,
+  while T309 said the entry point acts "on a UsageError", so T309 now checks the result's `exitCode`
+  (`unproducedMode` still throws its `UsageError`, which `parseArgs` turns into that result). T306 read
+  `now` from `process.hrtime.bigint()`, a BigInt that a Number clock cannot subtract, so it passes
+  `Number(process.hrtime.bigint() - start)` with `unitNs: 1`, and T307 passes `performance.now()` with
+  `unitNs: 1e6`.
+- **T304 and T306: the percentile rank is computed in integers, and `passes.mjs` holds the pieces both
+  halves share.** T304 wrote the rank as `Math.ceil(p / 100 * n)`, which rounds `p / 100` first:
+  `Math.ceil(7 / 100 * 100)` is 8, not the 7 that the contract's ⌈p / 100 · n⌉ gives. `nearestRank`
+  computes `Math.ceil(p * n / 100)`, exact for every integer p and n the report uses, and gives the same
+  ranks as the formula wherever it was right (the 5th, 9th and 2,978th that T299 pins). `passes.mjs` also
+  exports `COMMAND_SIZE`, `STEP_KINDS`, `COLD_START_SCENARIO`, `readStopText` and `readLoadText`, so the
+  Node half and the Worker (T307) drive the same three streams and name a failed call the same way: a
+  load call or `Reset` that does not return `Ok` names its code and the report buffer's text, and a
+  `StepQueued` that stops early names the stop entry's text. `measure-node.mjs` counts the
+  `CommandBuffer()` fetch and the write of the first command inside `firstStepMs`, because the first
+  step cannot run without them, and reports a boot failure as a MeasurementError naming `dotnet.js`.
+- **T307, T309 and T310: where the measurement tasks left a detail open, the runner fails loudly.**
+  T309 ran the entry point only when `import.meta.url === pathToFileURL(process.argv[1]).href`, but Node
+  gives the main module's `import.meta.url` its real path, so started through a symlinked path the script
+  would do nothing and exit 0. It compares through `realpathSync(process.argv[1])`, as
+  `lib/measure-node.mjs` already does. T309 gave no bound on a `measure-node.mjs` process or a Chromium
+  page, so a boot that hangs would run into the job's 30 minutes and leave no line naming it; each now
+  has 2 minutes and then fails as a MeasurementError naming the mode and the run. A page must post
+  exactly one `booted` and one `coldStart`, or one `steps` per kind, so a Worker that stopped early
+  cannot hand `summarize` a short list. T307 said the Worker records `performance.now()` on its first
+  line without saying where the reading goes; `booted` carries it as `moduleStartMs`, which the report
+  does not read. T310's sweeps step wrote the job summary only after `dotnet test` passed; it writes the
+  heading and the `SIMMATH ` lines, as an indented code block, whatever the tests' outcome, then exits
+  with their status, so a failing sweep still shows its numbers. T307, T309 and T310 now say so.
+- **T309 and T310: the AOT publish comes last, and the quickstart cleans after it.** T309's local check
+  ran the quickstart's measurement section twice in one checkout, and the second run's prebuilt build
+  failed its first Node cold start with `MONO interpreter: NIY encountered in method
+  System.OutOfMemoryException:.ctor (string)`. Its `System.Private.CoreLib` was byte for byte the AOT
+  build's: the AOT publish leaves the assemblies it compiled, stripped of their IL, in
+  `src/MmoEngine.SimCore.Wasm/obj/`, and the next interpreted publish copies them. `dotnet clean
+  src/MmoEngine.SimCore.Wasm -c Release` removes them, after which the prebuilt publish gives the original
+  build again. The `measure` job starts from a fresh checkout and publishes prebuilt, relinked and AOT in
+  that order, which `test_measure_job_measures_every_mode_and_validates_the_report` pins, so its
+  interpreted builds never see the AOT outputs; the workflow, contracts/measurement-report.md step 4 and
+  T310 now say why the order matters. quickstart.md's second measurement block runs `dotnet clean` after
+  the AOT publish, so the section and the agreement section can be run again. That line is no
+  `dotnet run` or `dotnet publish` line, so T311's exact line counts do not change.
+- **T297 and T310 (Phase 12 review): the measure job's agreement runs and compare run after a failed
+  agreement run, and the gate's denial is tested.** The three steps used GitHub's implicit `success()`,
+  so a relinked divergence, which fails its `agreement.test.mjs` run, skipped the AOT run and compare.
+  Only compare writes `report/`, so the failure upload then found nothing and the job summary named no
+  divergence. The three now run on `!cancelled() && steps.prepare.outcome == 'success' && <produced>`,
+  as the agreement job's compare runs on `!cancelled()`. The prepare step has `id: prepare`, so a failed
+  or skipped prepare, after which `WORK` is unset, skips them. Compare still exits non-zero for a build
+  that diverged or did not run, so the gate is unchanged. `test_relinked_and_aot_agreement_gates_the_job`
+  only ran the passing path, so `|| true` on any of the three left it green. It now decides each
+  condition with GitHub's status functions (`would_run`: after a failed step, after a cancel, after a
+  failed or skipped prepare), runs each step with its tool exiting 0 and then 1 and asserts the step's
+  exit code is the tool's, and pins that none of the three runs contains `||`.
+- **T310 and T297 (Phase 12 review): every measure step after the toolchain setup has its own bound,
+  and the relinked and AOT publishes bound `dotnet publish` themselves.** The job's 30 minutes was the
+  only bound, and a job that passes it is cancelled. A stalled optional step (the workload install, a
+  publish, the sweeps) then cancelled the job, so FR-031's unproduced record was never written and the
+  `failure()` upload never ran. This is the reasoning of the T290 bullet above. Each step now has its
+  own `timeout-minutes`. A stalled workload install or sweep is then a failed `continue-on-error` step:
+  the publishes are skipped and both modes are recorded with the workload's reason, or the sweep's
+  summary is missing. The publishes have no `continue-on-error`, so a step-level timeout there would
+  fail the job. They run `timeout --kill-after=30s 4m` (relinked) and `5m` (AOT) around
+  `dotnet publish` instead, and record exit 124 as `did not finish within <n> minutes`. The steps' own
+  5 and 6 minutes are only backstops. The bounds are a budget, from runs on this machine (4 cores).
+  The benchmarks took 10 minutes (bound 15), the sweeps 6.5 to 7 minutes plus the test project's build
+  (bound 10), the AOT publish 69 s, the relinked one 13 s, `measure.mjs` 41 s for all three modes
+  (bound 8), and every other step under 10 s. A normal run is then about 23 minutes of the 30. Any one
+  optional step that hangs to its bound adds at most about 4.5 minutes (the AOT publish: its 5 minutes
+  and the kill, against its 69 s), which still fits; two hung publishes in one run would not. A required
+  step fails on its own bound, which is below the job's.
+- **T302 and T309 (Phase 12 review): the entry point's exit codes have a test.** T309 checked once,
+  by hand, that `measure.mjs` exits 2 without `MMO_RUNNER_CLASS`. In CI the class is always set, so
+  nothing ran that path. `'the entry point exits 2 on a usage error and 1 on a failed measurement,
+  writing no report'` now runs `node tools/agreement/lib/measure.mjs` as a child process. It asserts
+  exit 2 with the exact `measure:` line when the class is unset or empty, and exit 1 with the exact
+  line when a produced mode has no `dotnet.js`. That download is read before any Node or Chromium
+  measurement, so no browser is needed. In both cases nothing is written. T309's check now cites it.
+- **T300 (Phase 12 review): `dotnet.js` keeps the fixture's bytes.** T300 had the test write
+  `dotnet.js` as the fixture and also gave all nine names `1000 * (i + 1)` bytes of `i & 0xff`.
+  `measureDownload` parses the boot manifest from `dotnet.js`, so the test keeps the fixture there.
+  Only the other eight names get the size pattern, and the test asserts that all nine raw lengths
+  differ. T300 now says so.
+- **T304, T306 and T307 (Phase 12 review): a failed call is named in the form its code allows.** T304
+  gave two message forms, `StepQueued(<n>) committed <m> steps: <stop text>` and `Reset returned
+  <code>: <report text>`. A negative `StepQueued` return leaves the report header with zeros and no stop
+  entry (contracts/wasm-api.md#return-codes), so there is no stop text to name. It throws
+  `StepQueued(<n>) refused the call: <code>`, the form of wasm-api.md#one-frame-from-javascript. A
+  return above `<n>` throws `StepQueued(<n>) committed <m> steps, more than it was asked to`. `Reset
+  returned <code>` leaves out `: <report text>` when the text is empty, as it is for `NotReady`. The
+  cold starts of both halves use the same forms. T304, T306 and T307 now list them. The step-pass
+  test gains a table for each: the negative and over-count returns, and a second `reset()` that returns
+  `FormatRefused` with its text or `NotReady` without one. Before, nothing tested the reset path.
+- **T305 and T309 (Phase 12 review): the step costs are checked kind by kind.** T309 refused a steps
+  page that did not post "one `steps` per kind", but the runner counted the messages, so a Worker that
+  posted movement three times reached the report. Only `validate-report` would then catch it, and the
+  quickstart's local run of `measure.mjs` would not. `checkStepKinds` (T305) now requires one entry per
+  kind of `STEP_KINDS`, with its stream, in that order. It checks the Worker's messages and the
+  `measure-node.mjs steps` line, which nothing had checked. `'each half gives one step entry per kind,
+  in the report order'` tests it without a browser.
+- **T304, T306 and T307 (second Phase 12 review): both halves time the same steps.** Each pass played
+  the stream's whole command list, and the Worker times only full 16-step batches, so with streams of
+  30, 120 and 45 commands it never timed steps 17 to 30 of `flat-run-30hz`, 113 to 120 of `rifle-burst`
+  or 33 to 45 of `launcher-arc` (the end of the projectile's flight), while Node timed every step. The
+  report's two numbers for a kind were then averages over different work. Each pass now plays the
+  stream's first ⌊n / 16⌋ · 16 commands in both halves (`passLength`, 16, 112 and 32 steps). With 512
+  warm-up and 3,008 timed steps, both multiples of 16, Node and the Worker time exactly the same steps,
+  and no partial batch runs at all. The alternative, timing the Worker's shorter last call too, would
+  mix batch sizes within one number. The two halves' step loops were one copy each, so the choice now
+  lives once, in `stepKindCosts` (`lib/passes.mjs`), which both call with their own batch and clock,
+  and `'both halves time the same steps, in passes of whole 16-command batches'` runs that one loop
+  with `batch` 1 and 16 over fake exports and compares the steps each timed. `expectLoad` moved there
+  with it, for the cold starts too. `runPasses` still runs a shorter last call untimed, for a caller
+  whose passes are not whole batches. T304, T306, T307 and contracts/measurement-report.md's "Step
+  cost" say so.
+- **T309 (second Phase 12 review): a Chromium page has one bound, and every way it fails is named.**
+  `page.goto` ran under Playwright's default 30-second navigation timeout, outside the page's
+  2 minutes, and only the wait was caught: a failed navigation, context, page or `evaluate` printed a
+  stack without the mode or run, and any failed wait, a crash included, was reported as the 2-minute
+  timeout. A close that failed in a `finally` could also replace the error it followed. `runPage` is
+  now exported and takes the browser it drives, so the test hands it a fake one. The navigation and the
+  wait share one deadline set when `runPage` starts; any error becomes `<mode>: chromium <run>:
+  <message>`, with the first line of the message so the `measure:` line stays one line (Playwright adds
+  a call log below it), and only an error named `TimeoutError` is the bound's message. The context, the
+  browser and the server close through `closeAfter`: a close that fails after a failure is added to
+  its message, and one that fails after a success fails the run, since nothing hides it. `newContext`,
+  `newPage` and `evaluate` take no timeout in Playwright, so they stay under the step's own 8 minutes.
+  A real Chromium given a refused port and a server that never answers gave `page.goto:
+  net::ERR_UNSAFE_PORT at …` at once and `the page did not finish within 3 s` after 3 s. T309, T302
+  and contracts/measurement-report.md step 6 say so, and contracts/wasm-api.md#measurement-worker now
+  gives the measurement Worker's messages, which only T307 and T309 listed.
+- **T309 and T306 (third Phase 12 review): the runner checks its inputs before it measures, and
+  both scripts' exit codes have a test.** T309 step 3 read the `--server-benchmarks` export and ran
+  `dotnet --version` and `dotnet --list-runtimes` after every mode was measured, so a missing or
+  malformed export, or a toolchain without a .NET 10 runtime, failed only after ten Node cold starts,
+  a steps process and eleven Chromium pages per mode (41 s for three modes here, far longer on a slow
+  runner). The entry point now reads them, and the machine, right after `parseArgs`; only the Chromium
+  version, known once a browser has run, is still gathered at the end. The report does not change.
+  `'the entry point reads the server export and the dotnet versions before it measures'` gives each
+  of those failures an empty mode folder, so a run that measured first would name its missing
+  `dotnet.js` instead, and puts a `dotnet` stand-in (a shell script) first on PATH rather than
+  depending on the toolchain the test runs on. T306's script entry had no test at all, although
+  `runNodeHalf` relies on its exit 1 and one `measure-node:` line. `'the Node half exits 1 with its
+  usage or measurement error and prints nothing on stdout'` runs it as a child process for each usage
+  error and for an unprepared work directory, and the entry point's test gains a row where the real
+  `measure-node.mjs` cold start fails and `measure.mjs` names it, and a row started through a symlink,
+  which pins T309's `realpathSync` check. The review's further rows for `runPasses` (a `Reset` that
+  does not return `Ok`, a negative `StepQueued` return) were already in T302's tables from the first
+  Phase 12 review, so nothing was added there.
+- **T311 (Phase 13 review): every slice-2 quickstart check has a defect row, and the workflow tests'
+  file is found through the document.** `SliceTwoChecksReportEachDefect` had no row for the publish
+  check or the shell check, so either could stop rejecting a bad line while both quickstart tests
+  stayed green. The workflow tests' file was a fixed path in the Fact, so no defect in quickstart.md
+  could make that assertion fail, although T311 and the class summary said every check is seen
+  failing. Two rows now misspell the agreement section's publish directory and drop the closing quote
+  of `--work "$WORK"`. A `workflow-tests` check reads the directory from the `## Workflow tests`
+  section's `python3 -m unittest discover -s <dir>` line and requires it to hold
+  `test_simcore_workflow.py`, with exact extraction of one line naming `tests/workflows`, and a third
+  row misspells that directory. The alternative was to reword the summary and call the file a direct
+  assertion. It was not chosen, because it left the section's only bash line unchecked. T311 says so.
+- **T315 (Phase 13 review): the quickstart's required browser install is Chromium, and a valid
+  report's stderr is tested.** The quickstart installed Chromium, Firefox and WebKit in one command
+  and ran every Playwright project, and documented both as exit 0, although it called Firefox and
+  WebKit optional. Where Playwright cannot download them, as on the machine T315 ran on, both commands
+  exit non-zero, so T315 ran the Chromium forms instead. The required install is now Chromium alone,
+  the browser CI requires. Firefox and WebKit are a separate optional command whose non-zero exit is
+  documented, and the all-project run's expected exit 0 holds only once all three are installed. No
+  `--project` line was added, so T311's Playwright extraction is unchanged. T315 also wrote that
+  `validate-report` on a valid report writes only its log event to stderr, which no test asserted.
+  `ValidateReportTests.TheContractExampleIsValid` now checks that stderr is one compact-JSON event
+  with the command's template, the report's path, `ProblemCount` 0 and `Tool` `simcore`. T309's check
+  and T315 now say "prints nothing on stdout".
+- **T290 and T283 (second Phase 13 review): the optional browsers share one deadline, so compare
+  still reports.** The Phase 11 bounds made every hung step fail on its own, and a failed required
+  step skips the steps after it up to compare. The Firefox and WebKit installs continue on error,
+  though, so the job carried on past all four optional steps, and their bounds alone (3 minutes each,
+  12 in all) could pass the job's 10. Two slow installs, which a slow Playwright download host makes
+  likely together, plus the required steps' few minutes then cancelled the job, so compare
+  (`!cancelled()`) never ran and the required gate failed with no summary although every required
+  build agreed. The header comment, T290 and the spec's SC-006 note claimed the opposite. The
+  directories step now also writes `AGREEMENT_OPTIONAL_DEADLINE`, 7 minutes after it runs. An install
+  must end 160 s before it (it starts only with 30 s of that to spare, under `timeout`), so its run
+  still has 150 s after the step change; a run starts only with 150 s left, more than Playwright's
+  2-minute test timeout, so Playwright still reports a stall first, and `timeout` stops it at the
+  deadline. A run without time exits 0 with a warning, since compare reports the build as not run,
+  while a run that starts and then fails or is stopped still fails the job, as before. All four steps
+  then end by the deadline plus `timeout`'s 10-second kill. With the toolchain setup's minute before
+  the deadline's step, about 1 minute 50 seconds remain for compare, which took 2.5 s here on a
+  prepared work directory. The cost is that Firefox and WebKit run only when the required steps leave
+  them time; the first GitHub runs show how often that is. The alternative, stating the weaker promise
+  as the measure job's T310 bullet does, was not chosen: there the optional steps record a reason,
+  while here a cancel turns an optional browser's slow download into a failed required gate.
+  `test_optional_browsers_share_a_deadline_that_leaves_compare_its_time` runs each optional step with
+  a stand-in `npx` around the deadline, including a stalled `npx` stopped at its bound.
+- **T311 and T312 (second Phase 13 review): every slice-2 path is resolved where its line runs.**
+  The node, publish, workflow-tests and Playwright checks resolved paths against the repository root
+  whatever `cd` a line did, and the Playwright check always read `tools/agreement/playwright.config.mjs`,
+  so a line that fails in a real shell could pass (a `--project chromium` line without its `cd`, or a
+  `node --test tools/agreement/...` line inside one). Each command now carries the directory it runs
+  in: a block starts in the root, as the quickstart's opening says, a `cd` carries to the block's later
+  lines, and one inside `( ... )` lasts until its `)`. `QuickstartBashLine` gains `Fence`, the line
+  of its block's opening fence, so a block boundary is known. Playwright's configuration is read from
+  the line's directory with its comments removed, so a `name:` in a comment is not a project. The CLI
+  lines are checked the same way, since `--project src/MmoEngine.SimCore.Cli` is relative too. Four
+  defect rows (Playwright from the root, `node --test` and `agreement compare` inside `cd tools/agreement`,
+  and a `cd` line that moves the next line) and the comment Theory pin it; with the old root-relative
+  resolution, five rows and the real document's check fail. The current quickstart needs no change.
+- **T316 (second Phase 13 review): the US2 Independent Test states where the one-ulp change is
+  checked.** It said `agreement compare` fails on the WebAssembly runner's perturbation, but the Node
+  runner compares the perturbed run in process and writes no records, and compare's report at step 15
+  is tested on server-perturbed records under a build's folder (contracts/wasm-api.md#node). The text
+  now names both halves, and the one-ulp Assumption says why. The Scenario coverage table's
+  introduction is in the past tense, since T316 deleted the planned section it described.
+- **T315 (second Phase 13 review):** step 3 is the quickstart's required Chromium install word for
+  word, and the measurement run replaced the quickstart's `MMO_RUNNER_CLASS=local-dev` with
+  `cloud-session-container-x64`, as T315 now says.
+- **T311 and T312 (third Phase 13 review): the section check reads headings through the bash
+  reader's fence scan.** `CheckSections` took every line that starts with `## ` as a heading, while
+  `QuickstartSections.BashLines` skips one inside a fenced block. With a fenced Markdown sample holding
+  a slice-2 heading before the real one, a renamed real heading was reported as "has no line in a
+  ```` ```bash ```` block" on the fenced line, not as missing, and with both present the check kept the
+  fenced line's number. `QuickstartSections.Headings` now gives the headings, and it and `BashLines`
+  share one private scan of the fences, so the two cannot drift apart again. The alternative, copying
+  `BashLines`' fence state into `CheckSections`, was not chosen, because two copies are what drifted.
+  A new defect row puts such a sample before the renamed heading, and both rename rows now name the
+  failure's message, since the section check fails a heading in two ways; with the old scan that row
+  fails. `QuickstartTests.QuickstartHeadingsAreReadOutsideFences` pins the reader. The same review
+  asked for publish-check and shell-check defect rows; those rows were already in place, from the
+  first Phase 13 review. Slice 1's `Collect` in `EverySliceOneQuickstartCommandParses` keeps its own
+  heading scan, since this review covered T311 to T316 only; quickstart.md holds no `## ` line inside a
+  fenced block, so both scans read its headings alike.
+- **T320 (spec-test review), T284: US2.7's "auto-merge does not merge" half runs auto-merge's own
+  decision step.** `test_a_failed_or_pending_agreement_check_holds_the_merge` ran only the step's
+  `CHECK_RUNS_JQ` and its `failed=` and `pending=` awk lines, never the code that turns those lists
+  into "leave it alone" or "wait", so deleting the failed-check reason left every workflow test green.
+  `test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs` now runs the "Merge,
+  wait, or leave it" step's script, taken from `auto-merge.yml` by name, under `bash -e` with a
+  stand-in `gh` that logs each call and answers the pull request and every endpoint the script reads.
+  Only the `agreement` check run differs between rows; a failed, cancelled, queued or in-progress run
+  never merges and writes its exact summary line, and where this workflow had turned auto-merge on,
+  it turns it off, since GitHub's auto-merge waits only for required checks. The passed control row
+  squash-merges at the head commit. Deleting the reason fails the four failed rows and turning the
+  waiting branch off fails the four pending ones. The alternative, matching the script's text for the
+  reason and the exits, was not chosen, because text matching passes a script whose branches no
+  longer connect. `auto-merge.yml` is unchanged.
+- **T322 (independent review), T297 and T310: the measure job's agreement-report upload needs a
+  prepared work directory, and the measurement report is shown in the job log and summary.** `WORK`
+  is in the environment only once prepare succeeded, so after the benchmarks or the prebuilt publish
+  failed, the `failure()` upload ran with the path `/report/` and only warned about missing files. Its
+  `if` is now `failure() && steps.prepare.outcome == 'success'`. The agreement job's upload was left
+  alone: its path is the fixed `${{ runner.temp }}/agreement-work/report/`, which never becomes
+  `/report/`, so a failure before its prepare step only finds no report there. Alongside that review,
+  a new "Show the measurement report" step right after validation prints the validated report to the
+  job log and appends it to the job summary in a fenced `json` block, because the numbers were only in
+  the `simcore-measurement` artifact, which readers without artifact access cannot open. It has no `if`,
+  so it runs only after validation passed, a 1-minute bound and no interpolated expression; valid JSON
+  has no line that starts with `::`, so the log reads no workflow command from it. Its closing fence
+  starts its own line whether or not the file ends with a newline. The upload still follows it, so a
+  report that cannot be shown is not uploaded either; that is the same file the upload would fail on.
+- **T320 (spec-test review), T302, T305 and T309: the report's `startup.coldStarts` is counted from
+  the samples, and a test runs the cold-start loops.** `assembleReport` wrote the constant 10, so
+  `validate-report`'s "must be 10" passed whatever the loops did, and no test ran `measureMode`: a
+  probe that made the Node loop run once left every test green. `measureMode` is now exported with
+  its runners injectable (`spawn`, `serve`, `launchChromium` and the page and close bounds), and its
+  startup is `summarizeStartup`, whose `coldStarts` is the number of samples and which fails the
+  mode unless Node and the Chromium Worker each measured 10. `'a mode is measured over exactly ten
+  cold starts in each runtime'` asserts the ten `cold-start` processes, the ten fresh contexts on
+  `?run=cold-start` and summaries that only those ten samples give (no shorter run of consecutive
+  cold starts has the same median and p90, which the test checks), and `'the startup summary needs
+  ten cold starts in each runtime'` the count's failure. With the Node loop, or the Chromium loop,
+  made to run once, the first fails. The count is checked once, at the end, rather than after each
+  loop, because both counts belong in the one message; the loops are fixed at 10, so the check
+  guards the code, not a run.
+- **T322 (independent review), T302, T305, T306 and T309: the measurement's jiterpreter, Worker and
+  bounds checks, and the runtime version's order.** (1) `runtime.jiterpreter` was the constant true
+  although `bootRuntime` reports the runtime's own state: `measure-node.mjs cold-start` now prints
+  it, every cold start's must be present and the same as the first's (checked before the steps
+  process, so a bad state fails at once), and the report's value is true only when all three options
+  are on, the defaults the contract's "left at their defaults" means. `runtimeOptions` stays `[]`:
+  it is what both halves pass, and the cold-start test's `dotnet.js` stand-in refuses any other. The
+  Chromium Worker's own state is not read: it boots with the same defaults, and the report's
+  `runtime`, like its `buildInfo`, describes the Node cold starts' runtime. (2) A page's `booted`
+  message must say `inWorker: true` (the Worker already sent it), so a page whose numbers did not
+  come from a `WorkerGlobalScope` fails instead of being recorded as `chromiumWorker`. (3) `newContext`, `newPage` and `evaluate` had no timeout, so a wedged browser held
+  the job until its step's bound with no `measure:` line (an earlier Phase 12 decision had accepted
+  that). Every call of a page is now raced against what is left of its one bound, the navigation and
+  the wait included (they keep Playwright's own timeouts too), and closing a page's context or the
+  browser has 10 seconds, since a browser that does not answer a page will not answer its close
+  either; the agreement server's close needed no bound, as it closes every connection itself. (4)
+  `compareVersions` ordered prerelease suffixes as text, so `10.0.0-rc.10` sorted below
+  `10.0.0-rc.2`; it now follows SemVer 2.0 precedence, and the runtime line accepts only a SemVer
+  version, so a line it cannot order is not listed rather than thrown on. A prerelease runtime still
+  fails `validate-report`'s `<major>.<minor>.<patch>` format, as the contract says; only the choice
+  among several runtimes changed. The order's one use is pinned too: `dotnetVersions(run)` is
+  exported with `run` (a `dotnet` command's standard output) defaulting to the real `dotnet`, and
+  the entry point calls it with that default. Its new `dotnetVersions:` rows of T302's SemVer test
+  give it a fake `dotnet` whose listing puts the highest runtime first (`rc.10` above `rc.2`) or in
+  the middle (`10.0.0` between them), and a listing of only a non-SemVer `10.0.99x` and 9.0 lines,
+  and assert the exact `{sdk, runtime}` or MeasurementError. With the pre-fix line back in
+  `dotnetVersions` (any `10.` version, sorted as text), `highestRuntime` bypassed, or the last or
+  first listed runtime taken, the test fails; before, only the helpers were tested, and the
+  entry-point rows end before a report, so the chosen version was never checked.
+- **T322 (independent review), T311 and T312: the quickstart readers' fence scan follows
+  CommonMark.** `QuickstartSections`' scan closed a block on any line of three or more backticks,
+  whatever the opening fence's length, and did not know `~~~` fences, so a ````` ```` ````` block
+  quoting a ```` ```bash ```` sample would close at the sample's own closing fence, and the lines
+  after it would be read as bash lines or headings. The scan now remembers the opening fence's
+  character and run length (at least three, after at most three spaces; a backtick fence's info
+  string holds no backtick), closes only on a run of the same character at least as long with nothing
+  but spaces or tabs after it, and takes the info string's first word as the language after either
+  character. `Headings` and `BashLines` still share that one scan, so the section check and the bash
+  reader agree on every fence. New rows of `QuickstartTests.QuickstartHeadingsAreReadOutsideFences`
+  and the new `QuickstartTests.QuickstartBashLinesFollowTheirFences` pin it; with the old rule, rows
+  of both fail. quickstart.md uses only column-0 three-backtick fences, so its readings, and the
+  slice-1 and slice-2 tests' expected lists, are unchanged; the quickstart itself needs no change.
+  The verifiers' mutation probes then found four rules the scan states but no row pinned, so rows were
+  added for each: a run of two backticks or tildes is no fence; a closing fence indented by four spaces
+  is block content; a tab before a run makes the line no fence (a tab reaches CommonMark's
+  four-column tab stop); and a closing run followed by a tab still closes. Each new row fails when its
+  rule is broken. The section check's message and T311's and T312's text now say "bash block", not
+  ```` ```bash ```` block, since a `~~~bash` block counts too.
+- **T322 (second independent review), T275, T287 and T288: the Node runner writes its outputs
+  through a temporary file, with the server's PUT.** The runner's `writeOutput` removed the output's
+  other form and then wrote the output in place, so a write that failed, or a run that died partway,
+  left `<build>/<stream>.records` cut off, and `agreement compare` reported a divergence at the
+  cut-off step instead of the write's error; `lib/server.mjs` also said its write-temp, rename,
+  remove order was "as the Node runner does", which it was not. The order now lives in one exported
+  helper, `writeOutputFile({ fs, directory, file, data, replaces })` in `lib/runtime.mjs`: a
+  `.<file>.<uuid>.tmp` in the build folder (flag `wx`), renamed over the target, then the other form
+  removed; a failed write or rename removes the temporary file and throws its own error. The runner
+  and the server's PUT both call it, and the server's comment now names it. It is in `runtime.mjs`,
+  which the runner already imports, and the file system is passed in (`node:fs/promises`'s
+  `writeFile`, `rename`, `rm`) so the module still uses no Node API and the Worker can keep
+  importing it. New `writeOutputFile` rows of `node/runtime.test.mjs` pin the calls
+  and the result, each failure (a failing, an interrupted and a renaming failure, no earlier target,
+  a failing clean-up), a child process that exits mid-write, and a self-replace; the old in-place
+  write fails eight of them, removing the other form first fails the same eight, and skipping the
+  clean-up fails four. A real node-interp run still passes 90 of 90, removes stale
+  `flat-run-30hz.error.txt` and `tables.error.txt` on a rerun, and compare prints
+  `node-interp: match, 69 streams, 17192 steps, tables match`.
+- **T320 (second spec-test review) and T322 (second independent review), T289, T302, T304, T306,
+  T307 and T309: a cold start must show the step it timed, both halves time it with one function, and
+  a refused load's text is read through a fresh report buffer.** Nothing tested that a cold start
+  completed a step or that `firstStepMs` covered it: replacing `E.StepQueued(1)` with `1` in
+  `measure-node.mjs` or in `measure-worker.mjs`, which each held a copy of the sequence, left every
+  test green, and `validate-report` only checks `median > 0` and `p90 >= median`. The sequence
+  (`LoadCollision`, `LoadConfig`, `Reset`, the first command written, `StepQueued(1)`, the clock read
+  before and after) and the totals now live once, in `timeFirstStep(E, inputs, now, timings)` in
+  `lib/passes.mjs`, which both halves call. After the clock it reads the record `StepQueued(1)`
+  committed from a fresh `ReportBuffer()` view (the header must hold exactly one whole record) and
+  returns it as `firstStep`, `{step, hash}`, which both halves report. `measure.mjs` reads the
+  server's first record of `flat-run-30hz` from `<work>/server/flat-run-30hz.records` once the ten
+  Node cold starts have run, and fails the mode, naming the runtime and the cold start, unless every
+  cold start's `firstStep` has its step and hash, so the `measure` job proves a real step happened in
+  Node and in the Chromium Worker. The record is read after the ten Node cold starts, not before them,
+  so an unprepared work directory still fails as the first Node cold start's own error. The hash is a
+  host-free check: `StepQueued`'s report buffer already holds the record, so the host is unchanged
+  and no Playwright spec was needed. New tests pin it: `'a cold start times its load calls, first
+  command and StepQueued(1) as one interval'` (fake exports that log every call and a clock that moves
+  7 ms only inside `StepQueued`: the exact call order, the first command written before the step,
+  `firstStepMs` 7, `totalMs` exact, each failure's exact error) and `'every cold start's first step is
+  the server's first record of flat-run-30hz'` (`measureMode` with fakes: another hash, another step,
+  the second record, no or a malformed `firstStep`, in either runtime, and a missing, empty or cut-off
+  records file each fail with their line). `'a Node cold start reports the jiterpreter state its
+  runtime booted with'` now also checks the `firstStep` the script prints. Replacing the step with `1`
+  in `timeFirstStep` fails two tests (eight of their subtests); making only the Node half skip it
+  fails the child-process test; on the real prebuilt publish, making only the Worker skip it fails
+  the measurement with `interp-prebuilt: chromium cold start 1: StepQueued(1) returned 1, but the
+  report buffer holds 0 records in 0 bytes, not one whole step record`, and making it step another
+  stream's first command fails it with the hash line. Unchanged, the real `interp-prebuilt`
+  measurement exits 0 and its report validates. Second, the agreement Worker's batch check (T289)
+  read a failing `LoadCollision`'s or `LoadConfig`'s text through the `ReportBuffer()` view it fetched
+  before the calls. BatchStepper reallocates the report buffer only on a `LoadConfig` that returns
+  `Ok` (`GrowReport`) and writes a refusal into the buffer it has, so that read of a `LoadConfig`
+  refusal was right against the host. Every refusal is now read through a fresh view, as
+  `BatchStepper.ReportSegment`'s doc asks ("a caller reads it again after each load call"): this keeps
+  a `Reset` refusal right after a `LoadConfig` that grew the buffer, and holds even if a future host
+  reallocates on a refusal. Its `LoadCollision`, `LoadConfig` and `Reset` now go through `loadWorld`
+  in `lib/passes.mjs`, which the cold starts' `timeFirstStep` uses too: each call through
+  `expectLoad`, which reads the text through a fresh view and disposes it. `'a refused load call's
+  text is read through a fresh report buffer'` pins it with a `LoadConfig` that reallocates the buffer
+  on every call, a stricter stand-in than BatchStepper; making `loadWorld` read through a view held
+  from before `LoadConfig` fails it. The Worker's own call is pinned in a browser by
+  `specs/worker-load-refusal.spec.mjs` (the T320 repair bullet at the end of this list).
+- **T322 (second independent review), T290, T283, T310, T293 and T297, with T284 and T291 from the
+  T320 second spec-test review: the measure job reports a divergence, its bounds add up, the
+  agreement job's optional-browser deadline is anchored to the job's start, and US2 scenario 7 states
+  the registered-check gate that is built.** (A) In the `measure` job every step after the relinked
+  and AOT agreement gate ran on the default `success()`, so when the relinked or AOT build disagreed
+  with the server the sweeps, the tools and Chromium installs, the runner's tests, the measurement,
+  validation, showing and uploading the report were all skipped: `agreement.status` `Diverged`, which
+  the contract lists and `assembleReport` copies from `report/agreement.json` (compare writes it before
+  it exits 1; a probe of `assembleReport` on that file gives `{"build":"node-interp-relinked","status":"Diverged"}`),
+  could never reach an uploaded report, and `simcore-measurement` was missing on exactly the run where
+  it matters. Those steps now run on `!cancelled()` with the steps they read from: the sweeps and the
+  tools install on `prepare` (whose success means the benchmarks and the prebuilt publish passed),
+  Chromium and the runner's tests on the tools, the measurement on the benchmarks, the prebuilt
+  publish, `prepare`, Chromium and the runner's tests, validation on the measurement, and showing and
+  uploading the report on validation (except, until the last bullet of this list, for a divergence in
+  `flat-run-30hz`'s first record, which failed the measurement: the later bullet "a diverged build's
+  report is qualified"). The gate steps
+  keep no `continue-on-error`, so a divergence still fails the job.
+  `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate` walks the job
+  as GitHub decides it with a new `simulate_job` helper; putting the measurement, the upload or the
+  sweeps back on `success()`, validation on `always()`, dropping the prebuilt publish from the
+  measurement's condition, `continue-on-error` on the relinked run, or the tools' `prepare` anchor
+  each fails it. (B) The agreement job's deadline was set by a step after checkout, `setup-dotnet` and
+  `setup-node`, which have no bound, so a slow setup moved it later and could leave compare too little
+  of the 10 minutes, and a cancelled check reads as failed. The directories step is now the job's
+  first step (it needs no checkout), so only GitHub's job set-up precedes it, and compare's bound drops
+  from 3 minutes to 2 (it takes seconds): 30 s of set-up, the 420 s deadline, the 10 s kill and the 120 s
+  bound are 580 s of the 600. With compare at 3 minutes the sum is 640 s, which the test rejects, and
+  with the step after the toolchain the test fails too. Choosing a shorter deadline instead would have
+  kept compare's 3 minutes at the cost of a minute of Firefox and WebKit time. (D) The `measure`
+  job's header said a hang in an optional step was recorded inside its 30 minutes, but the steps'
+  own bounds sum to 82 minutes (the benchmarks 15, the publishes 5, 5 and 6, the sweeps 10, the
+  measurement 8 and the rest), so several slow steps could cancel the job before the upload. The
+  bounds were sized from measured runs (the T310 and T297 Phase 12 review bullet above), and
+  tightening them cannot bring 82 near 30: the steps every run needs (the benchmarks, the prebuilt
+  publish, prepare, the tools, Chromium, the runner's tests, the measurement, validation, the report
+  and its upload) have 45 minutes of bounds on their own. So the job's `timeout-minutes` is
+  now 90: the 82 and 5 minutes for GitHub's job set-up, checkout and the two toolchain setups. A normal
+  run still takes about 23 minutes; the 90 only means no mix of hung steps is a cancel.
+  `test_every_step_bound_fits_in_the_job_timeout` sums the bounds and checks the header; the timeout
+  test is renamed `test_job_times_out_after_ninety_minutes`. (C) After a push to a ready pull request,
+  auto-merge can read the head commit's check runs before the `agreement` check run has registered,
+  and with `REQUIRE_CHECKS` `"false"` nothing counts as missing. That window is older than this slice
+  and holds for every check, and T291 limits this slice to the one `workflow_run` entry, so
+  `auto-merge.yml` is unchanged: US2 scenario 7 now says auto-merge holds the pull request while a
+  registered `agreement` check run has failed or is queued or running, and that an unregistered one is
+  not waited for while `REQUIRE_CHECKS` is `"false"`. A new Assumptions bullet records why and what
+  closes it (the check reporting on every pull request, then required, then `REQUIRE_CHECKS` `"true"`);
+  the AutoMerge docstrings and the US2.7 coverage row say the tests cover registered check runs, and
+  the test names are unchanged.
+- **T320 (second spec-test review) and T322 (second independent review), T289, T302 and T304: the
+  cold start's one-record rule and the agreement Worker's own load call are pinned.** The verifiers of
+  the bullet above found two stated behaviours that no test held. (A) `timeFirstStep` requires the
+  report header after `StepQueued(1)` to hold exactly one whole record (contracts/wasm-api.md,
+  Measurement Worker step 3; measurement-report.md, Startup), but its only row for a 1 held no record:
+  loosening the check to accept two records, or letting a cut-off record escape as `readRecords`'
+  `RangeError`, left every test green. Two rows of `'a cold start times its load calls, first command
+  and StepQueued(1) as one interval'` now pin it: a 1 with two records (`... holds 2 records in 40
+  bytes, not one whole step record`) and a 1 whose header counts one record in 19 bytes (`... holds 1
+  records in 19 bytes, ...`, a `MeasurementError`), through a new `recordsLength` option of the test's
+  `fakeColdStart`; each loosening fails exactly one of them. (B) Restoring the Worker's old reads (its
+  pre-fix `runBatch`, or one that reads every load call's text through the view held from before the
+  calls) left the Node suites and `worker.spec.mjs` green, since the real host never reallocates on a
+  refusal and `worker.spec.mjs` exercises only the happy path. A new Playwright spec,
+  `tools/agreement/specs/worker-load-refusal.spec.mjs`, runs `web/page.html` and `web/worker.mjs` in
+  each project against a stand-in `_framework/dotnet.js` (the `fakeDotnetBuild` shape of
+  `node/measure.test.mjs`) over a one-stream work directory, both written to a temporary folder, so it
+  needs neither `AGREEMENT_APP` nor `AGREEMENT_WORK` and `worker.spec.mjs` is unchanged. Its
+  `LoadConfig` leaves `stale text of the old report buffer` in the buffer it replaces on every call.
+  It asserts the Worker's exact events for a `LoadConfig` refusal (`batch: LoadConfig returned 2:
+  ...`) and for a `Reset` refusal after a `LoadConfig` that grew the buffer (`batch: Reset returned 1:
+  ...`), the case the real host can produce. The pre-fix `runBatch` fails the first, and the
+  read-everything-through-the-old-view variant fails both. A browser spec was chosen over moving
+  `runBatch` into a `lib/` module, which would have added a served file and changed the Worker's
+  shape for a test. `npx playwright test --project <browser>` now runs three tests per project, which
+  quickstart.md and the Playwright configuration's comment say; the stand-in spec takes about a
+  second, inside the optional browsers' 150 s run window. `loadWorld` also gains a row
+  for a `Reset` refused with text after a `LoadConfig` that grew the buffer, and the comments of
+  `lib/passes.mjs`, `web/worker.mjs`, `lib/server.mjs` (which modules import `/lib/passes.mjs`) and
+  the test no longer say a refused `LoadConfig` may reallocate.
+- **T322 (second independent review), T275 and T287: the runner's and the server's use of
+  `writeOutputFile` is pinned where each lives.** The helper's rows in `node/runtime.test.mjs` call it
+  directly, so restoring the old in-place write in the runner's `writeOutput`, or in the server's
+  `put`, or removing the other form before the server's write, kept every test green. The Node runner
+  now ends with `'each output is renamed into place, never written over in place'`: once the runtime
+  has booted, `before` plants an earlier copy of the first stream's `.records` and of `tables.bin`,
+  each hard-linked to `.<file>.in-place-check` in the build folder, and the test asserts that each link
+  still holds exactly the planted bytes and that the output is another file. A rename leaves the link
+  the old file; an in-place write changes what it reads. `after` removes the links, and any planted
+  copy no test replaced, so compare reports a missing output rather than a divergence; the links' dot
+  names are no output's, so compare never reads them. `tables.bin` is planted as well as the first
+  stream because it is the second write a passing run makes, from another test. The bytes are compared
+  with `Buffer.equals`: a failing `deepEqual` on the 1.4 MB `tables.bin` made the test runner run out
+  of memory and die by `SIGKILL` instead of failing the test. `node/server.test.mjs` gains `'a PUT
+  renames its body into place: a hard link to the earlier x.records keeps its bytes'` and `'a PUT
+  whose rename fails answers 500 and leaves the other form, with no temporary file'` (a non-empty
+  directory stands where the body would be renamed to), and the contract's PUT row now says a failed
+  write or rename is a 500 that leaves the earlier pair. With the in-place write restored in
+  `writeOutput`, with it written inline only in the per-stream tests or only in the tables check, or
+  with the per-stream write dropped, the runner fails only the new test (90 pass, 1 fail); the
+  server's in-place `put` fails both new rows and removing the other form first fails the second. As
+  fixed, a real node-interp run passes 91 of 91 over planted stale `flat-run-30hz.error.txt` and
+  `tables.error.txt`, leaves no dot-file or temporary file, and `agreement compare --require
+  node-interp` prints `node-interp: match, 69 streams, 17192 steps, tables match` and
+  `agreement: match`.
+- **T322 (second independent review) and T320 (second spec-test review), T290, T283, T310, T297,
+  T284 and T291: a diverged build's report is qualified, the agreement job's failure upload is
+  budgeted too, and US2 scenario 7 no longer states the unregistered check run.** The verifiers of
+  the workflow bullet above (T290, T283, T310, ...) found three gaps in it. (A) It, the `measure`
+  job's header and step comment, contract step 5, T310 and the failed-gate test's docstring said a
+  diverged relinked or AOT build's report is always written, validated, shown and uploaded with
+  `agreement.status` `Diverged`. That fails when the build's first committed step of `flat-run-30hz`
+  differs from the server's first record, the likeliest way a whole build diverges (a float
+  difference on step 1): `measure.mjs`'s cold-start check, new in the same round (contract step 6),
+  then exits 1 before any report is assembled, whatever `report/agreement.json` says, so validation,
+  showing the report and the `simcore-measurement` upload are skipped, and only the job summary and
+  `simcore-measure-agreement-report` name the divergence. Letting the check accept the server's step
+  number with another hash for a mode that `agreement.json` lists as `Diverged` would make the claim
+  hold for every divergence, but `measure.mjs` and its tests are the measurement runner's, outside
+  this workflow fix, so the exception was stated in those places and in quickstart.md. That change
+  was then made, and the exception removed from them again, in the last bullet of this list.
+  `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate` gains a row for it (the
+  AOT run, compare and the measurement fail; validation, the report and its
+  upload are skipped, the agreement report is uploaded and the job fails) and one for a measurement
+  that fails while every build agrees, which fails the job on its own: `continue-on-error` on the
+  measurement step fails that row, where it passed every row before. (B) The 580 s budget (30 s of
+  set-up, the 420 s deadline, the 10 s kill and compare's 120 s) covered compare but not the
+  `if: failure()` agreement upload after it, whose own 2 minutes were left 20 s when compare ran to its
+  bound. Compare's bound is now 1 minute and the upload's 1 minute: 30 + 420 + 10 + 60 + 60 = 580 of
+  the 600 s. A real compare after a node-interp run took about 2 s here, `dotnet run` included, so the
+  minute is a wide margin; keeping compare's 2 minutes would have cost a minute of the Firefox and
+  WebKit deadline. `test_optional_browsers_share_a_deadline_that_leaves_compare_its_time` asserts that
+  the upload is `failure()`, comes right after compare and is the job's last step, and sums both
+  bounds; compare or the upload back at 2 minutes, the upload before compare or on `always()`, or a
+  step after it each fail the test. (C) US2 scenario 7's sentence that an `agreement` check run that
+  has not registered is not waited for while `REQUIRE_CHECKS` is `"false"` put, inside an acceptance
+  scenario, a behaviour no test asserts. Pinning it would have made a known gap an acceptance
+  outcome, so the sentence is gone from the scenario, whose Then now names only the registered check
+  runs that the `AutoMerge` tests cover, and the existing Assumptions bullet says the scenario does
+  not state the unregistered case and no test claims it. The test docstrings that quoted the scenario,
+  the US2.7 coverage row and T284's note match; `auto-merge.yml` is unchanged.
+- **T322 (second independent review), T309, T302, T310, T297: a build that diverges on
+  `flat-run-30hz`'s first record is measured and reported `Diverged`.** The bullet above left one
+  case where a diverged relinked or AOT build wrote no report: `checkFirstStep` threw on any hash
+  that differed from the server's first record, so `measure.mjs` exited 1 before the report was
+  assembled. `measureMode` now reads `<work>/report/agreement.json` for `interp-relinked` and `aot`
+  (`agreementDiverged`, through the same `agreementBuilds` and `agreementOf` that `assembleReport`
+  uses) once the ten Node cold starts and the server's first record are in, and when the file lists
+  the mode's build (`node-interp-relinked`, `node-aot`) with status `Diverged`, `checkFirstStep`
+  accepts a well-formed `firstStep` at the server's step number with another hash, in both runtimes.
+  The build's agreement run and compare have already failed the job, the cold start still completed
+  step 1, so its times are still the time to the first completed step, and the report says
+  `Diverged`. Everything else still throws exactly as before: another step number (a cold start that
+  did not step), a malformed `firstStep`, the hash difference without the file, with the build
+  `Match` or `NotRun` or unlisted, and `interp-prebuilt`, whose agreement is the `agreement` job's and
+  which never reads the file. Reading the file there means one that is not JSON now fails a relinked
+  or AOT mode after its ten Node cold starts, with `assembleReport`'s own message, instead of after
+  every mode was measured; prebuilt-only runs are unchanged. The test is `'a build that
+  agreement.json lists as Diverged is measured though its first step has another hash'`: with
+  `node-aot` (and, in a second row, `node-interp-relinked`) `Diverged` and every cold start reporting
+  `{step: 1, hash: '9d4f3a17c0b2e685'}`, `measureMode` resolves after the whole mode and the
+  assembled report's `agreement` is exactly `{build, status: 'Diverged'}`; the same hash with the
+  build `Match` (the other build `Diverged`), with no file or no entry, a `Diverged` build whose cold
+  start reports step 0, step 2 or the second record, or no or an uppercase `firstStep`, and
+  `interp-prebuilt` with both builds `Diverged` each reject with exactly the earlier line. Probes:
+  ignoring the file fails the two resolving rows (and the `Diverged` rows that fail at a later cold
+  start, which then fail at cold start 1); accepting any hash always fails the `Match`, no-file,
+  no-entry and prebuilt rows; accepting any well-formed first step for a `Diverged` build fails the
+  step 0, step 2 and second-record rows; counting any build's `Diverged` for every mode fails the two
+  rows where only the other build diverged; reading the file for `interp-prebuilt` (as `node-aot`)
+  fails the prebuilt rows. The qualification the bullet above added is gone: the `measure` job's
+  header and step comment, contract step 5 (and step 6's exit-1 list and "how each number is
+  measured", which now state the exception), T310's steps 8 to 13, T297's and T309's text,
+  quickstart.md's Workflow tests paragraph, the failed-gate test's docstring and the workflow test
+  module's docstring (its `measure` item, which the second verifier of this fix found still qualified)
+  say that a relinked or AOT divergence fails the job while its report is still written, validated,
+  shown and uploaded with that mode's status `Diverged`; the first workflow bullet's pointer to the
+  qualified case now says it held until this bullet. `MeasureJob`'s row for the AOT build that
+  diverged at `flat-run-30hz`'s first step now has the measurement succeed, runs validation, the
+  report and both uploads, and fails the job on its gate.
+- **T322 (third independent review), T274 and T287: the server answers a refused or unknown request
+  exactly once, even when its body errors.** `drain`, which reads a refused PUT's, a non-GET request's
+  or an undecodable path's body to its end before the answer, called `then` only on the request's
+  `end` and swallowed its `error`, so a client that reset the connection mid-body left the response
+  never ended. It now answers on the first of `end`, `error` and `close`, never twice, keeps its error
+  listener, and is exported for the tests. `node/server.test.mjs` gains
+  `'drain answers a request exactly once: on its end, or on an error or close before it'` (each order
+  of the three events on a stand-in request, an ended body, and a `PassThrough` destroyed with an
+  error or ended) and `'a refused or unknown request reset mid-body is answered once, and the server
+  serves the next one'` (a refused PUT, a POST and an undecodable PUT, each declaring 1 MiB, sending
+  1 KiB from a raw socket that is destroyed once the server is dropping the body; the server's own
+  `IncomingMessage.resume` and `ServerResponse.end` are wrapped for the test to see that, and restored
+  exactly). Answering a response whose socket is gone was checked first: `writeHead` and `end` do not
+  throw and set `writableEnded`. Probes: the old `drain` fails 8 of the 49 tests (the four rows whose
+  first event is an `error` or a `close`, the destroyed `PassThrough`, and the three reset rows, each
+  `the response to <method> <path> was not ended within 5000 ms`); dropping the once guard fails 19,
+  the double answer becoming a 500. As fixed, all 49 pass.
+- **T320 (third spec-test review), T307: the measurement Worker runs in a Playwright spec.** Nothing
+  ran `web/measure-worker.mjs` but CI's `measure` job, so its one call into `timeFirstStep` was
+  guarded only there. `specs/measure-worker.spec.mjs`, modelled on `specs/worker-load-refusal.spec.mjs`,
+  writes its own publish folder and work directory and starts its own server per test, so it needs
+  neither `AGREEMENT_APP` nor `AGREEMENT_WORK` and runs in CI's existing `--project chromium` step (and
+  in the optional Firefox and WebKit runs, like the load-refusal spec). Its stand-in runtime puts a
+  floor under each interval with busy waits on the Worker's own clock (40 ms on import, 100 ms in
+  `create()`, 20 ms per `LoadCollision`), which is what lets the spec tell `bootRuntime`'s timings from
+  any others; finite and non-negative alone would pass zeros. Each `StepQueued(16)` busy-waits 0.1 ms
+  too, so each kind's `meanNs` and `p99Ns` are at least 6,250 ns (the clock and floating-point rounding
+  are both monotonic, so the floor holds exactly). Its `StepQueued` refuses a world or
+  commands that are not one measured stream's, and the manifest lists a decoy stream first.
+  `'a cold start posts booted, then the first step it committed with its timings, then done'` and
+  `'a steps run posts booted, then each step kind's cost in the report's order, then done'` assert the
+  exact messages. Probes on `measure-worker.mjs`: exports whose `StepQueued` returns 1 without writing
+  fail the cold start with the `fatal` `StepQueued(1) returned 1, but the report buffer holds 0 records
+  in 0 bytes, not one whole step record`; timings `{importMs: 0, createMs: 0}` fail `coldStart.importMs
+  is at least 40`; `bootRuntime`'s two timings swapped fail `coldStart.createMs is at least 100`;
+  timings `{}` post `undefined` intervals; taking the manifest's first stream fails both tests on the
+  decoy; and a step batch of 1 fails the steps test. The independent verification found that the
+  steps test, then checking only finite and non-negative costs, passed a step pass timed on a clock
+  that does not move (`now: () => 0`) or with `unitNs: 1e3`; with the 0.1 ms wait both fail
+  `steps movement: meanNs is at least 6250` (received 0 and 7.56). Restored, the Chromium project
+  passes all five specs, the full agreement run included, on a real publish.
 
 ## Delivery
 

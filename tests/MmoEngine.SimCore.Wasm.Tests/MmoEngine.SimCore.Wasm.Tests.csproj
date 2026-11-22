@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- A direct reference to the host, never a linked source file or [ExcludeFromCodeCoverage]: coverlet
+         skips test assemblies, so only a reference lets it report SimCoreExports.cs and Program.cs
+         (specs/015-shared-simulation-core/research.md R18). -->
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Wasm\MmoEngine.SimCore.Wasm.csproj" />
+    <!-- Test-only: Support/DefaultConfig binds simcore/config/default.json with SimConfigJson, the
+         server's binder, for the default config block (the block agreement prepare writes to
+         tables/config.bin). The host never references the server helpers. -->
+    <ProjectReference Include="..\..\src\MmoEngine.SimCore.Server\MmoEngine.SimCore.Server.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\MmoEngine.SimCore.Tests\Support\RepoPaths.cs" Link="Support\RepoPaths.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <!-- The browser build's host (FR-024, FR-025; specs/015-shared-simulation-core/contracts/wasm-api.md#host-exports,
+       research R15): one-line [JSExport] delegations to the core's BatchStepper, StreamRunner and
+       CrossBuildTables, so every rule it runs is the core's. It references only the core and attaches no
+       analyzer: only the core attaches the determinism analyzer (contracts/analyzer-rules.md#wiring).
+       InvariantGlobalization comes from Directory.Build.props, so the boot configuration is
+       globalizationMode "invariant" and no ICU file is downloaded. The publish output against the
+       prebuilt runtime pack is the only output the runners use; no workload is needed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The interop glue the JSExport generator emits is unsafe code (CS0227 otherwise). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.SimCore\MmoEngine.SimCore.csproj" />
+  </ItemGroup>
+</Project>

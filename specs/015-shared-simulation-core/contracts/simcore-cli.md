@@ -306,8 +306,10 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare -
 ```
 
 - `--require` is a comma-separated list of [build names](#build-names). It defaults to
-  `node-interp,node-interp-nojit,chromium-worker`. The `measure` job passes
-  `node-interp-relinked`, plus `node-aot` when the AOT build was produced.
+  `node-interp,node-interp-nojit,chromium-worker`. The `measure` job passes the builds it produced,
+  comma-joined: `node-interp-relinked` when the relinked build was produced and `node-aot` when the
+  AOT build was ([measurement-report.md](measurement-report.md) step 5). With neither produced, the
+  job's compare step is skipped.
 - Every known build with a folder under `<work>` is compared, required or not. A build with no folder
   is `NotRun`. Folders with other names are ignored.
 
@@ -348,7 +350,8 @@ written: after the build lines and first reports, the last line is
 when a build diverged, because a run whose report is lost could not finish. `agreement.json` is
 written before the summary is appended, so a summary that cannot be written leaves it in place.
 Otherwise exit 1 when any build is `Diverged`, else 0. A Firefox or WebKit build that Playwright
-could not install is reported `NotRun`, never as a pass.
+could not install, or that the `agreement` job's optional-browser deadline left no time to install or
+run, is reported `NotRun`, never as a pass.
 
 The NotComparable check reads only `formatVersion`, `rulesRevision` and `formats`, before the rest of
 the manifest, `formatVersion` first. A missing or non-integer `formatVersion` is unreadable (`agreement:
@@ -517,7 +520,8 @@ A stream is batchable when every step carries exactly one command, for character
 `RunStream` (US2 scenario 6). The measurement uses the same inputs.
 
 `run.json` is written only by the Node runner ([wasm-api.md](wasm-api.md#node)). It holds the build
-name, the runtime options, `runtimeBuildInfo`, Node's version and the start and end times. It is
+name, the runtime options, the jiterpreter state the runtime reported (`jiterpreter`),
+`runtimeBuildInfo`, Node's version and the start and end times. It is
 informational: `compare` does not read it, and a Worker build has none. A Worker's `inWorker`,
 `crossOriginIsolated`, `buildInfo` and `userAgent` are carried by its `booted` message, and the
 Playwright spec asserts `inWorker` and `crossOriginIsolated`
@@ -613,10 +617,10 @@ Playwright spec asserts `inWorker` and `crossOriginIsolated`
 | `node-interp` | Node, interpreted build, prebuilt runtime, jiterpreter on | `agreement` | yes |
 | `node-interp-nojit` | Node, interpreted build, prebuilt runtime, jiterpreter off | `agreement` | yes |
 | `chromium-worker` | dedicated Worker in headless Chromium | `agreement` | yes |
-| `firefox-worker` | dedicated Worker in Firefox | `agreement` | no: `NotRun` when Playwright cannot install it |
-| `webkit-worker` | dedicated Worker in WebKit | `agreement` | no: `NotRun` when Playwright cannot install it |
-| `node-interp-relinked` | Node, interpreted build relinked with the `wasm-tools` workload | `measure` | passed by the job |
-| `node-aot` | Node, ahead-of-time build | `measure` | passed by the job when AOT was produced |
+| `firefox-worker` | dedicated Worker in Firefox | `agreement` | no: `NotRun` when Playwright cannot install it, or the job's optional-browser deadline leaves no time to install or run it |
+| `webkit-worker` | dedicated Worker in WebKit | `agreement` | no: `NotRun` when Playwright cannot install it, or the job's optional-browser deadline leaves no time to install or run it |
+| `node-interp-relinked` | Node, interpreted build relinked with the `wasm-tools` workload | `measure` | passed by the job when the relinked build was produced |
+| `node-aot` | Node, ahead-of-time build | `measure` | passed by the job when the AOT build was produced |
 
 The runners are in [wasm-api.md](wasm-api.md#agreement-runners).
 
