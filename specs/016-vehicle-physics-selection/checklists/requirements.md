@@ -41,8 +41,15 @@
 - Success criteria name builds, runtimes and runner classes because agreement and cost on them are
   the outcome; they state no implementation of how agreement is reached.
 - Every user story has Given/When/Then acceptance scenarios and an Independent Test that an automated
-  test can run: the decision rule's branches are fixture reports, and the divergence measurement has a
-  known-offset fixture, so neither depends on which engine wins.
+  test can run. The decision rule's branches and band boundaries are fixture reports. The divergence
+  measurement has a known-offset fixture. The behavior checks, statuses and orchestration run on the
+  fixture engine (FR-035), and Rapier's fit verdicts run on fit-check fixtures. So no test depends on
+  which engine wins, and only the winner's checks run against a real engine on `main` (US1
+  scenario 14).
+- The review fixes name a few more mechanisms: the analyzer's rule IDs, pthread and `futex` counting,
+  `[JSImport]`, `emmalloc` and SPDX expressions. These are the subjects of the determinism, no-lock
+  and license requirements, which Principles II and VII state in those terms. They are not choices
+  about how the selection is built.
 - No `[NEEDS CLARIFICATION]` markers were written. The run was unattended (Principle XIII), so each
   open question was answered with the most defensible default and recorded under Assumptions and in
   the Clarifications session: the decision is gate 9's and not a constitution open decision;
@@ -53,3 +60,37 @@
 - Validation iteration 1: four items needed fixes (the tie rule with three qualifiers, per-mode
   wording in US3 and US5, NonExact eligibility excluding reset equivalence, and the native shims'
   coverage). Iteration 2: all items pass.
+- Iteration 3, after the spec review. FR numbers stay stable, so the review's references still
+  point at the right text. New requirements take the next free numbers, FR-032 to FR-037, plus
+  SC-009. The fixes:
+  - The adapters carry the analyzer, exempt only from named rules, and engine-neutral vehicle code
+    lives in the core. A lock test is a qualification check (FR-004, FR-033, FR-034).
+  - The license scan covers only what a candidate adds over the core-only builds, with SPDX `OR`,
+    the LLVM exception and `emmalloc` settled for the scan. How Principle VII treats platform
+    libraries is a follow-up (FR-031).
+  - Iteration 1's NonExact eligibility excluded reset equivalence wholesale. It now exempts only the
+    cross-build part, and server-build reset equivalence is required of every winner (FR-026).
+  - US1 checks are tested on a fixture engine with known faults, and the winner's checks run on
+    `main`. US6 runs on fit-check fixtures (FR-035).
+  - A NonExact record is scoped to worlds with vehicles, and version 2 records carry a version 1
+    part hash (FR-012, FR-027).
+  - The provisional flag has an exact condition and does not by itself meet gate 9's exit criterion.
+    Its follow-up is sub-spec 6's dependency, not a duty this spec gives sub-spec 6.
+  - Every behavior tolerance and time bound is justified under Assumptions, and the tolerances, the
+    window and the bounds moved to a selection configuration that no stream carries (FR-036).
+  - The decision records per-candidate evidence for parallel Movement phases (FR-027).
+  - One inclusive tie formula, a cost-then-size tie-break before the fixed order, boundary,
+    mixed-mode and cheapest-but-Diverged fixtures (FR-026, US3).
+  - End-to-end denial scenarios for Diverged, Failed and LicenseBlocked (US1 scenario 13, US2
+    scenarios 9 to 11).
+  - A status table with reason codes, precedence and exit codes (FR-037).
+  - Oracles that do not use the engine, and contact events derived by the core (FR-011, FR-012).
+  - Eight vehicles per seeded stream, with checked coverage, and the build modes and builds named
+    (FR-010, FR-018).
+  - A committed manifest at commit 65112ab as 015's baseline, a 15-minute bound on every build, and
+    a static fit check (d) (FR-015, FR-021, FR-030).
+  - Jolt and Rapier run as separate WebAssembly modules through `[JSImport]`, in all three modes
+    (FR-032).
+  - The window is checked against every committed network profile, loss included (FR-022).
+
+  All items pass.
