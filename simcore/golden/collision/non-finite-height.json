@@ -1,0 +1,12 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "non-finite-height",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 64, "hex": "0000c07f" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "NonFinite", "offset": 64, "field": "heights[4]" }
+}

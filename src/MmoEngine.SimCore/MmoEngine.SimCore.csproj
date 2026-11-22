@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The shared simulation core references only the BCL and System.IO.Hashing
+       (specs/015-shared-simulation-core/plan.md). Architecture/CoreDependencyTests enforces this. -->
+  <PropertyGroup>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The determinism analyzer runs on the core only and does not flow to consumers
+         (specs/015-shared-simulation-core/contracts/analyzer-rules.md#wiring). -->
+    <ProjectReference Include="..\MmoEngine.SimCore.Analyzers\MmoEngine.SimCore.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.SimCore.Tests" />
+  </ItemGroup>
+</Project>

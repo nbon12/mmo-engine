@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "trailing-bytes",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "append", "hex": "00000000" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 188, "field": "fileLength" }
+}

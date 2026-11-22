@@ -1,0 +1,4 @@
+# Binary content of the shared simulation core (specs/015-shared-simulation-core): no line-ending conversion, no text diff or merge.
+*.mmcd binary
+*.mmrs binary
+simcore/golden/**/*.bin binary

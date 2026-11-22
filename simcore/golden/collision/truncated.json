@@ -1,0 +1,11 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "truncated",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "truncate", "length": 100 }
+  ],
+  "expectedError": { "code": "Truncated", "offset": 100, "field": "fileLength" }
+}

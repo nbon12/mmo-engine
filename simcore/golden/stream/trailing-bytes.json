@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "trailing-bytes",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "append", "hex": "00000000" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 950, "field": "fileLength" }
+}

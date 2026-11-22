@@ -1,0 +1,12 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "config-count-short",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 64, "hex": "7300" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 756, "field": "config.count" }
+}

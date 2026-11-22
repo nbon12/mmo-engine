@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The server-only helpers the continent server will reuse: JSON binding, the FluentValidation
+       adapter, the environment check, the generators and the divergence report
+       (specs/015-shared-simulation-core/plan.md, Structure Decision). -->
+  <ItemGroup>
+    <ProjectReference Include="..\MmoEngine.SimCore\MmoEngine.SimCore.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MmoEngine.SimCore.Tests" />
+  </ItemGroup>
+</Project>

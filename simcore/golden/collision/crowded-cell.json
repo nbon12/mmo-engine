@@ -1,0 +1,16 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "crowded-cell",
+  "kind": "refusal",
+  "base": "full-cell",
+  "mutations": [
+    { "op": "insert", "offset": 2400, "hex": "1e85eb3e0000000000000000d6a3f03e00000000000000001e85eb3e0000003f00000000" },
+    { "op": "insert", "offset": 3204, "hex": "c0000000c1000000c2000000" },
+    { "op": "write", "offset": 88, "hex": "c3000000" },
+    { "op": "write", "offset": 92, "hex": "41000000" },
+    { "op": "write", "offset": 8, "hex": "980c000000000000" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 3204, "field": "grid.cells[0,0]" }
+}

@@ -1,0 +1,16 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "config-invalid",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 122, "hex": "0000c07f" },
+    { "op": "fixChecksum" }
+  ],
+  "refusedAt": "open",
+  "collisionFixtures": ["tiny-world"],
+  "expectedConfigErrors": [
+    { "path": "movement.gravity", "message": "must be finite" }
+  ]
+}

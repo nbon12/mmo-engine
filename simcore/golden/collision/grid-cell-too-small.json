@@ -1,0 +1,12 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "grid-cell-too-small",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 28, "hex": "0000803e" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 28, "field": "gridCellSize" }
+}

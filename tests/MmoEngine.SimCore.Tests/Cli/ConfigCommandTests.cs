@@ -1,0 +1,212 @@
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using MmoEngine.SimCore.Cli.Commands;
+using MmoEngine.SimCore.Tests.Support;
+using Serilog.Core;
+
+namespace MmoEngine.SimCore.Tests.Cli;
+
+/// <summary>
+/// FR-029, contracts/simcore-cli.md#config-check: <c>simcore config check &lt;file&gt;</c> binds the file
+/// with <c>SimConfigJson</c>, validates it with <c>SimConfigValidator</c> and prints one
+/// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
+/// valid. It exits 0 when valid, 1 when invalid, and 2 on a usage error or a refused input: a missing
+/// file, one longer than 1 MiB (from its length, or once more than 1 MiB has been read) or one that cannot
+/// be read, named in one line that is all of stderr, with nothing on stdout, or an empty or
+/// whitespace-only file argument, refused as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
+/// </summary>
+public sealed class ConfigCommandTests
+{
+    /// <summary>The two errors of the invalid copy, in rule-table order (stepRateHz is section 0, walkSpeed section 1).</summary>
+    private const string InvalidOutput =
+        "stepRateHz: must be between 20 and 60\n" +
+        "movement.walkSpeed: must be between 0.1 and 20\n";
+
+    /// <summary>The largest configuration file <c>config check</c> reads, 1 MiB.</summary>
+    private const long MaxFileLength = 1024 * 1024;
+
+    public static TheoryData<string> Cases =>
+        ["valid", "invalid", "missing-file", "oversized-file", "unreadable-file", "no-file-argument", "empty-file-argument", "whitespace-file-argument"];
+
+    public static TheoryData<string> BoundedReadCases => ["no-length-at-the-limit", "no-length-over-the-limit", "grew-after-the-check"];
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void ConfigCheckExitsZeroForValidOneForInvalidTwoForMissingOrRefused(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-check");
+        var row = Row(caseName, directory);
+        using var hold = row.Hold;
+
+        var (exit, stdout, stderr) = SimcoreCli.Run(row.Args);
+
+        Assert.True(
+            exit == row.Exit,
+            $"{caseName}: simcore {string.Join(' ', row.Args)} exited {exit}, expected {row.Exit}; stdout: {stdout}; stderr: {stderr}");
+        if (row.Stdout is not null)
+        {
+            Assert.Equal(row.Stdout, stdout);
+        }
+
+        if (row.Stderr is not null)
+        {
+            Assert.Equal(row.Stderr, stderr);
+        }
+
+        if (row.StderrContains is not null)
+        {
+            Assert.Contains(row.StderrContains, stderr, StringComparison.Ordinal);
+        }
+
+        if (row.StderrPattern is not null)
+        {
+            Assert.Matches(row.StderrPattern, stderr);
+        }
+    }
+
+    /// <summary>
+    /// <c>config check</c> reads at most 1 MiB + 1 byte, whatever its length check saw
+    /// (contracts/simcore-cli.md#config-check). Given a copy of <c>simcore/config/default.json</c> whose
+    /// stream, as for a pipe or a device, has no length and gives (<c>no-length-at-the-limit</c>)
+    /// <c>default.json</c> padded with spaces to exactly 1,048,576 bytes or (<c>no-length-over-the-limit</c>)
+    /// zeros without end, or (<c>grew-after-the-check</c>) a copy that grows to 1,048,577 bytes after its
+    /// length is checked and before it is opened, When <c>config check</c> runs on it, Then the first exits 0
+    /// with nothing on stdout or stderr after reading exactly 1,048,576 bytes, and the other two exit 2 with
+    /// nothing on stdout and exactly <c>&lt;path&gt;: the file holds more than 1048576 bytes; the limit is
+    /// 1048576</c> on stderr, the endless stream after exactly 1,048,577 bytes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BoundedReadCases))]
+    public void ConfigCheckReadsAtMostTheLimitPlusOneByte(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-check-bounded");
+        var path = directory.Combine("default.json");
+        File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
+        UnseekableStream? pipe = caseName switch
+        {
+            "no-length-at-the-limit" => new UnseekableStream(ConfigFiles.DefaultPaddedTo(MaxFileLength)),
+            "no-length-over-the-limit" => new UnseekableStream(content: null),
+            "grew-after-the-check" => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var exit = ConfigCommand.Check(path, stdout, stderr, Logger.None, opened => pipe ?? ConfigFiles.GrowThenOpen(opened, MaxFileLength + 1));
+
+        Assert.Equal(string.Empty, stdout.ToString());
+        if (caseName == "no-length-at-the-limit")
+        {
+            Assert.True(exit == 0, $"{caseName}: config check exited {exit}, expected 0; stderr: {stderr}");
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(pipe!.BytesRead == MaxFileLength, $"config check read {pipe.BytesRead} bytes of a {MaxFileLength}-byte stream");
+            return;
+        }
+
+        Assert.True(exit == 2, $"{caseName}: config check exited {exit}, expected 2; stderr: {stderr}");
+        Assert.Equal($"{path}: the file holds more than 1048576 bytes; the limit is 1048576\n", stderr.ToString());
+        if (pipe is not null)
+        {
+            Assert.True(pipe.BytesRead == MaxFileLength + 1, $"config check read {pipe.BytesRead} bytes of an endless stream; it may read at most {MaxFileLength + 1}");
+        }
+    }
+
+    /// <summary>
+    /// A row's arguments and what it must give. Only the invalid, oversized and unreadable rows write a file,
+    /// into <paramref name="directory"/>; the unreadable row also returns, as <c>Hold</c>, the exclusive
+    /// handle that keeps the file unreadable for the run.
+    /// </summary>
+    private static ConfigCheckRow Row(string caseName, TempDirectory directory)
+    {
+        switch (caseName)
+        {
+            case "valid":
+                return new(["config", "check", DefaultConfigPath], Exit: 0, Stdout: string.Empty);
+
+            case "invalid":
+                return new(["config", "check", WriteInvalidCopy(directory)], Exit: 1, Stdout: InvalidOutput);
+
+            case "missing-file":
+                var missing = directory.Combine("missing.json");
+                return new(["config", "check", missing], Exit: 2, Stdout: string.Empty, Stderr: $"{missing}: the file does not exist\n");
+
+            // One byte over the limit: refused from its length, before it is read, so nothing is
+            // bound and nothing reaches stdout.
+            case "oversized-file":
+                var oversized = WriteOversizedFile(directory);
+                return new(
+                    ["config", "check", oversized],
+                    Exit: 2,
+                    Stdout: string.Empty,
+                    Stderr: $"{oversized}: the file is {MaxFileLength + 1} bytes; the limit is {MaxFileLength}\n");
+
+            // A valid copy that another handle holds exclusively (FileShare.None) for the whole run, so it
+            // exists and is short enough, but reading it fails: stderr is exactly one line naming it with a
+            // non-empty reason in parentheses, and nothing is bound or printed on stdout. The pattern ends
+            // with \z, not $, which would also accept a final extra line feed; . does not match one.
+            case "unreadable-file":
+                var locked = directory.Combine("locked.json");
+                var hold = ConfigFiles.WriteHeldCopy(locked);
+                return new(
+                    ["config", "check", locked],
+                    Exit: 2,
+                    Stdout: string.Empty,
+                    StderrPattern: $@"^{Regex.Escape(locked)}: the file cannot be read \(.+\)\n\z",
+                    Hold: hold);
+
+            case "no-file-argument":
+                return new(["config", "check"], Exit: 2);
+
+            // An empty or whitespace-only path is a usage error when the command line is parsed, so no
+            // file API sees it and nothing reaches stdout.
+            case "empty-file-argument":
+                return new(["config", "check", string.Empty], Exit: 2, Stdout: string.Empty, StderrContains: "<file>: the path must not be empty or whitespace");
+
+            case "whitespace-file-argument":
+                return new(["config", "check", "   "], Exit: 2, Stdout: string.Empty, StderrContains: "<file>: the path must not be empty or whitespace");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case.");
+        }
+    }
+
+    /// <summary>The committed placeholders, opened by the CLI by their absolute path.</summary>
+    private static string DefaultConfigPath => RepoPaths.Combine("simcore", "config", "default.json");
+
+    /// <summary>
+    /// A copy of <c>simcore/config/default.json</c> with <c>stepRateHz</c> 61 and <c>movement.walkSpeed</c>
+    /// 0, written into <paramref name="directory"/>. The repository file is only read.
+    /// </summary>
+    private static string WriteInvalidCopy(TempDirectory directory)
+    {
+        var config = JsonNode.Parse(RepoPaths.ReadAllText("simcore", "config", "default.json"))!.AsObject();
+        config["stepRateHz"] = 61;
+        config["movement"]!["walkSpeed"] = 0;
+        var path = directory.Combine("default.json");
+        File.WriteAllText(path, config.ToJsonString());
+        return path;
+    }
+
+    /// <summary>A sparse file one byte longer than 1 MiB, written into <paramref name="directory"/>.</summary>
+    private static string WriteOversizedFile(TempDirectory directory)
+    {
+        var path = directory.Combine("oversized.json");
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+        stream.SetLength(MaxFileLength + 1);
+        return path;
+    }
+
+    /// <summary>
+    /// The arguments, the exit code, and, each when given, the exact stdout, the exact stderr, a text stderr
+    /// must contain and a pattern all of stderr must match; and a handle the row holds open while the command
+    /// runs, if any.
+    /// </summary>
+    private sealed record ConfigCheckRow(
+        string[] Args,
+        int Exit,
+        string? Stdout = null,
+        string? Stderr = null,
+        string? StderrContains = null,
+        string? StderrPattern = null,
+        IDisposable? Hold = null);
+}

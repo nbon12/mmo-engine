@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "unknown-magic",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 0, "hex": "4d4d5258" }
+  ],
+  "expectedError": { "code": "UnknownMagic", "offset": 0, "field": "magic" }
+}

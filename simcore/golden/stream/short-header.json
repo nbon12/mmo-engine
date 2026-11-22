@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "short-header",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "truncate", "length": 40 }
+  ],
+  "expectedError": { "code": "Truncated", "offset": 40, "field": "header" }
+}

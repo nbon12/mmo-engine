@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "state-too-long",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 48, "hex": "01001000" }
+  ],
+  "expectedError": { "code": "Oversized", "offset": 48, "field": "initialStateLength" }
+}

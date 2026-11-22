@@ -1,0 +1,15 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "neutral",
+  "kind": "valid",
+  "command": {
+    "sequence": 1,
+    "clientStep": 0,
+    "buttons": 0,
+    "aimYaw": 0,
+    "aimPitch": 0,
+    "weaponSlot": 0
+  },
+  "validate": { "lastSequence": 0, "weaponSlots": 2, "expected": "None" }
+}

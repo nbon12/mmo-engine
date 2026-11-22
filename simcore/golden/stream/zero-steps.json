@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "zero-steps",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 16, "hex": "00000000" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 16, "field": "stepCount" }
+}

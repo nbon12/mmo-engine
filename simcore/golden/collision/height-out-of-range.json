@@ -1,0 +1,12 @@
+{
+  "format": "collision",
+  "formatVersion": 1,
+  "case": "height-out-of-range",
+  "kind": "refusal",
+  "base": "tiny-world",
+  "mutations": [
+    { "op": "write", "offset": 64, "hex": "00a00c46" },
+    { "op": "fixChecksum" }
+  ],
+  "expectedError": { "code": "OutOfRange", "offset": 64, "field": "heights[4]" }
+}

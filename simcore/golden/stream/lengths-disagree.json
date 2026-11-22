@@ -1,0 +1,11 @@
+{
+  "format": "stream",
+  "formatVersion": 1,
+  "case": "lengths-disagree",
+  "kind": "refusal",
+  "base": "two-steps",
+  "mutations": [
+    { "op": "write", "offset": 52, "hex": "2d000000" }
+  ],
+  "expectedError": { "code": "Inconsistent", "offset": 56, "field": "fileLength" }
+}

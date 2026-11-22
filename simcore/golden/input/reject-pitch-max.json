@@ -1,0 +1,15 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "reject-pitch-max",
+  "kind": "valid",
+  "command": {
+    "sequence": 1,
+    "clientStep": 0,
+    "buttons": 0,
+    "aimYaw": 0,
+    "aimPitch": 32767,
+    "weaponSlot": 0
+  },
+  "validate": { "lastSequence": 0, "weaponSlots": 2, "expected": "PitchOutOfRange" }
+}

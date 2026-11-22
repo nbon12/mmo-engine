@@ -1,0 +1,9 @@
+{
+  "format": "input",
+  "formatVersion": 1,
+  "case": "refuse-oversized-18",
+  "kind": "refusal",
+  "base": "neutral",
+  "mutations": [ { "op": "append", "hex": "00" } ],
+  "expectedError": { "code": "Oversized", "offset": 17, "field": "length" }
+}
