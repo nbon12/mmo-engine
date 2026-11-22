@@ -241,6 +241,9 @@ public sealed class QuickstartTests
     /// <summary>The check that every slice-2 heading is in the file and holds a bash line.</summary>
     private const string SectionCheck = "section";
 
+    /// <summary>What the section check says of a slice-2 heading the file lacks outside its fenced blocks.</summary>
+    private const string NotAHeading = "is not a heading of quickstart.md";
+
     /// <summary>The check that a bash line splits into words (its quotes are closed).</summary>
     private const string ShellCheck = "shell";
 
@@ -386,8 +389,19 @@ public sealed class QuickstartTests
             "AGREEMENT_BUILD=node-interp-nojit node --test tools/agreement/node/agreement.test.mjs",
             LocatesDefect: false),
 
-        // A missing heading has no line of its own: the failure names the heading the file lacks.
-        new("section-renamed", "\n## Workflow tests\n", "\n## Workflow test\n", 1, SectionCheck, "## Workflow tests", LocatesDefect: false),
+        // A missing heading has no line of its own: the failure names the heading the file lacks. A fenced
+        // Markdown sample holding the heading is block content, not the heading, so it does not stand in
+        // for the renamed one.
+        new("section-renamed", "\n## Workflow tests\n", "\n## Workflow test\n", 1, SectionCheck, "## Workflow tests", LocatesDefect: false, Message: NotAHeading),
+        new(
+            "section-heading-only-in-a-fence",
+            "\n## Workflow tests\n",
+            "\n```markdown\n## Workflow tests\n```\n\n## Workflow test\n",
+            1,
+            SectionCheck,
+            "## Workflow tests",
+            LocatesDefect: false,
+            Message: NotAHeading),
     ];
 
     /// <summary>The names of <see cref="Defects"/>, one row each.</summary>
@@ -438,10 +452,11 @@ public sealed class QuickstartTests
         var reported = failures
             .Where(failure => failure.Check == row.Check && failure.Line.Contains(row.Needle, StringComparison.Ordinal))
             .Where(failure => !row.LocatesDefect || (failure.First <= line && line <= failure.Last))
+            .Where(failure => row.Message is null || failure.Message == row.Message)
             .ToArray();
         Assert.True(
             reported.Length > 0,
-            $"defect {defect} at line {line} should fail the {row.Check} check on a line holding '{row.Needle}'; the checks reported:\n{string.Join('\n', failures)}");
+            $"defect {defect} at line {line} should fail the {row.Check} check on a line holding '{row.Needle}'{(row.Message is null ? string.Empty : $" with '{row.Message}'")}; the checks reported:\n{string.Join('\n', failures)}");
     }
 
     /// <summary>
@@ -463,6 +478,27 @@ public sealed class QuickstartTests
     public void PlaywrightProjectsAreReadOutsideComments(string config, string project, bool declared)
     {
         Assert.Equal(declared, DeclaresProject(config, project));
+    }
+
+    /// <summary>
+    /// <see cref="QuickstartSections.Headings"/>, which the section check reads, takes a <c>## </c> line
+    /// as a heading only outside a fenced block, with <see cref="QuickstartSections.BashLines"/>' fence
+    /// handling: a block opens on a line whose trimmed start is three backticks and closes on one of only
+    /// backticks, and a fence line with an info string inside a block is block content. Each heading keeps
+    /// its own line number, so a fenced copy earlier in the file never stands in for it.
+    /// </summary>
+    [Theory]
+    [InlineData("## A\ntext\n## B", "A@1 B@3")]
+    [InlineData("```markdown\n## A\n```\n## A", "A@4")]
+    [InlineData("```bash\n## A\n```", "")]
+    [InlineData("  ```\n## A\n```bash\n## B\n```\n## C", "C@6")]
+    [InlineData("### A\n##B\n ## C\n## D ", "D@4")]
+    [InlineData("## A\r\n```\r\n## B\r\n```\r\n## C", "A@1 C@5")]
+    public void QuickstartHeadingsAreReadOutsideFences(string markdown, string expected)
+    {
+        var headings = QuickstartSections.Headings(markdown).Select(heading => $"{heading.Heading}@{heading.Line}");
+
+        Assert.Equal(expected, string.Join(' ', headings));
     }
 
     [Theory]
@@ -495,17 +531,18 @@ public sealed class QuickstartTests
         return failures;
     }
 
-    /// <summary>Every heading of <see cref="QuickstartSections.SliceTwo"/> is a <c>##</c> line of the file and yields a bash line.</summary>
+    /// <summary>
+    /// Every heading of <see cref="QuickstartSections.SliceTwo"/> is a <c>##</c> heading of the file and
+    /// yields a bash line. The headings come from <see cref="QuickstartSections.Headings"/>, which reads the
+    /// fences as <see cref="QuickstartSections.BashLines"/> does, so a <c>## </c> line inside a fenced block
+    /// is no heading to either.
+    /// </summary>
     private static List<QuickstartFailure> CheckSections(string markdown)
     {
         var headings = new Dictionary<string, int>(StringComparer.Ordinal);
-        var lines = markdown.ReplaceLineEndings("\n").Split('\n');
-        for (var i = 0; i < lines.Length; i++)
+        foreach (var (heading, line) in QuickstartSections.Headings(markdown))
         {
-            if (lines[i].StartsWith("## ", StringComparison.Ordinal))
-            {
-                headings.TryAdd(lines[i][3..].Trim(), i + 1);
-            }
+            headings.TryAdd(heading, line);
         }
 
         var failures = new List<QuickstartFailure>();
@@ -513,7 +550,7 @@ public sealed class QuickstartTests
         {
             if (!headings.TryGetValue(heading, out var number))
             {
-                failures.Add(new QuickstartFailure(SectionCheck, 0, 0, $"## {heading}", "is not a heading of quickstart.md"));
+                failures.Add(new QuickstartFailure(SectionCheck, 0, 0, $"## {heading}", NotAHeading));
             }
             else if (!QuickstartSections.BashLines(markdown, heading).Any())
             {
@@ -1162,7 +1199,9 @@ public sealed class QuickstartTests
     /// <summary>
     /// One row of <see cref="SliceTwoChecksReportEachDefect"/>. <see cref="LocatesDefect"/> is false only
     /// for a defect whose failure is not on the line it changes: a renamed heading, which removes the line a
-    /// check would name, or a <c>cd</c> on a line of its own, which moves the lines after it.
+    /// check would name, or a <c>cd</c> on a line of its own, which moves the lines after it. A row with a
+    /// <see cref="Message"/> also requires the failure to say exactly that, for a check that can fail the
+    /// same line in more than one way.
     /// </summary>
     private sealed record QuickstartDefect(
         string Name,
@@ -1171,5 +1210,6 @@ public sealed class QuickstartTests
         int Occurrences,
         string Check,
         string Needle,
-        bool LocatesDefect);
+        bool LocatesDefect,
+        string? Message = null);
 }

@@ -2308,6 +2308,21 @@ The design documents settled these points, which the spec leaves open. They are 
 - **T315 (second Phase 13 review):** step 3 is the quickstart's required Chromium install word for
   word, and the measurement run replaced the quickstart's `MMO_RUNNER_CLASS=local-dev` with
   `cloud-session-container-x64`, as T315 now says.
+- **T311 and T312 (third Phase 13 review): the section check reads headings through the bash
+  reader's fence scan.** `CheckSections` took every line that starts with `## ` as a heading, while
+  `QuickstartSections.BashLines` skips one inside a fenced block. With a fenced Markdown sample holding
+  a slice-2 heading before the real one, a renamed real heading was reported as "has no line in a
+  ```` ```bash ```` block" on the fenced line, not as missing, and with both present the check kept the
+  fenced line's number. `QuickstartSections.Headings` now gives the headings, and it and `BashLines`
+  share one private scan of the fences, so the two cannot drift apart again. The alternative, copying
+  `BashLines`' fence state into `CheckSections`, was not chosen, because two copies are what drifted.
+  A new defect row puts such a sample before the renamed heading, and both rename rows now name the
+  failure's message, since the section check fails a heading in two ways; with the old scan that row
+  fails. `QuickstartTests.QuickstartHeadingsAreReadOutsideFences` pins the reader. The same review
+  asked for publish-check and shell-check defect rows; those rows were already in place, from the
+  first Phase 13 review. Slice 1's `Collect` in `EverySliceOneQuickstartCommandParses` keeps its own
+  heading scan, since this review covered T311 to T316 only; quickstart.md holds no `## ` line inside a
+  fenced block, so both scans read its headings alike.
 
 ## Delivery
 
