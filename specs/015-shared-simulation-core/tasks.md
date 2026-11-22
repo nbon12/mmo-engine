@@ -3065,7 +3065,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. The server answers 204, or 403 for anything else, and 404 for unknown paths.
 
   Makes T274 (server.test.mjs) pass: 19 of its 23 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
-- [ ] T288 [US2] Implement `tools/agreement/lib/runtime.mjs` (contracts/wasm-api.md#boot), after T285:
+- [X] T288 [US2] Implement `tools/agreement/lib/runtime.mjs` (contracts/wasm-api.md#boot), after T285:
   - `JITERPRETER_OFF`, the three `--no-jiterpreter-*` flags;
   - `bootRuntime(dotnetJsUrl, { jiterpreter = true })`, which uses `dotnet.withRuntimeOptions(...)`, gets `getAssemblyExports('MmoEngine.SimCore.Wasm.dll')` and returns `{ runtime, exports, buildInfo, timings }`;
   - the record helpers `readRecords(bytes)` (u32 step, u32 stateLength, state, u64 hash, little-endian, next at `o + 16 + s`) and `firstDifferingStep(server, build)`. The latter returns the first step whose record is missing, has another step number, or differs in state bytes or hash, or `null` when both are equal.
@@ -3076,7 +3076,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `node --test tools/agreement/node/agreement.test.mjs`, with `AGREEMENT_BUILD=node-interp` and again with `node-interp-nojit`. Both pass every test.
 
   Makes T275 (per-stream tests, US2.1, US4.2b, US4-ITb and US5-ITb), T276 (US2.3), T277 (perturbation, US2-IT), T278 (tables, US3.8b and US5.5b) and T279 (batch and refusals) pass. A divergence found here is fixed in the core, never by special-casing a build. It is re-recorded with `streams record --scenario <name> --reason "…"` only when the server's rule itself was wrong, and `SimCoreVersion.RulesRevision` stays 1.
-- [ ] T289 [US2] Implement the Worker runner (contracts/wasm-api.md#worker-playwright), after T288:
+- [X] T289 [US2] Implement the Worker runner (contracts/wasm-api.md#worker-playwright), after T288:
   - `tools/agreement/playwright.config.mjs`: `testDir: 'specs'`, projects `chromium`, `firefox` and `webkit` (headless), `retries: 0`, `workers: 1`, a 5-minute test timeout and the `list` reporter.
   - `tools/agreement/web/page.html`: a module script creates `new Worker('./worker.mjs', { type: 'module' })` and posts `start` with `build` from the query and `runtimeOptions: []`. It appends every message to `window.__agreement.events` and sets `window.__agreement.done` on `done` or `fatal`.
   - `tools/agreement/web/worker.mjs`, which posts the contract's message types (`booted`, `stream`, `error`, `batch`, `tables`, `done` and `fatal`) with their fields:

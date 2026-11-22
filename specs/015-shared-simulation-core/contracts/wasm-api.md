@@ -537,6 +537,13 @@ export async function bootRuntime(dotnetJsUrl, { jiterpreter = true } = {}) {
 - **Playwright's Node-side loader** treats `dotnet.js` as CommonJS (`SyntaxError: Cannot use
   'import.meta' outside a module`), so the Node run uses `node --test`, not a Playwright project
   [measured].
+- **Record helpers.** `runtime.mjs` also exports `readRecords(bytes)`, each record's `step`, `offset`,
+  `length`, `state` (a view) and `hash` (a `BigInt`), which throws `RangeError` on a cut-off record, and
+  `firstDifferingStep(server, build)`. The latter walks the server's records in order, as
+  `agreement compare` does (`DivergenceReport.CompareBuild`): the first server step whose build record is
+  missing or cut off, has another step number, or differs in state bytes or hash; then, past the
+  server's last record, the build's first extra record (its step, or the server's last step + 1 when it
+  is cut off); `null` when both are equal. The module uses no Node API, so the Worker imports it too.
 
 ## Served files
 
@@ -609,7 +616,9 @@ Node's version and the start and end times.
 1. The spec opens `http://127.0.0.1:<port>/web/page.html?build=<build>` and collects console
    messages from the page and the Worker.
 2. `page.html` creates the module Worker, posts `start`, and appends every message it receives to
-   `window.__agreement.events`, setting `window.__agreement.done` on `done` or `fatal`.
+   `window.__agreement.events`, setting `window.__agreement.done` on `done` or `fatal`. A Worker
+   `error` event (the module did not load, or threw outside its checks) or `messageerror` is appended
+   as a `fatal` naming it, so a broken Worker fails the spec at once rather than at the test timeout.
 3. The Worker boots, fetches `/work/manifest.json`, and for each stream fetches the stream and its
    collision file, calls `RunStream(stream, collision, -1)`, `PUT`s the records to
    `/work/<build>/<stream>.records`, fetches `/work/server/<stream>.records`, compares the bytes and
@@ -626,12 +635,12 @@ Messages:
 | --- | --- | --- |
 | page → Worker | `start` | `build`, `runtimeOptions` (an array; empty for the agreement run) |
 | Worker → page | `booted` | `inWorker` (true when `self` is a `WorkerGlobalScope`), `crossOriginIsolated`, `buildInfo` (`runtimeBuildInfo`), `userAgent` |
-| Worker → page | `stream` | `name`, `steps`, `match`, `firstMismatchStep` (null when `match` is true) |
-| Worker → page | `error` | `name`, `message` |
+| Worker → page | `stream` | `name`, `steps` (the manifest's step count), `match`, `firstMismatchStep` (null when `match` is true) |
+| Worker → page | `error` | `name`, `message`: a stream, batch check (the message starts `batch: `) or tables check (`name` is `tables`) that could not finish: an export threw, a load call or `StepQueued` returned another code, or a file did not fetch or `PUT` |
 | Worker → page | `batch` | `name`, `match`, `firstMismatchStep` |
 | Worker → page | `tables` | `match`, `firstMismatch` (null when `match` is true; otherwise the mismatch line) |
-| Worker → page | `done` | `streams` (the number run), `mismatches`, `errors` |
-| Worker → page | `fatal` | `message` (boot or manifest failure) |
+| Worker → page | `done` | `streams` (the number run), `mismatches` (the stream, batch and tables comparisons that did not match), `errors` (the `error` messages posted) |
+| Worker → page | `fatal` | `message` (boot or manifest failure, or a `start` with no build or with runtime options; the agreement Worker boots with the defaults) |
 
 The spec asserts: a `booted` message with `inWorker` and `crossOriginIsolated` true; one `stream` message per manifest stream,
 each with `match` true; no `error` and no `fatal`; every `batch` message with `match` true; one

@@ -1946,6 +1946,18 @@ The design documents settled these points, which the spec leaves open. They are 
   `compareTables` over 5,187 one-bit flips of a random 64-row table (unknown function IDs and stances,
   NaN and extreme positions) gives the same line every time. Every position of the fixed table reads the
   same either way. T286 now says so.
+- **T288 and T289: where the contract was silent, the runners follow `agreement compare`, and a broken
+  Worker fails at once.** `firstDifferingStep` names the records the build has past the server's last
+  as a difference at the first of them, as `DivergenceReport.CompareBuild` does, so a runner's failure
+  and the job's report name the same step. The Worker's `done.mismatches` counts every stream, batch
+  and tables comparison that did not match, and `done.errors` counts its `error` messages. A batch
+  check that cannot finish (a load call or `StepQueued` returning another code) posts an `error` whose
+  message starts `batch: `. `stream.steps` is the manifest's step count. `page.html` also appends a
+  Worker `error` or `messageerror` event as a `fatal`, because without it a Worker module that fails to
+  load leaves the page waiting until the 5-minute test timeout, with no message; with it, a run against
+  an app root with no `_framework/` failed in under 2 s, naming the import that failed. The
+  configuration also sets `forbidOnly`, so a committed `.only` fails the run. contracts/wasm-api.md#boot
+  and #worker-playwright now describe the record helpers, the message fields and the page's `fatal`.
 
 ## Delivery
 
