@@ -30,8 +30,10 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    catches an exporter's exception and only logs it, so the exporter records the path it wrote and the
    entry point checks it; an export left over from an earlier run never passes the step.
 2. **The prebuilt interpreted build**, published before the workload is installed:
-   `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o <dir>`. Without the workload, publish
-   uses the prebuilt runtime [measured].
+   `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o <dir>`,
+   the `agreement` job's publish command. Without the workload, publish uses the prebuilt runtime
+   [measured]; the flag keeps it there even on a runner image that ships the workload, so this mode is
+   the build the `agreement` job tested as `node-interp`.
 3. **The workload.** `dotnet workload install wasm-tools`, continuing on error. With the workload,
    `InvariantGlobalization=true` forces a native relink on every publish [measured], so the prebuilt
    build has to come first.

@@ -12,10 +12,15 @@ that job depends on:
 - the agreement steps, their order and the compare gate (US2.7, SC-001), the 10-minute timeout
   (SC-006), each step's own bound inside it, and the three browser projects;
 - the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate,
-  and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check.
+  and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check;
+- the `measure` job (US7.2, US7-IT, SC-007, FR-030, FR-031): the server benchmarks on the runner class,
+  the prebuilt, relinked and AOT publishes in the contract's order, each mode recorded as produced or
+  with its reason, the relinked and AOT agreement gate, the exhaustive trig sweeps that run only there,
+  and the measurement report validated and then uploaded.
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
-tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs.
+tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs. The measurement
+runner's own tests are tools/agreement/node/measure.test.mjs.
 
 Run: python3 -m unittest tests/workflows/test_simcore_workflow.py -v   (needs PyYAML)
  or: python3 -m unittest discover -s tests/workflows -v
@@ -26,6 +31,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +81,57 @@ TOOLCHAIN_ACTIONS = ("actions/checkout@", "actions/setup-dotnet@", "actions/setu
 
 REQUIRED_BUILDS = "node-interp,node-interp-nojit,chromium-worker"
 SHA_PINNED = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$"
+
+# The measure job's steps that feed the report, in the order of
+# contracts/measurement-report.md#how-the-report-is-produced.
+MEASURE_ORDER = (
+    "Run the server benchmarks",
+    "Publish the prebuilt interpreted build",
+    "Install the wasm-tools workload",
+    "Publish the relinked interpreted build",
+    "Publish the AOT build",
+    "Prepare the agreement work directory",
+    "Agreement on the relinked build",
+    "Agreement on the AOT build",
+    "Compare the new builds with the server",
+    "Measure the WebAssembly builds",
+    "Validate the measurement report",
+    "Upload the measurement report",
+)
+
+MEASURE_STEP = "Measure the WebAssembly builds"
+MEASURE_RUNNER = "tools/agreement/lib/measure.mjs"
+SERVER_BENCHMARKS = "BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json"
+MEASUREMENT_REPORT = "$RUNNER_TEMP/simcore-measurement.json"
+PREBUILT_OUT = "publish/prebuilt"
+
+# The reason recorded for the relinked and AOT modes when the workload did not install, so their
+# publishes were skipped and wrote no outputs.
+WORKLOAD_REASON = "dotnet workload install wasm-tools failed; see the install-workload step log"
+
+# The two modes the job publishes after the workload: the publish step, its id, its output folder under
+# RUNNER_TEMP and the reason line it writes on failure, and the agreement build and step that check it.
+NEW_MODES = (
+    SimpleNamespace(mode="interp-relinked", publish="Publish the relinked interpreted build", publish_id="publish-relinked",
+                    out="publish/relinked", build="node-interp-relinked", agreement="Agreement on the relinked build",
+                    aot=False,
+                    reason_line="reason=dotnet publish exited ${code}; see the publish-relinked step log"),
+    SimpleNamespace(mode="aot", publish="Publish the AOT build", publish_id="publish-aot",
+                    out="publish/aot", build="node-aot", agreement="Agreement on the AOT build",
+                    aot=True,
+                    reason_line="reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log"),
+)
+
+# A stand-in for dotnet, node, npm and npx in the step runs below: it appends its name and arguments to
+# $FAKE_TOOL_LOG as one JSON line, and exits with $FAKE_<NAME>_EXIT (default 0).
+FAKE_TOOL = """#!{python}
+import json, os, sys
+name = os.path.basename(sys.argv[0])
+with open(os.environ["FAKE_TOOL_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps([name] + sys.argv[1:]) + "\\n")
+sys.exit(int(os.environ.get("FAKE_" + name.upper() + "_EXIT", "0")))
+"""
+FAKE_TOOLS = ("dotnet", "node", "npm", "npx")
 
 
 def steps(job):
@@ -233,6 +290,188 @@ def run_env_step():
         work = Path(values.get("AGREEMENT_WORK", runner_temp))
         work_fresh = not work.exists() or (work.is_dir() and not any(work.iterdir()))
     return SimpleNamespace(index=found[0], runner_temp=runner_temp, values=values, work_fresh=work_fresh)
+
+
+def step_named(job, name):
+    """(index, step) of the job's one step called `name`; fails naming the step when there is none."""
+    found = [i for i, step in enumerate(steps(job)) if step.get("name") == name]
+    if len(found) != 1:
+        raise AssertionError(f"expected exactly one {job} step named {name!r}, found {len(found)}")
+    return found[0], steps(job)[found[0]]
+
+
+def contains_sequence(items, sequence):
+    """Whether `sequence` occurs in `items` as consecutive elements."""
+    n = len(sequence)
+    return any(list(items[i:i + n]) == list(sequence) for i in range(len(items) - n + 1))
+
+
+def option_value(args, name):
+    """The one value given after `name` in an argument list."""
+    found = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == name]
+    if len(found) != 1:
+        raise AssertionError(f"expected {name} exactly once with a value in {args}, found {len(found)}")
+    return found[0]
+
+
+def if_else_blocks(script):
+    """The (then, else) branch texts of each `if` ... `else` ... `fi` block of a bash script, read line by
+    line; an `elif` starts the other branch. A nested block's lines belong to its enclosing branches too."""
+    blocks, stack = [], []
+    for raw in script.splitlines():
+        line = raw.strip()
+        if re.match(r"if\b", line):
+            for frame in stack:
+                frame[frame["in"]].append(line)
+            stack.append({"then": [], "else": [], "in": "then"})
+            after = re.split(r";\s*then\b", line, maxsplit=1)
+            if len(after) == 2 and after[1].strip():
+                stack[-1]["then"].append(after[1].strip())
+        elif stack and re.match(r"(else|elif)\b", line):
+            for frame in stack[:-1]:
+                frame[frame["in"]].append(line)
+            stack[-1]["in"] = "else"
+            rest = re.sub(r"^else\b", "", line).strip()
+            if line.startswith("else") and rest:
+                stack[-1]["else"].append(rest)
+        elif stack and re.match(r"fi\b", line):
+            frame = stack.pop()
+            blocks.append(("\n".join(frame["then"]), "\n".join(frame["else"])))
+            for outer in stack:
+                outer[outer["in"]].append(line)
+        else:
+            for frame in stack:
+                frame[frame["in"]].append(line)
+    return blocks
+
+
+def run_step(job, name, steps_context=None, env=None, exits=None, setup=None):
+    """Runs one step's `run` under bash as the runner does (`bash --noprofile --norc -eo pipefail`), with a
+    temporary RUNNER_TEMP, GITHUB_ENV, GITHUB_OUTPUT and GITHUB_STEP_SUMMARY, and FAKE_TOOL standing in for
+    dotnet, node, npm and npx. `${{ }}` in the run and in the step's env is evaluated against the `steps`
+    context given, `runner.temp` and the env, as the runner would.
+
+    `env(runner_temp)` gives the variables earlier steps appended to $GITHUB_ENV, `exits` maps a tool to
+    its exit code, and `setup(runner_temp, repo)` writes the files earlier steps would have left.
+
+    Returns the step's exit code and stderr, the RUNNER_TEMP and step summary file it ran with, the env it
+    was given, each tool call as [tool, *args], the outputs and env variables it appended, and, for each
+    appended variable that names a directory, whether that directory was empty afterwards.
+    """
+    index, step = step_named(job, name)
+    with tempfile.TemporaryDirectory() as temp:
+        temp = Path(temp)
+        runner_temp = str(temp / "runner-temp")
+        os.mkdir(runner_temp)
+        repo, tools = temp / "repo", temp / "bin"
+        repo.mkdir()
+        tools.mkdir()
+        for tool in FAKE_TOOLS:
+            (tools / tool).write_text(FAKE_TOOL.format(python=sys.executable))
+            (tools / tool).chmod(0o755)
+        files = {key: temp / key for key in ("github-env", "github-output", "step-summary", "tool-log")}
+        for path in files.values():
+            path.write_text("")
+        if setup:
+            setup(runner_temp, repo)
+        given = env(runner_temp) if env else {}
+        variables = {**WORKFLOW.get("env", {}), **WORKFLOW["jobs"][job].get("env", {}), **given}
+        context = {"runner": {"temp": runner_temp}, "env": variables, "steps": steps_context or {}}
+        step_env = {key: render(value if isinstance(value, str) else gh_expr.to_str(value), context)
+                    for key, value in step.get("env", {}).items()}
+        process_env = {str(key): value if isinstance(value, str) else gh_expr.to_str(value)
+                       for key, value in {**variables, **step_env}.items()}
+        process_env.update({
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "HOME": str(temp),
+            "RUNNER_TEMP": runner_temp,
+            "GITHUB_ENV": str(files["github-env"]),
+            "GITHUB_OUTPUT": str(files["github-output"]),
+            "GITHUB_STEP_SUMMARY": str(files["step-summary"]),
+            "FAKE_TOOL_LOG": str(files["tool-log"]),
+        })
+        for tool, code in (exits or {}).items():
+            process_env[f"FAKE_{tool.upper()}_EXIT"] = str(code)
+        script = render(step["run"], context)
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                                env=process_env, cwd=repo, capture_output=True, text=True, timeout=60)
+        appended = parse_github_env(files["github-env"].read_text())
+        empty_dirs = {key: not any(Path(value).iterdir()) for key, value in appended.items()
+                      if os.path.isabs(value) and Path(value).is_dir()}
+        return SimpleNamespace(index=index, step=step, returncode=result.returncode, stderr=result.stderr,
+                               runner_temp=runner_temp, summary_path=str(files["step-summary"]), given=given,
+                               calls=[json.loads(line) for line in files["tool-log"].read_text().splitlines()],
+                               outputs=parse_github_env(files["github-output"].read_text()), env=appended,
+                               empty_dirs=empty_dirs)
+
+
+# How a publish of the relinked or AOT build ended, as the measure job's later steps see it.
+PRODUCED = ("produced", None)
+SKIPPED = ("skipped", None)
+
+
+def failed_with(reason):
+    return ("failed", reason)
+
+
+def publish_context(state):
+    """The `steps` context entry a publish step leaves: it exits 0 whether or not dotnet publish did, and
+    a skipped step (the workload did not install) leaves no outputs."""
+    kind, reason = state
+    if kind == "skipped":
+        return {"outcome": "skipped", "conclusion": "skipped", "outputs": {}}
+    outputs = {"produced": "true"} if kind == "produced" else {"produced": "false", "reason": reason}
+    return {"outcome": "success", "conclusion": "success", "outputs": outputs}
+
+
+def measure_context(relinked, aot):
+    """The `steps` context after the workload install and the relinked and AOT publishes. The install
+    continues on error, so only its outcome says it failed; both publishes are then skipped."""
+    installed = SKIPPED not in (relinked, aot)
+    return {"install-workload": {"outcome": "success" if installed else "failure", "conclusion": "success",
+                                 "outputs": {}},
+            "publish-relinked": publish_context(relinked),
+            "publish-aot": publish_context(aot)}
+
+
+def expected_mode_argument(state, runner_temp, out):
+    """(option, value) that measure.mjs must be given for a mode whose publish ended in `state`."""
+    kind, reason = state
+    if kind == "produced":
+        return ("--mode", f"{runner_temp}/{out}")
+    return ("--unproduced", reason if kind == "failed" else WORKLOAD_REASON)
+
+
+def run_measure(relinked, aot):
+    """Runs the "Measure the WebAssembly builds" step after the given publish outcomes, with WORK as the
+    prepare step appended it. Returns the run, measure.mjs's options as {option: [values]}, and each
+    `--mode` or `--unproduced` it was given as (mode, option, value)."""
+    def setup(runner_temp, repo):
+        export = repo / SERVER_BENCHMARKS
+        export.parent.mkdir(parents=True)
+        export.write_text("{}")
+        for state, out in ((PRODUCED, PREBUILT_OUT), (relinked, NEW_MODES[0].out), (aot, NEW_MODES[1].out)):
+            if state == PRODUCED:
+                (Path(runner_temp) / out / "wwwroot" / "_framework").mkdir(parents=True)
+
+    def prepared(runner_temp):
+        work = f"{runner_temp}/simcore-work.prepared"
+        os.mkdir(work)
+        return {"WORK": work, "AGREEMENT_WORK": work}
+
+    run = run_step("measure", MEASURE_STEP, measure_context(relinked, aot), env=prepared, setup=setup)
+    calls = [call for call in run.calls if call[:2] == ["node", MEASURE_RUNNER]]
+    if len(calls) != 1:
+        raise AssertionError(f"expected one `node {MEASURE_RUNNER}` call, found {run.calls} (stderr: {run.stderr})")
+    options, modes, args = {}, [], iter(calls[0][2:])
+    for arg in args:
+        value = next(args, None)
+        if arg in ("--mode", "--unproduced"):
+            mode, _, rest = (value or "").partition("=")
+            modes.append((mode, arg, rest))
+        else:
+            options.setdefault(arg, []).append(value)
+    return run, options, modes
 
 
 class TriggersAndPaths(unittest.TestCase):
@@ -514,6 +753,331 @@ class AgreementJob(unittest.TestCase):
         self.assertEqual("bash", WORKFLOW["defaults"]["run"]["shell"])
         for step in steps("agreement"):
             self.assertEqual("bash", step.get("shell", "bash"), step.get("name"))
+
+
+class MeasureJob(unittest.TestCase):
+    """The `measure` job, which writes and uploads the measurement report.
+
+    US7.2: "**Given** the WebAssembly build, **When** the measurement job runs, **Then** its report records
+    the download size (raw and compressed), the time to the first completed step and the cost per step,
+    for each build mode the toolchain produced, and names any mode it could not produce and why." US7-IT:
+    "Run the measurement job on a CI runner and check that its report holds every listed measurement with
+    units, the runner class and the build mode." SC-007: "The measurement report records the server step
+    costs, and the WebAssembly download size, startup time and step cost for each build mode produced, each
+    with its runner class." FR-031: the job "MUST name any mode it could not build". FR-030: the server
+    build's movement, weapon and projectile steps have benchmarks, which this job runs in full.
+
+    The numbers themselves are checked by `simcore measure validate-report` in the job, and the runner by
+    tools/agreement/node/measure.test.mjs; these tests pin the steps that produce, gate, validate and
+    upload the report. Steps that only decide what to pass on are run under bash with stand-in tools."""
+
+    def test_measure_job_measures_every_mode_and_validates_the_report(self):
+        # The steps of contracts/measurement-report.md#how-the-report-is-produced, in its order.
+        order = [step_named("measure", name)[0] for name in MEASURE_ORDER]
+        for (earlier, before), (later, after) in zip(zip(MEASURE_ORDER, order), zip(MEASURE_ORDER[1:], order[1:])):
+            with self.subTest(earlier=earlier, later=later):
+                self.assertLess(before, after, f"{earlier!r} must come before {later!r}")
+
+        _, measure = step_named("measure", MEASURE_STEP)
+        text, raw = command(measure), measure.get("run", "")
+        self.assertIn(f"node {MEASURE_RUNNER}", text)
+        self.assertIn('--work "$WORK"', text)
+        self.assertIn(f"--server-benchmarks {SERVER_BENCHMARKS}", text)
+        self.assertIn(f'--out "{MEASUREMENT_REPORT}"', text)
+        # The prebuilt build is always produced: it was published before the workload.
+        self.assertEqual(1, text.count("--mode interp-prebuilt="))
+        self.assertNotIn("--unproduced interp-prebuilt=", text)
+        # Each new mode is passed as produced or as unproduced, never both: the two branches of one if/else.
+        blocks = if_else_blocks(raw)
+        for mode in NEW_MODES:
+            with self.subTest(mode=mode.mode):
+                produced, unproduced = f"--mode {mode.mode}=", f"--unproduced {mode.mode}="
+                self.assertEqual(1, text.count(produced), produced)
+                self.assertEqual(1, text.count(unproduced), unproduced)
+                split = [block for block in blocks
+                         if (produced in block[0] and unproduced in block[1])
+                         or (unproduced in block[0] and produced in block[1])]
+                self.assertEqual(1, len(split), f"{produced} and {unproduced} must be the two branches of one if/else")
+        # The report is written to the prepared work directory that compare read, not to one of its own.
+        self.assertNotIn("WORK", measure.get("env", {}))
+
+        # With every mode produced, each is measured from the folder its publish wrote.
+        run, options, modes = run_measure(PRODUCED, PRODUCED)
+        self.assertEqual(0, run.returncode, run.stderr)
+        self.assertEqual([run.given["WORK"]], options.get("--work"))
+        self.assertEqual([SERVER_BENCHMARKS], options.get("--server-benchmarks"))
+        self.assertEqual([expand(MEASUREMENT_REPORT, run.runner_temp)], options.get("--out"))
+        self.assertCountEqual(["interp-prebuilt", "interp-relinked", "aot"], [mode for mode, _, _ in modes])
+        self.assertEqual({"interp-prebuilt": ("--mode", f"{run.runner_temp}/{PREBUILT_OUT}"),
+                          "interp-relinked": ("--mode", f"{run.runner_temp}/{NEW_MODES[0].out}"),
+                          "aot": ("--mode", f"{run.runner_temp}/{NEW_MODES[1].out}")},
+                         {mode: (option, value) for mode, option, value in modes})
+
+        # The report is validated, and nothing turns a failed validation into a pass.
+        _, validate = step_named("measure", "Validate the measurement report")
+        self.assertIn(f'measure validate-report "{MEASUREMENT_REPORT}"', command(validate))
+        self.assertNotIn("continue-on-error", validate)
+        self.assertNotIn("|| true", command(validate))
+        self.assertNotIn("if", validate)
+        self.assertNotIn("continue-on-error", WORKFLOW["jobs"]["measure"])
+
+        # Then uploaded: no `if`, so it runs only when validation passed, and a missing report fails it.
+        _, upload = step_named("measure", "Upload the measurement report")
+        self.assertRegex(upload.get("uses", ""), r"^actions/upload-artifact@[0-9a-f]{40}$")
+        self.assertEqual("simcore-measurement", upload["with"]["name"])
+        self.assertEqual("${{ runner.temp }}/simcore-measurement.json", upload["with"]["path"])
+        self.assertEqual("error", upload["with"]["if-no-files-found"])
+        self.assertNotIn("if", upload)
+        self.assertEqual(expand(MEASUREMENT_REPORT, run.runner_temp), expand(upload["with"]["path"], run.runner_temp))
+
+    def test_runner_class_and_pinned_intrinsics_are_set(self):
+        env = {**WORKFLOW.get("env", {}), **WORKFLOW["jobs"]["measure"].get("env", {})}
+        self.assertEqual("gha-ubuntu-latest-x64", env.get("MMO_RUNNER_CLASS"))
+        self.assertEqual("0", env.get("DOTNET_EnableAVX512F"))
+        self.assertEqual("0", env.get("DOTNET_TieredPGO"))
+        self.assertEqual("ubuntu-latest", WORKFLOW["jobs"]["measure"]["runs-on"])
+        # One runner class reaches the benchmarks, measure.mjs and so every report field, and the server
+        # benchmarks run with the same intrinsics the report records.
+        for step in steps("measure"):
+            with self.subTest(step=step.get("name")):
+                for name in ("MMO_RUNNER_CLASS", "DOTNET_EnableAVX512F", "DOTNET_TieredPGO"):
+                    self.assertNotIn(name, step.get("env", {}))
+                self.assertNotRegex(command(step), r"(?<![$\w{])MMO_RUNNER_CLASS=|\bunset\b[^\n;|&]*\bMMO_RUNNER_CLASS\b",
+                                    "no step may set or unset MMO_RUNNER_CLASS")
+
+    def test_unproduced_modes_are_recorded_with_their_reason(self):
+        install_index, install = step_named("measure", "Install the wasm-tools workload")
+        self.assertEqual("install-workload", install.get("id"))
+        self.assertIn("dotnet workload install wasm-tools", command(install))
+        self.assertIs(True, install.get("continue-on-error"))
+
+        for mode in NEW_MODES:
+            index, publish = step_named("measure", mode.publish)
+            text = command(publish)
+            with self.subTest(step=mode.publish):
+                self.assertEqual(mode.publish_id, publish.get("id"))
+                self.assertGreater(index, install_index)
+                self.assertEqual("steps.install-workload.outcome=='success'", condition(publish))
+                for outcome in ("success", "failure", "skipped", "cancelled"):
+                    # With continue-on-error a failed install still concludes `success`; only its outcome tells.
+                    context = {"steps": {"install-workload": {"outcome": outcome, "conclusion": "success"}}}
+                    self.assertIs(outcome == "success", evaluate(condition(publish), context), outcome)
+                self.assertNotIn("continue-on-error", publish)
+                self.assertIn('"$GITHUB_OUTPUT"', text)
+                self.assertIn(mode.reason_line, publish.get("run", ""))
+                self.assertIs(mode.aot, "-p:RunAOTCompilation=true" in text)
+                # These two need the workload: the flag that keeps the prebuilt runtime pack would undo it.
+                self.assertNotIn("UsingBrowserRuntimeWorkload", text)
+            # Run the step with dotnet publish succeeding and failing: it records the outcome and exits 0.
+            for code in (0, 3):
+                with self.subTest(step=mode.publish, dotnet_exit=code):
+                    run = run_step("measure", mode.publish,
+                                   {"install-workload": {"outcome": "success", "conclusion": "success", "outputs": {}}},
+                                   exits={"dotnet": code})
+                    self.assertEqual(0, run.returncode, run.stderr)
+                    publishes = [call for call in run.calls if call[:2] == ["dotnet", "publish"]]
+                    self.assertEqual(1, len(publishes), run.calls)
+                    args = publishes[0]
+                    self.assertEqual("src/MmoEngine.SimCore.Wasm", args[2])
+                    self.assertTrue(contains_sequence(args, ["-c", "Release"]), args)
+                    self.assertEqual(f"{run.runner_temp}/{mode.out}", option_value(args, "-o"))
+                    self.assertIs(mode.aot, "-p:RunAOTCompilation=true" in args)
+                    if code == 0:
+                        self.assertEqual("true", run.outputs.get("produced"))
+                        self.assertEqual("", run.outputs.get("reason", ""))
+                    else:
+                        reason = mode.reason_line.removeprefix("reason=").replace("${code}", str(code))
+                        self.assertEqual({"produced": "false", "reason": reason}, run.outputs)
+
+        _, measure = step_named("measure", MEASURE_STEP)
+        expected_env = {
+            "RELINKED_PRODUCED": "${{ steps.publish-relinked.outputs.produced }}",
+            "RELINKED_REASON": "${{ steps.publish-relinked.outputs.reason }}",
+            "AOT_PRODUCED": "${{ steps.publish-aot.outputs.produced }}",
+            "AOT_REASON": "${{ steps.publish-aot.outputs.reason }}",
+        }
+        for name, value in expected_env.items():
+            with self.subTest(env=name):
+                self.assertEqual(re.sub(r"\s+", "", value), re.sub(r"\s+", "", str(measure.get("env", {}).get(name, ""))))
+        self.assertIn(WORKLOAD_REASON, measure.get("run", ""))
+
+        # Each mode that was not produced is passed with its reason: the publish's own, or the workload's
+        # when the publish was skipped.
+        for label, relinked, aot in (
+                ("the AOT publish failed", PRODUCED,
+                 failed_with("dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log")),
+                ("the relinked publish failed", failed_with("dotnet publish exited 1; see the publish-relinked step log"),
+                 PRODUCED),
+                ("both publishes failed", failed_with("dotnet publish exited 2; see the publish-relinked step log"),
+                 failed_with("dotnet publish -p:RunAOTCompilation=true exited 3; see the publish-aot step log")),
+                ("the workload did not install", SKIPPED, SKIPPED)):
+            with self.subTest(label):
+                run, _, modes = run_measure(relinked, aot)
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertCountEqual(["interp-prebuilt", "interp-relinked", "aot"], [mode for mode, _, _ in modes])
+                self.assertEqual({"interp-prebuilt": ("--mode", f"{run.runner_temp}/{PREBUILT_OUT}"),
+                                  "interp-relinked": expected_mode_argument(relinked, run.runner_temp, NEW_MODES[0].out),
+                                  "aot": expected_mode_argument(aot, run.runner_temp, NEW_MODES[1].out)},
+                                 {mode: (option, value) for mode, option, value in modes})
+
+    def test_server_benchmarks_run_with_the_runner_class(self):
+        index, step = step_named("measure", "Run the server benchmarks")
+        self.assertIn("dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'", command(step))
+        self.assertNotIn("continue-on-error", step)
+        # The benchmark Main exits 2 without MMO_RUNNER_CLASS (Phase 9), so a missing class fails the job.
+        self.assertNotIn("MMO_RUNNER_CLASS", step.get("env", {}))
+        self.assertNotRegex(command(step), r"\bMMO_RUNNER_CLASS\b", "the step must neither set nor unset MMO_RUNNER_CLASS")
+        # The measure step reads its export, from the same directory BenchmarkDotNet wrote it under.
+        measure_index, measure = step_named("measure", MEASURE_STEP)
+        self.assertLess(index, measure_index)
+        self.assertEqual(step.get("working-directory"), measure.get("working-directory"))
+
+    def test_relinked_and_aot_agreement_gates_the_job(self):
+        prepare_index, prepare = step_named("measure", "Prepare the agreement work directory")
+        self.assertIn('echo "AGREEMENT_WORK=$WORK" >> "$GITHUB_ENV"', prepare.get("run", ""))
+        # The prepared work directory is the one every later step reads, and `agreement prepare` gets it
+        # empty, as it requires.
+        run = run_step("measure", "Prepare the agreement work directory")
+        self.assertEqual(0, run.returncode, run.stderr)
+        work = run.env.get("WORK")
+        self.assertIsNotNone(work, "the step must append WORK to $GITHUB_ENV")
+        self.assertEqual(work, run.env.get("AGREEMENT_WORK"))
+        self.assertTrue(work.startswith(run.runner_temp + "/"), work)
+        self.assertIs(True, run.empty_dirs.get("WORK"), "WORK must be a fresh empty directory")
+        prepares = [call for call in run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "prepare"])]
+        self.assertEqual(1, len(prepares), run.calls)
+        self.assertTrue(contains_sequence(prepares[0], ["--seeds", "1-50"]), prepares[0])
+        self.assertEqual(work, option_value(prepares[0], "--work"))
+        for scope in (WORKFLOW.get("env", {}), WORKFLOW["jobs"]["measure"].get("env", {})):
+            self.assertNotIn("WORK", scope)
+            self.assertNotIn("AGREEMENT_WORK", scope)
+
+        gates = []
+        for mode in NEW_MODES:
+            index, step = step_named("measure", mode.agreement)
+            gates.append(index)
+            with self.subTest(step=mode.agreement):
+                self.assertEqual(f"steps.{mode.publish_id}.outputs.produced=='true'", condition(step))
+                for produced in ("true", "false", None):
+                    context = {"steps": {mode.publish_id: {"outputs": {} if produced is None else {"produced": produced}}}}
+                    self.assertIs(produced == "true", evaluate(condition(step), context), produced)
+                env = step.get("env", {})
+                self.assertEqual(mode.build, env.get("AGREEMENT_BUILD"))
+                self.assertEqual(f"${{{{ runner.temp }}}}/{mode.out}/wwwroot", env.get("AGREEMENT_APP"))
+                self.assertIn("node --test tools/agreement/node/agreement.test.mjs", command(step))
+                self.assertNotIn("AGREEMENT_WORK", env)
+                self.assertNotIn("continue-on-error", step)
+                self.assertLess(prepare_index, index)
+                # It runs the build the publish wrote.
+                _, publish = step_named("measure", mode.publish)
+                out = re.search(r"\s-o\s+\"?([^\"\s]+)\"?", command(publish))
+                self.assertIsNotNone(out, f"{mode.publish} names its output directory with -o")
+                with tempfile.TemporaryDirectory() as runner_temp:
+                    self.assertEqual(expand(out.group(1), runner_temp) + "/wwwroot",
+                                     expand(env.get("AGREEMENT_APP", ""), runner_temp))
+
+        compare_index, compare = step_named("measure", "Compare the new builds with the server")
+        self.assertEqual("steps.publish-relinked.outputs.produced=='true'||steps.publish-aot.outputs.produced=='true'",
+                         condition(compare))
+        self.assertIn('agreement compare --work "$WORK" --require "$REQUIRE" --summary "$GITHUB_STEP_SUMMARY"', command(compare))
+        self.assertIn("node-interp-relinked", compare.get("run", ""))
+        self.assertIn("node-aot", compare.get("run", ""))
+        self.assertNotIn("continue-on-error", compare)
+        self.assertNotIn("WORK", compare.get("env", {}))
+        self.assertGreater(compare_index, max(gates))
+        # It runs when either build was produced, and requires exactly the builds produced.
+        for relinked, aot, required in (
+                (PRODUCED, PRODUCED, ["node-interp-relinked", "node-aot"]),
+                (PRODUCED, failed_with("dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log"),
+                 ["node-interp-relinked"]),
+                (failed_with("dotnet publish exited 1; see the publish-relinked step log"), PRODUCED, ["node-aot"]),
+                (failed_with("dotnet publish exited 1; see the publish-relinked step log"),
+                 failed_with("dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log"), None),
+                (SKIPPED, SKIPPED, None)):
+            with self.subTest(relinked=relinked[0], aot=aot[0]):
+                context = measure_context(relinked, aot)
+                self.assertIs(required is not None, evaluate(condition(compare), {"steps": context}))
+                if required is None:
+                    continue
+
+                def prepared(runner_temp):
+                    os.mkdir(f"{runner_temp}/simcore-work.prepared")
+                    return {"WORK": f"{runner_temp}/simcore-work.prepared",
+                            "AGREEMENT_WORK": f"{runner_temp}/simcore-work.prepared"}
+
+                run = run_step("measure", "Compare the new builds with the server", context, env=prepared)
+                self.assertEqual(0, run.returncode, run.stderr)
+                compares = [call for call in run.calls if call[0] == "dotnet" and contains_sequence(call, ["agreement", "compare"])]
+                self.assertEqual(1, len(compares), run.calls)
+                self.assertEqual(run.given["WORK"], option_value(compares[0], "--work"))
+                self.assertEqual(run.summary_path, option_value(compares[0], "--summary"))
+                self.assertCountEqual(required, option_value(compares[0], "--require").split(","))
+
+        for name in (NEW_MODES[0].agreement, NEW_MODES[1].agreement, "Compare the new builds with the server"):
+            self.assertNotIn("continue-on-error", step_named("measure", name)[1], name)
+        # The agreement job's gate still requires only its own builds.
+        _, agreement_compare = only_step("agreement", "agreement compare --work")
+        self.assertNotIn("node-interp-relinked", json.dumps(agreement_compare))
+        self.assertNotIn("node-aot", json.dumps(agreement_compare))
+
+    def test_prebuilt_build_is_published_before_the_workload(self):
+        index, step = step_named("measure", "Publish the prebuilt interpreted build")
+        text = command(step)
+        # The agreement job's publish command: the flag keeps the prebuilt runtime pack even on an image
+        # that ships wasm-tools, so the report's interp-prebuilt mode is the build `node-interp` tested.
+        self.assertIn('dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false '
+                      '-o "$RUNNER_TEMP/publish/prebuilt"', text)
+        self.assertNotIn("RunAOTCompilation", text)
+        install_index, _ = step_named("measure", "Install the wasm-tools workload")
+        self.assertLess(index, install_index)
+        for earlier in steps("measure")[:index]:
+            self.assertNotIn("dotnet workload", json.dumps(earlier), earlier.get("name"))
+        self.assertNotIn("continue-on-error", step)
+
+    def test_exhaustive_math_sweeps_run_here_only(self):
+        workflows = sorted(path for pattern in ("*.yml", "*.yaml") for path in (ROOT / ".github" / "workflows").glob(pattern))
+        self.assertIn(WORKFLOW_PATH, workflows)
+        self.assertEqual(["simcore.yml"], [path.name for path in workflows if "MMO_EXHAUSTIVE_MATH" in path.read_text()])
+        # Inside simcore.yml, only that step sets it: not the workflow or a job env, nor any other step.
+        mentions = [(job, step.get("name")) for job, step in all_steps() if "MMO_EXHAUSTIVE_MATH" in json.dumps(step)]
+        self.assertEqual([("measure", "Run the exhaustive math sweeps")], mentions)
+        outside = {str(key): value for key, value in WORKFLOW.items() if key != "jobs"}
+        outside["jobs"] = {name: {key: value for key, value in job.items() if key != "steps"}
+                           for name, job in WORKFLOW["jobs"].items()}
+        self.assertNotIn("MMO_EXHAUSTIVE_MATH", json.dumps(outside, default=str))
+
+        index, step = step_named("measure", "Run the exhaustive math sweeps")
+        text = command(step)
+        self.assertIn('MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release '
+                      '--filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math"', text)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', text)
+        self.assertIn("SIMMATH", text, "the step copies the sweeps' SIMMATH lines to the job summary")
+        # A measurement, not a gate (Phase 5): the fixed trig table in the pull-request tests is the gate.
+        self.assertIs(True, step.get("continue-on-error"))
+        compare_index, _ = step_named("measure", "Compare the new builds with the server")
+        measure_index, _ = step_named("measure", MEASURE_STEP)
+        self.assertLess(compare_index, index)
+        self.assertLess(index, measure_index)
+
+    def test_job_times_out_after_thirty_minutes(self):
+        self.assertEqual(30, WORKFLOW["jobs"]["measure"]["timeout-minutes"])
+
+    def test_runner_tests_run_before_the_measurement(self):
+        install_index, install = step_named("measure", "Install the agreement tools")
+        self.assertRegex(command(install), r"(^|[\n;&|]\s*)npm ci(\s|$)")
+        self.assertEqual("tools/agreement", install.get("working-directory"))
+        chromium_index, chromium = step_named("measure", "Install Chromium")
+        self.assertIn("npx playwright install --with-deps chromium", command(chromium))
+        self.assertEqual("tools/agreement", chromium.get("working-directory"))
+        # npx then runs the lockfile's Playwright, whose Chromium measure.mjs launches.
+        self.assertLess(install_index, chromium_index)
+        test_index, test = step_named("measure", "Test the measurement runner")
+        self.assertIn("node --test tools/agreement/node/measure.test.mjs tools/agreement/node/server.test.mjs", command(test))
+        measure_index, _ = step_named("measure", MEASURE_STEP)
+        for index, step in ((install_index, install), (chromium_index, chromium), (test_index, test)):
+            with self.subTest(step=step.get("name")):
+                self.assertLess(index, measure_index)
+                self.assertNotIn("continue-on-error", step)
 
 
 class AutoMerge(unittest.TestCase):

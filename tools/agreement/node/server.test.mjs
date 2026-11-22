@@ -24,7 +24,9 @@
  *
  * The planted files make a missing traversal guard visible as a 200 with their bytes, not a 404.
  * `/web/*` and `/lib/*` are served from this package's own `web/` and `lib/` folders, so those rows
- * compare the body with the file in the repository.
+ * compare the body with the file in the repository. That includes the measurement page
+ * (`web/measure.html`), its Worker (`web/measure-worker.mjs`) and the step-pass module they share with
+ * the Node measurement (`lib/passes.mjs`), US7.
  *
  * Requests go through `node:http` with the raw path, because `fetch` would normalise `%2e%2e`
  * segments before sending them.
@@ -212,6 +214,43 @@ describe('serves each file type with its content type and the file\'s bytes', ()
             assert.ok(res.body.equals(await expected()), `GET ${path}: the body equals the file's bytes`);
         });
     }
+});
+
+test('serves the measurement page, its worker and the shared passes module', async (t) => {
+    // US7.2 (T303, contracts/wasm-api.md#served-files): the measurement job opens `measure.html`, which
+    // starts `measure-worker.mjs` as a module Worker, which imports `passes.mjs`, the step-pass loop it
+    // shares with the Node measurement. They are served like the agreement page and its worker, and the
+    // PUT builds stay the three Worker builds, so `node-aot` is still refused.
+    const { work, get, put } = await startFixtureServer(t);
+    const rows = [
+        { path: '/web/measure.html', type: 'text/html; charset=utf-8', file: 'web/measure.html' },
+        { path: '/web/measure-worker.mjs', type: 'text/javascript', file: 'web/measure-worker.mjs' },
+        { path: '/lib/passes.mjs', type: 'text/javascript', file: 'lib/passes.mjs' },
+    ];
+
+    const responses = [];
+    for (const row of rows) {
+        responses.push({ ...row, res: await get(row.path) });
+    }
+
+    // Every status at once, so a missing route shows as its 404 beside the others.
+    assert.deepEqual(
+        Object.fromEntries(responses.map(({ path, res }) => [path, res.status])),
+        Object.fromEntries(rows.map(({ path }) => [path, 200])),
+        'GET status of each measurement file',
+    );
+    for (const { path, type, file, res } of responses) {
+        assert.equal(res.headers['content-type'], type, `GET ${path}: Content-Type`);
+        assertEveryResponseHeader(res, `GET ${path}`);
+        const expected = await readFile(join(PACKAGE_ROOT, ...file.split('/')));
+        assert.ok(res.body.equals(expected), `GET ${path}: the body equals tools/agreement/${file}`);
+    }
+
+    const putPath = '/work/node-aot/flat-run-30hz.records';
+    const refused = await put(putPath, patternBytes(1_000, 14));
+    assert.equal(refused.status, 403, `PUT ${putPath}: status`);
+    assertEveryResponseHeader(refused, `PUT ${putPath}`);
+    assert.deepEqual(await filesUnder(work), ['manifest.json'], `PUT ${putPath} wrote nothing under the work root`);
 });
 
 test('every response, a 404 and a 403 included, carries COOP, COEP and no-store, and no Content-Encoding', async (t) => {

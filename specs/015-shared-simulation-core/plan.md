@@ -2073,6 +2073,30 @@ The design documents settled these points, which the spec leaves open. They are 
   both Node builds pass 90 of 90 tests, the Chromium Worker spec passes, and `agreement compare` prints
   `match, 69 streams, 17192 steps, tables match` for `node-interp`, `node-interp-nojit` and
   `chromium-worker` and exits 0.
+- **T297 and T310: the measure job's prebuilt publish carries `-p:UsingBrowserRuntimeWorkload=false`
+  too.** T297, T310 and the measurement contract's step 2 named the prebuilt publish without the flag,
+  while the decision above put it in quickstart.md's measurement section and said `node-interp` means the
+  prebuilt runtime pack on any runner image. Publishing before the workload install is enough on today's
+  runner image, but on an image that ships `wasm-tools` the publish would relink, and the report's
+  `interp-prebuilt` mode would record `relinked: false` for a relinked build that the `agreement` job
+  never tested. So the step runs the agreement job's command, `dotnet publish src/MmoEngine.SimCore.Wasm
+  -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"`, before the
+  workload as before. `test_prebuilt_build_is_published_before_the_workload` asserts the whole command,
+  and T297, T310 and contracts/measurement-report.md step 2 say the same. The relinked and AOT publishes
+  still leave the flag off, which `test_unproduced_modes_are_recorded_with_their_reason` asserts.
+- **T302, T304, T305 and T309: the measurement runner's interfaces are the ones the tests pin.** The
+  tasks left four interfaces open or at odds. T304's `runPasses` signature had no way to reach the report
+  buffer it reads the stop text from, so it takes `reportBuffer` (the `ReportBuffer()` view), and the
+  tasks now say what `reset`, `writeCommands`, `now`/`unitNs` and `samples` are. T305 did not give
+  `assembleReport`'s inputs, while T302 builds the report "from fixed inputs" including the machine and
+  versions, so `assembleReport` reads neither `process.env` nor `os`: the entry point gathers `machine`,
+  `versions`, `env` and `server` and passes them in, and the tests can set `GITHUB_SHA` and the
+  `DOTNET_` variables without touching the process. T302 has `parseArgs` return `{exitCode: 2, message}`,
+  while T309 said the entry point acts "on a UsageError", so T309 now checks the result's `exitCode`
+  (`unproducedMode` still throws its `UsageError`, which `parseArgs` turns into that result). T306 read
+  `now` from `process.hrtime.bigint()`, a BigInt that a Number clock cannot subtract, so it passes
+  `Number(process.hrtime.bigint() - start)` with `unitNs: 1`, and T307 passes `performance.now()` with
+  `unitNs: 1e6`.
 
 ## Delivery
 

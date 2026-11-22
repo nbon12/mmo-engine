@@ -3151,33 +3151,33 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
 
 ### Tests (write first, confirm red)
 
-- [ ] T293 [US7] Write failing test `MeasureJob.test_measure_job_measures_every_mode_and_validates_the_report` in `tests/workflows/test_simcore_workflow.py` (US7.2). Load `.github/workflows/simcore.yml` with `yaml.safe_load`, as `tests/workflows/test_harness_workflow.py` does, and reuse the module's `steps(job)` and `runs(job)` helpers. Add a `step_named(job, name)` helper that fails with the missing name. Given `jobs.measure`, assert:
+- [X] T293 [US7] Write failing test `MeasureJob.test_measure_job_measures_every_mode_and_validates_the_report` in `tests/workflows/test_simcore_workflow.py` (US7.2). Load `.github/workflows/simcore.yml` with `yaml.safe_load`, as `tests/workflows/test_harness_workflow.py` does, and reuse the module's `steps(job)` and `runs(job)` helpers. Add a `step_named(job, name)` helper that fails with the missing name. Given `jobs.measure`, assert:
   - The named steps appear at strictly increasing indexes in the order of contracts/measurement-report.md#how-the-report-is-produced: "Run the server benchmarks", "Publish the prebuilt interpreted build", "Install the wasm-tools workload", "Publish the relinked interpreted build", "Publish the AOT build", "Prepare the agreement work directory", "Agreement on the relinked build", "Agreement on the AOT build", "Compare the new builds with the server", "Measure the WebAssembly builds", "Validate the measurement report", "Upload the measurement report".
   - The "Measure the WebAssembly builds" run contains `node tools/agreement/lib/measure.mjs`, `--work "$WORK"`, `--server-benchmarks BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json` and `--out "$RUNNER_TEMP/simcore-measurement.json"`. It contains `--mode interp-prebuilt=` exactly once and no `--unproduced interp-prebuilt=`. For each of `interp-relinked` and `aot`, it contains exactly one `--mode <m>=` and exactly one `--unproduced <m>=`, in the two branches of one `if`/`else`.
   - The "Validate the measurement report" run contains `measure validate-report "$RUNNER_TEMP/simcore-measurement.json"`. It has no `continue-on-error`, no `|| true` and no `if:`.
   - The "Upload the measurement report" step `uses` `actions/upload-artifact@<40 hex>` with `with.name == "simcore-measurement"`, `with.path == "${{ runner.temp }}/simcore-measurement.json"` and `with.if-no-files-found == "error"`. It has no `if:`, so the upload runs only after validation passes.
 
   Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm it fails: there is no `measure` job (KeyError).
-- [ ] T294 [US7] Write failing test `MeasureJob.test_runner_class_and_pinned_intrinsics_are_set` in `tests/workflows/test_simcore_workflow.py` (US7-IT). Given the workflow-level `env` merged with `jobs.measure.env`, assert:
+- [X] T294 [US7] Write failing test `MeasureJob.test_runner_class_and_pinned_intrinsics_are_set` in `tests/workflows/test_simcore_workflow.py` (US7-IT). Given the workflow-level `env` merged with `jobs.measure.env`, assert:
   - the merged env has `MMO_RUNNER_CLASS == "gha-ubuntu-latest-x64"`, `DOTNET_EnableAVX512F == "0"` and `DOTNET_TieredPGO == "0"` (strings);
   - `jobs.measure["runs-on"] == "ubuntu-latest"`;
   - no step's `env` sets `MMO_RUNNER_CLASS`, so one runner class reaches the benchmarks, `measure.mjs` and every report field.
 
   Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm it fails.
-- [ ] T295 [US7] Write failing test `MeasureJob.test_unproduced_modes_are_recorded_with_their_reason` in `tests/workflows/test_simcore_workflow.py` (SC-007, FR-031). Assert:
+- [X] T295 [US7] Write failing test `MeasureJob.test_unproduced_modes_are_recorded_with_their_reason` in `tests/workflows/test_simcore_workflow.py` (SC-007, FR-031). Assert:
   - Step "Install the wasm-tools workload" has `id: install-workload`, run `dotnet workload install wasm-tools` and `continue-on-error: true`.
   - Steps "Publish the relinked interpreted build" (`id: publish-relinked`) and "Publish the AOT build" (`id: publish-aot`) each have `if: steps.install-workload.outcome == 'success'` and no `continue-on-error`. Each run writes `produced=true` to `"$GITHUB_OUTPUT"` on success. On failure each writes `produced=false` and a `reason=` line: relinked `reason=dotnet publish exited ${code}; see the publish-relinked step log`, AOT `reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log`. Each then exits 0. The AOT run contains `-p:RunAOTCompilation=true` and the relinked run does not.
   - The env of "Measure the WebAssembly builds" maps `RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}`, `RELINKED_REASON: ${{ steps.publish-relinked.outputs.reason }}`, `AOT_PRODUCED: ${{ steps.publish-aot.outputs.produced }}` and `AOT_REASON: ${{ steps.publish-aot.outputs.reason }}`.
   - The measure run falls back to the reason `dotnet workload install wasm-tools failed; see the install-workload step log` when the publish was skipped.
 
   Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm it fails.
-- [ ] T296 [US7] Write failing test `MeasureJob.test_server_benchmarks_run_with_the_runner_class` in `tests/workflows/test_simcore_workflow.py` (FR-030, full run). Assert:
+- [X] T296 [US7] Write failing test `MeasureJob.test_server_benchmarks_run_with_the_runner_class` in `tests/workflows/test_simcore_workflow.py` (FR-030, full run). Assert:
   - Step "Run the server benchmarks" run contains `dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'`.
   - It has no `continue-on-error` and no step-level `env` that sets or unsets `MMO_RUNNER_CLASS`. The benchmark `Main` exits 2 without the variable (Phase 9), so a missing class fails the job.
   - Its index is lower than "Measure the WebAssembly builds", which reads its output file.
 
   Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm it fails.
-- [ ] T297 [US7] Write the failing supporting tests of class `MeasureJob` in `tests/workflows/test_simcore_workflow.py`. Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm each fails.
+- [X] T297 [US7] Write the failing supporting tests of class `MeasureJob` in `tests/workflows/test_simcore_workflow.py`. Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm each fails.
   - `test_relinked_and_aot_agreement_gates_the_job`:
     - "Agreement on the relinked build" has `if: steps.publish-relinked.outputs.produced == 'true'`, env `AGREEMENT_BUILD: node-interp-relinked` and `AGREEMENT_APP: ${{ runner.temp }}/publish/relinked/wwwroot`, and run `node --test tools/agreement/node/agreement.test.mjs`.
     - "Agreement on the AOT build" has the same with `publish-aot`, `node-aot` and `publish/aot/wwwroot`.
@@ -3185,7 +3185,7 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
     - "Compare the new builds with the server" has `if: steps.publish-relinked.outputs.produced == 'true' || steps.publish-aot.outputs.produced == 'true'`. Its run contains `agreement compare --work "$WORK" --require "$REQUIRE" --summary "$GITHUB_STEP_SUMMARY"` and builds `REQUIRE` from `node-interp-relinked` and `node-aot`.
     - None of the three has `continue-on-error`.
     - The `agreement` job's compare step still contains neither `node-interp-relinked` nor `node-aot`, so its gating builds are unchanged.
-  - `test_prebuilt_build_is_published_before_the_workload`: the run of "Publish the prebuilt interpreted build" contains `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/publish/prebuilt"` and not `RunAOTCompilation`. Its index is lower than "Install the wasm-tools workload". No step before it runs `dotnet workload`. The step has no `continue-on-error`.
+  - `test_prebuilt_build_is_published_before_the_workload`: the run of "Publish the prebuilt interpreted build" contains `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"` (the agreement job's publish command, plan.md's Phase 11 decision) and not `RunAOTCompilation`. Its index is lower than "Install the wasm-tools workload". No step before it runs `dotnet workload`. The step has no `continue-on-error`.
   - `test_exhaustive_math_sweeps_run_here_only`:
     - Scanning the raw text of every `.github/workflows/*.yml` finds `MMO_EXHAUSTIVE_MATH` only in `simcore.yml`, and inside it only in `jobs.measure` step "Run the exhaustive math sweeps".
     - That step's run contains `MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math"` and `>> "$GITHUB_STEP_SUMMARY"`.
@@ -3197,7 +3197,7 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
     - "Install Chromium" runs `npx playwright install --with-deps chromium` with the same working directory.
     - "Test the measurement runner" runs `node --test tools/agreement/node/measure.test.mjs tools/agreement/node/server.test.mjs`.
     - All three come before "Measure the WebAssembly builds", and none has `continue-on-error`.
-- [ ] T298 [US7] Write failing test `'parses the boot manifest from dotnet.js'` in `tools/agreement/node/measure.test.mjs` (`node:test`, `node:assert/strict`), with the fixture `tools/agreement/node/fixtures/dotnet.js` (US7.2).
+- [X] T298 [US7] Write failing test `'parses the boot manifest from dotnet.js'` in `tools/agreement/node/measure.test.mjs` (`node:test`, `node:assert/strict`), with the fixture `tools/agreement/node/fixtures/dotnet.js` (US7.2).
   - The fixture is a few lines of JavaScript, then `/*json-start*/`, a boot manifest, then `/*json-end*/`, then more JavaScript.
   - The manifest copies the shape of a real `dotnet publish src/MmoEngine.SimCore.Wasm -c Release` manifest: `debugLevel` 0, `globalizationMode` `"invariant"`, and `resources` groups `jsModuleNative`, `jsModuleRuntime`, `wasmNative`, `coreAssembly` and `assembly`, holding the eight file names of contracts/measurement-report.md#example (no `icu`).
   - Given that file, `parseBootManifest(text)` returns `debugLevel === 0` and `globalizationMode === 'invariant'`.
@@ -3205,7 +3205,7 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - Text without the markers throws an Error with message `boot manifest not found in dotnet.js: no /*json-start*/ marker`.
 
   Run `node --test tools/agreement/node/measure.test.mjs` and confirm it fails: `lib/measure.mjs` does not exist.
-- [ ] T299 [US7] Write failing test `'nearest-rank percentile picks the ceil(p/100*n)-th smallest'` in `tools/agreement/node/measure.test.mjs` (US7.2, contracts/measurement-report.md#how-each-number-is-measured). Import `nearestRank` and `summarize` from `../lib/passes.mjs`. Assert:
+- [X] T299 [US7] Write failing test `'nearest-rank percentile picks the ceil(p/100*n)-th smallest'` in `tools/agreement/node/measure.test.mjs` (US7.2, contracts/measurement-report.md#how-each-number-is-measured). Import `nearestRank` and `summarize` from `../lib/passes.mjs`. Assert:
   - over the ten samples `[7, 3, 10, 1, 9, 2, 8, 4, 6, 5]`, `nearestRank(s, 50) === 5` and `nearestRank(s, 90) === 9`;
   - over 1..3008 in reverse order, `nearestRank(s, 99) === 2978`;
   - `nearestRank([42], 99) === 42` and `nearestRank(s, 100) === 10`;
@@ -3213,7 +3213,7 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - `summarize(s)` deep-equals `{median: 5, p90: 9}`.
 
   Run `node --test tools/agreement/node/measure.test.mjs` and confirm it fails.
-- [ ] T300 [US7] Write failing tests `'download totals are the exact sums'` and `'a missing compressed sibling fails the measurement'` in `tools/agreement/node/measure.test.mjs` (US7.2: "download size (raw and compressed)").
+- [X] T300 [US7] Write failing tests `'download totals are the exact sums'` and `'a missing compressed sibling fails the measurement'` in `tools/agreement/node/measure.test.mjs` (US7.2: "download size (raw and compressed)").
   - Setup: create a unique temp publish directory with `fs.mkdtempSync(path.join(os.tmpdir(), 'measure-'))`, removed in `t.after`. Write `wwwroot/_framework/dotnet.js` (the fixture). Write each of the nine names with a distinct deterministic length (`1000 * (i + 1)` bytes of `i & 0xff`). Write each file's `.br` (`zlib.brotliCompressSync`) and `.gz` (`zlib.gzipSync`) sibling.
   - When `measureDownload(publishDir)` runs, assert:
     - `files` lists the nine names in `downloadList` order with their groups;
@@ -3222,13 +3222,13 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - With `_framework/System.IO.Hashing.x8z6mup4sz.wasm.gz` deleted, `measureDownload` throws a `MeasurementError` with message `missing compressed file _framework/System.IO.Hashing.x8z6mup4sz.wasm.gz`.
 
   Run `node --test tools/agreement/node/measure.test.mjs` and confirm both fail.
-- [ ] T301 [US7] Write failing test `'an unproduced mode is only its reason'` in `tools/agreement/node/measure.test.mjs` (US7.2: "names any mode it could not produce and why"; FR-031). Assert:
+- [X] T301 [US7] Write failing test `'an unproduced mode is only its reason'` in `tools/agreement/node/measure.test.mjs` (US7.2: "names any mode it could not produce and why"; FR-031). Assert:
   - `unproducedMode('dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log')` deep-equals `{produced: false, reason: '<that text>'}`, and `Object.keys` of the result is exactly `['produced', 'reason']`;
   - `unproducedMode('')` throws a `UsageError` with message `--unproduced aot needs a non-empty reason`, using the mode name passed as the second argument;
   - an `assembleReport` call whose `aot` input is unproduced gives `report.wasm.modes.aot` equal to that two-key object.
 
   Run `node --test tools/agreement/node/measure.test.mjs` and confirm it fails.
-- [ ] T302 [US7] Write the failing supporting tests in `tools/agreement/node/measure.test.mjs`. Run `node --test tools/agreement/node/measure.test.mjs` and confirm each fails.
+- [X] T302 [US7] Write the failing supporting tests in `tools/agreement/node/measure.test.mjs`. Run `node --test tools/agreement/node/measure.test.mjs` and confirm each fails.
   - `'arguments need each mode exactly once and the runner class'` (Theory-style table of `parseArgs(argv, env)` cases):
     - With `MMO_RUNNER_CLASS` unset or `''`, the result is `{exitCode: 2, message: 'MMO_RUNNER_CLASS is not set; a measurement without its runner class is not usable'}`.
     - With `aot` absent, the message is `mode aot is not given; pass --mode aot=<dir> or --unproduced aot="<reason>"`.
@@ -3247,11 +3247,11 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
     - `recordedAt` matches `/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/`, `commit === 'unknown'`, and `dotnet.environment` deep-equals `{DOTNET_EnableAVX512F: 'unset', DOTNET_TieredPGO: 'unset'}`.
     - `runnerClass` and `server.runnerClass` are the input class.
     - `wasm.modes['interp-prebuilt'].agreement === null` and `wasm.modes['interp-relinked'].agreement` deep-equals `{build: 'node-interp-relinked', status: 'Match'}`. A produced `aot` without an entry gets `{build: 'node-aot', status: 'NotRun'}`.
-  - `'step passes warm up 512 steps, time 3008 and reset before each pass'`: call `runPasses` from `../lib/passes.mjs` with fake exports, which count `reset` and `stepQueued(n)` calls and return `n`, and a fake clock.
+  - `'step passes warm up 512 steps, time 3008 and reset before each pass'`: call `runPasses` from `../lib/passes.mjs` with fake exports, which count `reset` and `stepQueued(n)` calls and return `n`, check that `writeCommands` placed exactly the pass's next `n` commands before each `stepQueued(n)`, and write the report buffer as wasm-api.md#report-buffer-layouts lays it out, and a fake clock that reads microseconds (`unitNs: 1000`) and moves only inside `stepQueued`.
     - With `batch: 1`, `stepsPerPass: 30` and a clock that advances 1000 ns per `stepQueued`: `reset` is called 118 times (`ceil(3520 / 30)`), `stepQueued(1)` 3520 times, and `samples.length === 3008`; `steps === 3008`, `meanNs === 1000` and `p99Ns === 1000`.
     - With `batch: 16`, a clock that advances 16000 ns per `stepQueued(16)`, and 30 steps per pass: every timed call is `stepQueued(16)` and starts after at least 512 steps have run. Each pass's trailing `stepQueued(14)` is untimed. 188 batches are timed, and `steps === 3008` and `meanNs === 1000`.
     - A fake `stepQueued` that returns 15 for a count of 16 makes `runPasses` throw a `MeasurementError` with message `StepQueued(16) committed 15 steps: <stop text>`.
-- [ ] T303 [P] [US7] Write failing test `'serves the measurement page, its worker and the shared passes module'` in `tools/agreement/node/server.test.mjs`, extending Phase 11's file and its start-the-server helper. Assert:
+- [X] T303 [P] [US7] Write failing test `'serves the measurement page, its worker and the shared passes module'` in `tools/agreement/node/server.test.mjs`, extending Phase 11's file and its start-the-server helper. Assert:
   - `GET /web/measure.html` returns 200 with `Content-Type: text/html; charset=utf-8`, and the body equals `tools/agreement/web/measure.html`;
   - `GET /web/measure-worker.mjs` and `GET /lib/passes.mjs` return 200 with `Content-Type: text/javascript`;
   - every one of the three responses carries `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` and `Cache-Control: no-store`;
@@ -3265,28 +3265,28 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - `nearestRank(samples, p)`: sort a copy ascending and return element `Math.max(1, Math.ceil(p / 100 * n)) - 1`; throw `no samples` when the list is empty.
   - `summarize(samples)`: return `{median: nearestRank(s, 50), p90: nearestRank(s, 90)}`.
   - `MeasurementError`.
-  - `runPasses({ reset, stepQueued, writeCommands, commands, stepsPerPass, batch, warmupSteps = 512, timedSteps = 3008, now, unitNs })`.
+  - `runPasses({ reset, stepQueued, writeCommands, commands, stepsPerPass, batch, warmupSteps = 512, timedSteps = 3008, now, unitNs, reportBuffer })`. `reset()` takes no arguments (the caller binds the initial state and salt). `writeCommands(bytes)` receives the pass's next `n` 17-byte commands, sliced from `commands`, before each `stepQueued(n)`. `now()` returns a Number, a clock reading in units of `unitNs` nanoseconds. `reportBuffer` is the `ReportBuffer()` view. The result's `samples` holds one entry per timed call: that call's time per step, in ns.
 
   `runPasses` plays the stream's commands in passes, with an untimed `reset()` before each pass. It counts every step run, and the first `warmupSteps` are untimed. It times each call with `now()`: a single step when `batch` is 1, otherwise only full batches inside a pass, whose per-step time is the batch time divided by `batch`. A pass's partial batch runs untimed. It stops once `timedSteps` steps have been timed and returns `{steps, meanNs: totalNs / steps, p99Ns: nearestRank(perStepNs, 99), samples}`. A call that commits fewer steps than asked throws `MeasurementError('StepQueued(<n>) committed <m> steps: <stop text>')`, with the stop text read from the report buffer per contracts/wasm-api.md#one-frame-from-javascript.
 
   Makes T299 and T302's `'step passes warm up 512 steps, time 3008 and reset before each pass'` pass.
 - [ ] T305 [US7] Implement the pure part of `tools/agreement/lib/measure.mjs` (ES module; it imports `node:fs`, `node:path`, `node:os`, `node:child_process` and `./passes.mjs`; `@playwright/test` is imported dynamically only inside the Worker measurement, so the tests need no browser), after T304. It exports:
   - `UsageError` and a re-export of `MeasurementError`.
-  - `parseArgs(argv, env)`, with the rules and messages tested above (each of `interp-prebuilt`, `interp-relinked` and `aot` exactly once via `--mode <m>=<dir>` or `--unproduced <m>="<reason>"`).
+  - `parseArgs(argv, env)`, with the rules and messages tested above (each of `interp-prebuilt`, `interp-relinked` and `aot` exactly once via `--mode <m>=<dir>` or `--unproduced <m>="<reason>"`). `argv` is `process.argv.slice(2)` and `env` is passed in; it never reads `process.env`. A usage error, an empty reason included, is returned as `{exitCode: 2, message}`, not thrown. A valid argv returns exactly `{work, serverBenchmarks, out, runnerClass, modes}`, the paths as given.
   - `parseBootManifest(text)`: JSON between `/*json-start*/` and `/*json-end*/`.
   - `downloadList(manifest)`: `dotnet.js` as `loader`, then every `name` in `resources.jsModuleNative`, `jsModuleRuntime`, `wasmNative`, `coreAssembly`, `assembly` and `icu`, in that group order.
-  - `measureDownload(publishDir)`: read `<dir>/wwwroot/_framework/dotnet.js`; take raw, `.br` and `.gz` sizes; a missing sibling throws `MeasurementError('missing compressed file _framework/<name>.<br|gz>')`; compute `total` as exact integer sums.
+  - `measureDownload(publishDir)`: read `<dir>/wwwroot/_framework/dotnet.js`; return exactly `{files, total}`, each file `{name, group, rawBytes, brotliBytes, gzipBytes}`, from the raw, `.br` and `.gz` sizes; a missing sibling throws `MeasurementError('missing compressed file _framework/<name>.<br|gz>')`; compute `total` as exact integer sums.
   - `unproducedMode(reason, mode)` and `buildFlags(mode)`.
-  - `assembleReport(inputs)`, which builds exactly the top-level, `server`, `wasm.modes` and per-mode fields of contracts/measurement-report.md#fields:
+  - `assembleReport(inputs)`, which builds exactly the top-level, `server`, `wasm.modes` and per-mode fields of contracts/measurement-report.md#fields. It reads nothing from `process.env` or `os`: the entry point (T309) gathers the inputs `{runnerClass, env, work, machine: {cpuModel, logicalCores, architecture, os}, versions: {dotnetSdk, dotnetRuntime, node, chromium}, server, modes}`, where `env` holds `GITHUB_SHA` and the two `DOTNET_` variables, and each mode is `{produced: false, reason}` or `{produced: true, dir, manifest, buildInfo, download, startup: {node, chromiumWorker}, steps: {node, chromiumWorker}}` (`manifest` the parsed boot manifest, `buildInfo` the first Node cold start's six `runtimeBuildInfo` fields, `startup` the interval summaries with the Worker's `crossOriginIsolated`). The report holds:
     - `formatVersion` 1, `kind` `simcore-measurement`, `label` `measurement`;
     - `recordedAt` as `new Date().toISOString()` without milliseconds;
-    - `commit` from `GITHUB_SHA`, or `unknown`;
-    - `machine`: `os.cpus()[0].model`, `os.cpus().length`, `os.arch()` and `` `${os.type()} ${os.release()}` ``;
-    - `dotnet.sdkVersion` from `dotnet --version`, and `runtimeVersion` from the highest `Microsoft.NETCore.App 10.` line of `dotnet --list-runtimes`, both read in the job that ran the benchmarks;
-    - `dotnet.environment`, holding each variable's value or `unset`;
-    - `node.version` from `process.version`, and `chromium.version` from Playwright's `browser.version()`;
+    - `commit` from `env.GITHUB_SHA`, or `unknown`;
+    - `machine` from the input, which the entry point reads as `os.cpus()[0].model`, `os.cpus().length`, `os.arch()` and `` `${os.type()} ${os.release()}` ``;
+    - `dotnet.sdkVersion` and `runtimeVersion` from `versions`, which the entry point reads from `dotnet --version` and the highest `Microsoft.NETCore.App 10.` line of `dotnet --list-runtimes`, both in the job that ran the benchmarks;
+    - `dotnet.environment`, holding each `env` variable's value or `unset`;
+    - `node.version` and `chromium.version` from `versions` (`process.version` and Playwright's `browser.version()`);
     - `server` copied as is from `--server-benchmarks`;
-    - each produced mode's `build`, `runtime` (the first Node cold start's `runtimeBuildInfo` fields, the manifest's `debugLevel` and `globalizationMode`, `runtimeOptions: []`, `jiterpreter: true`), `download`, `startup` (`coldStarts: 10`), `steps` and `agreement`. `agreement` is null for `interp-prebuilt`. Otherwise it comes from `<work>/report/agreement.json`'s `builds[]` entry for `node-interp-relinked` or `node-aot`, as `{build, status}`, or `status: 'NotRun'` when the entry or the file is absent.
+    - each produced mode's `produced: true`, `reason: null`, `build` (`buildFlags(mode)`), `runtime` (the first Node cold start's `runtimeBuildInfo` fields, the manifest's `debugLevel` and `globalizationMode`, `runtimeOptions: []`, `jiterpreter: true`), `download`, `startup` (`coldStarts: 10`), `steps` and `agreement`. `agreement` is null for `interp-prebuilt`. Otherwise it comes from `<work>/report/agreement.json`'s `builds[]` entry for `node-interp-relinked` or `node-aot`, as `{build, status}`, or `status: 'NotRun'` when the entry or the file is absent.
 
   Makes T298, T300, T301, and T302's `'arguments need each mode exactly once and the runner class'`, `'build flags match the mode'` and `'assembled report has exactly the contract fields'` pass.
 - [ ] T306 [US7] Implement `tools/agreement/lib/measure-node.mjs`, the Node half of contracts/measurement-report.md#how-each-number-is-measured, after T304. It exports `coldStart({app, work})` and `stepCosts({app, work})`, and a script entry `node measure-node.mjs <cold-start|steps> --app <wwwroot> --work <dir>` that prints one JSON line on stdout and exits 0, or prints the error on stderr and exits 1.
@@ -3294,7 +3294,7 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - `coldStart` calls `bootRuntime(pathToFileURL(join(app, '_framework', 'dotnet.js')).href)` from `./runtime.mjs` (Phase 11), which gives `importMs` and `createMs`.
   - It then times with `performance.now()` the calls `LoadCollision`, `LoadConfig`, `Reset` and `StepQueued(1)` on the first command, which must return 0, 0, 0 and 1. Any other value throws naming the call and its code. That interval is `firstStepMs`.
   - `coldStart` returns `{importMs, createMs, firstStepMs, totalMs: importMs + createMs + firstStepMs, buildInfo}`.
-  - `stepCosts` boots once and, for each kind (`movement`/`flat-run-30hz`, `weapon`/`rifle-burst`, `projectile`/`launcher-arc`), loads the collision file and config, then calls `runPasses` with `batch: 1` and a `now` from `process.hrtime.bigint()`. It returns `{kind, scenario, batch: 1, steps, meanNs, p99Ns}`.
+  - `stepCosts` boots once and, for each kind (`movement`/`flat-run-30hz`, `weapon`/`rifle-burst`, `projectile`/`launcher-arc`), loads the collision file and config, then calls `runPasses` with `batch: 1`, `now: () => Number(process.hrtime.bigint() - start)` and `unitNs: 1`. It returns `{kind, scenario, batch: 1, steps, meanNs, p99Ns}`.
 
   Checked end to end by the `measure` job's "Validate the measurement report" step (pinned by T293).
 - [ ] T307 [US7] Implement `tools/agreement/web/measure.html` and `tools/agreement/web/measure-worker.mjs`, the Chromium Worker half of contracts/measurement-report.md#how-each-number-is-measured, after T304.
@@ -3302,25 +3302,25 @@ On the slice-2 PR, the SimCore `agreement` job passes within its 10-minute timeo
   - `measure-worker.mjs` records `performance.now()` on its module's first line, so the Worker takes every time itself. It fetches `/work/manifest.json` and the three batch inputs and collision files before the clock starts.
   - It boots with `bootRuntime(new URL('/_framework/dotnet.js', self.location.origin).href)` from `/lib/runtime.mjs` and posts `booted` `{inWorker, crossOriginIsolated, buildInfo}`.
   - For `cold-start`, it times the first step as in Node and posts `coldStart` `{importMs, createMs, firstStepMs, totalMs}`.
-  - For `steps`, it calls `runPasses` from `/lib/passes.mjs` with `batch: 16` and `now` from `performance.now()` scaled to ns, then posts one `steps` message `{kind, scenario, batch: 16, steps, meanNs, p99Ns}` per kind.
+  - For `steps`, it calls `runPasses` from `/lib/passes.mjs` with `batch: 16`, `now: () => performance.now()` and `unitNs: 1e6`, then posts one `steps` message `{kind, scenario, batch: 16, steps, meanNs, p99Ns}` per kind.
   - It then posts `done`. Any thrown error becomes `fatal` `{message}`.
 
   Checked end to end by the `measure` job's validate step (`startup.chromiumWorker`, `steps.chromiumWorker`, `crossOriginIsolated` true).
 - [ ] T308 [P] [US7] Add the routes `GET /web/measure.html`, `GET /web/measure-worker.mjs` (from `tools/agreement/web/`) and `GET /lib/passes.mjs` (from `tools/agreement/lib/`) to `tools/agreement/lib/server.mjs`. They get the same MIME, COOP, COEP, `no-store` and traversal rules, and the PUT rules do not change. Makes T303 pass.
 - [ ] T309 [US7] Implement the entry point of `tools/agreement/lib/measure.mjs`, after T305. It runs only when `import.meta.url === pathToFileURL(process.argv[1]).href`.
-  1. `parseArgs`; on a `UsageError`, print `measure: <message>` on stderr and exit 2.
+  1. `parseArgs(process.argv.slice(2), process.env)`; when the result has `exitCode`, print `measure: <message>` on stderr and exit 2.
   2. For each produced mode:
      - `measureDownload(dir)`.
      - Ten cold starts, each a fresh `node measure-node.mjs cold-start` process (`spawnSync(process.execPath, …)`). A non-zero exit is `MeasurementError('<mode>: node cold start <i> exited <code>: <stderr>')`.
      - One `measure-node.mjs steps` process.
      - Start `lib/server.mjs` with `AGREEMENT_APP=<dir>/wwwroot` and the work directory, and `chromium.launch()` from `@playwright/test`. Run ten cold starts, each in a fresh `browser.newContext()` and page at `/web/measure.html?run=cold-start`, then one context at `?run=steps`. Waiting on `window.__measure.done`: a `fatal` event, or a console message containing `does not have the expected content type "application/wasm"`, is a `MeasurementError`. `crossOriginIsolated` is the AND of every `booted` message.
      - Summarize each interval with `summarize`.
-  3. Call `assembleReport` and write `--out` atomically (temp file in the same directory, then rename). Print `measure: wrote <out>, <p> modes produced, <u> unproduced` and exit 0. A `MeasurementError` prints `measure: <message>` and exits 1.
+  3. Gather `machine` (from `os`), `versions` (`dotnet --version`, `dotnet --list-runtimes`, `process.version`, Playwright's `browser.version()`), `env` and `server` (the `--server-benchmarks` file), call `assembleReport` and write `--out` atomically (temp file in the same directory, then rename). Print `measure: wrote <out>, <p> modes produced, <u> unproduced` and exit 0. A `MeasurementError` prints `measure: <message>` and exits 1.
 
   Check: run the quickstart section "The measurement report" (specs/015-shared-simulation-core/quickstart.md#the-measurement-report) locally with `MMO_RUNNER_CLASS=local-dev`. `measure.mjs` exits 0, `dotnet run --project src/MmoEngine.SimCore.Cli -- measure validate-report "$MWORK/simcore-measurement.json"` prints nothing and exits 0, and without `MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
 - [ ] T310 [US7] Add the `measure` job to `.github/workflows/simcore.yml`, alongside Phase 11's `agreement` job and leaving it unchanged, after T309. The job has `runs-on: ubuntu-latest`, `timeout-minutes: 30` and the workflow's triggers, permissions and env (`MMO_RUNNER_CLASS`, `DOTNET_EnableAVX512F`, `DOTNET_TieredPGO`). Use the same SHA-pinned checkout (`persist-credentials: false`), `actions/setup-dotnet` (`global-json-file: global.json`) and `actions/setup-node` (Node 22) as the agreement job, and `actions/upload-artifact` pinned to a commit SHA. The steps run in this order, under the exact names, ids, conditions and runs that the `MeasureJob` tests pin:
   1. "Run the server benchmarks".
-  2. "Publish the prebuilt interpreted build" (`-o "$RUNNER_TEMP/publish/prebuilt"`).
+  2. "Publish the prebuilt interpreted build" (`dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"`, as the agreement job publishes; the relinked and AOT publishes leave the flag off).
   3. "Install the wasm-tools workload" (`id: install-workload`, `continue-on-error: true`).
   4. "Publish the relinked interpreted build" (`id: publish-relinked`) and "Publish the AOT build" (`id: publish-aot`). Each runs `set +e`, publishes to `$RUNNER_TEMP/publish/<relinked|aot>`, captures `code=$?`, writes `produced` and `reason` to `$GITHUB_OUTPUT` and exits 0.
   5. "Prepare the agreement work directory": `WORK="$(mktemp -d "$RUNNER_TEMP/simcore-work.XXXXXX")"`, then `dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$WORK"`, then `echo "WORK=$WORK" >> "$GITHUB_ENV"` and `echo "AGREEMENT_WORK=$WORK" >> "$GITHUB_ENV"`, so the later steps read the same directory and `agreement.test.mjs` finds the `AGREEMENT_WORK` it requires at load time (T275).
