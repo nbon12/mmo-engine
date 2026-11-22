@@ -363,8 +363,11 @@ hitboxes.crouched[0].b.up: must be at least hitboxes.crouched[0].a.up
 reuse:
 
 - `SimConfigJson` binds a JSON file to `SimConfig`. JSON problems use the repo's wording, keyed by
-  path: `is not valid JSON (…)`, `must be a JSON object`, `has an invalid value or is not a known
-  field (…)` (unknown fields are refused) and `is required`.
+  path: `is not valid JSON (…)`, `must be a JSON object` and `has an invalid value or is not a known
+  field (…)` (unknown fields are refused). An absent or null section, list element or capsule point
+  binds as null, and the guard's shape rules report it as `is required`; a null list gets the count
+  message. Amended 2026-11-22 by PR #70: binding never reports `is required`; the guard does
+  (`SimConfigJsonTests.NineDotEightOneBindsToTheLiteralsBits`).
 - `SimConfigValidator : AbstractValidator<SimConfig>` (FluentValidation) applies the guard, so there is
   one rule table:
 
@@ -535,7 +538,9 @@ configuration that fails the guard refuses the stream before any step runs, with
 
 ## Tests that pin this contract
 
-All automated, in `tests/MmoEngine.SimCore.Tests/Config/`; `tasks.md` names each one.
+All automated, in `tests/MmoEngine.SimCore.Tests/Config/` except the `BatchStepper.LoadConfig` item,
+which is `BatchStepperTests.LoadCallsReturnTheirCodes` in `tests/MmoEngine.SimCore.Tests/Batch/`;
+`tasks.md` names each one.
 
 - A Theory over every row: below the minimum, above the maximum, and for floats NaN, +∞ and −∞. Each
   gives exactly one error, with that row's path and message, from `ConfigGuard.Check` and from

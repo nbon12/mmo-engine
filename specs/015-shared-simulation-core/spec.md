@@ -187,8 +187,9 @@ weapon's fire rate, where it goes from the seeded spread rule, how much the view
 and when the weapon runs dry, reloads, overheats and cools. The client predicts the same shots the
 server later replays, because both compute them from the same inputs and the same seed.
 
-**Why this priority**: Hit claims (sub-spec 6) are replayed from the shooter's input and the seeded
-spread. Weapon timing must agree before hit detection can, but movement and agreement come first.
+**Why this priority**: Whichever hit model open decision 5 chooses, the server reproduces a shot from
+the shooter's input and the seeded spread (sub-spec 6). Weapon timing must agree before hit detection
+can, but movement and agreement come first.
 
 **Independent Test**: Step a character holding the trigger for every weapon in the test content and
 check each shot's step, direction, recoil and counters against the values the configuration implies.
@@ -378,7 +379,10 @@ Scenario 2 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-no
   sweeps the segment travelled in the step against terrain, static meshes and the hitboxes it is given.
 - **FR-010**: A projectile hit MUST report the entity hit (or the terrain or mesh), the hitbox struck,
   the impact point and the step. Among several hits within one step, the earliest along the segment
-  wins, with ties broken by entity ID.
+  wins. At equal distance a terrain or mesh hit wins over a character, then the lower target ID, then
+  the lower hitbox index (data-model.md, Projectile step). Amended 2026-11-22 by PR #70: the tie order
+  is the one `ProjectileStep` implements and
+  `ProjectileHitTests.EarliestHitAlongTheSegmentWinsAndTiesGoToTheLowerId` pins.
 - **FR-011**: The core MUST build a character's hitboxes from its position, orientation and stance,
   using a configured layout, so that the same pose gives the same hitboxes every time on the server
   build. The "in every build" clause is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
@@ -683,8 +687,8 @@ stays in its section, stated as built.
 - **Scope of this slice.** This spec covers character movement, character collision, weapon timing,
   projectile flight, hitboxes, the three formats, the analyzer, the agreement suite and the
   measurements. Vehicle physics (choosing Bepu, Jolt or Rapier by agreement and cost) is the next
-  slice of sub-spec 3, with its own spec. Client prediction and reconciliation, hit claims and their
-  validation are sub-spec 6; the client's Worker plumbing and rendering are sub-spec 8.
+  slice of sub-spec 3, with its own spec. Client prediction and reconciliation, and hit resolution
+  under open decision 5, are sub-spec 6; the client's Worker plumbing and rendering are sub-spec 8.
 - **Server target.** The agreement reference is .NET 10 on Linux x64. RyuJIT on x64 compiles scalar
   `float` arithmetic to SSE single-precision instructions and doesn't contract multiply-add, so x64
   results don't vary by CPU model. Other server architectures (Arm64 developer machines) can run the

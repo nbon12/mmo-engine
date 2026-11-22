@@ -375,7 +375,8 @@ candidate buffer's capacity per query.
 
 The compiled weapon configuration (per slot) is in
 [contracts/config-rules.md](contracts/config-rules.md#compile-time-conversions): `Rpm` (fire-rate units
-per step, equal to `roundsPerMinute`), `ShotCost` (60·`stepRateHz` units per shot), `MaxShotsPerStep`,
+per step, equal to `roundsPerMinute`; a shot costs `CompiledConfig.ShotCost`, 60·`stepRateHz` units,
+shared by every slot), `MaxShotsPerStep`,
 `FireMode` (Auto or Semi), magazine and reserve sizes, `ReloadSteps`, `EquipSteps`,
 `HeatCooldownDelaySteps`, `RecoilRecoveryDelaySteps`, heat values scaled by `stepRateHz`, `VersMax`,
 recoil in binary angle units, `MuzzleSpeed` and the projectile class index. No duration or rate in
@@ -653,8 +654,9 @@ buffers, so returning it allocates nothing, and it stays valid until the next ca
 | Step | `u32` | the new step number; the old one on a fault |
 | Fault | `StepFault` | Code None when the step committed |
 | Hash | `u64` | XxHash64 (seed 0, one-shot) of State; 0 on a fault. Printed as 16 lowercase hex digits in reports and fixtures. |
-| State | `ReadOnlySpan<byte>` | the canonical state with this step's events |
-| Events | `StepEvents` | typed read-only views of the six event lists |
+| State | `ReadOnlySpan<byte>` | the canonical state with this step's events; empty on a fault |
+| Events | `StepEvents` | typed read-only views of the six event lists; empty on a fault |
+| Counters | `StepCounters` | the step's work summed over its characters: SubMoves, Sweeps, SlideCapHits, FireBlocks; on a fault, the work done before it; not hashed; read by the FR-005 loop-bound tests. Amended 2026-11-22 by PR #70: the row was missing. |
 
 `StepEvents`, each list in the order the state serialises it:
 
