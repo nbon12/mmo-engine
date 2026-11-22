@@ -2097,6 +2097,17 @@ The design documents settled these points, which the spec leaves open. They are 
   `now` from `process.hrtime.bigint()`, a BigInt that a Number clock cannot subtract, so it passes
   `Number(process.hrtime.bigint() - start)` with `unitNs: 1`, and T307 passes `performance.now()` with
   `unitNs: 1e6`.
+- **T304 and T306: the percentile rank is computed in integers, and `passes.mjs` holds the pieces both
+  halves share.** T304 wrote the rank as `Math.ceil(p / 100 * n)`, which rounds `p / 100` first:
+  `Math.ceil(7 / 100 * 100)` is 8, not the 7 that the contract's ⌈p / 100 · n⌉ gives. `nearestRank`
+  computes `Math.ceil(p * n / 100)`, exact for every integer p and n the report uses, and gives the same
+  ranks as the formula wherever it was right (the 5th, 9th and 2,978th that T299 pins). `passes.mjs` also
+  exports `COMMAND_SIZE`, `STEP_KINDS`, `COLD_START_SCENARIO`, `readStopText` and `readLoadText`, so the
+  Node half and the Worker (T307) drive the same three streams and name a failed call the same way: a
+  load call or `Reset` that does not return `Ok` names its code and the report buffer's text, and a
+  `StepQueued` that stops early names the stop entry's text. `measure-node.mjs` counts the
+  `CommandBuffer()` fetch and the write of the first command inside `firstStepMs`, because the first
+  step cannot run without them, and reports a boot failure as a MeasurementError naming `dotnet.js`.
 
 ## Delivery
 
