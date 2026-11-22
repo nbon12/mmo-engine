@@ -186,10 +186,13 @@ is hard-coded. The missing-credential error itself is a known gap.
 - **FR-009**: Claude MUST NOT merge pull requests or push directly to the default branch. Changes go
   to a new branch, or to the head branch of the PR it was asked about. `auto-merge.yml` MUST NOT
   merge a PR whose head commit is from `claude[bot]`.
-- **FR-010**: While the repository holds only specs and docs, the job MUST NOT install build
-  toolchains or allow build commands. When application code lands, the spec that introduces it MUST
-  add the matching setup steps, and allow the same build and test commands CI runs, so that Claude
-  can verify its own changes.
+- **FR-010**: The job MUST NOT install build toolchains or allow build commands until a spec adds the
+  matching setup steps and allows the same build and test commands CI runs, so that Claude can
+  verify its own changes. Application code has landed since (specs 013 to 015), and CI builds and
+  tests it in the `.NET`, `Harness` and `SimCore` workflows, but no spec has added those steps yet:
+  the job still installs no toolchain and allows no build command, which
+  `FunctionalRequirements.test_fr010_no_toolchains_or_shell_commands_while_repo_is_docs_only` pins.
+  Adding them is an open follow-up (`specs/015-shared-simulation-core/spec.md`, Assumptions).
 - **FR-011**: If no credential is configured, the run MUST fail with an error that names the
   missing secret.
 
