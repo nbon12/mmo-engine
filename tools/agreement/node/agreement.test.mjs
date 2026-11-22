@@ -35,8 +35,9 @@
  * state | u64 hash`, little-endian, the next record at `o + 16 + stateLength`
  * (contracts/state-serialization.md#step-record).
  *
- * Run (after `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$APP_OUT"` and
- * `agreement prepare --seeds 1-50 --work "$WORK"`):
+ * Run (after `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false
+ * -o "$APP_OUT"`, the prebuilt runtime pack as CI publishes it even where the `wasm-tools` workload is
+ * installed, and `agreement prepare --seeds 1-50 --work "$WORK"`):
  *
  *   AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-interp \
  *     node --test tools/agreement/node/agreement.test.mjs

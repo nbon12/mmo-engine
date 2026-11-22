@@ -2037,6 +2037,42 @@ The design documents settled these points, which the spec leaves open. They are 
   not in the `workflow_run` list yet. Adding them would change the list beyond T291's one entry, so the
   list, `GUARDED_PATHS` and `REQUIRE_CHECKS` are unchanged, and the gap is an open follow-up in T317's
   description and T318's patch notes.
+- **T287 and T274 (Phase 11 review): the server's error answers are in the contract, and a PUT checks
+  its build folder's real path.** The server answered 500 when it could not write a file, and gave every
+  403, 404 and 500 a one-line `text/plain; charset=utf-8` body, while
+  contracts/wasm-api.md#served-files named only 204 and 403 for a PUT and its content-type row read as
+  covering every answer. The behaviour is kept and written down: a write failure is a server fault, and
+  answering it 403 would tell the runner its request was refused. The content-type row now covers
+  served files only. Separately, GET checked the real path of what it served but PUT did not, so a
+  `<work>/chromium-worker` symlinked to a folder outside the work root took a 204 and the file landed
+  outside (reproduced in review). PUT now creates the build folder when missing, resolves its real path
+  and refuses with 403 unless it is inside the work root's real path, then writes into that real path;
+  the body has been read to its end by then, so the client still gets the 403. A dangling symlink fails
+  the `mkdir` and is a 500, which writes nothing either. server.test.mjs gains the symlink row (it fails
+  against the previous server) and a table of a 403, a 404 and a 500 (a build folder that is a regular
+  file) asserting the body and its type; every refused-PUT row now also checks that nothing was written
+  anywhere in the case directory outside the app and work roots. The contract's Layer and Tests tables
+  now name `lib/server.mjs`, `web/page.html`, `specs/worker.spec.mjs` and `node/server.test.mjs`.
+  `tests/workflows/test_simcore_workflow.py` is not added there: this contract does not specify the
+  workflow, and tasks.md (T281 to T284) and quickstart.md already cite that test where the workflow is
+  described.
+- **T290, T285, T288 and T292 (Phase 11 review): the prebuilt publish passes
+  `-p:UsingBrowserRuntimeWorkload=false`.** With the `wasm-tools` workload installed, as it is here,
+  `InvariantGlobalization=true` makes every publish relink the runtime, so the local T285, T288, T289 and
+  T292 runs recorded as `node-interp` and `chromium-worker` tested a relinked `dotnet.native.wasm`, not
+  the runtime pack's that CI's `agreement` job tests (`cmp` shows the two differ).
+  `-p:WasmBuildNative=false` cannot stop it (`WasmBuildNative is required because
+  InvariantGlobalization=true`). `UsingBrowserRuntimeWorkload` is the property the workload manifest
+  computes from whether the workload is installed, so passing `false` gives a machine with the workload
+  exactly what a runner without it gets: no relink, and a `dotnet.native.*.wasm` byte-identical to the
+  10.0.15 runtime pack's. The flag is now in simcore.yml's publish step, so `node-interp` means the
+  prebuilt runtime pack on any runner image, and `test_prebuilt_wasm_is_published_before_any_workload`
+  asserts it. The same command is in quickstart.md's agreement section and its measurement section's
+  prebuilt publish, in T285, T288, T292 and T315, and in agreement.test.mjs's Run comment. The relinked
+  and AOT publishes, which need the workload, do not carry it. T292 was rerun on the prebuilt publish:
+  both Node builds pass 90 of 90 tests, the Chromium Worker spec passes, and `agreement compare` prints
+  `match, 69 streams, 17192 steps, tables match` for `node-interp`, `node-interp-nojit` and
+  `chromium-worker` and exits 0.
 
 ## Delivery
 

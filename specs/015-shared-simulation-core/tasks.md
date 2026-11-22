@@ -2924,7 +2924,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Every response, a 404 and a 403 included, carries `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` and `Cache-Control: no-store`, and no `Content-Encoding`. A served file's body equals the file's bytes.
   - `GET /_framework/%2e%2e/%2e%2e/etc/passwd` and `GET /work/..%2fmanifest.json` return 403.
   - `PUT /work/chromium-worker/flat-run-30hz.records`, `PUT /work/firefox-worker/x.error.txt`, `PUT /work/webkit-worker/tables.bin` and `PUT /work/chromium-worker/tables.error.txt` each return 204. The file holds exactly the body, and no temporary file is left in the folder.
-  - These PUTs return 403 and write nothing: build `node-interp`, stream name `Bad_Name`, stream `tables` with `.records`, an extension other than the four, and a body of 64 MiB + 1 byte.
+  - These PUTs return 403 and write nothing, under the work root or anywhere else in the case directory: build `node-interp`, stream name `Bad_Name`, stream `tables` with `.records`, an extension other than the four, a body of 64 MiB + 1 byte, and (added in the Phase 11 review) a `<work>/chromium-worker` that is a symlink to a folder outside the work root.
+  - (Added in the Phase 11 review.) A 403 (`GET /work/..%2fmanifest.json`, `PUT /work/node-interp/x.records`), a 404 (`GET /nothing`) and a 500 (`PUT /work/chromium-worker/a.records` when `<work>/chromium-worker` is a regular file, which is left as it was) each carry `Content-Type: text/plain; charset=utf-8` and the one-line body `<status> <reason>` with a newline (`403 Forbidden`, `404 Not Found`, `500 Internal Server Error`). A 204 has no body.
   - (Added in the Phase 11 review.) A PUT of one form replaces its other form: in `chromium-worker/`, beside a neighbour `x-2.error.txt`, `PUT x.error.txt` then `x.records`, `x.records` then `x.error.txt`, `tables.error.txt` then `tables.bin`, and `tables.bin` then `tables.error.txt` each return 204 and leave only the neighbour, untouched, and the second file, holding exactly its body. A refused `PUT x.records` of 64 MiB + 1 byte leaves an earlier `x.error.txt` as it was.
   - `GET /nothing` returns 404.
 
@@ -3012,7 +3013,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - it passes no `--require`, or exactly `--require node-interp,node-interp-nojit,chromium-worker`;
     - it comes after every runner step.
   - `test_agreement_job_times_out_after_ten_minutes` (SC-006): `jobs.agreement["timeout-minutes"] == 10`.
-  - `test_prebuilt_wasm_is_published_before_any_workload`: a step runs `dotnet publish src/MmoEngine.SimCore.Wasm -c Release`, and no step of the job mentions `dotnet workload`.
+  - `test_prebuilt_wasm_is_published_before_any_workload`: a step runs `dotnet publish src/MmoEngine.SimCore.Wasm -c Release`, with `-p:UsingBrowserRuntimeWorkload=false` (added in the Phase 11 review, so `node-interp` is the prebuilt runtime pack on any runner image), and no step of the job mentions `dotnet workload`.
   - `test_prepare_writes_fifty_seeds_to_a_fresh_work_directory` (SC-001): `agreement prepare --seeds 1-50 --work "$AGREEMENT_WORK"` runs after a step that appends `AGREEMENT_APP=$RUNNER_TEMP/…/wwwroot` and `AGREEMENT_WORK=$RUNNER_TEMP/…` to `$GITHUB_ENV`.
   - `test_runner_unit_tests_run_before_the_agreement`: a step runs `node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs tools/agreement/node/runtime.test.mjs` before the first agreement run, without `continue-on-error`.
   - `test_every_step_after_the_toolchain_setup_has_its_own_bound` (added in the Phase 11 review): checkout, `setup-dotnet` and `setup-node` are the first three steps, and every later step has an integer `timeout-minutes` above 0 and below the job's 10, so a step that hangs fails on its own and compare (`!cancelled()`) still reports.
@@ -3046,7 +3047,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
   This task follows T271 and T272, whose red checks need the host absent. Makes T272 (SimCoreExportsTests, all seven methods) pass. Also confirm with exit codes:
   - `dotnet build MmoEngine.sln -warnaserror` (which now builds the host's test project too) and `dotnet format MmoEngine.sln --verify-no-changes` exit 0;
-  - `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$(mktemp -d)"` exits 0 and writes `wwwroot/_framework/dotnet.js`.
+  - `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$(mktemp -d)"` exits 0 and writes `wwwroot/_framework/dotnet.js`. The flag keeps the publish on the prebuilt runtime pack where the `wasm-tools` workload is installed (added in the Phase 11 review; see T290 step 4).
 - [X] T286 [P] [US2] Implement `compareTables(inputs, serverResults, buildResults, buildName)` in `tools/agreement/lib/tables.mjs` (contracts/wasm-api.md#cross-build-tables):
   - The MMXT and MMXR headers must agree, using `TablesComparison`'s header wording.
   - Math rows match on bit-identical r0 and r1, or, where the server value is NaN (exponent all ones, mantissa non-zero), on any build NaN.
@@ -3069,9 +3070,9 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - The MIME table, plus COOP `same-origin`, COEP `require-corp` and `Cache-Control: no-store` on every response.
   - Files are streamed unmodified, without `Content-Encoding`.
   - A decoded path that resolves outside its root returns 403.
-  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. Once it is in place, the file's other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner's `writeOutput` does, so a rerun on the same work directory never leaves an error file beside the output it stands in place of (added in the Phase 11 review); a refused PUT writes and removes nothing. The server answers 204, or 403 for anything else, and 404 for unknown paths.
+  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`, and the build folder, created when missing, has its real path inside the work root's real path (a build folder symlinked out of the work directory is refused, added in the Phase 11 review); the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. Once it is in place, the file's other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner's `writeOutput` does, so a rerun on the same work directory never leaves an error file beside the output it stands in place of (added in the Phase 11 review); a refused PUT writes and removes nothing. The server answers 204, or 403 for a PUT under `/work/` that breaks the rule, and 404 for unknown paths. A file it cannot read or write for a reason other than a missing file (for example, a build folder that is a regular file) is 500. A 403, 404 or 500 carries a one-line `<status> <reason>` body as `text/plain; charset=utf-8`; the MIME table is for served files only (both added in the Phase 11 review).
 
-  Makes T274 (server.test.mjs) pass: 24 of its 28 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
+  Makes T274 (server.test.mjs) pass: 29 of its 33 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
 - [X] T288 [US2] Implement `tools/agreement/lib/runtime.mjs` (contracts/wasm-api.md#boot), after T285:
   - `JITERPRETER_OFF`, the three `--no-jiterpreter-*` flags;
   - `bootRuntime(dotnetJsUrl, { jiterpreter = true })`, which uses `dotnet.withRuntimeOptions(...)`, gets `getAssemblyExports('MmoEngine.SimCore.Wasm.dll')` and returns `{ runtime, exports, buildInfo, jiterpreter, timings }`, where `jiterpreter` is `jiterpreterState(runtime)` read right after `create()`;
@@ -3080,7 +3081,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Their unit tests, `tools/agreement/node/runtime.test.mjs` (`node:test`, added in the Phase 11 review), with records built in memory: `firstDifferingStep` table rows for equal records and both empty (null), a state byte or a state length differing at step n (n), only the hash differing (n), another step number (the server step), a missing middle or last record and no records at all (the server step), a record cut off inside its state or hash (its server step), an extra record past the last (its step, whatever its number), a cut-off extra record or header (the server's last step + 1), and against no server records (the extra's step, or 0 when cut off); a view's own range honoured; a cut-off server record throwing `RangeError`. `readRecords` rows read each record's step, offset, length, state and hash, records of different state lengths and no bytes, and throw a `RangeError` naming the offset of a cut-off header, state or hash, or a `TypeError` for something that is not bytes. `jiterpreterState` rows read the default and the `JITERPRETER_OFF` reports as all on and all off, each option on its own, a missing option as off, and give `null` without `INTERNAL`, without the accessor, or for an empty report. The workflow's unit-test step runs it (T290 step 8).
 
   Then run locally against the T285 host:
-  - `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$APP_OUT"`;
+  - `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$APP_OUT"` (the prebuilt runtime pack, as T290 step 4 publishes it, even where the `wasm-tools` workload is installed; added in the Phase 11 review);
   - `agreement prepare --seeds 1-50 --work "$WORK"`;
   - `node --test tools/agreement/node/agreement.test.mjs`, with `AGREEMENT_BUILD=node-interp` and again with `node-interp-nojit`. Both pass every test.
 
@@ -3108,7 +3109,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     1. `actions/checkout` and `actions/setup-dotnet` (`global-json-file: global.json`), at the SHAs `.github/workflows/dotnet.yml` pins. Checkout has `persist-credentials: false`.
     2. `actions/setup-node` with `node-version: "22"`, pinned to the 40-hex commit of its latest release tag, resolved with `gh api repos/actions/setup-node/git/ref/tags/<tag>` (dereferenced when the tag is annotated) and commented `# <tag>`.
     3. A step appending `AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot` and `AGREEMENT_WORK=$RUNNER_TEMP/agreement-work` to `$GITHUB_ENV` (1 minute).
-    4. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/simcore-app"` (5 minutes). This is the prebuilt runtime; no workload is ever installed here.
+    4. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/simcore-app"` (5 minutes). This is the prebuilt runtime; no workload is ever installed here. The flag (added in the Phase 11 review) is what a runner without the workload computes anyway; on an image that has the workload, it stops `InvariantGlobalization=true` from relinking the runtime, so `node-interp` and `chromium-worker` always test the prebuilt runtime pack.
     5. `dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$AGREEMENT_WORK"` (4 minutes).
     6. `npm ci` in `tools/agreement` (2 minutes).
     7. `npx playwright install --with-deps chromium` (4 minutes), with `working-directory: tools/agreement` like every Playwright step, so `npx` runs the lockfile's 1.63.0.
@@ -3122,7 +3123,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   Makes T281 (TriggersAndPaths), T282 (Pins) and T283 (AgreementJob) pass.
 - [X] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. In the Phase 11 review the comment's opening, which called `Workflow tests` main's only CI, was reworded to say no pull request workflow is a required check, and that `.NET` (dotnet.yml) and `Harness` (harness.yml) also run on pull requests and are not listed yet. Change nothing else, the list's other entries, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
 - [X] T292 [US2] Run the `agreement` job's commands end to end locally, in the workflow's order, on fresh `mktemp -d` app and work directories (US2-IT, SC-001):
-  - publish;
+  - publish, with `-p:UsingBrowserRuntimeWorkload=false` as T290 step 4 has it, and confirm that the published `_framework/dotnet.native.*.wasm` is byte-identical to the runtime pack's `dotnet.native.wasm` (`cmp`), so the run tests the prebuilt runtime even with the `wasm-tools` workload installed here (added in the Phase 11 review: the first run tested the relinked runtime);
   - `agreement prepare --seeds 1-50`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`;
   - the three runner unit-test files;
   - both Node runs;
@@ -3412,7 +3413,7 @@ On the PR, these checks pass on the head commit: the `SimCore` workflow's `agree
   - Rerun the coverage commands of T313 until the gate exits 0.
 - [ ] T315 Run the slice-2 quickstart sections exactly as `specs/015-shared-simulation-core/quickstart.md` writes them, in unique `mktemp -d` directories, and record each command's exit code and key output line for the PR description.
   - **Run the agreement suite.** Steps, each expected to exit 0:
-    1. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$APP_OUT"`.
+    1. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$APP_OUT"`.
     2. `agreement prepare --seeds 1-50 --work "$WORK"`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`.
     3. `(cd tools/agreement && npm ci && npx playwright install chromium)`.
     4. Both `node --test tools/agreement/node/agreement.test.mjs` runs, with `AGREEMENT_BUILD=node-interp` and `node-interp-nojit`.

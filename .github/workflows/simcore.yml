@@ -90,10 +90,12 @@ jobs:
           echo "AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot" >> "$GITHUB_ENV"
           echo "AGREEMENT_WORK=$RUNNER_TEMP/agreement-work" >> "$GITHUB_ENV"
 
-      # Against the prebuilt runtime pack: no workload is installed in this job.
+      # Against the prebuilt runtime pack: no workload is installed in this job. The flag is what a
+      # runner without the workload computes anyway; on an image that has wasm-tools it stops
+      # InvariantGlobalization=true from relinking the runtime, so node-interp is always the prebuilt.
       - name: Publish the WebAssembly build
         timeout-minutes: 5
-        run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/simcore-app"
+        run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/simcore-app"
 
       - name: Prepare the agreement work directory (19 committed streams, 50 generated seeds)
         timeout-minutes: 4

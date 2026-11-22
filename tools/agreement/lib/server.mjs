@@ -29,15 +29,21 @@
  *   `firefox-worker` or `webkit-worker`, and the file one of `<stream>.records`, `<stream>.error.txt`,
  *   `tables.bin` and `tables.error.txt`, where `<stream>` matches `^[a-z0-9-]+$` and is never `tables`
  *   (`tables.error.txt` is the tables error file, the fourth form). The body is at most 64 MiB, counted as
- *   it arrives, so a chunked body without a `Content-Length` is held to it too. The body is written to a
- *   temporary file in the same folder, then renamed over the target, so a reader never sees a partial
+ *   it arrives, so a chunked body without a `Content-Length` is held to it too. The build folder is
+ *   created when missing, and its real path must be inside the work root's real path, so a build folder
+ *   that is a symlink out of the work directory is refused like any other traversal. The body is written
+ *   to a temporary file in that folder, then renamed over the target, so a reader never sees a partial
  *   file. Each output then replaces its other form: once `<stream>.records` is in place,
  *   `<stream>.error.txt` is removed, and the reverse, and likewise `tables.bin` and `tables.error.txt`,
  *   as the Node runner does. So a rerun on the same work directory never leaves an error file beside the
  *   output it stands in place of, which `simcore agreement compare` would read first. The answer is 204,
  *   or 403 for any other PUT under `/work/`; a refused body is read to its end and dropped before the
  *   answer, so the client always gets the 403, and nothing is written or removed.
- * - **Anything else** is 404. A failure of the server itself (a file it cannot read or write) is 500.
+ * - **Anything else** is 404. A failure of the server itself (a file it cannot read or write for a reason
+ *   other than a missing file, such as a build folder that is a regular file) is 500, not 403, so the
+ *   runner sees a fault rather than a refusal.
+ * - **Error answers**: a 403, 404 or 500 carries a one-line `<status> <reason>` body as
+ *   `text/plain; charset=utf-8` (the content-type table is for served files only); a 204 has no body.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -250,8 +256,8 @@ async function serveFile(response, target, root) {
 
 /**
  * Writes a PUT body to `<work>/<build>/<file>` through a temporary file in the same folder, or refuses it
- * with 403 after reading it to its end. A body over the limit, or a request that ends early, writes
- * nothing.
+ * with 403 after reading it to its end. A body over the limit, a request that ends early, or a build
+ * folder whose real path is outside the work root writes nothing.
  */
 async function put(request, response, path, workRoot) {
     const target = putTarget(path);
@@ -267,8 +273,13 @@ async function put(request, response, path, workRoot) {
         return;
     }
 
-    const folder = join(workRoot, target.build);
-    await mkdir(folder, { recursive: true });
+    // The body has been read to its end, so a refusal here still reaches the client.
+    const folder = await buildFolder(workRoot, target.build);
+    if (folder === null) {
+        answer(response, 403);
+        return;
+    }
+
     const temporary = join(folder, `.${target.file}.${process.pid}.${randomUUID()}.tmp`);
     try {
         await writeFile(temporary, body, { flag: 'wx' });
@@ -281,6 +292,19 @@ async function put(request, response, path, workRoot) {
     // Removed only once the new output is in place, so a failed write leaves the earlier pair as it was.
     await rm(join(folder, target.replaces), { force: true });
     answer(response, 204);
+}
+
+/**
+ * The real path of `<work>/<build>/`, created when missing; null when that real path is outside the work
+ * root's real path (a build folder that is a symlink out of the work directory). Creating it writes
+ * nothing outside the root: an existing symlink is left as it is, and one whose target is missing fails
+ * the request.
+ */
+async function buildFolder(workRoot, build) {
+    const folder = join(workRoot, build);
+    await mkdir(folder, { recursive: true });
+    const real = await realpath(folder);
+    return isInside(await realpath(workRoot), real) ? real : null;
 }
 
 /**

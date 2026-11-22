@@ -8,10 +8,12 @@
  * - serve each file type with the content type the runtime and module workers need;
  * - send COOP, COEP and `Cache-Control: no-store` on every response, and never a Content-Encoding;
  * - refuse with 403 any decoded path that resolves outside its root;
- * - accept only the four PUT forms, for the three Worker builds, up to 64 MiB, written to a
- *   temporary file and renamed, each removing its other form (`<stream>.records` and
- *   `<stream>.error.txt`, `tables.bin` and `tables.error.txt`) once it is in place;
- * - answer 404 for anything else.
+ * - accept only the four PUT forms, for the three Worker builds, up to 64 MiB, into a build folder whose
+ *   real path is inside the work root, written to a temporary file and renamed, each removing its other
+ *   form (`<stream>.records` and `<stream>.error.txt`, `tables.bin` and `tables.error.txt`) once it is
+ *   in place;
+ * - answer 404 for anything else, and 500 when it cannot write a file;
+ * - give each 403, 404 and 500 a one-line `text/plain; charset=utf-8` body.
  *
  * Each test starts the server on a fresh `fs.mkdtemp` case directory and closes it afterwards:
  *
@@ -33,7 +35,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -279,6 +281,7 @@ describe('a Worker build PUT is written to the work root and answered 204', () =
             const res = await put(path, body);
             assert.equal(res.status, 204, `PUT ${path}: status`);
             assertEveryResponseHeader(res, `PUT ${path}`);
+            assert.equal(res.body.length, 0, `PUT ${path}: a 204 has no body`);
             assert.ok((await readFile(join(work, build, file))).equals(body), `${build}/${file} holds exactly the body`);
             assert.deepEqual(await readdir(join(work, build)), [file], `no temporary file is left in ${build}/`);
             assert.deepEqual(await filesUnder(work), [`${build}/${file}`, 'manifest.json'].sort(), 'the work root');
@@ -359,16 +362,79 @@ describe('any other PUT is refused with 403 and writes nothing', () => {
             makeBody: () => Buffer.alloc(PUT_LIMIT_BYTES + 1, 0x5a),
             chunked: true,
         },
+        {
+            // The build folder's path is inside the work root and its real path is not: a symlink to a
+            // folder beside the work root. Listings do not follow the symlink, so the work root shows
+            // only the link, and the check below shows nothing was written through it.
+            what: 'a build folder that is a symlink out of the work root',
+            path: '/work/chromium-worker/flat-run-30hz.records',
+            makeBody: () => patternBytes(1_000, 9),
+            arrange: async ({ root, work }) => {
+                await mkdir(join(root, 'outside'));
+                await symlink(join(root, 'outside'), join(work, 'chromium-worker'), 'dir');
+            },
+            workFiles: ['chromium-worker', 'manifest.json'],
+        },
     ];
 
-    for (const { what, path, makeBody, chunked = false } of rows) {
+    for (const { what, path, makeBody, chunked = false, arrange, workFiles = ['manifest.json'] } of rows) {
         test(`PUT refused: ${what}`, async (t) => {
-            const { work, put } = await startFixtureServer(t);
+            const fixture = await startFixtureServer(t);
+            const { root, work, put } = fixture;
+            await arrange?.(fixture);
             const body = makeBody();
             const res = await put(path, body, { chunked });
             assert.equal(res.status, 403, `PUT ${path} (${body.length} bytes): status`);
             assertEveryResponseHeader(res, `PUT ${path}`);
-            assert.deepEqual(await filesUnder(work), ['manifest.json'], `PUT ${path} wrote nothing under the work root`);
+            assert.deepEqual(await filesUnder(work), workFiles, `PUT ${path} wrote nothing under the work root`);
+            const elsewhere = (await filesUnder(root)).filter((file) => !file.startsWith('app/') && !file.startsWith('work/'));
+            assert.deepEqual(elsewhere, Object.keys(PLANTED_FILES).sort(), `PUT ${path} wrote nothing outside the work root`);
+        });
+    }
+});
+
+describe('a 403, 404 or 500 carries a one-line text/plain body', () => {
+    const rows = [
+        {
+            what: 'GET /nothing',
+            status: 404,
+            send: ({ get }) => get('/nothing'),
+        },
+        {
+            what: 'GET /work/..%2fmanifest.json',
+            status: 403,
+            send: ({ get }) => get('/work/..%2fmanifest.json'),
+        },
+        {
+            what: 'PUT /work/node-interp/x.records',
+            status: 403,
+            send: ({ put }) => put('/work/node-interp/x.records', patternBytes(64, 11)),
+        },
+        {
+            // The server cannot create `<work>/chromium-worker/`, because a regular file holds that
+            // name: a failure to write, so 500, and the file is left as it was.
+            what: 'PUT /work/chromium-worker/a.records when chromium-worker is a regular file',
+            status: 500,
+            send: async ({ work, put }) => {
+                await writeFile(join(work, 'chromium-worker'), 'a regular file, not a build folder\n');
+                return put('/work/chromium-worker/a.records', patternBytes(64, 12));
+            },
+            workFiles: ['chromium-worker', 'manifest.json'],
+        },
+    ];
+    const reasons = new Map([[403, 'Forbidden'], [404, 'Not Found'], [500, 'Internal Server Error']]);
+
+    for (const { what, status, send: request, workFiles = ['manifest.json'] } of rows) {
+        test(`${what} returns ${status} with the body "${status} ${reasons.get(status)}"`, async (t) => {
+            const fixture = await startFixtureServer(t);
+            const res = await request(fixture);
+            const text = `${status} ${reasons.get(status)}\n`;
+            assert.equal(res.status, status, `${what}: status`);
+            assert.equal(res.headers['content-type'], 'text/plain; charset=utf-8', `${what}: Content-Type`);
+            assert.equal(res.headers['content-length'], String(Buffer.byteLength(text)), `${what}: Content-Length`);
+            assert.equal(res.body.toString('utf8'), text, `${what}: body`);
+            assertEveryResponseHeader(res, what);
+            assert.deepEqual(await filesUnder(fixture.work), workFiles, `${what} wrote nothing under the work root`);
         });
     }
 });

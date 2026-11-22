@@ -361,6 +361,9 @@ class AgreementJob(unittest.TestCase):
 
     def test_prebuilt_wasm_is_published_before_any_workload(self):
         index, step = only_step("agreement", "dotnet publish src/MmoEngine.SimCore.Wasm -c Release")
+        # Where an image has wasm-tools, InvariantGlobalization=true would relink the runtime; the flag
+        # keeps node-interp and chromium-worker on the prebuilt runtime pack.
+        self.assertIn("-p:UsingBrowserRuntimeWorkload=false", command(step).split(), "the publish keeps the prebuilt runtime pack")
         for other in steps("agreement"):
             self.assertNotIn("dotnet workload", json.dumps(other), other.get("name"))
         self.assertLess(index, runner_indexes()[0])

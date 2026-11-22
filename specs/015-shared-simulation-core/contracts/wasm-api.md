@@ -11,7 +11,7 @@ Three layers:
 | --- | --- | --- | --- |
 | `BatchStepper`, `StreamRunner` and `CrossBuildTables` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
 | `SimCoreExports`, one-line `[JSExport]` delegations | `src/MmoEngine.SimCore.Wasm/` | no | `tests/MmoEngine.SimCore.Wasm.Tests/`, which calls the exports as plain methods |
-| JavaScript boot and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `node/agreement.test.mjs`, `web/worker.mjs`, `lib/measure.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs |
+| JavaScript boot, server and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `lib/server.mjs`, `node/agreement.test.mjs`, `web/page.html`, `web/worker.mjs`, `specs/worker.spec.mjs`, `lib/measure.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs; `node/runtime.test.mjs`, `node/tables.test.mjs` and `node/server.test.mjs` for the record helpers, `compareTables` and the server ([Tests](#tests)) |
 
 All logic lives in the core, so the server tests cover everything the browser runs. Only bytes cross
 the JavaScript boundary. Byte layouts of the step record, the canonical state, the collision file, the
@@ -574,7 +574,7 @@ export function jiterpreterState(runtime) {
 | `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on every response | `crossOriginIsolated` is then true in the page and the Worker, and Worker timers resolve to 5 µs instead of 100 µs [measured]. |
 | `Cache-Control: no-store` on every response | Every cold start downloads every file, and no run sees a stale build. |
 | The publish output served unmodified, without `Content-Encoding` | Assets are fetched with SHA-256 integrity [measured]. Startup is measured over loopback on raw files, so it measures the runtime's boot, not the network. |
-| A path-traversal guard: every resolved path must stay inside its root, else 403 | The server writes files (below). |
+| A path-traversal guard: every resolved path, and its real path, must stay inside its root's real path, else 403; for a PUT, the build folder's real path must be inside the work root's | The server writes files (below). |
 
 Routes:
 
@@ -583,8 +583,15 @@ Routes:
 | `GET /web/page.html`, `GET /web/worker.mjs`, `GET /web/measure.html`, `GET /web/measure-worker.mjs`, `GET /lib/runtime.mjs`, `GET /lib/tables.mjs`, `GET /lib/passes.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
 | `GET /_framework/*` | `AGREEMENT_APP/_framework/` |
 | `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs, the table inputs and the server's table results) |
-| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; once it is in place, its other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner does, so an error file never sits beside the output it stands in place of; 204 on success, 403 otherwise, and a refused PUT writes and removes nothing |
+| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`, and the build folder (created when missing) must have its real path inside the work root's, so a build folder that is a symlink out of the work directory is refused; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; once it is in place, its other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner does, so an error file never sits beside the output it stands in place of; 204 on success; 403 for a PUT under `/work/` that breaks these rules, and a refused PUT writes and removes nothing |
+| a request the server fails on: a file it cannot read or write for a reason other than a missing file (for example, `<build>` is a regular file, so the build folder cannot be created) | 500 |
 | anything else | 404 |
+
+A 403, 404 or 500 carries a one-line `<status> <reason>` body (`403 Forbidden`, `404 Not Found`,
+`500 Internal Server Error`, then a newline) as `text/plain; charset=utf-8`, with the COOP, COEP and
+`Cache-Control` headers every response carries. A 204 has no body. The content types in the
+requirements table are those of served files only. A write failure is a 500, not a 403, so a runner
+sees a fault in the server rather than a refused request.
 
 ## Agreement runners
 
@@ -700,3 +707,4 @@ report and the Worker's events attached, before the step is stopped.
 | `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker, checked on the records the Worker wrote too; FR-024; its `tables` assertion and its own `compareTables` on the Worker's `tables.bin` are the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
 | `tools/agreement/node/runtime.test.mjs` (`node --test`) | `firstDifferingStep` (equal, a state byte, a state length or only the hash differing, another step number, missing, cut-off and extra records), `readRecords` (each record's fields; a `RangeError` on a cut-off record) and `jiterpreterState` (on, off, each option, no accessor), on records built in memory |
 | `tools/agreement/node/tables.test.mjs` (`node --test`) | `compareTables` on fixture results: an identical pair matches, a flipped bit in a math or pose row reports that row, a NaN row matches any NaN and not a finite value |
+| `tools/agreement/node/server.test.mjs` (`node --test`) | [Served files](#served-files): 127.0.0.1 with a dynamic port; each content type with the file's bytes; COOP, COEP and `no-store` on every response (the 403, 404 and 204 included) and no `Content-Encoding`; the path-traversal 403; the four PUT forms answered 204 with no body and written exactly, each replacing its other form; the refused PUTs (build name, stream pattern, a `tables` stream, another extension, a 64 MiB + 1 byte chunked body, a build folder symlinked out of the work root) answered 403 with nothing written; the one-line `text/plain` body of a 403, a 404 and a 500 (a build folder that is a regular file); the 404 |

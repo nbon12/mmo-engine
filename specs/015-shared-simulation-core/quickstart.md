@@ -13,7 +13,8 @@ directory. Every expected outcome below is what the command prints or its exit c
 - Python 3 with PyYAML, for the workflow tests.
 - Optional (slice 2, not on main yet): the `wasm-tools` workload, only for the relinked interpreted and
   AOT builds in [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses
-  the prebuilt runtime, which is the build the gating CI job tests.
+  the prebuilt runtime, which is the build the gating CI job tests; with it, the prebuilt publishes
+  below pass `-p:UsingBrowserRuntimeWorkload=false` to keep that build.
 
 ## Build and test
 
@@ -114,14 +115,18 @@ build, prepare a work directory, run the build in Node and in browser Workers, t
 ```bash
 APP_OUT="$(mktemp -d)"
 WORK="$(mktemp -d)"
-dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$APP_OUT"
+dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$APP_OUT"
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$WORK"
 ```
 
 Expected: both exit 0, and `prepare` prints
-`prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision <r>`. With the
-`wasm-tools` workload installed, the publish relinks the runtime; the run below still works, but it
-then tests the relinked build rather than the prebuilt one CI's `agreement` job tests.
+`prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision <r>`.
+`-p:UsingBrowserRuntimeWorkload=false` keeps the publish on the prebuilt runtime pack, the build CI's
+`agreement` job tests, even where the `wasm-tools` workload is installed: there,
+`InvariantGlobalization=true` otherwise relinks the runtime, and `-p:WasmBuildNative=false` cannot
+stop it (`WasmBuildNative is required because InvariantGlobalization=true`). On a machine without the
+workload the flag changes nothing. The published `_framework/dotnet.native.*.wasm` is then
+byte-identical to the runtime pack's `dotnet.native.wasm`.
 
 ```bash
 (cd tools/agreement && npm ci && npx playwright install chromium firefox webkit)
@@ -201,14 +206,15 @@ runner class `local-dev`. The numbers are measurements on this machine only.
 
 Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
-This builds the report for the prebuilt interpreted build, on a machine without the `wasm-tools`
-workload. It needs the benchmark output above and Playwright's Chromium from the agreement section.
+This builds the report for the prebuilt interpreted build, with or without the `wasm-tools` workload
+(the publish keeps the prebuilt runtime pack, as in the agreement section). It needs the benchmark
+output above and Playwright's Chromium from the agreement section.
 
 ```bash
 export MMO_RUNNER_CLASS=local-dev
 PUBLISH="$(mktemp -d)"
 MWORK="$(mktemp -d)"
-dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$PUBLISH/prebuilt"
+dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$PUBLISH/prebuilt"
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$MWORK"
 node tools/agreement/lib/measure.mjs --work "$MWORK" \
   --server-benchmarks BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json \
