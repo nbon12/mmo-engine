@@ -179,6 +179,65 @@ public sealed class SimConfigJsonTests
         }
     }
 
+    public static TheoryData<string> OmittedLeafCases =>
+    [
+        "stepRateHz",
+        "world.maxCharacters",
+        "movement.airAccel",
+        "movement.snapDistance",
+        "weapons[0].reserveRounds",
+        "weapons[1].fireMode",
+        "weapons[0].recoilRecoveryDelayMs",
+        "projectileClasses[0].gravityFactor",
+        "hitboxes.eyeHeightStanding",
+        "hitboxes.standing[0].radius",
+        "hitboxes.crouched[2].b.up",
+        "input.weaponSlots",
+    ];
+
+    /// <summary>
+    /// A leaf field left out of the JSON is refused, not bound as 0 or <c>Auto</c> (issue #71,
+    /// contracts/config-rules.md#shape). Given <c>simcore/config/default.json</c> with one leaf removed (a
+    /// top-level int, a section int, a float whose minimum is 0, a weapon int, <c>fireMode</c>, a projectile
+    /// class float, a hitbox float, a capsule radius, a capsule point coordinate, an input int), When it is
+    /// bound, Then there is no configuration and exactly one error, <c>&lt;path&gt;: is required</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(OmittedLeafCases))]
+    public void AnOmittedLeafFieldIsRequired(string path)
+    {
+        var load = SimConfigJson.Parse(DefaultWith(root => RemoveAt(root, path)));
+
+        Assert.Null(load.Config);
+        var error = Assert.Single(load.Errors);
+        Assert.Equal($"{path}: is required", error.ToString());
+    }
+
+    /// <summary>
+    /// Every omitted leaf is named, in document order. Given <c>default.json</c> without
+    /// <c>movement.airAccel</c>, <c>weapons[0].heatPerShot</c> and <c>weapons[0].equipMs</c>, When it is
+    /// bound, Then the errors are exactly those three <c>is required</c> lines, in the binder's field order.
+    /// </summary>
+    [Fact]
+    public void EveryOmittedLeafFieldIsNamed()
+    {
+        var load = SimConfigJson.Parse(DefaultWith(root =>
+        {
+            RemoveAt(root, "movement.airAccel");
+            RemoveAt(root, "weapons[0].heatPerShot");
+            RemoveAt(root, "weapons[0].equipMs");
+        }));
+
+        Assert.Null(load.Config);
+        string[] expected =
+        [
+            "movement.airAccel: is required",
+            "weapons[0].equipMs: is required",
+            "weapons[0].heatPerShot: is required",
+        ];
+        Assert.Equal(expected, load.Errors.Select(e => e.ToString()));
+    }
+
     [Fact]
     public void NineDotEightOneBindsToTheLiteralsBits()
     {
@@ -205,6 +264,33 @@ public sealed class SimConfigJsonTests
         var root = JsonNode.Parse(RepoPaths.ReadAllText("simcore", "config", "default.json"))!.AsObject();
         edit(root);
         return root.ToJsonString();
+    }
+
+    /// <summary>Removes the leaf at a camelCase path such as <c>hitboxes.crouched[2].b.up</c>, which must exist.</summary>
+    private static void RemoveAt(JsonObject root, string path)
+    {
+        JsonNode node = root;
+        var parts = path.Split('.');
+        for (var p = 0; p < parts.Length; p++)
+        {
+            var part = parts[p];
+            var bracket = part.IndexOf('[', StringComparison.Ordinal);
+            var name = bracket < 0 ? part : part[..bracket];
+            if (p == parts.Length - 1 && bracket < 0)
+            {
+                Assert.True(node.AsObject().Remove(name), $"default.json has no '{path}'");
+                return;
+            }
+
+            node = node[name]!;
+            if (bracket >= 0)
+            {
+                var index = int.Parse(part[(bracket + 1)..^1], System.Globalization.CultureInfo.InvariantCulture);
+                node = node[index]!;
+            }
+        }
+
+        throw new ArgumentException($"'{path}' does not end at a field", nameof(path));
     }
 
     /// <summary>How a row's message is checked.</summary>

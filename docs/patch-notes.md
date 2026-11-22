@@ -20,6 +20,24 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-22 — Config JSON refuses an omitted leaf field
+
+Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #PR · Issue: #71
+
+### Behavior and contract changes
+
+- `SimConfigJson.Parse` (and so `Load` and `simcore config check`) refuses a JSON configuration that
+  leaves out any leaf field (an `int`, a `float` or `fireMode`), with one `<path>: is required` per
+  omitted field, such as `weapons[0].reserveRounds: is required`. Before, it bound as 0 or `Auto` and
+  passed every rule whose minimum is 0. `contracts/config-rules.md#shape` now says every leaf is required.
+- Absent sections, lists, list elements and capsule points still bind as null and are reported by the
+  guard's shape rules, as before.
+
+### Assumptions that no longer hold
+
+- A config JSON file with a scalar deleted is no longer accepted. Any hand-written config must list
+  every field.
+
 ## 2026-11-21 — Shared simulation core, slice 1: deterministic core, analyzer, formats and the simcore CLI
 
 Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #70
