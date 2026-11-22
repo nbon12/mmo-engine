@@ -13,10 +13,11 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// The quickstart's commands (specs/015-shared-simulation-core/quickstart.md) are real. Slice 1's
 /// <c>simcore</c> commands each parse against the CLI's own command tree
 /// (<see cref="Program.CreateRootCommand()"/>) and resolve to the command their first two words name, and
-/// the documented refusal refuses. Slice 2's sections (<see cref="QuickstartSections.SliceTwo"/>) name CLI
-/// commands that parse, a publishable project, runner files that exist, known build names and report
-/// modes, a declared Playwright project and the workflow tests' file; and
-/// <see cref="SliceTwoChecksReportEachDefect"/> sees each of those checks fail on a copy with one defect.
+/// the documented refusal refuses. Slice 2's sections (<see cref="QuickstartSections.SliceTwo"/>) hold
+/// bash lines whose quotes close, CLI commands that parse, a publishable project, runner files that
+/// exist, known build names and report modes, a declared Playwright project and a workflow-tests
+/// directory that holds the SimCore workflow's tests; and <see cref="SliceTwoChecksReportEachDefect"/>
+/// sees each of those checks, and the section check, fail on a copy with one defect.
 /// </summary>
 /// <remarks>
 /// quickstart.md is opened read-only through <see cref="RepoPaths"/>. The refusal runs with
@@ -241,6 +242,12 @@ public sealed class QuickstartTests
     /// <summary>The check that a bash line splits into words (its quotes are closed).</summary>
     private const string ShellCheck = "shell";
 
+    /// <summary>The check that a <c>python3 -m unittest discover -s &lt;dir&gt;</c> line names a directory holding <see cref="WorkflowTestsFile"/>.</summary>
+    private const string WorkflowTestsCheck = "workflow-tests";
+
+    /// <summary>The SimCore workflow's tests, which the <c>## Workflow tests</c> section's directory must hold.</summary>
+    private const string WorkflowTestsFile = "test_simcore_workflow.py";
+
     /// <summary>The CLI project every slice-2 <c>dotnet run</c> line names.</summary>
     private const string CliProject = "src/MmoEngine.SimCore.Cli";
 
@@ -310,6 +317,9 @@ public sealed class QuickstartTests
     /// <summary>The <c>npx playwright test --project</c> projects, in document order.</summary>
     private static readonly string[] ExpectedPlaywrightProjects = ["chromium"];
 
+    /// <summary>The <c>python3 -m unittest discover -s</c> directories, in document order.</summary>
+    private static readonly string[] ExpectedWorkflowTestDirectories = ["tests/workflows"];
+
     /// <summary>
     /// One deliberate defect per row: the first occurrence of <see cref="QuickstartDefect.Original"/>, which
     /// the real document holds <see cref="QuickstartDefect.Occurrences"/> times, becomes
@@ -319,11 +329,21 @@ public sealed class QuickstartTests
     private static readonly QuickstartDefect[] Defects =
     [
         new("compare-misspelt", "agreement compare --work \"$WORK\"", "agreement compar --work \"$WORK\"", 1, ParseCheck, "agreement compar --work", LocatesDefect: true),
+        new(
+            "publish-dir-misspelt",
+            "dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o \"$APP_OUT\"",
+            "dotnet publish src/MmoEngine.SimCore.Wsm -c Release -p:UsingBrowserRuntimeWorkload=false -o \"$APP_OUT\"",
+            1,
+            PublishCheck,
+            "dotnet publish src/MmoEngine.SimCore.Wsm",
+            LocatesDefect: true),
+        new("quote-unclosed", "agreement prepare --seeds 1-50 --work \"$WORK\"", "agreement prepare --seeds 1-50 --work \"$WORK", 1, ShellCheck, "--work \"$WORK", LocatesDefect: true),
         new("test-file-misspelt", "node --test tools/agreement/node/agreement.test.mjs", "node --test tools/agreement/node/agreemnt.test.mjs", 4, FileCheck, "node --test tools/agreement/node/agreemnt.test.mjs", LocatesDefect: true),
         new("agreement-build-unknown", "AGREEMENT_BUILD=node-interp-nojit", "AGREEMENT_BUILD=node-jit", 1, BuildNameCheck, "AGREEMENT_BUILD=node-jit", LocatesDefect: true),
         new("require-build-unknown", "--require node-interp-relinked,node-aot", "--require node-interp-relinked,node-aotx", 1, BuildNameCheck, "--require node-interp-relinked,node-aotx", LocatesDefect: true),
         new("mode-key-unknown", "--mode interp-prebuilt=", "--mode interp=", 1, ModeKeyCheck, "--mode interp=", LocatesDefect: true),
         new("playwright-project-unknown", "--project chromium", "--project chrome", 1, PlaywrightCheck, "--project chrome", LocatesDefect: true),
+        new("workflow-tests-dir-misspelt", "-s tests/workflows -v", "-s tests/workflow -v", 1, WorkflowTestsCheck, "discover -s tests/workflow -v", LocatesDefect: true),
 
         // A missing heading has no line of its own: the failure names the heading the file lacks.
         new("section-renamed", "\n## Workflow tests\n", "\n## Workflow test\n", 1, SectionCheck, "## Workflow tests", LocatesDefect: false),
@@ -345,10 +365,9 @@ public sealed class QuickstartTests
         // When: every slice-2 check runs on the document.
         var failures = CheckSliceTwo(markdown, shellPaths.Path);
 
-        // Then: none fails, and the workflow tests' file the last section describes exists.
+        // Then: none fails. The workflow-tests check is the one that finds the workflow tests' file, through
+        // the directory the last section's unittest line names.
         Assert.True(failures.Count == 0, $"quickstart.md's slice-2 sections fail {failures.Count} checks:\n{string.Join('\n', failures)}");
-        var workflowTests = RepoPaths.Combine("tests", "workflows", "test_simcore_workflow.py");
-        Assert.True(File.Exists(workflowTests), $"{workflowTests} does not exist");
     }
 
     [Theory]
@@ -399,6 +418,7 @@ public sealed class QuickstartTests
         failures.AddRange(CheckBuildNames(commands));
         failures.AddRange(CheckModeKeys(commands));
         failures.AddRange(CheckPlaywrightProjects(commands, RepoPaths.ReadAllText("tools", "agreement", "playwright.config.mjs")));
+        failures.AddRange(CheckWorkflowTests(commands));
         return failures;
     }
 
@@ -670,6 +690,29 @@ public sealed class QuickstartTests
         }
 
         failures.AddRange(CompareMatched(PlaywrightCheck, "Playwright projects", matched, ExpectedPlaywrightProjects));
+        return failures;
+    }
+
+    /// <summary>
+    /// Every <c>python3 -m unittest discover -s &lt;dir&gt;</c> names a repository directory that holds
+    /// <see cref="WorkflowTestsFile"/>, the tests the <c>## Workflow tests</c> section describes.
+    /// </summary>
+    private static List<QuickstartFailure> CheckWorkflowTests(List<ShellCommand> commands)
+    {
+        var failures = new List<QuickstartFailure>();
+        var matched = new List<(ShellCommand Command, string Value)>();
+        foreach (var command in commands.Where(command => command.Words is ["python3", "-m", "unittest", "discover", ..]))
+        {
+            var at = Array.IndexOf(command.Words, "-s");
+            var directory = at >= 0 && at + 1 < command.Words.Length ? command.Words[at + 1] : string.Empty;
+            matched.Add((command, directory));
+            if (!IsRepoPath(directory) || !File.Exists(Path.Combine(RepoPaths.Root, directory, WorkflowTestsFile)))
+            {
+                failures.Add(FailureOn(WorkflowTestsCheck, command, $"'{directory}' is not a repository directory that holds {WorkflowTestsFile}"));
+            }
+        }
+
+        failures.AddRange(CompareMatched(WorkflowTestsCheck, "workflow-test directories", matched, ExpectedWorkflowTestDirectories));
         return failures;
     }
 

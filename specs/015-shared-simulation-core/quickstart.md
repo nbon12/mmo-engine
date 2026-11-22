@@ -126,12 +126,21 @@ workload the flag changes nothing. The published `_framework/dotnet.native.*.was
 byte-identical to the runtime pack's `dotnet.native.wasm`.
 
 ```bash
-(cd tools/agreement && npm ci && npx playwright install chromium firefox webkit)
+(cd tools/agreement && npm ci && npx playwright install chromium)
 ```
 
-Expected: exit 0. On Linux, `npx playwright install --with-deps chromium firefox webkit` also installs
-the browsers' system libraries, which needs root. Firefox and WebKit are optional: without them,
-`compare` reports those builds `not run`.
+Expected: exit 0. On Linux, `npx playwright install --with-deps chromium` also installs the
+browser's system libraries, which needs root.
+
+Firefox and WebKit are optional:
+
+```bash
+(cd tools/agreement && npx playwright install firefox webkit)
+```
+
+Expected: exit 0 where Playwright can download both browsers (`--with-deps` again adds their system
+libraries). Where it cannot, for example when its download host is blocked, the command exits
+non-zero; skip those browsers, and `compare` reports `firefox-worker` and `webkit-worker` as `not run`.
 
 ```bash
 AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-interp \
@@ -140,16 +149,20 @@ AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-int
   node --test tools/agreement/node/agreement.test.mjs
 ```
 
-Expected: each run passes every test (one per stream, plus the jiterpreter, batch, perturbation,
-refusal and cross-build tables checks) and exits 0. The second run has the jiterpreter off, and its
+Expected: each run passes every test (one per stream, plus the jiterpreter, manifest seeds, batch,
+perturbation, refusal and cross-build tables checks) and exits 0. The manifest seeds check finds the
+50 generated seeds after the 19 committed streams. The second run has the jiterpreter off, and its
 jiterpreter check shows the runtime reports it off.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test)
 ```
 
-Expected: exit 0, with one passing Worker test per browser project. To run Chromium only, the browser
-CI requires:
+This runs every project `tools/agreement/playwright.config.mjs` declares, so it needs all three
+browsers. Expected, once Chromium, Firefox and WebKit are installed: exit 0, with one passing Worker
+test per browser project. A project whose browser is not installed fails, and the command exits
+non-zero. Without Firefox and WebKit, run Chromium only, the browser CI requires, as below; to add a
+browser that did install, run the same command with `--project firefox` or `--project webkit`.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium)

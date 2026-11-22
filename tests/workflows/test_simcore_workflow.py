@@ -511,10 +511,13 @@ def run_measure(relinked, aot):
 
 
 class TriggersAndPaths(unittest.TestCase):
-    """US2.7: "**Given** a pull request that changes the shared core or its recorded streams, **When** CI
-    runs, **Then** the agreement suite runs and its result gates the pull request." FR-027: "The
-    agreement suite MUST run in CI on every pull request that changes the core, its analyzer, its
-    recorded streams or its build, and its result MUST gate the pull request." This class is the
+    """US2.7: "**Given** a pull request that changes the shared core, its analyzer, its recorded streams,
+    its runners or its build, **When** CI runs, **Then** the `SimCore` workflow's `agreement` job runs
+    the agreement suite and fails on any divergent step, and its result gates the pull request:
+    auto-merge waits for the workflow and does not merge while the `agreement` check has failed or is
+    still running." FR-027: "The agreement suite MUST run in CI on every pull request that changes the
+    core, its analyzer, its recorded streams or its build (the `SimCore` workflow,
+    `.github/workflows/simcore.yml`), and its result MUST gate the pull request." This class is the
     "runs" half; AgreementJob.test_compare_gates_the_job and AutoMerge are the gate."""
 
     def test_runs_on_pull_requests_and_main_for_simcore_paths(self):
@@ -607,10 +610,11 @@ class AgreementJob(unittest.TestCase):
     """The gating `agreement` job.
 
     SC-001: "Every committed recorded stream, at least 10 named movement, weapon and projectile
-    scenarios plus generated streams from 50 seeds, gives identical per-step hashes in the server
-    build, the WebAssembly build in Node and the WebAssembly build in a browser Worker: zero divergent
-    steps." SC-006: "The agreement suite, including the browser Worker run, completes in under 10
-    minutes on a CI runner." US2.7's gate: `simcore agreement compare` exits non-zero on any divergent
+    scenarios (19 are committed), plus generated streams from 50 seeds, gives identical per-step hashes
+    in the server build, the WebAssembly build in Node and the WebAssembly build in a browser Worker:
+    zero divergent steps." SC-006: "The agreement suite, including the browser Worker run, completes in
+    under 10 minutes on a CI runner: the `agreement` job's 10-minute bound fails any run that does
+    not." US2.7's gate: `simcore agreement compare` exits non-zero on any divergent
     step or any required build that did not run, and nothing turns that exit into a pass."""
 
     def test_compare_gates_the_job(self):
@@ -794,11 +798,13 @@ class AgreementJob(unittest.TestCase):
 class MeasureJob(unittest.TestCase):
     """The `measure` job, which writes and uploads the measurement report.
 
-    US7.2: "**Given** the WebAssembly build, **When** the measurement job runs, **Then** its report records
-    the download size (raw and compressed), the time to the first completed step and the cost per step,
-    for each build mode the toolchain produced, and names any mode it could not produce and why." US7-IT:
-    "Run the measurement job on a CI runner and check that its report holds every listed measurement with
-    units, the runner class and the build mode." SC-007: "The measurement report records the server step
+    US7.2: "**Given** the WebAssembly build, **When** the measurement job runs, **Then** its report records,
+    for each build mode the toolchain produced, the download size (raw, Brotli and gzip), the time to the
+    first completed step over 10 cold starts and the cost per step, each in Node and in a Chromium Worker,
+    and names any mode it could not produce and why." US7-IT: "Run the measurement job on a CI runner and
+    check that its report holds every listed measurement with units, the runner class and the build mode
+    (`simcore measure validate-report`). Check that the zero-allocation tests pass for every step
+    function." SC-007: "The measurement report records the server step
     costs, and the WebAssembly download size, startup time and step cost for each build mode produced, each
     with its runner class." FR-031: the job "MUST name any mode it could not build". FR-030: the server
     build's movement, weapon and projectile steps have benchmarks, which this job runs in full.
@@ -1248,8 +1254,9 @@ class AutoMerge(unittest.TestCase):
     def test_a_failed_or_pending_agreement_check_holds_the_merge(self):
         # The agreement job's check run, under the name GitHub gives it (the job's `name`), goes through
         # auto-merge.yml's own CHECK_RUNS_JQ filter and its `failed=` and `pending=` awk lines: a failed
-        # run is a reason to leave the pull request alone, and a queued one keeps it waiting. A job
-        # named `auto-merge` or `claude` would be filtered out, and the gate would never hold a merge.
+        # run is a reason to leave the pull request alone, and a queued or in-progress one keeps it
+        # waiting. A job named `auto-merge` or `claude` would be filtered out, and the gate would never
+        # hold a merge.
         check = WORKFLOW["jobs"]["agreement"].get("name", "agreement")
         merge_steps = [step for step in AUTO_MERGE["jobs"]["auto-merge"]["steps"]
                        if "CHECK_RUNS_JQ" in step.get("env", {})]

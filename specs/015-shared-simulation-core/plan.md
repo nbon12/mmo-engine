@@ -2241,6 +2241,29 @@ The design documents settled these points, which the spec leaves open. They are 
   which pins T309's `realpathSync` check. The review's further rows for `runPasses` (a `Reset` that
   does not return `Ok`, a negative `StepQueued` return) were already in T302's tables from the first
   Phase 12 review, so nothing was added there.
+- **T311 (Phase 13 review): every slice-2 quickstart check has a defect row, and the workflow tests'
+  file is found through the document.** `SliceTwoChecksReportEachDefect` had no row for the publish
+  check or the shell check, so either could stop rejecting a bad line while both quickstart tests
+  stayed green. The workflow tests' file was a fixed path in the Fact, so no defect in quickstart.md
+  could make that assertion fail, although T311 and the class summary said every check is seen
+  failing. Two rows now misspell the agreement section's publish directory and drop the closing quote
+  of `--work "$WORK"`. A `workflow-tests` check reads the directory from the `## Workflow tests`
+  section's `python3 -m unittest discover -s <dir>` line and requires it to hold
+  `test_simcore_workflow.py`, with exact extraction of one line naming `tests/workflows`, and a third
+  row misspells that directory. The alternative was to reword the summary and call the file a direct
+  assertion. It was not chosen, because it left the section's only bash line unchecked. T311 says so.
+- **T315 (Phase 13 review): the quickstart's required browser install is Chromium, and a valid
+  report's stderr is tested.** The quickstart installed Chromium, Firefox and WebKit in one command
+  and ran every Playwright project, and documented both as exit 0, although it called Firefox and
+  WebKit optional. Where Playwright cannot download them, as on the machine T315 ran on, both commands
+  exit non-zero, so T315 ran the Chromium forms instead. The required install is now Chromium alone,
+  the browser CI requires. Firefox and WebKit are a separate optional command whose non-zero exit is
+  documented, and the all-project run's expected exit 0 holds only once all three are installed. No
+  `--project` line was added, so T311's Playwright extraction is unchanged. T315 also wrote that
+  `validate-report` on a valid report writes only its log event to stderr, which no test asserted.
+  `ValidateReportTests.TheContractExampleIsValid` now checks that stderr is one compact-JSON event
+  with the command's template, the report's path, `ProblemCount` 0 and `Tool` `simcore`. T309's check
+  and T315 now say "prints nothing on stdout".
 
 ## Delivery
 

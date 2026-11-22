@@ -163,7 +163,8 @@ An engineer, or an agent, writes code in the shared core that would make the bui
 iteration over a hash-ordered collection, a read of the wall clock, or an unseeded random number. The
 build fails on that line with a rule ID and a message that names the allowed alternative. The core's
 own trigonometric functions stay within a documented error of the true value, and give the same bits
-in every build.
+in every build for every input in their domain; where the server build's result is NaN, every build's
+result is a NaN.
 
 **Why this priority**: The agreement suite catches a divergence only on the paths the streams cover.
 The analyzer catches the cause on every line, before any test runs.
@@ -200,7 +201,8 @@ allowed sample none. Then build the core itself with the analyzer as an error.
 8. **Given** each of the core's trigonometric and inverse-trigonometric functions, **When** they are
    evaluated over a fixed table of inputs spanning their domains, **Then** (a) on the server build
    every result is within the documented error bound of the true value, and (b) the server and
-   WebAssembly builds return identical bits for every input.
+   WebAssembly builds return identical bits for every in-domain input, and a NaN wherever the
+   server's result is NaN.
 
 ---
 
@@ -603,7 +605,8 @@ validate-report`). Check that the zero-allocation tests pass for every step func
 - **SC-003**: Every analyzer rule fails the build on its violating sample and stays silent on its
   allowed sample, and the core builds with zero analyzer diagnostics.
 - **SC-004**: Each of the core's trigonometric functions stays within its documented error bound over
-  its whole test table on the server build, and agrees to the bit across builds.
+  its whole test table on the server build, and agrees to the bit across builds on every in-domain
+  row, with a NaN on every row where the server gives one.
 - **SC-005**: Steady-state movement, weapon and projectile steps allocate zero bytes after warm-up.
 - **SC-006**: The agreement suite, including the browser Worker run, completes in under 10 minutes on
   a CI runner: the `agreement` job's 10-minute bound fails any run that does not.
@@ -700,6 +703,12 @@ validate-report`). Check that the zero-allocation tests pass for every step func
   - *The records compared (SC-001, US2.1, US2.2).* Every build's whole step record, state and hash,
     is compared byte for byte, which is stronger than the hashes alone, because `agreement compare`
     needs the state to name the fields that differ (US2.4).
+  - *The NaN rows (US3 narrative, US3.8 (b), SC-004).* The cross-build tables accept any NaN from a
+    build where the server's result is NaN, because NaN sign and payload bits are not portable: AOT
+    folds `0f/0f` to `7FC00000` where x64 gives `FFC00000`, and WebAssembly leaves NaN payloads
+    nondeterministic (research.md R4). Every in-domain math row has a finite result and is compared
+    bit for bit, and so is every pose row (contracts/wasm-api.md#cross-build-tables). A NaN never
+    reaches the state (FR-017), so the step records are still compared byte for byte.
   - *The build modes (US7, US7.2, FR-031).* There are three modes, not two: the interpreted build on
     the prebuilt runtime (what the `agreement` job tests), the interpreted build with the runtime
     relinked by the workload, and the ahead-of-time build. With the workload installed every publish
