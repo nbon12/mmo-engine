@@ -16,7 +16,9 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// the documented refusal refuses. Slice 2's sections (<see cref="QuickstartSections.SliceTwo"/>) hold
 /// bash lines whose quotes close, CLI commands that parse, a publishable project, runner files that
 /// exist, known build names and report modes, a declared Playwright project and a workflow-tests
-/// directory that holds the SimCore workflow's tests; and <see cref="SliceTwoChecksReportEachDefect"/>
+/// directory that holds the SimCore workflow's tests. Every path is resolved against the directory its
+/// command runs in: each block starts in the repository root, a <c>cd</c> changes it for the rest of the
+/// block, and one inside <c>( ... )</c> only until the <c>)</c>. <see cref="SliceTwoChecksReportEachDefect"/>
 /// sees each of those checks, and the section check, fail on a copy with one defect.
 /// </summary>
 /// <remarks>
@@ -251,6 +253,9 @@ public sealed class QuickstartTests
     /// <summary>The CLI project every slice-2 <c>dotnet run</c> line names.</summary>
     private const string CliProject = "src/MmoEngine.SimCore.Cli";
 
+    /// <summary>The configuration <c>npx playwright test</c> reads from the directory it runs in.</summary>
+    private const string PlaywrightConfigFile = "playwright.config.mjs";
+
     /// <summary>The environment variable that names the build a Node agreement run records.</summary>
     private const string AgreementBuildPrefix = "AGREEMENT_BUILD=";
 
@@ -345,6 +350,42 @@ public sealed class QuickstartTests
         new("playwright-project-unknown", "--project chromium", "--project chrome", 1, PlaywrightCheck, "--project chrome", LocatesDefect: true),
         new("workflow-tests-dir-misspelt", "-s tests/workflows -v", "-s tests/workflow -v", 1, WorkflowTestsCheck, "discover -s tests/workflow -v", LocatesDefect: true),
 
+        // The directory a line runs in: Playwright run from the root finds no configuration, a node or CLI
+        // path given from tools/agreement does not exist there, and a cd on its own line moves the lines
+        // after it in its block.
+        new(
+            "playwright-run-from-the-root",
+            "(cd tools/agreement && AGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" npx playwright test --project chromium)",
+            "AGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" npx playwright test --project chromium",
+            1,
+            PlaywrightCheck,
+            "AGREEMENT_WORK=\"$WORK\" npx playwright test --project chromium",
+            LocatesDefect: true),
+        new(
+            "node-test-from-the-runners",
+            "AGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" AGREEMENT_BUILD=node-interp \\\n  node --test tools/agreement/node/agreement.test.mjs\n",
+            "(cd tools/agreement && AGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" AGREEMENT_BUILD=node-interp \\\n  node --test tools/agreement/node/agreement.test.mjs)\n",
+            1,
+            FileCheck,
+            "AGREEMENT_BUILD=node-interp node --test tools/agreement/node/agreement.test.mjs",
+            LocatesDefect: true),
+        new(
+            "cli-run-from-the-runners",
+            "dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work \"$WORK\"",
+            "(cd tools/agreement && dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work \"$WORK\")",
+            1,
+            ParseCheck,
+            "(cd tools/agreement && dotnet run --project src/MmoEngine.SimCore.Cli",
+            LocatesDefect: true),
+        new(
+            "cd-moves-the-next-line",
+            "AGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" AGREEMENT_BUILD=node-interp-nojit \\",
+            "cd tools/agreement\nAGREEMENT_APP=\"$APP_OUT/wwwroot\" AGREEMENT_WORK=\"$WORK\" AGREEMENT_BUILD=node-interp-nojit \\",
+            1,
+            FileCheck,
+            "AGREEMENT_BUILD=node-interp-nojit node --test tools/agreement/node/agreement.test.mjs",
+            LocatesDefect: false),
+
         // A missing heading has no line of its own: the failure names the heading the file lacks.
         new("section-renamed", "\n## Workflow tests\n", "\n## Workflow test\n", 1, SectionCheck, "## Workflow tests", LocatesDefect: false),
     ];
@@ -404,6 +445,38 @@ public sealed class QuickstartTests
     }
 
     /// <summary>
+    /// The Playwright-project check reads a project's <c>name:</c> from the configuration's code only: a
+    /// name in a <c>//</c> or <c>/* */</c> comment is not a project, and a <c>//</c> inside a string does not
+    /// start a comment. The committed configuration declares its three projects.
+    /// </summary>
+    [Theory]
+    [InlineData("projects: [{ name: 'chromium' }]", "chromium", true)]
+    [InlineData("projects: [{ name: \"chromium\" }]", "chromium", true)]
+    [InlineData("projects: [{ name: 'firefox' }]", "chromium", false)]
+    [InlineData("projects: [{ name: 'chromium\" }]", "chromium", false)]
+    [InlineData("projects: [{ name: 'chromium' }]", "", false)]
+    [InlineData("// { name: 'chromium' }\nprojects: [{ name: 'firefox' }]", "chromium", false)]
+    [InlineData("/* { name: 'chromium' } */ projects: [{ name: 'firefox' }]", "chromium", false)]
+    [InlineData("/**\n * `--project chromium`, { name: 'chromium' }\n */\nprojects: []", "chromium", false)]
+    [InlineData("projects: [{ url: 'http://127.0.0.1/', name: 'chromium' }]", "chromium", true)]
+    [InlineData("projects: [{ testname: 'chromium' }]", "chromium", false)]
+    public void PlaywrightProjectsAreReadOutsideComments(string config, string project, bool declared)
+    {
+        Assert.Equal(declared, DeclaresProject(config, project));
+    }
+
+    [Theory]
+    [InlineData("chromium")]
+    [InlineData("firefox")]
+    [InlineData("webkit")]
+    public void TheCommittedPlaywrightConfigDeclaresEachBrowser(string project)
+    {
+        var config = RepoPaths.ReadAllText("tools", "agreement", PlaywrightConfigFile);
+
+        Assert.True(DeclaresProject(config, project), $"tools/agreement/{PlaywrightConfigFile} does not declare the project '{project}' outside its comments");
+    }
+
+    /// <summary>
     /// Every slice-2 check run on <paramref name="markdown"/>, the text of quickstart.md or a mutated copy.
     /// Shell variables in its lines stand for paths under <paramref name="shellPaths"/>.
     /// </summary>
@@ -417,7 +490,7 @@ public sealed class QuickstartTests
         failures.AddRange(CheckNodeFiles(commands));
         failures.AddRange(CheckBuildNames(commands));
         failures.AddRange(CheckModeKeys(commands));
-        failures.AddRange(CheckPlaywrightProjects(commands, RepoPaths.ReadAllText("tools", "agreement", "playwright.config.mjs")));
+        failures.AddRange(CheckPlaywrightProjects(commands));
         failures.AddRange(CheckWorkflowTests(commands));
         return failures;
     }
@@ -452,27 +525,39 @@ public sealed class QuickstartTests
     }
 
     /// <summary>
-    /// The simple commands of every bash line of the slice-2 sections, in document order. A line whose
-    /// quotes do not close adds a <see cref="ShellCheck"/> failure to <paramref name="failures"/> instead.
+    /// The simple commands of every bash line of the slice-2 sections, in document order, each with the
+    /// directory it runs in. Each <c>```bash</c> block starts in the repository root, as the quickstart says
+    /// its commands run, and a <c>cd</c> outside <c>( ... )</c> carries to the block's later lines. A line
+    /// whose quotes do not close adds a <see cref="ShellCheck"/> failure to <paramref name="failures"/>
+    /// instead, and leaves the directory as it was.
     /// </summary>
     private static List<ShellCommand> SliceTwoCommands(string markdown, string shellPaths, List<QuickstartFailure> failures)
     {
         var commands = new List<ShellCommand>();
         foreach (var heading in QuickstartSections.SliceTwo)
         {
+            var fence = 0;
+            var directory = RepoPaths.Root;
             foreach (var line in QuickstartSections.BashLines(markdown, heading))
             {
-                var (simple, error) = SplitShell(line.Text, shellPaths);
+                if (line.Fence != fence)
+                {
+                    fence = line.Fence;
+                    directory = RepoPaths.Root;
+                }
+
+                var (simple, after, error) = SplitShell(line.Text, shellPaths, directory);
                 if (error is not null)
                 {
                     failures.Add(new QuickstartFailure(ShellCheck, line.First, line.Last, line.Text, error));
                     continue;
                 }
 
-                foreach (var words in simple)
+                directory = after;
+                foreach (var (words, runsIn) in simple)
                 {
                     var assignments = words.TakeWhile(IsAssignment).ToArray();
-                    commands.Add(new ShellCommand(line.First, line.Last, line.Text, assignments, words[assignments.Length..]));
+                    commands.Add(new ShellCommand(line.First, line.Last, line.Text, runsIn, assignments, words[assignments.Length..]));
                 }
             }
         }
@@ -500,6 +585,11 @@ public sealed class QuickstartTests
                 continue;
             }
 
+            if (Resolve(command, CliProject) != RepoPaths.Combine(CliProject))
+            {
+                failures.Add(FailureOn(ParseCheck, command, $"runs in {Where(command)}, where --project {CliProject} is not the CLI project"));
+            }
+
             var arguments = command.Words[(separator + 1)..];
             var parse = root.Parse(arguments);
             if (parse.Errors.Count > 0)
@@ -516,7 +606,10 @@ public sealed class QuickstartTests
         return failures;
     }
 
-    /// <summary>Every <c>dotnet publish &lt;dir&gt;</c> names a repository directory that holds exactly one <c>.csproj</c>.</summary>
+    /// <summary>
+    /// Every <c>dotnet publish &lt;dir&gt;</c> names, from the directory it runs in, a repository directory that
+    /// holds exactly one <c>.csproj</c>.
+    /// </summary>
     private static List<QuickstartFailure> CheckPublishDirectories(List<ShellCommand> commands)
     {
         var failures = new List<QuickstartFailure>();
@@ -524,12 +617,11 @@ public sealed class QuickstartTests
         foreach (var command in commands.Where(command => command.Words is ["dotnet", "publish", ..]))
         {
             var directory = command.Words.Length > 2 ? command.Words[2] : string.Empty;
-            var projects = IsRepoPath(directory) && Directory.Exists(Path.Combine(RepoPaths.Root, directory))
-                ? Directory.GetFiles(Path.Combine(RepoPaths.Root, directory), "*.csproj")
-                : null;
+            var resolved = Resolve(command, directory);
+            var projects = resolved is not null && Directory.Exists(resolved) ? Directory.GetFiles(resolved, "*.csproj") : null;
             if (projects is not [var project])
             {
-                var holds = projects is null ? "is not a repository directory" : $"holds {projects.Length} .csproj files, not one";
+                var holds = projects is null ? $"is not a repository directory from {Where(command)}" : $"holds {projects.Length} .csproj files, not one";
                 failures.Add(FailureOn(PublishCheck, command, $"'{directory}' {holds}"));
                 matched.Add((command, directory));
                 continue;
@@ -542,7 +634,7 @@ public sealed class QuickstartTests
         return failures;
     }
 
-    /// <summary>Every <c>node --test &lt;path&gt;</c> and <c>node &lt;path&gt;</c> names a repository file that exists.</summary>
+    /// <summary>Every <c>node --test &lt;path&gt;</c> and <c>node &lt;path&gt;</c> names, from the directory it runs in, a repository file that exists.</summary>
     private static List<QuickstartFailure> CheckNodeFiles(List<ShellCommand> commands)
     {
         var failures = new List<QuickstartFailure>();
@@ -553,9 +645,10 @@ public sealed class QuickstartTests
             var index = test ? 2 : 1;
             var path = command.Words.Length > index ? command.Words[index] : string.Empty;
             matched.Add((command, test ? $"node --test {path}" : $"node {path}"));
-            if (!IsRepoPath(path) || !File.Exists(Path.Combine(RepoPaths.Root, path)))
+            var resolved = Resolve(command, path);
+            if (resolved is null || !File.Exists(resolved))
             {
-                failures.Add(FailureOn(FileCheck, command, $"'{path}' is not a file in the repository"));
+                failures.Add(FailureOn(FileCheck, command, $"'{path}' is not a file in the repository from {Where(command)}"));
             }
         }
 
@@ -666,15 +759,25 @@ public sealed class QuickstartTests
     }
 
     /// <summary>
-    /// Every <c>npx playwright test --project &lt;p&gt;</c> names a project that <paramref name="config"/>, the
-    /// text of <c>tools/agreement/playwright.config.mjs</c>, declares with <c>name: '&lt;p&gt;'</c>.
+    /// Every <c>npx playwright test</c> runs in a repository directory that holds <see cref="PlaywrightConfigFile"/>,
+    /// which Playwright reads from the directory it runs in, and every <c>--project &lt;p&gt;</c> names a
+    /// project that file declares with <c>name: '&lt;p&gt;'</c> outside a comment (<see cref="DeclaresProject"/>).
     /// </summary>
-    private static List<QuickstartFailure> CheckPlaywrightProjects(List<ShellCommand> commands, string config)
+    private static List<QuickstartFailure> CheckPlaywrightProjects(List<ShellCommand> commands)
     {
         var failures = new List<QuickstartFailure>();
         var matched = new List<(ShellCommand Command, string Value)>();
         foreach (var command in commands.Where(command => command.Words is ["npx", "playwright", "test", ..]))
         {
+            var configPath = Resolve(command, PlaywrightConfigFile);
+            var config = configPath is not null && File.Exists(configPath)
+                ? RepoPaths.ReadAllText(Path.GetRelativePath(RepoPaths.Root, configPath))
+                : null;
+            if (config is null)
+            {
+                failures.Add(FailureOn(PlaywrightCheck, command, $"runs in {Where(command)}, which has no {PlaywrightConfigFile}"));
+            }
+
             var at = Array.IndexOf(command.Words, "--project");
             if (at < 0)
             {
@@ -683,9 +786,9 @@ public sealed class QuickstartTests
 
             var project = at + 1 < command.Words.Length ? command.Words[at + 1] : string.Empty;
             matched.Add((command, project));
-            if (project.Length == 0 || !Regex.IsMatch(config, $"name:\\s*['\"]{Regex.Escape(project)}['\"]"))
+            if (config is not null && !DeclaresProject(config, project))
             {
-                failures.Add(FailureOn(PlaywrightCheck, command, $"'{project}' is not a project tools/agreement/playwright.config.mjs declares"));
+                failures.Add(FailureOn(PlaywrightCheck, command, $"'{project}' is not a project {Path.GetRelativePath(RepoPaths.Root, configPath!)} declares"));
             }
         }
 
@@ -694,8 +797,9 @@ public sealed class QuickstartTests
     }
 
     /// <summary>
-    /// Every <c>python3 -m unittest discover -s &lt;dir&gt;</c> names a repository directory that holds
-    /// <see cref="WorkflowTestsFile"/>, the tests the <c>## Workflow tests</c> section describes.
+    /// Every <c>python3 -m unittest discover -s &lt;dir&gt;</c> names, from the directory it runs in, a
+    /// repository directory that holds <see cref="WorkflowTestsFile"/>, the tests the <c>## Workflow tests</c>
+    /// section describes.
     /// </summary>
     private static List<QuickstartFailure> CheckWorkflowTests(List<ShellCommand> commands)
     {
@@ -706,9 +810,10 @@ public sealed class QuickstartTests
             var at = Array.IndexOf(command.Words, "-s");
             var directory = at >= 0 && at + 1 < command.Words.Length ? command.Words[at + 1] : string.Empty;
             matched.Add((command, directory));
-            if (!IsRepoPath(directory) || !File.Exists(Path.Combine(RepoPaths.Root, directory, WorkflowTestsFile)))
+            var resolved = Resolve(command, directory);
+            if (resolved is null || !File.Exists(Path.Combine(resolved, WorkflowTestsFile)))
             {
-                failures.Add(FailureOn(WorkflowTestsCheck, command, $"'{directory}' is not a repository directory that holds {WorkflowTestsFile}"));
+                failures.Add(FailureOn(WorkflowTestsCheck, command, $"'{directory}' is not a repository directory from {Where(command)} that holds {WorkflowTestsFile}"));
             }
         }
 
@@ -750,12 +855,86 @@ public sealed class QuickstartTests
         return string.Join(' ', names);
     }
 
-    /// <summary>A relative path that stays inside the repository, which the quickstart runs from.</summary>
-    private static bool IsRepoPath(string path) =>
-        path.Length > 0
-        && !path.StartsWith('-')
-        && !Path.IsPathRooted(path)
-        && Path.GetFullPath(Path.Combine(RepoPaths.Root, path)).StartsWith(RepoPaths.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    /// <summary>
+    /// The full path that <paramref name="path"/>, a relative path, names when <paramref name="command"/> runs
+    /// in its directory; null when the path is empty, an option or absolute, or leaves the repository.
+    /// </summary>
+    private static string? Resolve(ShellCommand command, string path)
+    {
+        if (path.Length == 0 || path.StartsWith('-') || Path.IsPathRooted(path))
+        {
+            return null;
+        }
+
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(command.Directory, path)));
+        return full.StartsWith(RepoPaths.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? full : null;
+    }
+
+    /// <summary>The directory a command runs in, for a failure message: the repository root, or its path from there.</summary>
+    private static string Where(ShellCommand command) =>
+        command.Directory == RepoPaths.Root ? "the repository root" : $"'{Path.GetRelativePath(RepoPaths.Root, command.Directory)}'";
+
+    /// <summary>
+    /// Whether <paramref name="config"/>, the text of a Playwright configuration, declares the project
+    /// <paramref name="project"/> with <c>name: '&lt;project&gt;'</c> (or double quotes) outside its
+    /// <c>//</c> and <c>/* */</c> comments.
+    /// </summary>
+    private static bool DeclaresProject(string config, string project) =>
+        project.Length > 0 && Regex.IsMatch(WithoutComments(config), $"\\bname\\s*:\\s*(['\"]){Regex.Escape(project)}\\1");
+
+    /// <summary>
+    /// <paramref name="script"/> with its <c>//</c> and <c>/* */</c> comments removed (each block comment
+    /// becomes one space, each line comment ends before its newline); a <c>//</c> or <c>/*</c> inside a
+    /// quoted or template string is kept.
+    /// </summary>
+    private static string WithoutComments(string script)
+    {
+        var text = new StringBuilder(script.Length);
+        for (var i = 0; i < script.Length; i++)
+        {
+            var c = script[i];
+            var next = i + 1 < script.Length ? script[i + 1] : '\0';
+            if (c is '\'' or '"' or '`')
+            {
+                var end = i + 1;
+                while (end < script.Length && script[end] != c)
+                {
+                    end += script[end] == '\\' ? 2 : 1;
+                }
+
+                end = System.Math.Min(end, script.Length - 1);
+                text.Append(script, i, end - i + 1);
+                i = end;
+            }
+            else if (c == '/' && next == '/')
+            {
+                var newline = script.IndexOf('\n', i);
+                if (newline < 0)
+                {
+                    break;
+                }
+
+                i = newline - 1;
+            }
+            else if (c == '/' && next == '*')
+            {
+                var close = script.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                if (close < 0)
+                {
+                    break;
+                }
+
+                text.Append(' ');
+                i = close + 1;
+            }
+            else
+            {
+                text.Append(c);
+            }
+        }
+
+        return text.ToString();
+    }
 
     /// <summary>A leading <c>NAME=value</c> word of a simple command: a shell name, then <c>=</c>.</summary>
     private static bool IsAssignment(string word)
@@ -773,9 +952,20 @@ public sealed class QuickstartTests
     /// <c>)</c> end a command. <c>$NAME</c> and <c>${NAME}</c> become <c>&lt;shellPaths&gt;/NAME</c>; any
     /// other <c>$</c> is kept. The error is set when a quote does not close.
     /// </summary>
-    private static (List<string[]> Commands, string? Error) SplitShell(string text, string shellPaths)
+    /// <remarks>
+    /// Each command comes with the directory it runs in. The line starts in <paramref name="directory"/>;
+    /// <c>cd &lt;dir&gt;</c> moves the commands after it to <c>&lt;dir&gt;</c>, resolved from there (a bare
+    /// <c>cd</c> goes to <c>$HOME</c>, which is outside the repository), and a <c>(</c> opens a subshell whose
+    /// <c>cd</c> lasts until its <c>)</c>. The directory after the line, outside any subshell, is returned
+    /// for the next line of the block.
+    /// </remarks>
+    private static (List<(string[] Words, string Directory)> Commands, string Directory, string? Error) SplitShell(
+        string text,
+        string shellPaths,
+        string directory)
     {
-        var commands = new List<string[]>();
+        var commands = new List<(string[] Words, string Directory)>();
+        var subshells = new Stack<string>();
         var words = new List<string>();
         var word = new StringBuilder();
         var inWord = false;
@@ -795,7 +985,16 @@ public sealed class QuickstartTests
             EndWord();
             if (words.Count > 0)
             {
-                commands.Add([.. words]);
+                commands.Add(([.. words], directory));
+                if (words is ["cd", var target])
+                {
+                    directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(directory, target)));
+                }
+                else if (words is ["cd", ..])
+                {
+                    directory = Path.Combine(shellPaths, "HOME");
+                }
+
                 words.Clear();
             }
         }
@@ -808,7 +1007,7 @@ public sealed class QuickstartTests
                 var close = text.IndexOf('\'', i + 1);
                 if (close < 0)
                 {
-                    return ([], $"the ' at column {i + 1} does not close");
+                    return ([], directory, $"the ' at column {i + 1} does not close");
                 }
 
                 word.Append(text, i + 1, close - i - 1);
@@ -820,7 +1019,7 @@ public sealed class QuickstartTests
                 var close = ReadDoubleQuoted(text, i, word, shellPaths);
                 if (close < 0)
                 {
-                    return ([], $"the \" at column {i + 1} does not close");
+                    return ([], directory, $"the \" at column {i + 1} does not close");
                 }
 
                 inWord = true;
@@ -844,7 +1043,20 @@ public sealed class QuickstartTests
             {
                 break;
             }
-            else if (c is '&' or '|' or ';' or '(' or ')')
+            else if (c == '(')
+            {
+                EndCommand();
+                subshells.Push(directory);
+            }
+            else if (c == ')')
+            {
+                EndCommand();
+                if (subshells.Count > 0)
+                {
+                    directory = subshells.Pop();
+                }
+            }
+            else if (c is '&' or '|' or ';')
             {
                 EndCommand();
             }
@@ -860,7 +1072,7 @@ public sealed class QuickstartTests
         }
 
         EndCommand();
-        return (commands, null);
+        return (commands, subshells.Count > 0 ? subshells.Last() : directory, null);
     }
 
     /// <summary>
@@ -929,9 +1141,10 @@ public sealed class QuickstartTests
 
     /// <summary>
     /// One simple command of a quickstart bash line: the 1-based lines that line spans, its text as
-    /// quickstart.md writes it (continuations joined), its leading <c>NAME=value</c> words, and the words after them.
+    /// quickstart.md writes it (continuations joined), the full path of the directory it runs in, its
+    /// leading <c>NAME=value</c> words, and the words after them.
     /// </summary>
-    private sealed record ShellCommand(int First, int Last, string Line, string[] Assignments, string[] Words);
+    private sealed record ShellCommand(int First, int Last, string Line, string Directory, string[] Assignments, string[] Words);
 
     /// <summary>
     /// One failed check: which check, the 1-based lines of the quickstart line it failed on (0 when it is
@@ -948,7 +1161,8 @@ public sealed class QuickstartTests
 
     /// <summary>
     /// One row of <see cref="SliceTwoChecksReportEachDefect"/>. <see cref="LocatesDefect"/> is false only
-    /// for a defect that removes the line a check would name, such as a renamed heading.
+    /// for a defect whose failure is not on the line it changes: a renamed heading, which removes the line a
+    /// check would name, or a <c>cd</c> on a line of its own, which moves the lines after it.
     /// </summary>
     private sealed record QuickstartDefect(
         string Name,

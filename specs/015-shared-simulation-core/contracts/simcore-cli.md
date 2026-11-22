@@ -350,7 +350,8 @@ written: after the build lines and first reports, the last line is
 when a build diverged, because a run whose report is lost could not finish. `agreement.json` is
 written before the summary is appended, so a summary that cannot be written leaves it in place.
 Otherwise exit 1 when any build is `Diverged`, else 0. A Firefox or WebKit build that Playwright
-could not install is reported `NotRun`, never as a pass.
+could not install, or that the `agreement` job's optional-browser deadline left no time to install or
+run, is reported `NotRun`, never as a pass.
 
 The NotComparable check reads only `formatVersion`, `rulesRevision` and `formats`, before the rest of
 the manifest, `formatVersion` first. A missing or non-integer `formatVersion` is unreadable (`agreement:
@@ -616,8 +617,8 @@ Playwright spec asserts `inWorker` and `crossOriginIsolated`
 | `node-interp` | Node, interpreted build, prebuilt runtime, jiterpreter on | `agreement` | yes |
 | `node-interp-nojit` | Node, interpreted build, prebuilt runtime, jiterpreter off | `agreement` | yes |
 | `chromium-worker` | dedicated Worker in headless Chromium | `agreement` | yes |
-| `firefox-worker` | dedicated Worker in Firefox | `agreement` | no: `NotRun` when Playwright cannot install it |
-| `webkit-worker` | dedicated Worker in WebKit | `agreement` | no: `NotRun` when Playwright cannot install it |
+| `firefox-worker` | dedicated Worker in Firefox | `agreement` | no: `NotRun` when Playwright cannot install it, or the job's optional-browser deadline leaves no time to install or run it |
+| `webkit-worker` | dedicated Worker in WebKit | `agreement` | no: `NotRun` when Playwright cannot install it, or the job's optional-browser deadline leaves no time to install or run it |
 | `node-interp-relinked` | Node, interpreted build relinked with the `wasm-tools` workload | `measure` | passed by the job when the relinked build was produced |
 | `node-aot` | Node, ahead-of-time build | `measure` | passed by the job when the AOT build was produced |
 

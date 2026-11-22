@@ -10,9 +10,12 @@ name: SimCore
 #              install), and gates the pull request on `simcore agreement compare`, which exits non-zero
 #              on any divergent step, any cross-build table mismatch or a required build that did not run.
 #              Every step after the toolchain setup has its own timeout-minutes, so a step that hangs
-#              fails on its own (a failure, not a cancel) and compare still reports inside the job's
-#              10 minutes; the optional browsers install after the required runs, so they cannot use up
-#              the required runs' time.
+#              fails on its own (a failure, not a cancel), and a failed required step skips the steps
+#              after it up to compare. The optional Firefox and WebKit steps come after the required runs
+#              and share one deadline, 7 minutes after the toolchain setup: an install or run that cannot
+#              finish by then does not start, and one that would run past it is stopped. They therefore
+#              end by the deadline whatever they do, and compare, which takes seconds, keeps the rest of
+#              the job's 10 minutes (about 1 minute 50 seconds when the toolchain setup took a minute).
 #   measure:   the measurement job (US7, FR-030, FR-031; contracts/measurement-report.md). It runs the
 #              server benchmarks on the runner class, publishes the prebuilt interpreted build, installs
 #              the wasm-tools workload and publishes the relinked and AOT builds, or records why it could
@@ -99,12 +102,14 @@ jobs:
           node-version: "22"
 
       # The publish output's served root and a work directory that does not exist yet, which
-      # `agreement prepare` requires. Every later step reads them from the environment.
-      - name: Name the app and work directories
+      # `agreement prepare` requires, and the optional browsers' deadline in epoch seconds, 7 minutes
+      # from here. Every later step reads them from the environment.
+      - name: Name the app and work directories and the optional browsers' deadline
         timeout-minutes: 1
         run: |
           echo "AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot" >> "$GITHUB_ENV"
           echo "AGREEMENT_WORK=$RUNNER_TEMP/agreement-work" >> "$GITHUB_ENV"
+          echo "AGREEMENT_OPTIONAL_DEADLINE=$(( $(date +%s) + 7 * 60 ))" >> "$GITHUB_ENV"
 
       # Against the prebuilt runtime pack: no workload is installed in this job. The flag is what a
       # runner without the workload computes anyway; on an image that has wasm-tools it stops
@@ -152,34 +157,73 @@ jobs:
         working-directory: tools/agreement
         run: npx playwright test --project chromium
 
-      # Firefox and WebKit are optional and come after the required runs: an install that fails or
-      # times out skips its run, and compare reports that build as not run. A build that installs and
-      # then disagrees still fails the job.
+      # Firefox and WebKit are optional and come after the required runs. They share the deadline the
+      # directories step set, so all four steps end by it (and `timeout`'s 10-second kill) and compare
+      # keeps the rest of the job's 10 minutes. An install must end 160 s before the deadline, so its run
+      # still has 150 s after the step change: it starts only with 30 s of that to spare and is stopped
+      # when it runs out. One that fails, is stopped or does not start skips its run, and compare reports
+      # that build as not run. A run starts only with 150 s left, more than Playwright's 2-minute test
+      # timeout, so Playwright still reports a stalled run first; one that starts and then disagrees,
+      # fails or is stopped at the deadline fails the job. Each step's own 3 minutes is a backstop.
       - name: Install Firefox
         id: firefox
         timeout-minutes: 3
         continue-on-error: true
         working-directory: tools/agreement
-        run: npx playwright install --with-deps firefox
+        run: |
+          left=$(( ${AGREEMENT_OPTIONAL_DEADLINE:?is set by the directories step} - $(date +%s) - 160 ))
+          if [ "$left" -lt 30 ]; then
+            echo "::warning::no time to install Firefox and still leave its run 160 s before the optional browsers' deadline; compare reports firefox-worker as not run"
+            exit 1
+          fi
+          timeout --kill-after=10s "${left}s" npx playwright install --with-deps firefox
 
       - name: Agreement in a Firefox Worker
         if: steps.firefox.outcome == 'success'
         timeout-minutes: 3
         working-directory: tools/agreement
-        run: npx playwright test --project firefox
+        run: |
+          left=$(( ${AGREEMENT_OPTIONAL_DEADLINE:?is set by the directories step} - $(date +%s) ))
+          if [ "$left" -lt 150 ]; then
+            echo "::warning::${left} s left before the optional browsers' deadline, under the 150 s a Firefox run needs; compare reports firefox-worker as not run"
+            exit 0
+          fi
+          code=0
+          timeout --kill-after=10s "${left}s" npx playwright test --project firefox || code=$?
+          if [ "$code" -eq 124 ]; then
+            echo "::error::the Firefox Worker run did not finish by the optional browsers' deadline"
+          fi
+          exit "$code"
 
       - name: Install WebKit
         id: webkit
         timeout-minutes: 3
         continue-on-error: true
         working-directory: tools/agreement
-        run: npx playwright install --with-deps webkit
+        run: |
+          left=$(( ${AGREEMENT_OPTIONAL_DEADLINE:?is set by the directories step} - $(date +%s) - 160 ))
+          if [ "$left" -lt 30 ]; then
+            echo "::warning::no time to install WebKit and still leave its run 160 s before the optional browsers' deadline; compare reports webkit-worker as not run"
+            exit 1
+          fi
+          timeout --kill-after=10s "${left}s" npx playwright install --with-deps webkit
 
       - name: Agreement in a WebKit Worker
         if: steps.webkit.outcome == 'success'
         timeout-minutes: 3
         working-directory: tools/agreement
-        run: npx playwright test --project webkit
+        run: |
+          left=$(( ${AGREEMENT_OPTIONAL_DEADLINE:?is set by the directories step} - $(date +%s) ))
+          if [ "$left" -lt 150 ]; then
+            echo "::warning::${left} s left before the optional browsers' deadline, under the 150 s a WebKit run needs; compare reports webkit-worker as not run"
+            exit 0
+          fi
+          code=0
+          timeout --kill-after=10s "${left}s" npx playwright test --project webkit || code=$?
+          if [ "$code" -eq 124 ]; then
+            echo "::error::the WebKit Worker run did not finish by the optional browsers' deadline"
+          fi
+          exit "$code"
 
       # The gate. It runs after a runner step failed too (not after a cancel), so the job summary and
       # the divergence reports name what disagreed. The default --require is node-interp,

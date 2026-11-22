@@ -10,7 +10,8 @@ that job depends on:
   build runs the suite (US2.7, FR-027), and the read-only token;
 - the SHA-pinned actions, the exact Playwright pin and the toolchains;
 - the agreement steps, their order and the compare gate (US2.7, SC-001), the 10-minute timeout
-  (SC-006), each step's own bound inside it, and the three browser projects;
+  (SC-006), each step's own bound inside it, the optional browsers' shared deadline that leaves compare
+  the rest of the 10 minutes, and the three browser projects;
 - the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate,
   and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check;
 - the `measure` job (US7.2, US7-IT, SC-007, FR-030, FR-031): the server benchmarks on the runner class,
@@ -83,6 +84,24 @@ RUNNER_UNIT_TESTS = ("node --test tools/agreement/node/tables.test.mjs tools/agr
 TOOLCHAIN_ACTIONS = ("actions/checkout@", "actions/setup-dotnet@", "actions/setup-node@")
 
 REQUIRED_BUILDS = "node-interp,node-interp-nojit,chromium-worker"
+
+# The optional browsers' shared deadline (SC-006): the agreement job's directories step sets
+# AGREEMENT_OPTIONAL_DEADLINE this many seconds after it runs, right after the toolchain setup. An
+# install must end OPTIONAL_INSTALL_RESERVE seconds before it and starts only with OPTIONAL_INSTALL_MINIMUM
+# seconds to spare; a run starts only with OPTIONAL_RUN_MINIMUM seconds left, more than Playwright's test
+# timeout, and stops at the deadline. `timeout` kills a stopped step OPTIONAL_KILL_GRACE seconds after it
+# asks it to end.
+OPTIONAL_DEADLINE = 7 * 60
+OPTIONAL_INSTALL_RESERVE = 160
+OPTIONAL_INSTALL_MINIMUM = 30
+OPTIONAL_RUN_MINIMUM = 150
+OPTIONAL_KILL_GRACE = 10
+# The budget the deadline is checked against [estimate]: GitHub's checkout, setup-dotnet and setup-node
+# before the directories step, and compare (2.5 s on a prepared work directory here) and the failure
+# upload after the optional steps.
+TOOLCHAIN_ALLOWANCE = 60
+COMPARE_RESERVE = 90
+OPTIONAL_BROWSERS = (("firefox", "Firefox"), ("webkit", "WebKit"))
 SHA_PINNED = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$"
 
 # The measure job's steps that feed the report, in the order of
@@ -293,11 +312,12 @@ def parse_github_env(text):
 
 def run_env_step():
     """Runs the agreement job's step that appends AGREEMENT_APP to $GITHUB_ENV under bash, as the runner
-    does (`bash --noprofile --norc -eo pipefail`), with a temporary RUNNER_TEMP and GITHUB_ENV.
+    does (`bash --noprofile --norc -eo pipefail`), with a temporary RUNNER_TEMP and GITHUB_ENV. The same
+    step appends AGREEMENT_WORK and the optional browsers' AGREEMENT_OPTIONAL_DEADLINE.
 
-    Returns its index, the RUNNER_TEMP it ran with, the variables it appended, and whether
-    AGREEMENT_WORK was still absent or an empty directory afterwards (`agreement prepare` refuses
-    anything else).
+    Returns its index, the RUNNER_TEMP it ran with, the variables it appended, the epoch seconds just
+    before and just after it ran, and whether AGREEMENT_WORK was still absent or an empty directory
+    afterwards (`agreement prepare` refuses anything else).
     """
     found = [i for i, step in enumerate(steps("agreement"))
              if "AGREEMENT_APP=" in step.get("run", "") and "GITHUB_ENV" in step.get("run", "")]
@@ -312,14 +332,17 @@ def run_env_step():
         github_env = Path(temp) / "github-env"
         github_env.write_text("")
         script = render(step["run"], {"runner": {"temp": runner_temp}, "env": {}})
+        started = int(time.time())
         subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
                        env={"PATH": os.environ["PATH"], "HOME": temp, "RUNNER_TEMP": runner_temp,
                             "GITHUB_ENV": str(github_env)},
                        cwd=temp, check=True, capture_output=True, text=True, timeout=30)
+        ended = int(time.time())
         values = parse_github_env(github_env.read_text())
         work = Path(values.get("AGREEMENT_WORK", runner_temp))
         work_fresh = not work.exists() or (work.is_dir() and not any(work.iterdir()))
-    return SimpleNamespace(index=found[0], runner_temp=runner_temp, values=values, work_fresh=work_fresh)
+    return SimpleNamespace(index=found[0], runner_temp=runner_temp, values=values, started=started, ended=ended,
+                           work_fresh=work_fresh)
 
 
 def step_named(job, name):
@@ -386,9 +409,10 @@ def run_step(job, name, steps_context=None, env=None, exits=None, setup=None, sl
     the files earlier steps would have left. `rewrite(script)`, when given, changes the step's evaluated
     run before it runs (a test shortens a bound with it).
 
-    Returns the step's exit code and stderr, the RUNNER_TEMP and step summary file it ran with, the env it
-    was given, each tool call as [tool, *args], the outputs and env variables it appended, and, for each
-    appended variable that names a directory, whether that directory was empty afterwards.
+    Returns the step's exit code, stdout (where the runner reads `::warning::` and `::error::` lines) and
+    stderr, the RUNNER_TEMP and step summary file it ran with, the env it was given, each tool call as
+    [tool, *args], the outputs and env variables it appended, and, for each appended variable that names a
+    directory, whether that directory was empty afterwards.
     """
     index, step = step_named(job, name)
     with tempfile.TemporaryDirectory() as temp:
@@ -434,7 +458,7 @@ def run_step(job, name, steps_context=None, env=None, exits=None, setup=None, sl
         appended = parse_github_env(files["github-env"].read_text())
         empty_dirs = {key: not any(Path(value).iterdir()) for key, value in appended.items()
                       if os.path.isabs(value) and Path(value).is_dir()}
-        return SimpleNamespace(index=index, step=step, returncode=result.returncode, stderr=result.stderr,
+        return SimpleNamespace(index=index, step=step, returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,
                                runner_temp=runner_temp, summary_path=str(files["step-summary"]), given=given,
                                calls=[json.loads(line) for line in files["tool-log"].read_text().splitlines()],
                                outputs=parse_github_env(files["github-output"].read_text()), env=appended,
@@ -691,7 +715,8 @@ class AgreementJob(unittest.TestCase):
     def test_optional_browsers_install_after_the_required_runs_within_three_minutes(self):
         # A slow Firefox or WebKit install cannot use up the required runs' time, and one that times
         # out fails only itself (continue-on-error), so its run is skipped and compare reports it as
-        # not run.
+        # not run. The three minutes are each step's backstop; the shared deadline below bounds the four
+        # together.
         required = [i for text in ("node --test tools/agreement/node/agreement.test.mjs",
                                    "npx playwright test --project chromium")
                     for i in indexes("agreement", text)]
@@ -707,6 +732,109 @@ class AgreementJob(unittest.TestCase):
                 self.assertEqual(3, install.get("timeout-minutes"))
                 self.assertIs(True, install.get("continue-on-error"))
                 self.assertEqual(3, test.get("timeout-minutes"))
+
+    def test_optional_browsers_share_a_deadline_that_leaves_compare_its_time(self):
+        # Whatever Firefox and WebKit do, their four steps end by one deadline: an install must end
+        # OPTIONAL_INSTALL_RESERVE seconds before it, a run starts only with OPTIONAL_RUN_MINIMUM seconds
+        # left and is stopped at it. So the job is not cancelled by optional steps that are slow or hang,
+        # and compare (`!cancelled()`) still reports inside the 10 minutes (SC-006).
+        job_seconds = WORKFLOW["jobs"]["agreement"]["timeout-minutes"] * 60
+        env = run_env_step()
+        deadline = env.values.get("AGREEMENT_OPTIONAL_DEADLINE", "")
+        self.assertRegex(deadline, r"^[0-9]+$", "AGREEMENT_OPTIONAL_DEADLINE is a whole number of epoch seconds")
+        self.assertGreaterEqual(int(deadline), env.started + OPTIONAL_DEADLINE)
+        self.assertLessEqual(int(deadline), env.ended + OPTIONAL_DEADLINE)
+        # The budget: the toolchain setup before the deadline's step, the deadline, `timeout`'s kill, and
+        # compare and the failure upload after it fit in the job's bound.
+        self.assertLessEqual(TOOLCHAIN_ALLOWANCE + OPTIONAL_DEADLINE + OPTIONAL_KILL_GRACE + COMPARE_RESERVE, job_seconds)
+        # A run that starts has more time than Playwright's own test timeout, so Playwright reports a
+        # stalled run before the deadline stops it, and an install that ends in time leaves its run that much.
+        self.assertGreater(OPTIONAL_RUN_MINIMUM * 1000, playwright_test_timeout_ms())
+        self.assertGreater(OPTIONAL_INSTALL_RESERVE, OPTIONAL_RUN_MINIMUM)
+
+        def deadline_in(seconds):
+            return lambda runner_temp: {"AGREEMENT_OPTIONAL_DEADLINE": str(int(time.time()) + seconds)}
+
+        for browser, title in OPTIONAL_BROWSERS:
+            install_name, run_name = f"Install {title}", f"Agreement in a {title} Worker"
+            install_index, install = step_named("agreement", install_name)
+            run_index, test = step_named("agreement", run_name)
+            self.assertLess(env.index, install_index)
+            self.assertLess(install_index, run_index)
+            # Each npx runs under `timeout` with the time left, which is what stops it at its bound.
+            bounded = f'timeout --kill-after={OPTIONAL_KILL_GRACE}s "${{left}}s" npx playwright'
+            self.assertIn(f"{bounded} install --with-deps {browser}", install["run"])
+            self.assertIn(f"{bounded} test --project {browser}", test["run"])
+            install_call = ["npx", "playwright", "install", "--with-deps", browser]
+            run_call = ["npx", "playwright", "test", "--project", browser]
+            not_run = f"compare reports {browser}-worker as not run"
+
+            with self.subTest(step=install_name, case="time to spare"):
+                run = run_step("agreement", install_name, env=deadline_in(OPTIONAL_INSTALL_RESERVE + 300))
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertEqual([install_call], run.calls)
+            with self.subTest(step=install_name, case="the install fails"):
+                run = run_step("agreement", install_name, env=deadline_in(OPTIONAL_INSTALL_RESERVE + 300), exits={"npx": 1})
+                self.assertEqual(1, run.returncode, "continue-on-error then skips the run")
+                self.assertEqual([install_call], run.calls)
+            with self.subTest(step=install_name, case="no time to spare"):
+                run = run_step("agreement", install_name,
+                               env=deadline_in(OPTIONAL_INSTALL_RESERVE + OPTIONAL_INSTALL_MINIMUM - 5))
+                self.assertNotEqual(0, run.returncode, "an install that does not start fails, so its run is skipped")
+                self.assertEqual([], run.calls)
+                self.assertIn("::warning::", run.stdout)
+                self.assertIn(not_run, run.stdout)
+            with self.subTest(step=install_name, case="no deadline"):
+                run = run_step("agreement", install_name)
+                self.assertNotEqual(0, run.returncode)
+                self.assertEqual([], run.calls)
+                self.assertIn("AGREEMENT_OPTIONAL_DEADLINE", run.stderr)
+            with self.subTest(step=install_name, case="stalled"):
+                # The minimum is lowered so the install's bound, OPTIONAL_INSTALL_RESERVE seconds before
+                # the deadline, comes in seconds rather than half a minute.
+                def lower_install_minimum(script):
+                    self.assertEqual(1, script.count(f'-lt {OPTIONAL_INSTALL_MINIMUM} ]'), script)
+                    self.assertEqual(1, script.count(f"- {OPTIONAL_INSTALL_RESERVE} ))"), script)
+                    return script.replace(f'-lt {OPTIONAL_INSTALL_MINIMUM} ]', '-lt 1 ]')
+
+                started = time.monotonic()
+                run = run_step("agreement", install_name, env=deadline_in(OPTIONAL_INSTALL_RESERVE + 3),
+                               sleeps={"npx": 30}, rewrite=lower_install_minimum)
+                self.assertLess(time.monotonic() - started, 20, "the deadline must stop the stalled install")
+                self.assertEqual(TIMEOUT_EXIT, run.returncode, run.stderr)
+                self.assertEqual([install_call], run.calls)
+
+            with self.subTest(step=run_name, case="time to run"):
+                run = run_step("agreement", run_name, env=deadline_in(OPTIONAL_RUN_MINIMUM + 100))
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertEqual([run_call], run.calls)
+            with self.subTest(step=run_name, case="the build disagrees"):
+                run = run_step("agreement", run_name, env=deadline_in(OPTIONAL_RUN_MINIMUM + 100), exits={"npx": 1})
+                self.assertEqual(1, run.returncode, "a build that installs and then disagrees fails the job")
+                self.assertNotIn("::error::", run.stdout)
+            with self.subTest(step=run_name, case="no time to run"):
+                run = run_step("agreement", run_name, env=deadline_in(OPTIONAL_RUN_MINIMUM - 10))
+                self.assertEqual(0, run.returncode, "an optional run without time is not run, not a failure")
+                self.assertEqual([], run.calls)
+                self.assertIn("::warning::", run.stdout)
+                self.assertIn(not_run, run.stdout)
+            with self.subTest(step=run_name, case="no deadline"):
+                run = run_step("agreement", run_name)
+                self.assertNotEqual(0, run.returncode)
+                self.assertEqual([], run.calls)
+                self.assertIn("AGREEMENT_OPTIONAL_DEADLINE", run.stderr)
+            with self.subTest(step=run_name, case="stalled"):
+                # The minimum is lowered so the deadline comes in seconds rather than minutes.
+                def lower_run_minimum(script):
+                    self.assertEqual(1, script.count(f'-lt {OPTIONAL_RUN_MINIMUM} ]'), script)
+                    return script.replace(f'-lt {OPTIONAL_RUN_MINIMUM} ]', '-lt 1 ]')
+
+                started = time.monotonic()
+                run = run_step("agreement", run_name, env=deadline_in(3), sleeps={"npx": 30}, rewrite=lower_run_minimum)
+                self.assertLess(time.monotonic() - started, 20, "the deadline must stop the stalled run")
+                self.assertEqual(TIMEOUT_EXIT, run.returncode, "a run stopped at the deadline fails the job")
+                self.assertEqual([run_call], run.calls)
+                self.assertIn(f"::error::the {title} Worker run did not finish by the optional browsers' deadline", run.stdout)
 
     def test_playwright_fails_a_stalled_run_before_its_step_bound(self):
         # Playwright's own test timeout ends first, so its failure and the Worker's events attachment

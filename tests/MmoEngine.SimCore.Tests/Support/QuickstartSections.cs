@@ -44,9 +44,10 @@ public static class QuickstartSections
     /// <remarks>
     /// A line that ends in <c>\</c> is joined to the next with one space: the backslash, any whitespace
     /// before it and the next line's leading whitespace are dropped, and the entry spans both lines. Blank
-    /// lines are skipped. A <c>## </c> line inside a fenced block is part of the block, not a heading. A
-    /// heading the document lacks yields an empty list, so the caller's section check reports it rather
-    /// than an exception.
+    /// lines are skipped. Each entry carries the line of the fence that opens its block, so a caller can
+    /// start each block in the repository root, as the quickstart says its commands run. A <c>## </c> line
+    /// inside a fenced block is part of the block, not a heading. A heading the document lacks yields an
+    /// empty list, so the caller's section check reports it rather than an exception.
     /// </remarks>
     public static IReadOnlyList<QuickstartBashLine> BashLines(string markdown, string heading)
     {
@@ -58,6 +59,7 @@ public static class QuickstartSections
         var inSection = false;
         var inFence = false;
         var inBash = false;
+        var fence = 0;
         var pending = (First: 0, Text: string.Empty);
         for (var i = 0; i < lines.Length; i++)
         {
@@ -80,6 +82,7 @@ public static class QuickstartSections
                 {
                     inFence = true;
                     inBash = Language(trimmed) == BashLanguage;
+                    fence = i + 1;
                     continue;
                 }
 
@@ -87,7 +90,7 @@ public static class QuickstartSections
                 {
                     if (inSection && inBash && pending.First > 0)
                     {
-                        result.Add(new QuickstartBashLine(pending.First, i, pending.Text));
+                        result.Add(new QuickstartBashLine(pending.First, i, pending.Text, fence));
                         pending = (0, string.Empty);
                     }
 
@@ -114,7 +117,7 @@ public static class QuickstartSections
                 : (pending.First, text.TrimStart().Length == 0 ? pending.Text : $"{pending.Text} {text.TrimStart()}");
             if (!continues)
             {
-                result.Add(new QuickstartBashLine(pending.First, i + 1, pending.Text));
+                result.Add(new QuickstartBashLine(pending.First, i + 1, pending.Text, fence));
                 pending = (0, string.Empty);
             }
         }
@@ -133,7 +136,8 @@ public static class QuickstartSections
 
 /// <summary>
 /// One command line of a quickstart <c>```bash</c> block: the 1-based lines it spans (<see cref="First"/>
-/// to <see cref="Last"/>, equal unless it continues with <c>\</c>) and its text, continuations joined with
-/// one space.
+/// to <see cref="Last"/>, equal unless it continues with <c>\</c>), its text, continuations joined with
+/// one space, and the 1-based line of the <c>```bash</c> fence that opens its block (<see cref="Fence"/>),
+/// the same for every line of one block.
 /// </summary>
-public sealed record QuickstartBashLine(int First, int Last, string Text);
+public sealed record QuickstartBashLine(int First, int Last, string Text, int Fence);

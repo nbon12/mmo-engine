@@ -2264,6 +2264,50 @@ The design documents settled these points, which the spec leaves open. They are 
   `ValidateReportTests.TheContractExampleIsValid` now checks that stderr is one compact-JSON event
   with the command's template, the report's path, `ProblemCount` 0 and `Tool` `simcore`. T309's check
   and T315 now say "prints nothing on stdout".
+- **T290 and T283 (second Phase 13 review): the optional browsers share one deadline, so compare
+  still reports.** The Phase 11 bounds made every hung step fail on its own, and a failed required
+  step skips the steps after it up to compare. The Firefox and WebKit installs continue on error,
+  though, so the job carried on past all four optional steps, and their bounds alone (3 minutes each,
+  12 in all) could pass the job's 10. Two slow installs, which a slow Playwright download host makes
+  likely together, plus the required steps' few minutes then cancelled the job, so compare
+  (`!cancelled()`) never ran and the required gate failed with no summary although every required
+  build agreed. The header comment, T290 and the spec's SC-006 note claimed the opposite. The
+  directories step now also writes `AGREEMENT_OPTIONAL_DEADLINE`, 7 minutes after it runs. An install
+  must end 160 s before it (it starts only with 30 s of that to spare, under `timeout`), so its run
+  still has 150 s after the step change; a run starts only with 150 s left, more than Playwright's
+  2-minute test timeout, so Playwright still reports a stall first, and `timeout` stops it at the
+  deadline. A run without time exits 0 with a warning, since compare reports the build as not run,
+  while a run that starts and then fails or is stopped still fails the job, as before. All four steps
+  then end by the deadline plus `timeout`'s 10-second kill. With the toolchain setup's minute before
+  the deadline's step, about 1 minute 50 seconds remain for compare, which took 2.5 s here on a
+  prepared work directory. The cost is that Firefox and WebKit run only when the required steps leave
+  them time; the first GitHub runs show how often that is. The alternative, stating the weaker promise
+  as the measure job's T310 bullet does, was not chosen: there the optional steps record a reason,
+  while here a cancel turns an optional browser's slow download into a failed required gate.
+  `test_optional_browsers_share_a_deadline_that_leaves_compare_its_time` runs each optional step with
+  a stand-in `npx` around the deadline, including a stalled `npx` stopped at its bound.
+- **T311 and T312 (second Phase 13 review): every slice-2 path is resolved where its line runs.**
+  The node, publish, workflow-tests and Playwright checks resolved paths against the repository root
+  whatever `cd` a line did, and the Playwright check always read `tools/agreement/playwright.config.mjs`,
+  so a line that fails in a real shell could pass (a `--project chromium` line without its `cd`, or a
+  `node --test tools/agreement/...` line inside one). Each command now carries the directory it runs
+  in: a block starts in the root, as the quickstart's opening says, a `cd` carries to the block's later
+  lines, and one inside `( ... )` lasts until its `)`. `QuickstartBashLine` gains `Fence`, the line
+  of its block's opening fence, so a block boundary is known. Playwright's configuration is read from
+  the line's directory with its comments removed, so a `name:` in a comment is not a project. The CLI
+  lines are checked the same way, since `--project src/MmoEngine.SimCore.Cli` is relative too. Four
+  defect rows (Playwright from the root, `node --test` and `agreement compare` inside `cd tools/agreement`,
+  and a `cd` line that moves the next line) and the comment Theory pin it; with the old root-relative
+  resolution, five rows and the real document's check fail. The current quickstart needs no change.
+- **T316 (second Phase 13 review): the US2 Independent Test states where the one-ulp change is
+  checked.** It said `agreement compare` fails on the WebAssembly runner's perturbation, but the Node
+  runner compares the perturbed run in process and writes no records, and compare's report at step 15
+  is tested on server-perturbed records under a build's folder (contracts/wasm-api.md#node). The text
+  now names both halves, and the one-ulp Assumption says why. The Scenario coverage table's
+  introduction is in the past tense, since T316 deleted the planned section it described.
+- **T315 (second Phase 13 review):** step 3 is the quickstart's required Chromium install word for
+  word, and the measurement run replaced the quickstart's `MMO_RUNNER_CLASS=local-dev` with
+  `cloud-session-container-x64`, as T315 now says.
 
 ## Delivery
 
