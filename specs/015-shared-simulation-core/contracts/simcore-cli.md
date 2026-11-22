@@ -306,8 +306,10 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare -
 ```
 
 - `--require` is a comma-separated list of [build names](#build-names). It defaults to
-  `node-interp,node-interp-nojit,chromium-worker`. The `measure` job passes
-  `node-interp-relinked`, plus `node-aot` when the AOT build was produced.
+  `node-interp,node-interp-nojit,chromium-worker`. The `measure` job passes the builds it produced,
+  comma-joined: `node-interp-relinked` when the relinked build was produced and `node-aot` when the
+  AOT build was ([measurement-report.md](measurement-report.md) step 5). With neither produced, the
+  job's compare step is skipped.
 - Every known build with a folder under `<work>` is compared, required or not. A build with no folder
   is `NotRun`. Folders with other names are ignored.
 
@@ -616,8 +618,8 @@ Playwright spec asserts `inWorker` and `crossOriginIsolated`
 | `chromium-worker` | dedicated Worker in headless Chromium | `agreement` | yes |
 | `firefox-worker` | dedicated Worker in Firefox | `agreement` | no: `NotRun` when Playwright cannot install it |
 | `webkit-worker` | dedicated Worker in WebKit | `agreement` | no: `NotRun` when Playwright cannot install it |
-| `node-interp-relinked` | Node, interpreted build relinked with the `wasm-tools` workload | `measure` | passed by the job |
-| `node-aot` | Node, ahead-of-time build | `measure` | passed by the job when AOT was produced |
+| `node-interp-relinked` | Node, interpreted build relinked with the `wasm-tools` workload | `measure` | passed by the job when the relinked build was produced |
+| `node-aot` | Node, ahead-of-time build | `measure` | passed by the job when the AOT build was produced |
 
 The runners are in [wasm-api.md](wasm-api.md#agreement-runners).
 

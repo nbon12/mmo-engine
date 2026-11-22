@@ -71,7 +71,10 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
 
    Each of the three modes is given exactly once, with `--mode <mode>=<publish dir>` or
    `--unproduced <mode>="<reason>"`. It exits 0 when the report is written; 1 when a measurement
-   failed (a boot error, the content-type warning, a missing compressed file); 2 on a usage error,
+   failed (a boot error, the content-type warning, a missing compressed file, a `measure-node.mjs`
+   process or a Chromium page that failed or did not finish within its 2 minutes), with one
+   `measure: <message>` line, which for a process or a page names the mode and the run, such as
+   `measure: aot: chromium cold start 3: the page did not finish within 120 s`; 2 on a usage error,
    including an unset `MMO_RUNNER_CLASS`, because a number without its runner class is not usable.
 7. **Validation**, then upload: `simcore measure validate-report "$RUNNER_TEMP/simcore-measurement.json"`.
 
@@ -347,8 +350,9 @@ clock starts.
 - **Node:** each cold start is a fresh `node` process. Times come from `performance.now()`.
 - **Chromium Worker:** each cold start is a fresh browser context, page and module Worker, served by
   `lib/server.mjs` with COOP, COEP and `no-store`, so nothing is cached and timers resolve to 5 µs
-  [measured]. The Worker takes the times itself, from its module's first line. Startup is measured
-  over loopback on uncompressed files, so it measures the runtime's boot, not the network.
+  [measured]. The Worker takes the times itself, from its module's first line, and posts them to the
+  page; the messages are in [wasm-api.md](wasm-api.md#measurement-worker). Startup is measured over
+  loopback on uncompressed files, so it measures the runtime's boot, not the network.
 
 **Step cost.** One entry per step kind. Each kind is driven by a named stream's batch inputs through
 `StepQueued`, so it is a whole world step (inputs, movement, weapons, hitboxes, projectiles, hash)
@@ -360,8 +364,12 @@ whose work is dominated by that kind:
 | `weapon` | `rifle-burst` |
 | `projectile` | `launcher-arc` |
 
-The stream's commands are played in passes, with a `Reset` (not timed) before each pass. The first
-512 steps are warm-up and not timed. Then 3,008 steps are timed.
+The stream's commands are played in passes, with a `Reset` (not timed) before each pass. Each pass
+plays the stream's first ⌊*n* / 16⌋ · 16 of its *n* commands, its whole 16-command batches, in both
+runtimes: 16 of `flat-run-30hz`'s 30, 112 of `rifle-burst`'s 120 and 32 of `launcher-arc`'s 45. The
+first 512 steps are warm-up and not timed. Then 3,008 steps are timed. 512 and 3,008 are multiples of
+16, so Node and the Worker time the same steps of the same passes, and their two numbers for a kind
+are averages over the same work. Both run the loop of `lib/passes.mjs` (`stepKindCosts`).
 
 - **Node:** one command per `StepQueued(1)` call, each timed with `process.hrtime.bigint()`.
   `meanNs` is the total time divided by the number of timed steps; `p99Ns` is the 99th percentile
@@ -369,8 +377,7 @@ The stream's commands are played in passes, with a `Reset` (not timed) before ea
 - **Chromium Worker:** `StepQueued(16)` per batch, timed with `performance.now()`. The browser's
   timer resolves to 5 µs, which is close to an AOT step's cost [measured], so single steps are not
   timed. A batch's per-step time is its time divided by 16. `meanNs` is the total time divided by
-  the number of timed steps; `p99Ns` is the 99th percentile of the batches' per-step times. Only
-  full batches inside a pass are timed; a pass's last partial batch runs untimed.
+  the number of timed steps; `p99Ns` is the 99th percentile of the batches' per-step times.
 
 **Percentiles** use the nearest-rank method: the *p*-th percentile of *n* samples is the
 ⌈*p* / 100 · *n*⌉-th smallest. The median is the 50th percentile. With 10 cold starts, the median is
@@ -442,6 +449,6 @@ no tuning value is set (Principle VI). The zero-allocation tests in
 | `ValidateReportTests.TextFromTheFileIsShownEscapedSoEachProblemIsOneLine` (Theory) | an unknown field whose name holds a line feed, or a quote and a backslash, an unknown mode whose name holds a line feed, and two `server` benchmarks with the same case and the step `"x\ny"` each print exactly their lines, with the text escaped, and as many line feeds as problems |
 | `tests/MmoEngine.SimCore.Tests/Benchmarks/ServerBenchmarkExportTests.DryRunExportsAValidServerObject` | US7 scenario 1 in the pull-request run: references the benchmark project and runs the movement, weapon and projectile benchmarks in process with `BenchmarkRunner.Run`, using `SimCoreBenchmarkConfig.Create("test-runner", Job.Dry.WithIterationCount(3).WithToolchain(InProcessEmitToolchain.Instance))` with the optimizations validator off and the artifacts in a temporary directory; the exported JSON's `server` object passes check 5 and every `server` field rule above, its `label` is `measurement` and its `runnerClass` is `test-runner`. Each entry, matched to its report by step and case, has exactly that report's `Mean` as `meanNs`, its `Percentiles.Percentile(99)` as `p99Ns`, its `N` (3) as `iterations` and its `GetBytesAllocatedPerOperation` as `allocatedBytesPerOp`. The job measures three iterations because with `Job.Dry`'s one the 99th percentile equals the mean. It runs in the serial collection |
 | `ServerBenchmarkExportTests.RunExitsZeroWhenItExportedEveryBenchmarkItRan`, `RunExitsOneWhenItWroteNoExport` (Theory), `RunExitsOneWhenAReportHasNoAllocationMeasurement` | step 1's exit code, through the entry point's `Program.Run(args, runnerClass, stderr, createConfig)` and `BenchmarkSwitcher` with the dry run's configuration: 0 when the movement, weapon and projectile benchmarks ran and were exported; 1 with exactly its stderr line when the filter selects nothing (an export left from an earlier run stays as it was), when a directory at the export's path makes the exporter throw, and when a report has no allocation measurement |
-| `tools/agreement/node/measure.test.mjs` (`node --test`) | the boot-manifest parser on a fixture `dotnet.js`, the nearest-rank percentile, and the totals; step 6's exit codes, with `node tools/agreement/lib/measure.mjs` run as a child process: 2 and `measure: MMO_RUNNER_CLASS is not set; …` without the runner class, 1 and `measure: cannot read _framework/dotnet.js of …` for a produced mode with no build, and no `--out` written in either |
-| `tests/workflows/test_simcore_workflow.py` `MeasureJob` | the job's steps in this order; each mode passed as produced or with its reason, a publish that `timeout` ended included; the agreement runs and compare failing the job when their tool fails, and still running after an agreement run failed; each step's own bound inside the job's 30 minutes |
+| `tools/agreement/node/measure.test.mjs` (`node --test`) | `'parses the boot manifest from dotnet.js'` on a fixture `dotnet.js`; `'nearest-rank percentile picks the ceil(p/100*n)-th smallest'`; `'download totals are the exact sums'` and `'a missing compressed sibling fails the measurement'` (the `.br` and `.gz` siblings); `'an unproduced mode is only its reason'`; `'arguments need each mode exactly once and the runner class'` (step 6's `--mode` and `--unproduced` rules and their usage messages); `'the entry point exits 2 on a usage error and 1 on a failed measurement, writing no report'`, with `node tools/agreement/lib/measure.mjs` run as a child process: 2 and `measure: MMO_RUNNER_CLASS is not set; …` without the runner class, 1 and `measure: cannot read _framework/dotnet.js of …` for a produced mode with no build, and no `--out` written in either; `'a measurement page that fails is a MeasurementError naming its mode and run'`, with a fake browser: every way a page fails (no context or page, a failed, refused or timed-out navigation, a wait that times out or crashes, unreadable events, `fatal`, the content-type warning from the page or the Worker, a failed close) is exactly its `<mode>: chromium cold start <i>: <message>` line, and the navigation and the wait share the page's one bound; `'build flags match the mode'`; `'each half gives one step entry per kind, in the report order'`; `'assembled report has exactly the contract fields'`, with its `NotRun` rows; `'step passes warm up 512 steps, time 3008 and reset before each pass'`; and `'both halves time the same steps, in passes of whole 16-command batches'`: the pass lengths above, and Node's single steps and the Worker's batches timing the same 3,008 steps of each stream |
+| `tests/workflows/test_simcore_workflow.py` `MeasureJob` | `test_measure_job_measures_every_mode_and_validates_the_report` (the job's steps in this order, every mode passed to `measure.mjs`, the report validated and uploaded); `test_runner_class_and_pinned_intrinsics_are_set`; `test_unproduced_modes_are_recorded_with_their_reason` (each mode passed as produced or with its reason, a publish that `timeout` ended included); `test_server_benchmarks_run_with_the_runner_class`; `test_relinked_and_aot_agreement_gates_the_job` (step 5: the agreement runs and compare require the builds produced, fail the job when their tool fails, and still run after an agreement run failed); `test_prebuilt_build_is_published_before_the_workload`; `test_exhaustive_math_sweeps_run_here_only`; `test_job_times_out_after_thirty_minutes` and `test_every_step_after_the_toolchain_setup_has_its_own_bound` (each step's own bound inside the job's 30 minutes); `test_runner_tests_run_before_the_measurement` |
 | The `measure` job | runs `validate-report` on the real report on the runner class (US7 Independent Test, SC-007) |

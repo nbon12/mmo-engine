@@ -11,7 +11,7 @@ Three layers:
 | --- | --- | --- | --- |
 | `BatchStepper`, `StreamRunner` and `CrossBuildTables` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
 | `SimCoreExports`, one-line `[JSExport]` delegations | `src/MmoEngine.SimCore.Wasm/` | no | `tests/MmoEngine.SimCore.Wasm.Tests/`, which calls the exports as plain methods |
-| JavaScript boot, server and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `lib/server.mjs`, `node/agreement.test.mjs`, `web/page.html`, `web/worker.mjs`, `specs/worker.spec.mjs`, `lib/measure.mjs`, `lib/measure-node.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs; `node/runtime.test.mjs`, `node/tables.test.mjs` and `node/server.test.mjs` for the record helpers, `compareTables` and the server ([Tests](#tests)); `node/measure.test.mjs` for the measurement runner's pure parts and step passes |
+| JavaScript boot, server and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `lib/server.mjs`, `node/agreement.test.mjs`, `web/page.html`, `web/worker.mjs`, `specs/worker.spec.mjs`, `lib/measure.mjs`, `lib/measure-node.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs; `node/runtime.test.mjs`, `node/tables.test.mjs` and `node/server.test.mjs` for the record helpers, `compareTables` and the server ([Tests](#tests)); `node/measure.test.mjs` for the measurement runner's pure parts, its handling of a page that fails (with a fake browser) and the step passes |
 
 All logic lives in the core, so the server tests cover everything the browser runs. Only bytes cross
 the JavaScript boundary. Byte layouts of the step record, the canonical state, the collision file, the
@@ -684,6 +684,46 @@ The configuration's 2-minute test timeout is shorter than each Worker step's 3-m
 `timeout-minutes` in `.github/workflows/simcore.yml`, so a stalled run fails in Playwright, with its
 report and the Worker's events attached, before the step is stopped.
 
+### Measurement Worker
+
+The measurement runner `tools/agreement/lib/measure.mjs` opens
+`http://127.0.0.1:<port>/web/measure.html?run=<run>`, served by the same `lib/server.mjs`, in a fresh
+browser context for each page: ten pages with `run=cold-start`, then one with `run=steps`
+([measurement-report.md](measurement-report.md#how-each-number-is-measured)). It is not a Playwright
+test: it drives `chromium.launch()` itself, so it has its own protocol, which differs from the
+agreement Worker's above.
+
+1. `measure.html` creates the module Worker `measure-worker.mjs`, posts `start` with the `run` of its
+   `?run=` query, and appends every message it receives to `window.__measure.events`, setting
+   `window.__measure.done` on `done` or `fatal`. A Worker `error` event or a `messageerror` is
+   appended as a `fatal` naming it, as `page.html` does. `window.__measure` is the page's whole
+   interface to the runner.
+2. The Worker reads `performance.now()` on its module's first line, fetches `/work/manifest.json` and
+   the batch inputs and collision files of `flat-run-30hz`, `rifle-burst` and `launcher-arc`, boots
+   `/_framework/dotnet.js` with `bootRuntime` and no runtime options (the jiterpreter on) and posts
+   `booted`.
+3. For `cold-start` it times the first step and posts `coldStart`; for `steps` it times each step
+   kind and posts one `steps` per kind, in the report's order. It then posts `done`.
+
+Messages:
+
+| Direction | `type` | Fields |
+| --- | --- | --- |
+| page → Worker | `start` | `run`: `cold-start` or `steps` |
+| Worker → page | `booted` | `inWorker`, `crossOriginIsolated`, `buildInfo` (`runtimeBuildInfo`), `moduleStartMs` (the clock reading on the module's first line, which the report does not read); no `userAgent`, unlike the agreement Worker's |
+| Worker → page | `coldStart` | `importMs`, `createMs`, `firstStepMs`, `totalMs` (`cold-start` only) |
+| Worker → page | `steps` | `kind`, `scenario`, `batch` (16), `steps`, `meanNs`, `p99Ns`: one per kind (`steps` only) |
+| Worker → page | `done` | none |
+| Worker → page | `fatal` | `message`: an input that did not fetch or is malformed, a boot failure, a load call, `Reset` or `StepQueued` that returned another code than it must, or a `start` whose `run` is neither `cold-start` nor `steps`; it takes the place of everything after it |
+
+The runner waits for `window.__measure.done` within the page's 2 minutes, which the navigation and the
+wait share, then reads the events. A cold-start page must hold exactly one `booted` and one
+`coldStart`, and the steps page exactly one `booted` and one `steps` per kind, with its stream, in
+`STEP_KINDS` order. A `fatal`, any other set of messages, a console message from the page or the Worker
+about the `.wasm` content type, or a page that fails to load or finish is a failed measurement, named
+`<mode>: chromium cold start <i>: <message>` or `<mode>: chromium steps: <message>`. The report's
+`crossOriginIsolated` is true only when every `booted` message says so.
+
 ## Tests
 
 | Test | Covers |
@@ -707,4 +747,5 @@ report and the Worker's events attached, before the step is stopped.
 | `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker, checked on the records the Worker wrote too; FR-024; its `tables` assertion and its own `compareTables` on the Worker's `tables.bin` are the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
 | `tools/agreement/node/runtime.test.mjs` (`node --test`) | `firstDifferingStep` (equal, a state byte, a state length or only the hash differing, another step number, missing, cut-off and extra records), `readRecords` (each record's fields; a `RangeError` on a cut-off record) and `jiterpreterState` (on, off, each option, no accessor), on records built in memory |
 | `tools/agreement/node/tables.test.mjs` (`node --test`) | `compareTables` on fixture results: an identical pair matches, a flipped bit in a math or pose row reports that row, a NaN row matches any NaN and not a finite value |
-| `tools/agreement/node/server.test.mjs` (`node --test`) | [Served files](#served-files): 127.0.0.1 with a dynamic port; each content type with the file's bytes; COOP, COEP and `no-store` on every response (the 403, 404 and 204 included) and no `Content-Encoding`; the path-traversal 403; the four PUT forms answered 204 with no body and written exactly, each replacing its other form; the refused PUTs (build name, stream pattern, a `tables` stream, another extension, a 64 MiB + 1 byte chunked body, a build folder symlinked out of the work root) answered 403 with nothing written; the one-line `text/plain` body of a 403, a 404 and a 500 (a build folder that is a regular file); the 404 |
+| `tools/agreement/node/server.test.mjs` (`node --test`) | [Served files](#served-files): 127.0.0.1 with a dynamic port; each content type with the file's bytes; COOP, COEP and `no-store` on every response (the 403, 404 and 204 included) and no `Content-Encoding`; the path-traversal 403; the four PUT forms answered 204 with no body and written exactly, each replacing its other form; the refused PUTs (build name, stream pattern, a `tables` stream, another extension, a 64 MiB + 1 byte chunked body, a build folder symlinked out of the work root) answered 403 with nothing written; the one-line `text/plain` body of a 403, a 404 and a 500 (a build folder that is a regular file); the 404; and `'serves the measurement page, its worker and the shared passes module'`: `/web/measure.html`, `/web/measure-worker.mjs` and `/lib/passes.mjs` with their content types, the file's bytes, COOP, COEP and `no-store`, and a `node-aot` PUT still refused with 403 and nothing written |
+| `tools/agreement/node/measure.test.mjs` (`node --test`) | the measurement runner's parts that need no browser: see [measurement-report.md](measurement-report.md#tests) |

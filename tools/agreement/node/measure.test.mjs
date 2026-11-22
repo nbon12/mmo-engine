@@ -575,6 +575,237 @@ test('the entry point exits 2 on a usage error and 1 on a failed measurement, wr
     }
 });
 
+// ---------------------------------------------------------------------------------------------------
+// One Chromium measurement page (T309, Phase 12 review)
+// ---------------------------------------------------------------------------------------------------
+
+const PAGE_WHAT = 'interp-prebuilt: chromium cold start 3';
+const PAGE_URL = 'http://127.0.0.1:9/web/measure.html?run=cold-start';
+const CONTENT_TYPE_LINE = 'WebAssembly resource does not have the expected content type "application/wasm", '
+    + 'so falling back to slower ArrayBuffer instantiation.';
+const FINISHED_EVENTS = [
+    { type: 'booted', inWorker: true, crossOriginIsolated: true, buildInfo: {}, moduleStartMs: 1 },
+    { type: 'coldStart', importMs: 1, createMs: 2, firstStepMs: 3, totalMs: 6 },
+    { type: 'done' },
+];
+
+/** An Error whose `name` is Playwright's `TimeoutError`, as `errors.TimeoutError` gives it. */
+function playwrightTimeout(message) {
+    return Object.assign(new Error(message), { name: 'TimeoutError' });
+}
+
+/** A console message as Playwright hands it to a `console` listener. */
+function consoleMessage(text) {
+    return { text: () => text };
+}
+
+/**
+ * A fake Playwright browser with the members `runPage` uses: `newContext()`, the context's `newPage()` and
+ * `close()`, and the page's `on('console' | 'worker')`, `goto`, `waitForFunction` and `evaluate`. By
+ * default the page loads with 200, finishes and holds `FINISHED_EVENTS`; each override replaces one
+ * member's behaviour. `log` records the URL and options of each call and how often the context closed.
+ */
+function fakeBrowser(overrides = {}) {
+    const log = { contexts: 0, closed: 0, goto: [], waitForFunction: [], evaluate: 0 };
+    const browser = {
+        async newContext() {
+            if (overrides.newContext) {
+                await overrides.newContext();
+            }
+            log.contexts += 1;
+            const listeners = { console: [], worker: [] };
+            const page = {
+                on(event, listener) {
+                    listeners[event]?.push(listener);
+                },
+                async goto(url, options) {
+                    log.goto.push({ url, options });
+                    const emit = {
+                        pageConsole: (text) => listeners.console.forEach((listener) => listener(consoleMessage(text))),
+                        workerConsole: (text) => {
+                            const workerListeners = [];
+                            const worker = { on: (event, listener) => event === 'console' && workerListeners.push(listener) };
+                            listeners.worker.forEach((listener) => listener(worker));
+                            workerListeners.forEach((listener) => listener(consoleMessage(text)));
+                        },
+                    };
+                    return overrides.goto ? overrides.goto(emit) : { status: () => 200 };
+                },
+                async waitForFunction(predicate, argument, options) {
+                    log.waitForFunction.push({ options });
+                    return overrides.waitForFunction ? overrides.waitForFunction() : true;
+                },
+                async evaluate() {
+                    log.evaluate += 1;
+                    return overrides.evaluate ? overrides.evaluate() : FINISHED_EVENTS;
+                },
+            };
+            return {
+                async newPage() {
+                    return overrides.newPage ? overrides.newPage() : page;
+                },
+                async close() {
+                    log.closed += 1;
+                    if (overrides.close) {
+                        await overrides.close();
+                    }
+                },
+            };
+        },
+    };
+    return { browser, log };
+}
+
+test('a measurement page that fails is a MeasurementError naming its mode and run', async (t) => {
+    // T309: each Chromium page has 2 minutes, and a failure is `<mode>: chromium cold start <i>: <message>`
+    // (or `<mode>: chromium steps: …`). That holds for every way a page can fail, not only the wait: the
+    // context or page that cannot be made, the navigation that fails, answers another status or times
+    // out, the wait that ends without a timeout (a crash), and the events that cannot be read. A close
+    // that fails never hides the page's own result.
+    const { MeasurementError, runPage } = await import('../lib/measure.mjs');
+    const bound = 'the page did not finish within 120 s';
+
+    await t.test('a page that finishes gives its events and closes its context', async () => {
+        const { browser, log } = fakeBrowser();
+
+        const events = await runPage(browser, PAGE_URL, PAGE_WHAT);
+
+        assert.deepEqual(events, FINISHED_EVENTS);
+        assert.deepEqual(log.goto.map((call) => call.url), [PAGE_URL]);
+        assert.equal(log.contexts, 1);
+        assert.equal(log.closed, 1);
+    });
+
+    const failures = [
+        {
+            name: 'the browser context cannot be made',
+            overrides: {
+                newContext: () => Promise.reject(new Error('browser.newContext: Target page, context or browser has been closed')),
+            },
+            message: `${PAGE_WHAT}: browser.newContext: Target page, context or browser has been closed`,
+            closed: 0,
+        },
+        {
+            name: 'the page cannot be opened',
+            overrides: { newPage: () => Promise.reject(new Error('browserContext.newPage: Target closed')) },
+            message: `${PAGE_WHAT}: browserContext.newPage: Target closed`,
+        },
+        {
+            // Playwright's call log, on the lines after the first, is left out, so the failure is one line.
+            name: 'the navigation fails',
+            overrides: {
+                goto: () => Promise.reject(new Error(
+                    `page.goto: net::ERR_CONNECTION_REFUSED at ${PAGE_URL}\nCall log:\n`
+                    + `  - navigating to "${PAGE_URL}", waiting until "load"\n`,
+                )),
+            },
+            message: `${PAGE_WHAT}: page.goto: net::ERR_CONNECTION_REFUSED at ${PAGE_URL}`,
+        },
+        {
+            name: 'the navigation times out',
+            overrides: { goto: () => Promise.reject(playwrightTimeout('page.goto: Timeout 120000ms exceeded.')) },
+            message: `${PAGE_WHAT}: ${bound}`,
+        },
+        {
+            name: 'the page answers 404',
+            overrides: { goto: () => ({ status: () => 404 }) },
+            message: `${PAGE_WHAT}: GET ${PAGE_URL} answered 404`,
+        },
+        {
+            name: 'the page never finishes',
+            overrides: { waitForFunction: () => Promise.reject(playwrightTimeout('page.waitForFunction: Timeout 120000ms exceeded.')) },
+            message: `${PAGE_WHAT}: ${bound}`,
+        },
+        {
+            // Not a timeout: the wait ended at once, so the message is the wait's, not the bound's.
+            name: 'the page crashes while it is waited on',
+            overrides: { waitForFunction: () => Promise.reject(new Error('page.waitForFunction: Target crashed')) },
+            message: `${PAGE_WHAT}: page.waitForFunction: Target crashed`,
+        },
+        {
+            name: 'the events cannot be read',
+            overrides: { evaluate: () => Promise.reject(new Error('page.evaluate: Execution context was destroyed')) },
+            message: `${PAGE_WHAT}: page.evaluate: Execution context was destroyed`,
+        },
+        {
+            name: 'the Worker posts fatal',
+            overrides: { evaluate: () => [{ type: 'fatal', message: 'cannot boot http://127.0.0.1:9/_framework/dotnet.js: no' }] },
+            message: `${PAGE_WHAT}: cannot boot http://127.0.0.1:9/_framework/dotnet.js: no`,
+        },
+        {
+            name: 'the page warns that .wasm is not application/wasm',
+            overrides: {
+                goto: (emit) => {
+                    emit.pageConsole(CONTENT_TYPE_LINE);
+                    return { status: () => 200 };
+                },
+            },
+            message: `${PAGE_WHAT}: ${CONTENT_TYPE_LINE}`,
+        },
+        {
+            name: 'the Worker warns that .wasm is not application/wasm',
+            overrides: {
+                goto: (emit) => {
+                    emit.workerConsole(CONTENT_TYPE_LINE);
+                    return { status: () => 200 };
+                },
+            },
+            message: `${PAGE_WHAT}: ${CONTENT_TYPE_LINE}`,
+        },
+        {
+            name: 'the context does not close after the page finished',
+            overrides: { close: () => Promise.reject(new Error('browserContext.close: Target closed\nCall log:\n  - closing')) },
+            message: `${PAGE_WHAT}: closing its browser context failed: browserContext.close: Target closed`,
+        },
+        {
+            // The page's own failure comes first, and the close's is added, not put in its place.
+            name: 'the context does not close after the page failed',
+            overrides: {
+                evaluate: () => [{ type: 'fatal', message: 'manifest.json has no stream rifle-burst' }],
+                close: () => Promise.reject(new Error('browserContext.close: Target closed')),
+            },
+            message: `${PAGE_WHAT}: manifest.json has no stream rifle-burst; `
+                + 'closing its browser context failed too: browserContext.close: Target closed',
+        },
+    ];
+    for (const row of failures) {
+        await t.test(row.name, async () => {
+            const { browser, log } = fakeBrowser(row.overrides);
+
+            await assert.rejects(async () => runPage(browser, PAGE_URL, PAGE_WHAT), exactly(MeasurementError, row.message));
+            assert.equal(log.closed, row.closed ?? 1, 'a context that was made is closed');
+        });
+    }
+
+    await t.test('the navigation and the wait share the page\'s one bound', async () => {
+        const boundMs = 10_000;
+        const navigationMs = 50;
+        const { browser, log } = fakeBrowser({
+            goto: () => new Promise((resolve) => setTimeout(() => resolve({ status: () => 200 }), navigationMs)),
+        });
+
+        await runPage(browser, PAGE_URL, PAGE_WHAT, boundMs);
+
+        const gotoTimeout = log.goto[0].options?.timeout;
+        const waitTimeout = log.waitForFunction[0].options?.timeout;
+        assert.ok(gotoTimeout > 0 && gotoTimeout <= boundMs, `goto's timeout ${gotoTimeout} is within the bound`);
+        // The wait gets what the navigation left, not a fresh bound (less a few ms for timer rounding).
+        assert.ok(
+            waitTimeout > 0 && waitTimeout <= boundMs - (navigationMs - 10),
+            `the wait's timeout ${waitTimeout} is the bound less the navigation's ${navigationMs} ms`,
+        );
+    });
+
+    await t.test('a timeout names the bound it was given', async () => {
+        const { browser } = fakeBrowser({ waitForFunction: () => Promise.reject(playwrightTimeout('Timeout 1500ms exceeded.')) });
+
+        await assert.rejects(
+            async () => runPage(browser, PAGE_URL, PAGE_WHAT, 1500),
+            exactly(MeasurementError, `${PAGE_WHAT}: the page did not finish within 1.5 s`),
+        );
+    });
+});
+
 test('build flags match the mode', async () => {
     const { buildFlags } = await import('../lib/measure.mjs');
 
@@ -1003,4 +1234,181 @@ test('step passes warm up 512 steps, time 3008 and reset before each pass', asyn
             assert.equal(fake.log.calls.length, 30);
         });
     }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The same steps in both halves (T304, T306, T307; Phase 12 review)
+// ---------------------------------------------------------------------------------------------------
+
+/** The commands of the three measured streams in a prepared work directory. */
+const MEASURED_STREAM_COMMANDS = { 'flat-run-30hz': 30, 'rifle-burst': 120, 'launcher-arc': 45 };
+
+/**
+ * Fake exports for `stepKindCosts` over streams of `commandCounts` commands, and a fake clock that reads
+ * microseconds and moves 1 µs per step committed.
+ *
+ * - Each stream's inputs are distinct bytes, and command i of a stream is 17 bytes of value i + 1.
+ *   `LoadConfig` selects the stream by its config bytes; `Reset` checks it gets that stream's initial
+ *   state and starts a pass.
+ * - `StepQueued(count)` checks that the command buffer holds exactly the pass's next `count` commands,
+ *   commits them all and returns `count`.
+ * - A call is timed when the clock was read an odd number of times before it, the start reading
+ *   `runPasses` takes just before a timed call. `log.timed` lists, per stream, each timed step as
+ *   `<pass>:<position in the pass>`; `log.passes` lists each pass's call counts.
+ */
+function fakeStepKindExports(commandCounts) {
+    const encode = (text) => new TextEncoder().encode(text);
+    const inputs = new Map();
+    for (const [scenario, count] of Object.entries(commandCounts)) {
+        const commands = new Uint8Array(count * COMMAND_SIZE);
+        for (let i = 0; i < count; i++) {
+            commands.fill(i + 1, i * COMMAND_SIZE, (i + 1) * COMMAND_SIZE);
+        }
+        inputs.set(scenario, {
+            collision: encode(`collision of ${scenario}`),
+            config: encode(scenario),
+            initialState: encode(`initial state of ${scenario}`),
+            commands,
+            salt: 7n,
+        });
+    }
+
+    const report = new Uint8Array(64 * 1024);
+    const log = { timed: {}, passes: {}, violations: [] };
+    let loaded = null;
+    let position = null;
+    let written = null;
+    let clockUs = 0;
+    let clockReads = 0;
+
+    const exports = {
+        LoadCollision: () => 0,
+        LoadConfig(config) {
+            loaded = new TextDecoder().decode(config);
+            position = null;
+            log.timed[loaded] = [];
+            log.passes[loaded] = [];
+            return 0;
+        },
+        Reset(initialState, salt) {
+            const expected = inputs.get(loaded);
+            if (new TextDecoder().decode(initialState) !== `initial state of ${loaded}` || salt !== expected.salt) {
+                log.violations.push(`Reset of ${loaded} with another stream's initial state or salt`);
+            }
+            position = 0;
+            log.passes[loaded].push([]);
+            return 0;
+        },
+        CommandBuffer() {
+            return {
+                set(bytes, offset) {
+                    if (offset !== 0) {
+                        log.violations.push(`commands written at offset ${offset}`);
+                    }
+                    written = Uint8Array.from(bytes);
+                },
+                dispose() {},
+            };
+        },
+        ReportBuffer: () => memoryView(report),
+        StepQueued(count) {
+            const { commands } = inputs.get(loaded);
+            const expected = commands.subarray(position * COMMAND_SIZE, (position + count) * COMMAND_SIZE);
+            if (written === null || written.length !== expected.length || !written.every((byte, i) => byte === expected[i])) {
+                log.violations.push(`${loaded}: StepQueued(${count}) at command ${position} without exactly those commands`);
+            }
+            written = null;
+
+            const pass = log.passes[loaded].length - 1;
+            log.passes[loaded][pass].push(count);
+            if (clockReads % 2 === 1) {
+                for (let i = 0; i < count; i++) {
+                    log.timed[loaded].push(`${pass}:${position + i}`);
+                }
+            }
+            clockUs += count;
+            position += count;
+            return count;
+        },
+    };
+
+    const now = () => {
+        clockReads += 1;
+        return clockUs;
+    };
+    return { exports, inputs, log, now };
+}
+
+test('both halves time the same steps, in passes of whole 16-command batches', async (t) => {
+    const { MeasurementError, STEP_KINDS, WORKER_BATCH, passLength, stepKindCosts } = await import('../lib/passes.mjs');
+
+    await t.test('a pass is the stream\'s whole 16-command batches', () => {
+        assert.equal(WORKER_BATCH, 16);
+        const rows = [[16, 16], [17, 16], [30, 16], [45, 32], [120, 112], [128, 128]];
+        for (const [commands, expected] of rows) {
+            assert.equal(passLength(commands), expected, `a stream of ${commands} commands`);
+        }
+    });
+
+    await t.test('a stream shorter than one batch cannot be timed', () => {
+        for (const commands of [0, 1, 15]) {
+            assert.throws(
+                () => passLength(commands),
+                exactly(MeasurementError, `${commands} commands are fewer than one 16-command batch, so no step can be timed`),
+            );
+        }
+    });
+
+    await t.test('Node\'s single steps and the Worker\'s batches time the same steps of each stream', () => {
+        const node = fakeStepKindExports(MEASURED_STREAM_COMMANDS);
+        const worker = fakeStepKindExports(MEASURED_STREAM_COMMANDS);
+
+        const nodeEntries = stepKindCosts(node.exports, node.inputs, { batch: 1, now: node.now, unitNs: CLOCK_UNIT_NS });
+        const workerEntries = stepKindCosts(worker.exports, worker.inputs, {
+            batch: WORKER_BATCH,
+            now: worker.now,
+            unitNs: CLOCK_UNIT_NS,
+        });
+
+        assert.deepEqual(node.log.violations, []);
+        assert.deepEqual(worker.log.violations, []);
+        const entries = (batch) => STEP_KINDS.map(
+            ({ kind, scenario }) => ({ kind, scenario, batch, steps: 3008, meanNs: 1000, p99Ns: 1000 }),
+        );
+        assert.deepEqual(nodeEntries, entries(1));
+        assert.deepEqual(workerEntries, entries(16));
+
+        for (const { scenario } of STEP_KINDS) {
+            const length = passLength(MEASURED_STREAM_COMMANDS[scenario]);
+            // Every pass plays the stream's first `length` commands: Node one at a time, the Worker in
+            // whole batches, with no shorter last call (the run may stop inside its last pass).
+            const shortPasses = (passes) => passes.slice(0, -1)
+                .map((counts) => counts.reduce((sum, count) => sum + count, 0))
+                .filter((steps) => steps !== length);
+            assert.deepEqual(shortPasses(node.log.passes[scenario]), [], `${scenario}: Node's passes`);
+            assert.deepEqual(shortPasses(worker.log.passes[scenario]), [], `${scenario}: the Worker's passes`);
+            assert.deepEqual(node.log.passes[scenario].flat().filter((count) => count !== 1), [], `${scenario}: Node's calls`);
+            assert.deepEqual(worker.log.passes[scenario].flat().filter((count) => count !== 16), [], `${scenario}: the Worker's calls`);
+
+            // The same 3,008 steps, pass by pass and position by position, so the two numbers per kind
+            // are averages over the same work.
+            assert.equal(node.log.timed[scenario].length, 3008, `${scenario}: Node's timed steps`);
+            assert.deepEqual(worker.log.timed[scenario], node.log.timed[scenario], `${scenario}: the steps each half timed`);
+            const positions = new Set(node.log.timed[scenario].map((step) => Number(step.split(':')[1])));
+            assert.deepEqual(
+                [...positions].sort((a, b) => a - b),
+                Array.from({ length }, (_, i) => i),
+                `${scenario}: every position of the pass is timed`,
+            );
+        }
+    });
+
+    await t.test('a stream shorter than one batch fails naming it', () => {
+        const fake = fakeStepKindExports({ ...MEASURED_STREAM_COMMANDS, 'rifle-burst': 12 });
+
+        assert.throws(
+            () => stepKindCosts(fake.exports, fake.inputs, { batch: 1, now: fake.now, unitNs: CLOCK_UNIT_NS }),
+            exactly(MeasurementError, 'rifle-burst: 12 commands are fewer than one 16-command batch, so no step can be timed'),
+        );
+    });
 });

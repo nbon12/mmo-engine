@@ -14,8 +14,9 @@
  *   have returned 0, 0, 0 and 1. `totalMs` is the three added: the time to the first completed step.
  *   `buildInfo` is the runtime's six `runtimeBuildInfo` fields the report records.
  * - `stepCosts({app, work})`: one entry per step kind, `{kind, scenario, batch: 1, steps, meanNs, p99Ns}`,
- *   from `runPasses` (`lib/passes.mjs`) with one command per `StepQueued(1)`, each timed with
- *   `process.hrtime.bigint()`.
+ *   from `stepKindCosts` (`lib/passes.mjs`, the loop the Worker runs) with one command per `StepQueued(1)`,
+ *   each timed with `process.hrtime.bigint()`, over the same passes of whole 16-command batches as the
+ *   Worker's, so the two halves time the same steps.
  *
  * Both read their inputs from the work directory that `simcore agreement prepare` wrote
  * (contracts/simcore-cli.md#agreement-work-directory) before the clock starts: `manifest.json`, and for
@@ -33,9 +34,9 @@ import {
     COMMAND_SIZE,
     MeasurementError,
     STEP_KINDS,
-    readLoadText,
+    expectLoad,
     readStopText,
-    runPasses,
+    stepKindCosts,
 } from './passes.mjs';
 import { bootRuntime } from './runtime.mjs';
 
@@ -48,9 +49,6 @@ const BUILD_INFO_FIELDS = [
     'wasmEnableExceptionHandling',
     'wasmEnableThreads',
 ];
-
-/** The load calls' `Ok` (contracts/wasm-api.md#return-codes). */
-const OK = 0;
 
 const USAGE = 'usage: node measure-node.mjs <cold-start|steps> --app <wwwroot> --work <dir>';
 
@@ -113,45 +111,13 @@ export async function stepCosts({ app, work }) {
     const inputs = await readInputs(work);
 
     const booted = await boot(app);
-    const E = booted.exports;
-    const commandView = E.CommandBuffer();
-    const entries = [];
-    try {
-        for (const { kind, scenario } of STEP_KINDS) {
-            const input = inputs.get(scenario);
-            expectLoad(E, 'LoadCollision', E.LoadCollision(input.collision), scenario);
-            expectLoad(E, 'LoadConfig', E.LoadConfig(input.config), scenario);
-            // LoadConfig may have reallocated the report buffer, so the view is fetched after it.
-            const reportBuffer = E.ReportBuffer();
-            try {
-                const start = process.hrtime.bigint();
-                const result = runPasses({
-                    reset: () => E.Reset(input.initialState, input.salt),
-                    stepQueued: (count) => E.StepQueued(count),
-                    writeCommands: (bytes) => commandView.set(bytes, 0),
-                    commands: input.commands,
-                    stepsPerPass: input.commands.length / COMMAND_SIZE,
-                    batch: 1,
-                    now: () => Number(process.hrtime.bigint() - start),
-                    unitNs: 1,
-                    reportBuffer,
-                });
-                entries.push({ kind, scenario, batch: 1, steps: result.steps, meanNs: result.meanNs, p99Ns: result.p99Ns });
-            } catch (error) {
-                if (error instanceof MeasurementError) {
-                    throw new MeasurementError(`${scenario}: ${error.message}`, { cause: error });
-                }
-
-                throw error;
-            } finally {
-                reportBuffer.dispose();
-            }
-        }
-    } finally {
-        commandView.dispose();
-    }
-
-    return entries;
+    // A Number clock in nanoseconds from here, exact for the 104 days before it passes 2^53.
+    const origin = process.hrtime.bigint();
+    return stepKindCosts(booted.exports, inputs, {
+        batch: 1,
+        now: () => Number(process.hrtime.bigint() - origin),
+        unitNs: 1,
+    });
 }
 
 /**
@@ -232,27 +198,6 @@ async function boot(app) {
         return await bootRuntime(url);
     } catch (error) {
         throw new MeasurementError(`cannot boot ${url}: ${error?.message ?? String(error)}`, { cause: error });
-    }
-}
-
-/** Throws naming the call, its code and the report text when a load call or `Reset` did not return `Ok`. */
-function expectLoad(E, call, code, scenario) {
-    if (code === OK) {
-        return;
-    }
-
-    const text = loadText(E);
-    const where = scenario === undefined ? '' : `${scenario}: `;
-    throw new MeasurementError(`${where}${call} returned ${code}${text === '' ? '' : `: ${text}`}`);
-}
-
-/** The text a load call that did not return `Ok` left in the report buffer, read through a fresh view. */
-function loadText(E) {
-    const view = E.ReportBuffer();
-    try {
-        return readLoadText(view);
-    } finally {
-        view.dispose();
     }
 }
 

@@ -2192,6 +2192,37 @@ The design documents settled these points, which the spec leaves open. They are 
   kind of `STEP_KINDS`, with its stream, in that order. It checks the Worker's messages and the
   `measure-node.mjs steps` line, which nothing had checked. `'each half gives one step entry per kind,
   in the report order'` tests it without a browser.
+- **T304, T306 and T307 (second Phase 12 review): both halves time the same steps.** Each pass played
+  the stream's whole command list, and the Worker times only full 16-step batches, so with streams of
+  30, 120 and 45 commands it never timed steps 17 to 30 of `flat-run-30hz`, 113 to 120 of `rifle-burst`
+  or 33 to 45 of `launcher-arc` (the end of the projectile's flight), while Node timed every step. The
+  report's two numbers for a kind were then averages over different work. Each pass now plays the
+  stream's first ⌊n / 16⌋ · 16 commands in both halves (`passLength`, 16, 112 and 32 steps). With 512
+  warm-up and 3,008 timed steps, both multiples of 16, Node and the Worker time exactly the same steps,
+  and no partial batch runs at all. The alternative, timing the Worker's shorter last call too, would
+  mix batch sizes within one number. The two halves' step loops were one copy each, so the choice now
+  lives once, in `stepKindCosts` (`lib/passes.mjs`), which both call with their own batch and clock,
+  and `'both halves time the same steps, in passes of whole 16-command batches'` runs that one loop
+  with `batch` 1 and 16 over fake exports and compares the steps each timed. `expectLoad` moved there
+  with it, for the cold starts too. `runPasses` still runs a shorter last call untimed, for a caller
+  whose passes are not whole batches. T304, T306, T307 and contracts/measurement-report.md's "Step
+  cost" say so.
+- **T309 (second Phase 12 review): a Chromium page has one bound, and every way it fails is named.**
+  `page.goto` ran under Playwright's default 30-second navigation timeout, outside the page's
+  2 minutes, and only the wait was caught: a failed navigation, context, page or `evaluate` printed a
+  stack without the mode or run, and any failed wait, a crash included, was reported as the 2-minute
+  timeout. A close that failed in a `finally` could also replace the error it followed. `runPage` is
+  now exported and takes the browser it drives, so the test hands it a fake one. The navigation and the
+  wait share one deadline set when `runPage` starts; any error becomes `<mode>: chromium <run>:
+  <message>`, with the first line of the message so the `measure:` line stays one line (Playwright adds
+  a call log below it), and only an error named `TimeoutError` is the bound's message. The context, the
+  browser and the server close through `closeAfter`: a close that fails after a failure is added to
+  its message, and one that fails after a success fails the run, since nothing hides it. `newContext`,
+  `newPage` and `evaluate` take no timeout in Playwright, so they stay under the step's own 8 minutes.
+  A real Chromium given a refused port and a server that never answers gave `page.goto:
+  net::ERR_UNSAFE_PORT at …` at once and `the page did not finish within 3 s` after 3 s. T309, T302
+  and contracts/measurement-report.md step 6 say so, and contracts/wasm-api.md#measurement-worker now
+  gives the measurement Worker's messages, which only T307 and T309 listed.
 
 ## Delivery
 

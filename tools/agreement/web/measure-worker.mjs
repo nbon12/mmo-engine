@@ -18,9 +18,10 @@
  *   write of that command between the last two, as the Node half times it), and `totalMs`, the three
  *   added: the time to the first completed step.
  * - For `steps`, one `steps` message per step kind, in the report's order: `{kind, scenario, batch: 16,
- *   steps, meanNs, p99Ns}` from `runPasses` (`lib/passes.mjs`, the loop the Node half runs) with
- *   `StepQueued(16)` per timed batch, timed with `performance.now()` (`unitNs: 1e6`), because the
- *   browser's timer resolves to 5 µs, too coarse for one step.
+ *   steps, meanNs, p99Ns}` from `stepKindCosts` (`lib/passes.mjs`, the loop the Node half runs) with
+ *   `StepQueued(16)` per batch, timed with `performance.now()` (`unitNs: 1e6`), because the browser's
+ *   timer resolves to 5 µs, too coarse for one step. Each pass is the stream's whole 16-command batches,
+ *   as in Node, so both halves time the same steps.
  * - `done`, last.
  * - `fatal` (`message`) in place of everything after it, for any error: an input that does not fetch,
  *   a runtime that does not boot, a call that returns another code than it must, or a `start` whose run
@@ -33,9 +34,10 @@ import {
     COMMAND_SIZE,
     MeasurementError,
     STEP_KINDS,
-    readLoadText,
+    WORKER_BATCH,
+    expectLoad,
     readStopText,
-    runPasses,
+    stepKindCosts,
 } from '../lib/passes.mjs';
 
 /**
@@ -44,14 +46,8 @@ import {
  */
 const moduleStartMs = performance.now();
 
-/** The commands per timed `StepQueued` call in the Worker (contracts/measurement-report.md, "Step cost"). */
-const WORKER_BATCH = 16;
-
 /** The runs the page may ask for. */
 const RUNS = new Set(['cold-start', 'steps']);
-
-/** The load calls' `Ok` (contracts/wasm-api.md#return-codes). */
-const OK = 0;
 
 let started = false;
 
@@ -87,7 +83,8 @@ async function run(which) {
     if (which === 'cold-start') {
         post({ type: 'coldStart', ...firstStep(booted, inputs) });
     } else {
-        for (const entry of stepCosts(booted.exports, inputs)) {
+        const timing = { batch: WORKER_BATCH, now: () => performance.now(), unitNs: 1e6 };
+        for (const entry of stepKindCosts(booted.exports, inputs, timing)) {
             post({ type: 'steps', ...entry });
         }
     }
@@ -119,54 +116,6 @@ function firstStep(booted, inputs) {
 
     const { importMs, createMs } = booted.timings;
     return { importMs, createMs, firstStepMs, totalMs: importMs + createMs + firstStepMs };
-}
-
-/**
- * The cost per step of each step kind, `StepQueued(16)` per timed batch.
- *
- * @returns {{ kind: string, scenario: string, batch: 16, steps: number, meanNs: number, p99Ns: number }[]}
- */
-function stepCosts(E, inputs) {
-    const commandView = E.CommandBuffer();
-    const entries = [];
-    try {
-        for (const { kind, scenario } of STEP_KINDS) {
-            const input = inputs.get(scenario);
-            expectLoad(E, 'LoadCollision', E.LoadCollision(input.collision), scenario);
-            expectLoad(E, 'LoadConfig', E.LoadConfig(input.config), scenario);
-            // LoadConfig may have reallocated the report buffer, so the view is fetched after it.
-            const reportBuffer = E.ReportBuffer();
-            try {
-                const result = runPasses({
-                    reset: () => E.Reset(input.initialState, input.salt),
-                    stepQueued: (count) => E.StepQueued(count),
-                    writeCommands: (bytes) => commandView.set(bytes, 0),
-                    commands: input.commands,
-                    stepsPerPass: input.commands.length / COMMAND_SIZE,
-                    batch: WORKER_BATCH,
-                    now: () => performance.now(),
-                    unitNs: 1e6,
-                    reportBuffer,
-                });
-                entries.push({
-                    kind,
-                    scenario,
-                    batch: WORKER_BATCH,
-                    steps: result.steps,
-                    meanNs: result.meanNs,
-                    p99Ns: result.p99Ns,
-                });
-            } catch (error) {
-                throw new MeasurementError(`${scenario}: ${messageOf(error)}`, { cause: error });
-            } finally {
-                reportBuffer.dispose();
-            }
-        }
-    } finally {
-        commandView.dispose();
-    }
-
-    return entries;
 }
 
 /**
@@ -230,24 +179,6 @@ async function boot() {
     } catch (error) {
         throw new MeasurementError(`cannot boot ${url}: ${messageOf(error)}`, { cause: error });
     }
-}
-
-/** Throws naming the call, its code and the report text when a load call or `Reset` did not return `Ok`. */
-function expectLoad(E, call, code, scenario) {
-    if (code === OK) {
-        return;
-    }
-
-    const view = E.ReportBuffer();
-    let text;
-    try {
-        text = readLoadText(view);
-    } finally {
-        view.dispose();
-    }
-
-    const where = scenario === undefined ? '' : `${scenario}: `;
-    throw new MeasurementError(`${where}${call} returned ${code}${text === '' ? '' : `: ${text}`}`);
 }
 
 /** Why the cold start's `StepQueued(1)` did not commit its step. */

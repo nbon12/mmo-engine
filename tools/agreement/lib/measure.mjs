@@ -10,7 +10,8 @@
  *     --unproduced aot="dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log" \
  *     --out "$RUNNER_TEMP/simcore-measurement.json"
  *
- * Its exports are pure: they read the files they are pointed at and nothing of the process.
+ * Its exports read only what they are given, the files they are pointed at or the browser they drive,
+ * and nothing of the process.
  *
  * - `parseArgs(argv, env)`: argv is `process.argv.slice(2)` and env the environment. Each of
  *   `interp-prebuilt`, `interp-relinked` and `aot` is given exactly once, with `--mode <mode>=<publish
@@ -32,6 +33,9 @@
  * - `checkStepKinds(steps, what)`: a half's step costs, checked to be one entry per kind of `STEP_KINDS`
  *   (`./passes.mjs`), with its stream, in the report's order.
  * - `assembleReport(inputs)`: the whole report from what the entry point gathered (below).
+ * - `runPage(browser, url, what, boundMs)`: one measurement page in a fresh context of a Playwright
+ *   `browser`, within one bound (2 minutes by default), giving the events its Worker posted; every way
+ *   the page can fail is the MeasurementError `<what>: <message>`.
  * - `UsageError`, and `MeasurementError` re-exported from `./passes.mjs`, so a caller catches the
  *   measurement failures of both modules as one class.
  *
@@ -43,11 +47,14 @@
  *    `measure-node.mjs steps` process for the step costs, whose line `checkStepKinds` checks.
  * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
  *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
- *    `/web/measure.html?run=cold-start` ten times, each in a fresh browser context, then
- *    `?run=steps` once. A `fatal` event, a page that does not finish, or the runtime's console warning
- *    that `.wasm` was not served as `application/wasm` fails the measurement, and so does a page that
- *    does not post exactly one `booted` and one `coldStart`, or `steps` messages that `checkStepKinds`
- *    refuses. `crossOriginIsolated` is true only when every `booted` message says so.
+ *    `/web/measure.html?run=cold-start` ten times with `runPage`, each in a fresh browser context, then
+ *    `?run=steps` once. A page that fails as `runPage` says (a `fatal` event, a page that does not load
+ *    or finish within its 2 minutes, the runtime's console warning that `.wasm` was not served as
+ *    `application/wasm`) fails the measurement, and so does a page that does not post exactly one
+ *    `booted` and one `coldStart`, or `steps` messages that `checkStepKinds` refuses.
+ *    `crossOriginIsolated` is true only when every `booted` message says so. The pages' contexts, the
+ *    browser and the server are closed however the run ends, and a close that fails never takes the
+ *    place of the failure it followed.
  * 4. Each startup interval summarized with `summarize` (`./passes.mjs`).
  *
  * It then gathers the machine (`os`), the versions (`dotnet --version`, the highest
@@ -563,18 +570,162 @@ function exactSum(files, field) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The entry point (T309): `node tools/agreement/lib/measure.mjs ...` measures the produced modes and
-// writes the report. Nothing below runs when the module is imported.
+// One Chromium measurement page (T309): the entry point opens each page with `runPage`, which takes the
+// browser it drives, so the tests can hand it a fake one.
 // ---------------------------------------------------------------------------------------------------
-
-/** The Node half, run once per cold start and once for the step costs. */
-const MEASURE_NODE = fileURLToPath(new URL('./measure-node.mjs', import.meta.url));
 
 /** The runtime's console warning when `.wasm` is served with another content type (contracts/wasm-api.md#served-files). */
 const CONTENT_TYPE_WARNING = 'does not have the expected content type "application/wasm"';
 
 /** How long one `measure-node.mjs` process or one measurement page may take before it fails the run. */
 const RUN_BOUND_MS = 2 * 60 * 1000;
+
+/**
+ * One measurement page in a fresh browser context: `url` (`/web/measure.html?run=<run>`), waited on until
+ * the page sets `window.__measure.done`, then its events read.
+ *
+ * The page has one bound, `boundMs` from the call: the navigation gets it and the wait gets what the
+ * navigation left, so a slow load does not extend the page's time. Every failure is the MeasurementError
+ * `<what>: <message>`, with the first line of the error's message: a context or page that cannot be
+ * made, a navigation that fails or answers another status than 200, a wait that ends without a timeout
+ * (a crash), events that cannot be read, a `fatal` event, or the runtime's console warning that `.wasm`
+ * was not served as `application/wasm`. A Playwright
+ * timeout is `<what>: the page did not finish within <bound> s`. The context is closed however the page
+ * ended, and a failed close never takes the place of the page's own failure (`closeAfter`).
+ *
+ * @param {{ newContext(): Promise<object> }} browser a Playwright `Browser`
+ * @param {string} url the page to open
+ * @param {string} what names the page in a failure: `<mode>: chromium cold start <i>` or
+ *   `<mode>: chromium steps`
+ * @param {number} [boundMs] the page's bound, 2 minutes by default
+ * @returns {Promise<object[]>} the events the Worker posted
+ * @throws {MeasurementError}
+ */
+export async function runPage(browser, url, what, boundMs = RUN_BOUND_MS) {
+    const deadline = Date.now() + boundMs;
+    let context;
+    try {
+        context = await browser.newContext();
+    } catch (error) {
+        throw pageFailure(error, what, boundMs);
+    }
+
+    return closeAfter(
+        async () => {
+            try {
+                return await loadPage(context, url, what, () => Math.max(1, deadline - Date.now()));
+            } catch (error) {
+                throw pageFailure(error, what, boundMs);
+            }
+        },
+        () => context.close(),
+        what,
+        'its browser context',
+    );
+}
+
+/** The page's events, or a failure that `runPage` names. */
+async function loadPage(context, url, what, remainingMs) {
+    const page = await context.newPage();
+    const warnings = [];
+    const onConsole = (message) => {
+        if (message.text().includes(CONTENT_TYPE_WARNING)) {
+            warnings.push(message.text());
+        }
+    };
+    page.on('console', onConsole);
+    page.on('worker', (worker) => worker.on('console', onConsole));
+
+    const response = await page.goto(url, { timeout: remainingMs() });
+    if (response?.status() !== 200) {
+        throw new MeasurementError(`${what}: GET ${url} answered ${response?.status() ?? 'nothing'}`);
+    }
+
+    await page.waitForFunction(() => window.__measure?.done === true, undefined, { timeout: remainingMs() });
+    const events = await page.evaluate(() => window.__measure.events);
+    const fatal = events.find((event) => event?.type === 'fatal');
+    if (fatal !== undefined) {
+        throw new MeasurementError(`${what}: ${fatal.message}`);
+    }
+
+    if (warnings.length > 0) {
+        throw new MeasurementError(`${what}: ${warnings[0]}`);
+    }
+
+    return events;
+}
+
+/** A page's failure as the MeasurementError `<what>: <message>`; a Playwright timeout is its bound running out. */
+function pageFailure(error, what, boundMs) {
+    if (error instanceof MeasurementError) {
+        return error;
+    }
+
+    if (error?.name === 'TimeoutError') {
+        return new MeasurementError(`${what}: the page did not finish within ${boundMs / 1000} s`, { cause: error });
+    }
+
+    return new MeasurementError(`${what}: ${firstLine(error)}`, { cause: error });
+}
+
+/**
+ * `run()`, then `close()` however `run` ended, so that a failed close never hides what `run` did. After a
+ * failed `run`, its error stays the failure and the close's is added to its message
+ * (`<message>; closing <thing> failed too: <close message>`); after a successful one, the close's failure
+ * is the MeasurementError `<what>: closing <thing> failed: <close message>`.
+ *
+ * @template T
+ * @param {() => Promise<T>} run
+ * @param {() => Promise<void>} close
+ * @param {string} what names the run in a failure
+ * @param {string} thing what `close` closes
+ * @returns {Promise<T>} what `run` returned
+ */
+async function closeAfter(run, close, what, thing) {
+    let failure;
+    let failed = false;
+    let result;
+    try {
+        result = await run();
+    } catch (error) {
+        failed = true;
+        failure = error;
+    }
+
+    try {
+        await close();
+    } catch (error) {
+        if (failed) {
+            const message = `${firstLine(failure)}; closing ${thing} failed too: ${firstLine(error)}`;
+            throw new MeasurementError(message, { cause: failure });
+        }
+
+        throw new MeasurementError(`${what}: closing ${thing} failed: ${firstLine(error)}`, { cause: error });
+    }
+
+    if (failed) {
+        throw failure;
+    }
+
+    return result;
+}
+
+/**
+ * The first line of an error's message, or of the thrown value as text, so that each failure stays one
+ * `measure:` line; Playwright's messages add a call log on the lines after it, and the whole error stays
+ * the MeasurementError's `cause`.
+ */
+function firstLine(error) {
+    return (error instanceof Error ? error.message : String(error)).split('\n', 1)[0];
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The entry point (T309): `node tools/agreement/lib/measure.mjs ...` measures the produced modes and
+// writes the report. Nothing below runs when the module is imported.
+// ---------------------------------------------------------------------------------------------------
+
+/** The Node half, run once per cold start and once for the step costs. */
+const MEASURE_NODE = fileURLToPath(new URL('./measure-node.mjs', import.meta.url));
 
 /** The most output one `measure-node.mjs` process may print. */
 const NODE_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -705,95 +856,58 @@ function runNodeHalf(mode, run, app, work, what) {
  * costs in one more, all served by the agreement server.
  *
  * @returns {Promise<{ version: string, crossOriginIsolated: boolean, coldStarts: object[], steps: object[] }>}
- * @throws {MeasurementError} a page failed (see `runPage`), or did not post what its run posts
+ * @throws {MeasurementError} the server did not start or Chromium did not launch, a page failed (see
+ *   `runPage`) or did not post what its run posts, or closing the browser or the server failed
+ *   (`closeAfter`)
  */
 async function measureInChromium(mode, app, work) {
     const { chromium } = await import('@playwright/test');
-    const server = await startServer({ app, work });
-    let browser;
+    let server;
     try {
-        try {
-            browser = await chromium.launch();
-        } catch (error) {
-            throw new MeasurementError(`${mode}: Chromium did not launch: ${error?.message ?? String(error)}`, { cause: error });
-        }
-
-        const booted = [];
-        const coldStarts = [];
-        for (let i = 1; i <= COLD_STARTS; i++) {
-            const what = `${mode}: chromium cold start ${i}`;
-            const events = await runPage(browser, server, 'cold-start', what);
-            booted.push(onlyEvent(events, 'booted', what));
-            coldStarts.push(onlyEvent(events, 'coldStart', what));
-        }
-
-        const what = `${mode}: chromium steps`;
-        const events = await runPage(browser, server, 'steps', what);
-        booted.push(onlyEvent(events, 'booted', what));
-        const steps = checkStepKinds(events.filter((event) => event?.type === 'steps').map(stepEntry), what);
-
-        return {
-            version: browser.version(),
-            crossOriginIsolated: booted.every((event) => event.crossOriginIsolated === true),
-            coldStarts,
-            steps,
-        };
-    } finally {
-        try {
-            await browser?.close();
-        } finally {
-            await server.close();
-        }
+        server = await startServer({ app, work });
+    } catch (error) {
+        throw new MeasurementError(`${mode}: the agreement server did not start: ${firstLine(error)}`, { cause: error });
     }
+
+    return closeAfter(
+        async () => {
+            let browser;
+            try {
+                browser = await chromium.launch();
+            } catch (error) {
+                throw new MeasurementError(`${mode}: Chromium did not launch: ${firstLine(error)}`, { cause: error });
+            }
+
+            return closeAfter(() => measurePages(mode, browser, server.url), () => browser.close(), mode, 'Chromium');
+        },
+        () => server.close(),
+        mode,
+        'the agreement server',
+    );
 }
 
-/**
- * One measurement page in a fresh browser context: `/web/measure.html?run=<run>`, waited on until the page
- * sets `window.__measure.done`.
- *
- * @returns {Promise<object[]>} the events the Worker posted
- * @throws {MeasurementError} the page did not load or finish, the Worker posted `fatal`, or the runtime
- *   warned that `.wasm` was not served as `application/wasm`
- */
-async function runPage(browser, server, run, what) {
-    const context = await browser.newContext();
-    try {
-        const page = await context.newPage();
-        const warnings = [];
-        const onConsole = (message) => {
-            if (message.text().includes(CONTENT_TYPE_WARNING)) {
-                warnings.push(message.text());
-            }
-        };
-        page.on('console', onConsole);
-        page.on('worker', (worker) => worker.on('console', onConsole));
-
-        const url = `${server.url}/web/measure.html?run=${run}`;
-        const response = await page.goto(url);
-        if (response?.status() !== 200) {
-            throw new MeasurementError(`${what}: GET ${url} answered ${response?.status() ?? 'nothing'}`);
-        }
-
-        try {
-            await page.waitForFunction(() => window.__measure?.done === true, undefined, { timeout: RUN_BOUND_MS });
-        } catch (error) {
-            throw new MeasurementError(`${what}: the page did not finish within ${RUN_BOUND_MS / 1000} s`, { cause: error });
-        }
-
-        const events = await page.evaluate(() => window.__measure.events);
-        const fatal = events.find((event) => event?.type === 'fatal');
-        if (fatal !== undefined) {
-            throw new MeasurementError(`${what}: ${fatal.message}`);
-        }
-
-        if (warnings.length > 0) {
-            throw new MeasurementError(`${what}: ${warnings[0]}`);
-        }
-
-        return events;
-    } finally {
-        await context.close();
+/** The ten cold-start pages and the steps page of one mode, checked as `measureInChromium` says. */
+async function measurePages(mode, browser, origin) {
+    const booted = [];
+    const coldStarts = [];
+    for (let i = 1; i <= COLD_STARTS; i++) {
+        const what = `${mode}: chromium cold start ${i}`;
+        const events = await runPage(browser, `${origin}/web/measure.html?run=cold-start`, what);
+        booted.push(onlyEvent(events, 'booted', what));
+        coldStarts.push(onlyEvent(events, 'coldStart', what));
     }
+
+    const what = `${mode}: chromium steps`;
+    const events = await runPage(browser, `${origin}/web/measure.html?run=steps`, what);
+    booted.push(onlyEvent(events, 'booted', what));
+    const steps = checkStepKinds(events.filter((event) => event?.type === 'steps').map(stepEntry), what);
+
+    return {
+        version: browser.version(),
+        crossOriginIsolated: booted.every((event) => event.crossOriginIsolated === true),
+        coldStarts,
+        steps,
+    };
 }
 
 /** The one event of a type that a page run posts; a MeasurementError when there is not exactly one. */
