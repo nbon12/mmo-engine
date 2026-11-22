@@ -1933,6 +1933,19 @@ The design documents settled these points, which the spec leaves open. They are 
   anything, `npx playwright install` would download the latest Playwright and install the browsers
   that version launches, not the ones the pinned 1.63.0 needs. T283's test asserts
   `working-directory: tools/agreement` on the install steps too, and T283 and T290 now say so.
+- **T286: pose positions are written as .NET's `"R"` writes a float.** T286 asked for positions in
+  JavaScript's shortest round-trip form and for the same lines as `TablesComparison`, which writes them
+  with `float.ToString("R")`. The two differ for a float that is not a short decimal: JavaScript writes
+  the double of 0.1f as `0.10000000149011612`, .NET writes `0.1`, and .NET switches to `E+XX` notation
+  above max(digits, 9) integer digits or below 10⁻³ (`1E+09`, `1E-05`). The same lines is the
+  requirement the runners and the job report rest on, so `lib/tables.mjs` writes the shortest decimal
+  that reads back as the float, the closest such and the even one on a tie, with .NET's notation rule,
+  compared exactly in BigInt. Checked in scratch against .NET 10 (not committed): `float.ToString("R")`
+  of 401,298 bit patterns (every power of two and its neighbours, every power of ten, 300,000 random
+  patterns, 100,000 short decimals) gives 0 differences, and `TablesComparison.Compare` against
+  `compareTables` over 5,187 one-bit flips of a random 64-row table (unknown function IDs and stances,
+  NaN and extreme positions) gives the same line every time. Every position of the fixed table reads the
+  same either way. T286 now says so.
 
 ## Delivery
 

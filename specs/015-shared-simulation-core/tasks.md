@@ -3040,14 +3040,14 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   This task follows T271 and T272, whose red checks need the host absent. Makes T272 (SimCoreExportsTests, all seven methods) pass. Also confirm with exit codes:
   - `dotnet build MmoEngine.sln -warnaserror` (which now builds the host's test project too) and `dotnet format MmoEngine.sln --verify-no-changes` exit 0;
   - `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$(mktemp -d)"` exits 0 and writes `wwwroot/_framework/dotnet.js`.
-- [ ] T286 [P] [US2] Implement `compareTables(inputs, serverResults, buildResults, buildName)` in `tools/agreement/lib/tables.mjs` (contracts/wasm-api.md#cross-build-tables):
+- [X] T286 [P] [US2] Implement `compareTables(inputs, serverResults, buildResults, buildName)` in `tools/agreement/lib/tables.mjs` (contracts/wasm-api.md#cross-build-tables):
   - The MMXT and MMXR headers must agree, using `TablesComparison`'s header wording.
   - Math rows match on bit-identical r0 and r1, or, where the server value is NaN (exponent all ones, mantissa non-zero), on any build NaN.
   - Pose rows compare all 25 floats bit for bit.
   - The first mismatch line follows the contract's two examples:
     - function names Sin, Cos, Tan, SinCos, Asin, Acos, Atan, Atan2, SinCosBinaryAngle and Sqrt by ID;
     - stance names Standing and Crouched;
-    - yaw as `0x%04X`, and positions in JavaScript's shortest round-trip form;
+    - yaw as `0x%04X`, and positions as .NET's `"R"` writes a float, as `TablesComparison` does: the shortest decimal that reads back as the same float, in fixed notation unless the decimal exponent is above max(digits, 9) or below −3 (`d[.ddd]E±XX`), so 0.1f is `0.1`, not JavaScript's `0.10000000149011612` for the same float;
     - the part fields `head`, `torso` and `legs` with `A.x` to `B.z` and `radius`, then the bounding sphere, named exactly as `TablesComparison` names them;
     - bits as uppercase `0x%08X`.
 
