@@ -8,11 +8,12 @@ directory. Every expected outcome below is what the command prints or its exit c
 
 - .NET SDK 10.0.100 or a later 10.0.1xx patch (`global.json`). The analyzer's Roslyn pin matches this
   band ([contracts/analyzer-rules.md](contracts/analyzer-rules.md#roslyn-pin)).
-- Node 22, for the agreement and measurement runners in `tools/agreement/`.
+- Node 22 (slice 2, not on main yet), for the agreement and measurement runners that slice 2 adds in
+  tools/agreement/.
 - Python 3 with PyYAML, for the workflow tests.
-- Optional: the `wasm-tools` workload, only for the relinked interpreted and AOT builds in
-  [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses the prebuilt
-  runtime, which is the build the gating CI job tests.
+- Optional (slice 2, not on main yet): the `wasm-tools` workload, only for the relinked interpreted and
+  AOT builds in [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses
+  the prebuilt runtime, which is the build the gating CI job tests.
 
 ## Build and test
 

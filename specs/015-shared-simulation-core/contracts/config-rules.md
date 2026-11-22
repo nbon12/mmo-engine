@@ -384,7 +384,15 @@ reuse:
 - `simcore config check <file>` binds and validates a file, prints one `path: message` line per error
   and exits 0 when valid, 1 when invalid and 2 on a usage error or a file it cannot check: one that is
   missing, longer than 1 MiB or cannot be read
-  ([simcore-cli.md](simcore-cli.md#config-check)).
+  ([simcore-cli.md](simcore-cli.md#config-check)). A file longer than 1 MiB is refused from its length
+  before it is read, and one without a length (a pipe or a device) or one that grew after its length
+  was checked once more than 1 MiB has been read.
+- `SimConfigJson.Load(path)` refuses the same files with one error at `config` and no configuration:
+  `file '<path>' does not exist`, `the file is <n> bytes; the limit is 1048576`,
+  `the file holds more than 1048576 bytes; the limit is 1048576` or
+  `file '<path>' cannot be read (<reason>)`. It reads at most 1 MiB + 1 bytes through
+  `SimConfigJson.ReadText`, which `config check` shares (`SimConfigJsonTests.LoadRefusesAFileItCannotRead`
+  and `SimConfigJsonTests.LoadReadsAtMostTheLimitPlusOneByte`).
 
 A server loads its configuration at startup and refuses to start on any error (fail fast).
 

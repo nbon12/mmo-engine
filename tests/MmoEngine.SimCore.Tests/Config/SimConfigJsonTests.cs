@@ -19,6 +19,8 @@ public sealed class SimConfigJsonTests
 
     public static TheoryData<string> FileCases => ["missing-file", "oversized-file", "unreadable-file"];
 
+    public static TheoryData<string> BoundedReadCases => ["no-length-at-the-limit", "no-length-over-the-limit", "grew-after-the-check"];
+
     public static TheoryData<string> JsonCases =>
     [
         "truncated",
@@ -129,6 +131,51 @@ public sealed class SimConfigJsonTests
                 Assert.EndsWith(")", error.Message, StringComparison.Ordinal);
                 Assert.True(error.Message.Length > $"file '{path}' cannot be read ()".Length, $"'{error.Message}' carries no reason.");
                 break;
+        }
+    }
+
+    /// <summary>
+    /// <c>SimConfigJson.Load</c> reads at most 1 MiB + 1 byte, whatever its length check saw
+    /// (contracts/config-rules.md#server). Given a short file at the path whose stream, as for a pipe or a
+    /// device, has no length and gives (<c>no-length-at-the-limit</c>) <c>simcore/config/default.json</c>
+    /// padded with spaces to exactly 1,048,576 bytes or (<c>no-length-over-the-limit</c>) zeros without end,
+    /// or (<c>grew-after-the-check</c>) a copy of <c>default.json</c> that grows to 1,048,577 bytes after its
+    /// length is checked and before it is opened, When it is loaded, Then the first binds with no error after
+    /// reading exactly 1,048,576 bytes, the second is refused with exactly
+    /// <c>config: the file holds more than 1048576 bytes; the limit is 1048576</c> after reading exactly
+    /// 1,048,577 bytes, and the third with the same error from the open file's length.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BoundedReadCases))]
+    public void LoadReadsAtMostTheLimitPlusOneByte(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-load-bounded");
+        var path = directory.Combine("config.json");
+        File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
+        UnseekableStream? pipe = caseName switch
+        {
+            "no-length-at-the-limit" => new UnseekableStream(ConfigFiles.DefaultPaddedTo(MaxFileLength)),
+            "no-length-over-the-limit" => new UnseekableStream(content: null),
+            "grew-after-the-check" => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+
+        var load = SimConfigJson.Load(path, opened => pipe ?? ConfigFiles.GrowThenOpen(opened, MaxFileLength + 1));
+
+        if (caseName == "no-length-at-the-limit")
+        {
+            Assert.Empty(load.Errors);
+            Assert.NotNull(load.Config);
+            Assert.True(pipe!.BytesRead == MaxFileLength, $"Load read {pipe.BytesRead} bytes of a {MaxFileLength}-byte stream");
+            return;
+        }
+
+        Assert.Null(load.Config);
+        var error = Assert.Single(load.Errors);
+        Assert.Equal("config: the file holds more than 1048576 bytes; the limit is 1048576", error.ToString());
+        if (pipe is not null)
+        {
+            Assert.True(pipe.BytesRead == MaxFileLength + 1, $"Load read {pipe.BytesRead} bytes of an endless stream; it may read at most {MaxFileLength + 1}");
         }
     }
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -28,10 +29,21 @@ public sealed record SimConfigLoad(SimConfig? Config, IReadOnlyList<ConfigError>
 /// </remarks>
 public static class SimConfigJson
 {
-    /// <summary>The largest configuration file read, 1 MiB; a longer one is refused before it is read.</summary>
+    /// <summary>
+    /// The largest configuration file read, 1 MiB. A longer file is refused from its length, before it is
+    /// read, and one without a length (a pipe or a device), or one that grew after its length was checked,
+    /// once more than the limit has been read.
+    /// </summary>
     public const long MaxFileLength = 1024 * 1024;
 
     private const string RootPath = "config";
+
+    /// <summary>
+    /// The refusal of a file found to hold more than <see cref="MaxFileLength"/> bytes only as it is read:
+    /// <c>the file holds more than 1048576 bytes; the limit is 1048576</c>.
+    /// </summary>
+    public static string MoreThanTheLimit { get; } =
+        string.Create(CultureInfo.InvariantCulture, $"the file holds more than {MaxFileLength} bytes; the limit is {MaxFileLength}");
 
     /// <summary>The serializer options: camelCase names, unknown members refused, <c>fireMode</c> by name.</summary>
     public static JsonSerializerOptions SerializerOptions { get; } = CreateOptions();
@@ -44,12 +56,20 @@ public static class SimConfigJson
 
     /// <summary>
     /// Reads and binds the file at <paramref name="path"/>. A missing file, a file longer than
-    /// <see cref="MaxFileLength"/> (refused from its length, before it is read) or a file that cannot be
-    /// read is one error at <c>config</c>; otherwise the result is <see cref="Parse"/>'s.
+    /// <see cref="MaxFileLength"/> (refused from its length, before it is read, or as
+    /// <see cref="MoreThanTheLimit"/> once more than the limit has been read) or a file that cannot be read
+    /// is one error at <c>config</c>; otherwise the result is <see cref="Parse"/>'s.
     /// </summary>
-    public static SimConfigLoad Load(string path)
+    public static SimConfigLoad Load(string path) => Load(path, OpenRead);
+
+    /// <summary>
+    /// <see cref="Load(string)"/>, reading the file through the stream <paramref name="open"/> gives for the
+    /// path, so a test can give a stream without a length or a file that grows after its length is checked.
+    /// </summary>
+    internal static SimConfigLoad Load(string path, Func<string, Stream> open)
     {
         ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(open);
         var file = new FileInfo(path);
         if (!file.Exists)
         {
@@ -61,18 +81,41 @@ public static class SimConfigJson
             return Fail(RootPath, string.Create(CultureInfo.InvariantCulture, $"the file is {file.Length} bytes; the limit is {MaxFileLength}"));
         }
 
-        string json;
+        string? json;
         try
         {
-            json = File.ReadAllText(path);
+            using var stream = open(path);
+            json = ReadText(stream);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return Fail(RootPath, $"file '{path}' cannot be read ({ex.Message})");
         }
 
-        return Parse(json);
+        return json is null ? Fail(RootPath, MoreThanTheLimit) : Parse(json);
     }
+
+    /// <summary>
+    /// The text of a configuration file's <paramref name="stream"/>, or null when it holds more than
+    /// <see cref="MaxFileLength"/> bytes, reading at most the limit + 1 bytes
+    /// (<see cref="BoundedRead.ReadAtMost"/>). The bytes are decoded as <see cref="File.ReadAllText(string)"/>
+    /// decodes a file: UTF-8, unless a byte-order mark names another encoding.
+    /// </summary>
+    /// <exception cref="IOException">The stream cannot be read.</exception>
+    public static string? ReadText(Stream stream)
+    {
+        var bytes = BoundedRead.ReadAtMost(stream, (int)MaxFileLength);
+        if (bytes is null)
+        {
+            return null;
+        }
+
+        using var reader = new StreamReader(new MemoryStream(bytes, writable: false), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>The file at <paramref name="path"/>, opened read-only and shared for reading.</summary>
+    internal static Stream OpenRead(string path) => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
     /// <summary>Binds JSON text. Every error names its path; the configuration is null when there is one.</summary>
     public static SimConfigLoad Parse(string json)

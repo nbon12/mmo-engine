@@ -10,12 +10,20 @@ namespace MmoEngine.SimCore.Cli.Commands;
 /// folder only through <see cref="LoadAll(string)"/>, before they run any stream: every <c>*.mmcd</c>, in
 /// ordinal name order, each refused from its size when it is longer than
 /// <see cref="CollisionFile.MaxFileLength"/> (without being opened) and otherwise read through a read-only
-/// <see cref="FileStream"/> and decoded with <see cref="CollisionFile.Decode"/>.
+/// <see cref="FileStream"/> and decoded with <see cref="CollisionFile.Decode"/>. A file whose stream has no
+/// length (a pipe or a terminal) is refused as unreadable, with <see cref="NoLength"/>, before any byte of
+/// it is read.
 /// </summary>
 public static class ContentFiles
 {
     /// <summary>The content files' extension.</summary>
     public const string Extension = ".mmcd";
+
+    /// <summary>
+    /// The refusal of a content file whose stream has no length, such as a pipe or a terminal: a content
+    /// file is refused from its length, so one without a length is not read.
+    /// </summary>
+    internal const string NoLength = "the file has no length; a content file must be a regular file";
 
     /// <summary>The <c>fileLength</c> offset in the collision header, where an oversized file is refused.</summary>
     private const long FileLengthOffset = 8;
@@ -30,7 +38,9 @@ public static class ContentFiles
     /// <see cref="FormatErrorCode.Oversized"/> at offset 8, field <c>fileLength</c>, before it is opened; any
     /// other with <see cref="CollisionFile.Decode"/>'s error.
     /// </exception>
-    /// <exception cref="IOException">The folder does not exist or a file cannot be read.</exception>
+    /// <exception cref="IOException">
+    /// The folder does not exist, a file cannot be read, or a file's stream has no length (<see cref="NoLength"/>).
+    /// </exception>
     /// <exception cref="UnauthorizedAccessException">The folder or a file cannot be accessed.</exception>
     public static IReadOnlyList<CollisionWorld> LoadAll(string contentDir) => LoadAll(contentDir, opening: null);
 
@@ -46,9 +56,17 @@ public static class ContentFiles
     /// once they are read and before they are decoded, so a caller can copy a file byte for byte
     /// (<c>agreement prepare</c>'s <c>collision/&lt;checksum&gt;.mmcd</c>).
     /// </summary>
-    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening, Action<byte[]>? read)
+    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening, Action<byte[]>? read) =>
+        LoadAll(contentDir, opening, read, OpenRead);
+
+    /// <summary>
+    /// <see cref="LoadAll(string, Action{string}?, Action{byte[]}?)"/>, reading each file through the stream
+    /// <paramref name="open"/> gives for its path, so a test can give a stream without a length.
+    /// </summary>
+    internal static IReadOnlyList<CollisionWorld> LoadAll(string contentDir, Action<string>? opening, Action<byte[]>? read, Func<string, Stream> open)
     {
         ArgumentException.ThrowIfNullOrEmpty(contentDir);
+        ArgumentNullException.ThrowIfNull(open);
         var paths = Directory.GetFiles(contentDir, "*" + Extension, SearchOption.TopDirectoryOnly)
             .Where(path => path.EndsWith(Extension, StringComparison.Ordinal))
             .ToArray();
@@ -57,7 +75,7 @@ public static class ContentFiles
         for (var i = 0; i < paths.Length; i++)
         {
             opening?.Invoke(Path.GetFileName(paths[i]));
-            worlds[i] = Load(paths[i], read);
+            worlds[i] = Load(paths[i], read, open);
         }
 
         return worlds;
@@ -87,13 +105,26 @@ public static class ContentFiles
         TextWriter stderr,
         out IReadOnlyList<string> names,
         out IReadOnlyList<CollisionWorld> worlds,
+        out IReadOnlyList<byte[]> files) => TryLoadAll(contentDir, command, stderr, OpenRead, out names, out worlds, out files);
+
+    /// <summary>
+    /// <see cref="TryLoadAll(string, string, TextWriter, out IReadOnlyList{string}, out IReadOnlyList{CollisionWorld}, out IReadOnlyList{byte[]})"/>,
+    /// reading each file through the stream <paramref name="open"/> gives for its path.
+    /// </summary>
+    internal static bool TryLoadAll(
+        string contentDir,
+        string command,
+        TextWriter stderr,
+        Func<string, Stream> open,
+        out IReadOnlyList<string> names,
+        out IReadOnlyList<CollisionWorld> worlds,
         out IReadOnlyList<byte[]> files)
     {
         var opened = new List<string>();
         var read = new List<byte[]>();
         try
         {
-            worlds = LoadAll(contentDir, opened.Add, read.Add);
+            worlds = LoadAll(contentDir, opened.Add, read.Add, open);
             names = opened;
             files = read;
             return true;
@@ -114,8 +145,11 @@ public static class ContentFiles
         return false;
     }
 
-    /// <summary>One file: refused from its length, or read through a read-only stream, given to <paramref name="read"/> and decoded.</summary>
-    private static CollisionWorld Load(string path, Action<byte[]>? read)
+    /// <summary>
+    /// One file: refused from its length, or opened through <paramref name="open"/>, refused when its stream
+    /// has no length, and otherwise read, given to <paramref name="read"/> and decoded.
+    /// </summary>
+    private static CollisionWorld Load(string path, Action<byte[]>? read, Func<string, Stream> open)
     {
         var length = new FileInfo(path).Length;
         if (length > CollisionFile.MaxFileLength)
@@ -124,8 +158,15 @@ public static class ContentFiles
         }
 
         byte[] bytes;
-        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var stream = open(path))
         {
+            // A pipe or a terminal reports length 0 before it is opened, and its stream has no length: it
+            // is refused here rather than read without a bound.
+            if (!stream.CanSeek)
+            {
+                throw new IOException(NoLength);
+            }
+
             // The file may have grown since its length was read; the open stream's length is the one read.
             if (stream.Length > CollisionFile.MaxFileLength)
             {
@@ -139,6 +180,9 @@ public static class ContentFiles
         read?.Invoke(bytes);
         return CollisionFile.Decode(bytes);
     }
+
+    /// <summary>The file at <paramref name="path"/>, opened read-only and shared for reading.</summary>
+    private static Stream OpenRead(string path) => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
     private static CoreFormatException Oversized(long length) => new(new FormatError(
         "collision",

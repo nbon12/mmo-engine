@@ -138,8 +138,8 @@ An engineer, or an agent, writes code in the shared core that would make the bui
 `Vector<T>` operation, a call to platform math such as `MathF.Sin`, an explicit fused multiply-add, an
 iteration over a hash-ordered collection, a read of the wall clock, or an unseeded random number. The
 build fails on that line with a rule ID and a message that names the allowed alternative. The core's
-own trigonometric functions give the same bits in every build and stay within a documented error of
-the true value.
+own trigonometric functions stay within a documented error of the true value on the server build;
+their bit-for-bit agreement across builds is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Why this priority**: The agreement suite catches a divergence only on the paths the streams cover.
 The analyzer catches the cause on every line, before any test runs.
@@ -358,7 +358,8 @@ Scenario 2 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-no
   static triangle meshes, and MUST never leave the capsule overlapping either by more than the
   configured contact tolerance after a step.
 - **FR-004**: The collision world MUST be built only from collision data files in the core's format,
-  and the same file MUST give the same collision results in every build.
+  and the same file MUST give the same collision results every time on the server build. The "in every
+  build" clause is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **FR-005**: Every loop in the movement step MUST have a fixed iteration limit, and the step's result
   MUST NOT depend on how long the step took to run.
 
@@ -379,7 +380,8 @@ Scenario 2 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-no
   the impact point and the step. Among several hits within one step, the earliest along the segment
   wins, with ties broken by entity ID.
 - **FR-011**: The core MUST build a character's hitboxes from its position, orientation and stance,
-  using a configured layout, so that the same pose gives the same hitboxes in every build.
+  using a configured layout, so that the same pose gives the same hitboxes every time on the server
+  build. The "in every build" clause is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 
 **Determinism**
 
@@ -506,10 +508,12 @@ Scenario 2 is planned for slice 2 ([Planned for slice 2](#planned-for-slice-2-no
   are the shared reference that a TypeScript decoder, if the fallback is ever needed, is verified
   against. Packet framing and protocol-version negotiation stay with the transport and Delivery.
 - **Performance and evidence**: Every step function is tick-path code: zero-allocation tests and
-  benchmarks are required (FR-030, FR-032). The step costs, download size and startup time recorded by
-  this feature are measurements; v2's 11–33 ms per tick at 1,000 players stays an estimate until the
-  gate-9 sweep replaces it. This feature sets no tuning value: movement, weapon and hitbox values are
-  placeholders until game design supplies them.
+  benchmarks are required (FR-030, FR-032). The server step costs recorded by this slice are
+  measurements; the WebAssembly download size, startup time and step cost are recorded by the
+  measurement job planned for slice 2 (FR-031, SC-007;
+  [Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)). v2's 11–33 ms per tick
+  at 1,000 players stays an estimate until the gate-9 sweep replaces it. This feature sets no tuning
+  value: movement, weapon and hitbox values are placeholders until game design supplies them.
 - **Security and abuse controls**: Input commands are untrusted and validated (FR-019). Decoders refuse
   malformed, oversized and unknown-version data without partial results (FR-020). No authentication or
   authorization: the core is a library.
@@ -607,6 +611,8 @@ stays in its section, stated as built.
 
 ### Cross-build halves of User Stories 3 to 5
 
+- **US3 narrative (cross-build sentence)**: The core's own trigonometric functions give the same bits
+  in every build.
 - **US3.8 (b)**: **Given** each of the core's trigonometric and inverse-trigonometric functions,
   **When** they are evaluated over the fixed table, **Then** the server and WebAssembly builds return
   identical bits for every input.
@@ -631,7 +637,10 @@ stays in its section, stated as built.
 
 ### Requirements for slice 2
 
+- **FR-004 (every build)**: The same collision data file MUST give the same collision results in every
+  build.
 - **FR-008 (every build)**: Shot spread MUST give the same direction to the bit in every build.
+- **FR-011 (every build)**: The same pose MUST give the same hitboxes to the bit in every build.
 - **FR-024 (WebAssembly)**: The core MUST build as a .NET WebAssembly build that runs in Node and in a
   dedicated Web Worker.
 - **FR-025 (WebAssembly)**: The WebAssembly build MUST expose the batched step entry point.
@@ -645,6 +654,11 @@ stays in its section, stated as built.
 - **FR-031**: A measurement job MUST record the WebAssembly build's download size (raw and
   compressed), time to the first completed step and cost per step, for the interpreted build and for
   the ahead-of-time build where the toolchain produces one, and MUST name any mode it could not build.
+
+### Constitution Requirements for slice 2
+
+- **Performance and evidence (WebAssembly half)**: The WebAssembly download size, startup time and step
+  cost recorded by the measurement job are measurements, each with its runner class and build mode.
 
 ### Success criteria for slice 2
 
@@ -718,8 +732,9 @@ stays in its section, stated as built.
   ([Planned for slice 2](#planned-for-slice-2-not-yet-built-no-test-on-main)).
 - **Older specs.** `specs/013-regionizer-simulator/spec.md` and
   `specs/014-telemetry-test-harness/spec.md` were checked against this feature, and neither has a
-  statement it supersedes. The core's `SimEnvironment` keeps the simulator's environment names, so
-  013's configuration stays as written. The regionizer keeps its own determinism checks, including its
+  statement it supersedes. The `simcore` CLI's environment check (`SimEnvironment`, in
+  `src/MmoEngine.SimCore.Server/SimEnvironment.cs`) keeps the simulator's environment names, so 013's
+  configuration stays as written. The regionizer keeps its own determinism checks, including its
   regex banned-API scan (plan.md), and 013's FR-019 (hashes match on the same machine and build)
   still governs the regionizer simulator: this spec's cross-machine agreement covers the shared core
   only. Where the two specs touch, as in the determinism rules each states for its own code, each

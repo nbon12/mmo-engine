@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
+using MmoEngine.SimCore.Cli.Commands;
 using MmoEngine.SimCore.Tests.Support;
+using Serilog.Core;
 
 namespace MmoEngine.SimCore.Tests.Cli;
 
@@ -8,8 +10,8 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// with <c>SimConfigJson</c>, validates it with <c>SimConfigValidator</c> and prints one
 /// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
 /// valid. It exits 0 when valid, 1 when invalid, and 2 on a usage error or a refused input: a missing
-/// file, one longer than 1 MiB or one that cannot be read, named on stderr, or an empty or
-/// whitespace-only file argument, refused as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
+/// file, one longer than 1 MiB (from its length, or once more than 1 MiB has been read) or one that cannot
+/// be read, named on stderr, or an empty or whitespace-only file argument, refused as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
 /// </summary>
 public sealed class ConfigCommandTests
 {
@@ -23,6 +25,8 @@ public sealed class ConfigCommandTests
 
     public static TheoryData<string> Cases =>
         ["valid", "invalid", "missing-file", "oversized-file", "unreadable-file", "no-file-argument", "empty-file-argument", "whitespace-file-argument"];
+
+    public static TheoryData<string> BoundedReadCases => ["no-length-at-the-limit", "no-length-over-the-limit", "grew-after-the-check"];
 
     [Theory]
     [MemberData(nameof(Cases))]
@@ -45,6 +49,53 @@ public sealed class ConfigCommandTests
         if (row.StderrContains is not null)
         {
             Assert.Contains(row.StderrContains, stderr, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// <c>config check</c> reads at most 1 MiB + 1 byte, whatever its length check saw
+    /// (contracts/simcore-cli.md#config-check). Given a copy of <c>simcore/config/default.json</c> whose
+    /// stream, as for a pipe or a device, has no length and gives (<c>no-length-at-the-limit</c>)
+    /// <c>default.json</c> padded with spaces to exactly 1,048,576 bytes or (<c>no-length-over-the-limit</c>)
+    /// zeros without end, or (<c>grew-after-the-check</c>) a copy that grows to 1,048,577 bytes after its
+    /// length is checked and before it is opened, When <c>config check</c> runs on it, Then the first exits 0
+    /// with nothing on stdout or stderr after reading exactly 1,048,576 bytes, and the other two exit 2 with
+    /// nothing on stdout and exactly <c>&lt;path&gt;: the file holds more than 1048576 bytes; the limit is
+    /// 1048576</c> on stderr, the endless stream after exactly 1,048,577 bytes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BoundedReadCases))]
+    public void ConfigCheckReadsAtMostTheLimitPlusOneByte(string caseName)
+    {
+        using var directory = TempDirectories.Create("config-check-bounded");
+        var path = directory.Combine("default.json");
+        File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
+        UnseekableStream? pipe = caseName switch
+        {
+            "no-length-at-the-limit" => new UnseekableStream(ConfigFiles.DefaultPaddedTo(MaxFileLength)),
+            "no-length-over-the-limit" => new UnseekableStream(content: null),
+            "grew-after-the-check" => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case."),
+        };
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var exit = ConfigCommand.Check(path, stdout, stderr, Logger.None, opened => pipe ?? ConfigFiles.GrowThenOpen(opened, MaxFileLength + 1));
+
+        Assert.Equal(string.Empty, stdout.ToString());
+        if (caseName == "no-length-at-the-limit")
+        {
+            Assert.True(exit == 0, $"{caseName}: config check exited {exit}, expected 0; stderr: {stderr}");
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(pipe!.BytesRead == MaxFileLength, $"config check read {pipe.BytesRead} bytes of a {MaxFileLength}-byte stream");
+            return;
+        }
+
+        Assert.True(exit == 2, $"{caseName}: config check exited {exit}, expected 2; stderr: {stderr}");
+        Assert.Equal($"{path}: the file holds more than 1048576 bytes; the limit is 1048576\n", stderr.ToString());
+        if (pipe is not null)
+        {
+            Assert.True(pipe.BytesRead == MaxFileLength + 1, $"config check read {pipe.BytesRead} bytes of an endless stream; it may read at most {MaxFileLength + 1}");
         }
     }
 

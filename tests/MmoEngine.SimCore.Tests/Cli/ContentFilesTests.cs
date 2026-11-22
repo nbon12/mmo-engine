@@ -24,6 +24,47 @@ public sealed class ContentFilesTests
     /// <summary>The <c>tiny-world</c> fixture's checksum (contracts/collision-data-format.md#tiny-world).</summary>
     private const ulong TinyWorldChecksum = 0x9224e3fa3b3fca9cUL;
 
+    /// <summary>The content file a <see cref="AContentFileWithoutALengthIsRefusedBeforeItIsRead"/> row reads as a pipe.</summary>
+    public static TheoryData<string> PipeNames => ["a.mmcd", "b.mmcd"];
+
+    /// <summary>
+    /// contracts/simcore-cli.md#content-files: Given a temp directory holding <c>a.mmcd</c> and <c>b.mmcd</c>,
+    /// each the <c>tiny-world</c> fixture encoded, where the row's file opens, as a pipe or a terminal does,
+    /// as a stream that has no length (giving the same valid bytes), When <c>streams verify</c> loads the
+    /// directory through <c>ContentFiles.TryLoadAll</c>, Then it returns false, prints exactly
+    /// <c>streams verify: content &lt;file&gt;: the file has no length; a content file must be a regular
+    /// file</c> on stderr, gives no name, world or file, and reads no byte of that stream, whether it is the
+    /// first file (<c>a.mmcd</c>) or follows one that loaded (<c>b.mmcd</c>). The commands turn that false
+    /// into exit 2, as for every refused content file.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PipeNames))]
+    public void AContentFileWithoutALengthIsRefusedBeforeItIsRead(string pipeName)
+    {
+        using var directory = TempDirectories.Create("content-files-no-length");
+        var tiny = CollisionFile.Encode(TestWorlds.TinyWorld());
+        File.WriteAllBytes(directory.Combine("a.mmcd"), tiny);
+        File.WriteAllBytes(directory.Combine("b.mmcd"), tiny);
+        var pipe = new UnseekableStream(tiny);
+        using var stderr = new StringWriter();
+
+        var loaded = ContentFiles.TryLoadAll(
+            directory.Path,
+            "streams verify",
+            stderr,
+            path => Path.GetFileName(path) == pipeName ? pipe : new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read),
+            out var names,
+            out var worlds,
+            out var files);
+
+        Assert.False(loaded, $"TryLoadAll loaded {pipeName} from a stream without a length");
+        Assert.Equal($"streams verify: content {pipeName}: the file has no length; a content file must be a regular file\n", stderr.ToString());
+        Assert.Empty(names);
+        Assert.Empty(worlds);
+        Assert.Empty(files);
+        Assert.True(pipe.BytesRead == 0, $"TryLoadAll read {pipe.BytesRead} bytes of {pipeName}'s stream before refusing it");
+    }
+
     /// <summary>
     /// Given a temp directory holding only a sparse <c>big.mmcd</c> of 268,435,457 zero bytes (so byte 0 is
     /// 0, not the <c>M</c> of <c>MMCD</c>), When <c>ContentFiles.LoadAll</c> loads the directory, Then it

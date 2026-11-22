@@ -1718,7 +1718,8 @@ The design documents settled these points, which the spec leaves open. They are 
   detection, which would also accept UTF-16 and UTF-32 files with their marks and decode them leniently:
   JSON exchanged between systems is UTF-8 (RFC 8259, section 8.1), and the report's only producer,
   `measure.mjs`, writes UTF-8, so a UTF-16 file is now invalid rather than accepted. `config check` still
-  reads with `File.ReadAllText`; it belongs to Phase 2's `ConfigCommand` and this review did not cover it.
+  decodes as `File.ReadAllText` does; it belongs to Phase 2's `ConfigCommand` and this review did not
+  cover it (the Phase 10 review bounded its read but kept that decoding, below).
   T249, T250, the contract's check 1 and simcore-cli.md say so.
 - **An integer field is a signed 64-bit integer (T249, Phase 9 review).** The validator reads integers
   with `JsonElement.TryGetInt64`, so `99999999999999999999`, `4.0` and `1e2` are `must be an integer`,
@@ -1759,9 +1760,9 @@ The design documents settled these points, which the spec leaves open. They are 
   a longer file is refused from its length before it is read, and a stream without a length once it
   passes the limit, each with exit 2 and a logged event naming the path. The limit is the command's,
   not the validator's, because a file that is not a report cannot be checked, which is what exit 2
-  means. The bounded read covers `validate-report` only; `config check` and the content loader keep
-  their length checks, and this review did not cover them. T249, T250, the contract's check 1, its
-  tests table and simcore-cli.md say so.
+  means. The bounded read covered `validate-report` only; `config check` and the content loader kept
+  their length checks, and this review did not cover them (the Phase 10 review did, below). T249, T250,
+  the contract's check 1, its tests table and simcore-cli.md say so.
 - **`CreateRootCommand` takes the writers and the logger (T256).** T256 had `CreateRootCommand()`
   delegate to `CreateRootCommand(runStream)` and `Run` call that one, but every command's `Create`
   captures `stdout`, `stderr` and the logger its actions write to, so a tree built without them could
@@ -1782,8 +1783,8 @@ The design documents settled these points, which the spec leaves open. They are 
   added a line feed after an entry that did not end with one, but its only caller, `streams record`,
   builds every entry from lines that each end with one, and `StreamWriterTests` keeps tests from
   calling the writer directly, so no test could reach the branch and the file stayed under 95%. The
-  branch is gone and the method's summary says an entry ends with its own line feed. The three
-  reachable cases (no log, an empty log, a log without a final line feed) are now exercised through
+  branch is gone and the method's summary says an entry ends with its own line feed. The four log
+  shapes (no log, an empty log, and a log with and without a final line feed) are now exercised through
   the command by `StreamsCommandTests.RecordStartsOrExtendsTheRegenerationLog`, and
   contracts/simcore-cli.md#regenerationsmd states them.
 - **Two refusals are tested with a file another handle holds open (T260).** `config check` and
@@ -1797,6 +1798,46 @@ The design documents settled these points, which the spec leaves open. They are 
   byte count after the state (`input/example: unchanged, 17 bytes`), and the command and its tests
   follow the contract. The command stays as built; T258 now says each line reads
   `<format>/<case>: unchanged, <bytes> bytes`. The Phase 10 re-run found all 92 lines in that form.
+- **More cross-build claims move to the planned section (T264, Phase 10 review).** T264's move list
+  left FR-004's and FR-011's "in every build" clauses, the US3 narrative's sentence that the core's
+  trigonometry gives the same bits in every build, and the Constitution Requirements' claim that this
+  feature records the WebAssembly download size and startup time stated as current behavior, although
+  no slice-1 test compares builds (the cross-build rows of the Scenario coverage table cite only slice
+  2's `tools/agreement/` tests). Principle IX allows spec.md to state as current behavior only what
+  `main` tests, so each is moved the way FR-008's clause was: FR-004 and FR-011 now state the server
+  build, with `FR-004 (every build)` and `FR-011 (every build)` under "Requirements for slice 2"; the
+  US3 sentence keeps the bound half on the server build; and the Performance and evidence bullet keeps
+  the server step costs, its WebAssembly half listed under "Constitution Requirements for slice 2".
+  quickstart.md's Node 22 and `wasm-tools` prerequisites, which serve only slice 2's runners and
+  measurement builds, are tagged "(slice 2, not on main yet)" beyond T264's three section lines, with
+  the runners' folder written as plain text until it exists. T264, T267, T312 and Phase 11's goal list
+  the additions.
+- **A content file without a length is refused as unreadable (Phase 10 review).** `ContentFiles.Load`
+  checked a file's length from its directory entry and then read the open stream's `Length`, which a
+  pipe does not have: a FIFO named `a.mmcd` passed the first check (length 0) and threw
+  `NotSupportedException`, which no handler caught, so `streams verify`, `streams record` and
+  `agreement prepare` exited 1, the code for a divergence, instead of 2 for a refused input. The open
+  stream is now refused when it cannot seek, with an `IOException` reading
+  `the file has no length; a content file must be a regular file`, which `TryLoadAll` already prints as
+  `<command>: content <file name>: …` with exit 2. A bounded read was not chosen: content is refused
+  from its length by contract, and a bound of 256 MiB + 1 bytes would allocate that much for every
+  pipe. The test reaches the refusal through a new `TryLoadAll` overload that takes the stream opener,
+  since a FIFO cannot be made on every platform and the suite may skip nothing. Opening a pipe that no
+  process writes to still waits for a writer, as every command's open does; .NET gives no file type
+  before the open without platform calls.
+- **`config check` and `SimConfigJson.Load` read at most 1 MiB + 1 bytes (Phase 10 review).** Both
+  checked the length from the directory entry and then read the whole file with `File.ReadAllText`, so
+  a pipe (length 0), a device, or a file that grew after the check was read whole and bound: a 3 MiB
+  JSON object through a FIFO made `config check` exit 1 (invalid) instead of refusing the file with 2.
+  `validate-report`'s `ReadAtMost` moved to the Server project as `BoundedRead.ReadAtMost`, and both
+  read through `SimConfigJson.ReadText`, which decodes the bytes as `File.ReadAllText` did (UTF-8 unless
+  a byte-order mark names another encoding), so no file accepted before changes meaning. A file found
+  over the limit only as it is read is refused with
+  `the file holds more than 1048576 bytes; the limit is 1048576`, distinct from the length check's
+  `the file is <n> bytes; …`, which keeps its message. `ConfigCommand.Check` and `SimConfigJson.Load`
+  take the stream opener through internal overloads, so the tests give a stream without a length and a
+  file that grows between the check and the open; `UnseekableStream` moved to the tests' `Support/`.
+  simcore-cli.md#config-check, config-rules.md#server, T242 and T250 say so.
 
 ## Delivery
 

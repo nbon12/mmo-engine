@@ -1,5 +1,6 @@
 using System.CommandLine;
 using MmoEngine.SimCore.Cli.Measure;
+using MmoEngine.SimCore.Server;
 using Serilog;
 
 namespace MmoEngine.SimCore.Cli.Commands;
@@ -41,7 +42,7 @@ internal static class MeasureCommand
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            bytes = ReadAtMost(stream, MaxFileLength);
+            bytes = BoundedRead.ReadAtMost(stream, MaxFileLength);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -65,37 +66,5 @@ internal static class MeasureCommand
 
         logger.Information("Validated measurement report {Path}: {ProblemCount} problems", path, problems.Count);
         return problems.Count == 0 ? CliExitCodes.Success : CliExitCodes.Failed;
-    }
-
-    /// <summary>
-    /// Every byte of <paramref name="stream"/> when it holds at most <paramref name="limit"/>, else null. A
-    /// stream with a length over the limit is refused from it, before any byte is read; one without a length
-    /// (a pipe, or a device such as <c>/dev/zero</c>) is read to its end or until it passes the limit, so no
-    /// more than <paramref name="limit"/> + 1 bytes are ever read.
-    /// </summary>
-    internal static byte[]? ReadAtMost(Stream stream, int limit)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        ArgumentOutOfRangeException.ThrowIfNegative(limit);
-        ArgumentOutOfRangeException.ThrowIfEqual(limit, int.MaxValue);
-        if (stream.CanSeek && stream.Length - stream.Position > limit)
-        {
-            return null;
-        }
-
-        var buffer = new byte[limit + 1];
-        var count = 0;
-        while (count < buffer.Length)
-        {
-            var read = stream.Read(buffer, count, buffer.Length - count);
-            if (read == 0)
-            {
-                break;
-            }
-
-            count += read;
-        }
-
-        return count > limit ? null : buffer[..count];
     }
 }

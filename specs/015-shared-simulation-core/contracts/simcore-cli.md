@@ -55,10 +55,17 @@ ordinal name order, before they run any stream. They load them only through
 - A file longer than `CollisionFile.MaxFileLength` (256 MiB) is refused from its size, before it is
   opened, with the error `Oversized` at offset 8, field `fileLength`, for example
   `collision fileLength at offset 8: the file is 268435457 bytes; the limit is 268435456`.
+- A file whose stream has no length, such as a pipe or a terminal (a path that reports length 0 until
+  it is opened), is refused as unreadable once it is open and before any byte of it is read, with the
+  message `the file has no length; a content file must be a regular file`. A content file is refused
+  from its length, so one without a length is not read at all
+  (`ContentFilesTests.AContentFileWithoutALengthIsRefusedBeforeItIsRead`). Opening a pipe that no
+  process writes to waits for a writer, as every command's open of a file does.
 - Any other file is read through a read-only `FileStream` and decoded with `CollisionFile.Decode`.
 
 When a content file is refused, the command prints `<command>: content <file name>: <message>` on
-stderr (for example `streams verify: content big.mmcd: collision fileLength at offset 8: …`), runs
+stderr (for example `streams verify: content big.mmcd: collision fileLength at offset 8: …`, or
+`streams verify: content a.mmcd: the file has no length; a content file must be a regular file`), runs
 no stream, writes nothing and exits 2. The `CoreFormatException` does not carry the file name, so the
 commands call `LoadAll` through `ContentFiles.TryLoadAll`, which uses `LoadAll`'s internal overload
 that names each file before it opens it, and prints the refusal with that name. A `--content` folder
@@ -468,7 +475,14 @@ rule table ([config-rules.md](config-rules.md#server)). Output: one `path: messa
 validation error, in rule-table order; nothing when valid. Exit 0 valid, 1 invalid. A file the command
 cannot check is a refused input, reported as one line on stderr with exit 2 and nothing on stdout:
 `<path>: the file does not exist`, `<path>: the file is <n> bytes; the limit is 1048576` (a file longer
-than 1 MiB, refused from its length before it is read), or `<path>: the file cannot be read (<reason>)`.
+than 1 MiB, refused from its length before it is read),
+`<path>: the file holds more than 1048576 bytes; the limit is 1048576` (a file without a length, such
+as a pipe or a device, or one that grew after its length was checked, refused once more than 1 MiB has
+been read), or `<path>: the file cannot be read (<reason>)`. The command reads at most 1 MiB + 1 bytes
+through `BoundedRead.ReadAtMost` (`src/MmoEngine.SimCore.Server/BoundedRead.cs`), the reader
+`measure validate-report` uses, and decodes them as `File.ReadAllText` does: UTF-8, unless a byte-order
+mark names another encoding. `ConfigCommandTests.ConfigCheckReadsAtMostTheLimitPlusOneByte` checks the
+three cases.
 
 ## Agreement work directory
 
