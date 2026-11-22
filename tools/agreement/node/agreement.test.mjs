@@ -12,6 +12,9 @@
  *   hashed state (US4.2b). `shots-at-known-distances` is US5-IT's agreement half. Each build's records
  *   go to `<build>/<stream>.records` (or the error to `<stream>.error.txt`) so that
  *   `simcore agreement compare` gates the job on them;
+ * - `'the jiterpreter is on or off as the build says'`: the runtime's own report of its jiterpreter
+ *   options (`jiterpreterState`) is all on for `node-interp` and all off for `node-interp-nojit`, so the
+ *   two Node runs really are two code generators (the runtime ignores an unknown runtime option);
  * - `'manifest holds the 50 generated seeds'` (US2.3);
  * - `'perturbation diverges at exactly its step'`: a one-ulp change in WebAssembly is reported at
  *   exactly its step (US2-IT, SC-002);
@@ -121,7 +124,7 @@ if (!existsSync(MANIFEST_PATH)) {
 }
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
 
-/** The booted runtime: `{ runtime, exports, buildInfo, timings }` from `bootRuntime`. */
+/** The booted runtime: `{ runtime, exports, buildInfo, jiterpreter, timings }` from `bootRuntime`. */
 let booted = null;
 let startedAt = null;
 
@@ -217,12 +220,30 @@ after(async () => {
     const run = {
         build: BUILD,
         runtimeOptions: RUNTIME_OPTIONS,
+        jiterpreter: booted?.jiterpreter ?? null,
         runtimeBuildInfo: booted?.buildInfo ?? null,
         node: process.version,
         startedAt,
         endedAt: new Date().toISOString(),
     };
     await writeFile(join(BUILD_DIR, 'run.json'), `${JSON.stringify(run, null, 2)}\n`);
+});
+
+// The jiterpreter-off build runs without the jiterpreter, and the default build with it: the runtime's
+// own report after create(), not the options passed, since an unknown runtime option is ignored.
+test('the jiterpreter is on or off as the build says', () => {
+    assert.ok(booted, 'the runtime did not boot');
+    assert.notEqual(
+        booted.jiterpreter,
+        null,
+        `${BUILD}: the runtime has no INTERNAL.jiterpreter_get_options(), so its jiterpreter state is unknown`,
+    );
+    assert.deepEqual(
+        booted.jiterpreter,
+        { traces: JITERPRETER, interpEntry: JITERPRETER, jitCall: JITERPRETER },
+        `${BUILD}, booted with runtime options ${JSON.stringify(RUNTIME_OPTIONS)}: the jiterpreter must be `
+            + `${JITERPRETER ? 'on' : 'off'}, the runtime reports ${JSON.stringify(booted.jiterpreter)}`,
+    );
 });
 
 // US2.1 (and US2.3, US4-ITb, US4.2b, US5-ITb through the streams they name): one test per stream.

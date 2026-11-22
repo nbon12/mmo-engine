@@ -517,7 +517,8 @@ A stream is batchable when every step carries exactly one command, for character
 `RunStream` (US2 scenario 6). The measurement uses the same inputs.
 
 `run.json` is written only by the Node runner ([wasm-api.md](wasm-api.md#node)). It holds the build
-name, the runtime options, `runtimeBuildInfo`, Node's version and the start and end times. It is
+name, the runtime options, the jiterpreter state the runtime reported (`jiterpreter`),
+`runtimeBuildInfo`, Node's version and the start and end times. It is
 informational: `compare` does not read it, and a Worker build has none. A Worker's `inWorker`,
 `crossOriginIsolated`, `buildInfo` and `userAgent` are carried by its `booted` message, and the
 Playwright spec asserts `inWorker` and `crossOriginIsolated`

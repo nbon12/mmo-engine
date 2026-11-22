@@ -7,20 +7,25 @@
  *   in headless Chromium, **Then** it produces the same per-step hashes as the server build." Every
  *   manifest stream (19 committed, 50 generated) goes through `RunStream`, and each `stream` event must
  *   report a byte match with `server/<stream>.records`, the records holding every step's state and hash.
+ *   The spec does not rest on the Worker's own verdict: after `done` it reads every
+ *   `<work>/<build>/<stream>.records` the Worker wrote and compares it, byte for byte, with
+ *   `server/<stream>.records` itself.
  * - The Worker half of US4.2 (b) (the same shot direction to the bit in any build), US4-IT (b) (the weapon
  *   streams through the agreement suite) and US5-IT (b) (the same shots through the agreement suite): the
  *   weapon and shot streams are manifest streams, and shot directions are hashed state.
  * - The Worker half of US3.8 (b) and US5.5 (b): the `tables` event reports that the build's
  *   `EvaluateTables` result matches the server's under the cross-build comparison rule, so every
- *   trigonometric row and every hitbox pose row agrees to the bit.
- * - US2.6 in a Worker: the `batch` events report that each batchable stream, queued through `StepQueued`,
- *   gives the same records as `RunStream`.
+ *   trigonometric row and every hitbox pose row agrees to the bit; the spec then runs `compareTables`
+ *   itself on the `<work>/<build>/tables.bin` the Worker wrote.
+ * - US2.6 (browser call) in a Worker: the `batch` events report that each batchable stream, queued
+ *   through `StepQueued`, gives the same records as `RunStream`.
  * - FR-024: `booted` says the code ran in a `WorkerGlobalScope`, cross-origin isolated.
  *
  * The page (`/web/page.html`) starts the Worker, posts `start`, appends every Worker message to
  * `window.__agreement.events` and sets `window.__agreement.done` on `done` or `fatal`. The Worker
  * `PUT`s each build output to `/work/<build>/`, so `simcore agreement compare` reads them afterwards and
- * writes the field-level report for any mismatch (US2 scenario 4); this spec checks they were written.
+ * writes the field-level report for any mismatch (US2 scenario 4); this spec compares them with the
+ * server's itself.
  *
  * A console message containing `expected content type` means the runtime fell back to slower
  * ArrayBuffer instantiation because `.wasm` was not served as `application/wasm`
@@ -39,6 +44,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { startServer } from '../lib/server.mjs';
+import { compareTables } from '../lib/tables.mjs';
 
 /** Reads the named environment variable, which must name an existing directory. */
 function requireDirectory(name) {
@@ -71,6 +77,22 @@ test.afterAll(async () => {
 /** The events of one message type, in the order the Worker posted them. */
 function ofType(events, type) {
     return events.filter((event) => event.type === type);
+}
+
+/** A file's bytes, or null when it does not exist. */
+async function readIfPresent(path) {
+    return existsSync(path) ? readFile(path) : null;
+}
+
+/** The offset of the first byte at which two byte arrays differ (the shorter length when one is a prefix). */
+function firstDifferingByte(a, b) {
+    const length = Math.min(a.length, b.length);
+    for (let i = 0; i < length; i++) {
+        if (a[i] !== b[i]) {
+            return i;
+        }
+    }
+    return length;
 }
 
 /** One line per event, for failure messages. */
@@ -133,11 +155,11 @@ test('every stream, batch and table matches the server in a dedicated Worker', a
     expect(ofType(events, 'error'), 'error events').toStrictEqual([]);
     expect(ofType(events, 'fatal'), 'fatal events').toStrictEqual([]);
 
-    // US2.6: every batchable stream, queued through StepQueued, equals RunStream.
+    // US2.6 (browser call): every batchable stream, queued through StepQueued, equals RunStream.
     expect(
-        ofType(events, 'batch').map(({ name, match }) => ({ name, match })),
+        ofType(events, 'batch').map(({ name, match, firstMismatchStep }) => ({ name, match, firstMismatchStep })),
         `batch events for ${build}`,
-    ).toStrictEqual(batchableNames.map((name) => ({ name, match: true })));
+    ).toStrictEqual(batchableNames.map((name) => ({ name, match: true, firstMismatchStep: null })));
 
     // US3.8 (b) and US5.5 (b): the cross-build tables match the server's.
     expect(
@@ -151,10 +173,34 @@ test('every stream, batch and table matches the server in a dedicated Worker', a
         `done event for ${build}`,
     ).toStrictEqual([{ streams: manifest.streams.length, mismatches: 0, errors: 0 }]);
 
-    // The build's outputs are on disk for `simcore agreement compare`.
-    const expectedFiles = [...streamNames.map((name) => `${name}.records`), 'tables.bin'];
-    const missingFiles = expectedFiles.filter((file) => !existsSync(join(AGREEMENT_WORK, build, file)));
-    expect(missingFiles, `files missing under ${join(AGREEMENT_WORK, build)}`).toStrictEqual([]);
+    // US2.2, checked on the bytes the Worker wrote rather than on its own verdict: every
+    // <build>/<stream>.records equals server/<stream>.records byte for byte (every step's state and hash),
+    // and these are the files `simcore agreement compare` reads. A missing file is a difference.
+    const buildDir = join(AGREEMENT_WORK, build);
+    const differing = [];
+    for (const name of streamNames) {
+        const records = await readIfPresent(join(buildDir, `${name}.records`));
+        const server = await readFile(join(AGREEMENT_WORK, 'server', `${name}.records`));
+        if (records === null) {
+            differing.push(`${name}: ${build}/${name}.records was not written`);
+        } else if (!records.equals(server)) {
+            differing.push(
+                `${name}: ${records.length} bytes against the server's ${server.length}, `
+                    + `first differing at byte ${firstDifferingByte(records, server)}`,
+            );
+        }
+    }
+    expect(differing, `streams whose ${buildDir}/<stream>.records differ from server/<stream>.records`).toStrictEqual([]);
+
+    // US3.8 (b) and US5.5 (b), on the bytes the Worker wrote: <build>/tables.bin against server/tables.bin.
+    const tablesBin = await readIfPresent(join(buildDir, 'tables.bin'));
+    expect(tablesBin, `${buildDir}/tables.bin was written`).not.toBeNull();
+    const tableInputs = await readFile(join(AGREEMENT_WORK, manifest.tables.inputs));
+    const serverTables = await readFile(join(AGREEMENT_WORK, manifest.tables.serverResults));
+    expect(
+        { ...compareTables(tableInputs, serverTables, tablesBin, build) },
+        `compareTables on ${buildDir}/tables.bin`,
+    ).toStrictEqual({ match: true, firstMismatch: null });
 
     // The runtime never fell back to ArrayBuffer instantiation over a wrong content type.
     expect(

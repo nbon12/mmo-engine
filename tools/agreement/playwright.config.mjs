@@ -8,7 +8,9 @@
  *
  * - `retries: 0`: a disagreement fails the run the first time; a rerun never hides it.
  * - `workers: 1`: one browser at a time, so a run's timings and its Worker are its own.
- * - A 5-minute test timeout bounds the wait for the Worker's `done` (the whole suite takes seconds).
+ * - A 2-minute test timeout bounds the wait for the Worker's `done` (the Chromium run takes about 8 s).
+ *   It is shorter than each Worker step's 3-minute bound in `.github/workflows/simcore.yml`, so a
+ *   stalled run fails here first, with its report and the Worker's events, before the step is killed.
  * - `forbidOnly`: a committed `.only` would silently drop the other tests, so it fails the run.
  * - The `list` reporter writes to the job log; no HTML report is written.
  */
@@ -19,7 +21,7 @@ export default defineConfig({
     testDir: 'specs',
     retries: 0,
     workers: 1,
-    timeout: 5 * 60 * 1000,
+    timeout: 2 * 60 * 1000,
     forbidOnly: true,
     reporter: 'list',
     projects: [

@@ -1958,6 +1958,51 @@ The design documents settled these points, which the spec leaves open. They are 
   an app root with no `_framework/` failed in under 2 s, naming the import that failed. The
   configuration also sets `forbidOnly`, so a committed `.only` fails the run. contracts/wasm-api.md#boot
   and #worker-playwright now describe the record helpers, the message fields and the page's `fatal`.
+- **T280 and T288 (Phase 11 review): the Worker spec checks the bytes the Worker wrote, and the record
+  helpers have their own tests.** T280 asserted US2.2's Then through the Worker's own `match`, which
+  `firstDifferingStep` decides, and checked only that the output files existed, so a helper that
+  ignored the hash or an extra record would have passed it. The spec now reads every
+  `<build>/<stream>.records` after `done` and compares it with `server/<stream>.records` byte for byte,
+  and runs `compareTables` itself on `<build>/tables.bin`; the batch assertion also requires
+  `firstMismatchStep === null`. `tools/agreement/node/runtime.test.mjs` pins `firstDifferingStep`,
+  `readRecords` and `jiterpreterState` with table rows on records built in memory, and the workflow's
+  unit-test step runs it. Checked in scratch (not committed): a Worker that writes one flipped byte into
+  `rifle-burst.records`, or into `tables.bin`, while reporting a match now fails the spec, and a
+  `firstDifferingStep` that ignores the hash, never reports an extra record, or ignores what follows
+  the server's last record fails 1, 3 and 7 rows of runtime.test.mjs.
+- **T290, T283 and T289 (Phase 11 review): every step after the toolchain setup has its own bound, and
+  the optional browsers run last.** The job's `timeout-minutes: 10` was the only bound, and a job that
+  passes it is cancelled, so compare (`!cancelled()`) and the report upload (`failure()`) never ran: a
+  stalled optional Firefox or WebKit install, which came before every required run, could fail the
+  required gate with no summary. Each step after checkout, `setup-dotnet` and `setup-node` now has its
+  own `timeout-minutes` (1 to 5), so a hang is a failed step and compare still reports. The Firefox and
+  WebKit installs (3 minutes each, still `continue-on-error`, so a timed-out install skips only its
+  run) and their runs now come after the Node and Chromium runs. Playwright's test timeout drops from
+  5 minutes to 2, below each Worker step's 3, so Playwright reports a stalled run, with the Worker's
+  events attached, before the step is stopped. The toolchain steps are GitHub's own actions and stay
+  under the job's bound only. Locally the publish and prepare take 13 s, the two Node runs 5.5 s and 7.8 s,
+  and the Chromium run 9 s, so the bounds leave room for a cold runner.
+- **T275 and T288 (Phase 11 review): the jiterpreter-off run checks the runtime's own report.** The
+  runtime ignores a runtime option it does not know without a warning (renamed flags booted with the
+  jiterpreter on, measured), so passing `JITERPRETER_OFF` did not show that `node-interp-nojit` ran
+  without the jiterpreter. `bootRuntime` now also returns `jiterpreter`, read by `jiterpreterState`
+  through the runtime's internal `INTERNAL.jiterpreter_get_options()` right after `create()`, and the
+  Node runner's `'the jiterpreter is on or off as the build says'` asserts it, all on or all off, and
+  writes it to `run.json`. The accessor is internal, but the SDK is pinned by global.json and a missing
+  accessor fails the test by name, so an SDK bump that moves it is caught, not silently passed. The
+  check is a named test, not a throw in `bootRuntime`, so the Worker builds (where the default runs
+  with the jiterpreter on and Firefox and WebKit could not be run here) are unaffected.
+- **T284 (Phase 11 review): auto-merge's own filter is tested on the `agreement` check, and the
+  not-yet-registered race stays an open follow-up.** `test_auto_merge_waits_for_simcore` showed only
+  that auto-merge hears SimCore finish. `test_a_failed_or_pending_agreement_check_holds_the_merge` runs
+  the auto-merge step's `CHECK_RUNS_JQ` and its `failed=` and `pending=` awk lines on check runs named
+  as the `agreement` job is, so a failed run blocks the merge, a queued one holds it, and a rename to a
+  name the filter drops (`auto-merge`, `claude`) fails the test; `auto-merge.yml` is unchanged (T291).
+  What it cannot close: while `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for a check run
+  that has not registered on the head commit yet, as for `Workflow tests` before it. Making `agreement`
+  a required check is an admin-only branch-protection setting, and it first needs the check to report
+  on every pull request, since SimCore's path filter would leave other pull requests waiting on it.
+  T318's open follow-ups carry it.
 
 ## Delivery
 

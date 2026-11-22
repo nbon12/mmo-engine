@@ -10,8 +10,9 @@ that job depends on:
   build runs the suite (US2.7, FR-027), and the read-only token;
 - the SHA-pinned actions, the exact Playwright pin and the toolchains;
 - the agreement steps, their order and the compare gate (US2.7, SC-001), the 10-minute timeout
-  (SC-006) and the three browser projects;
-- the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate.
+  (SC-006), each step's own bound inside it, and the three browser projects;
+- the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate,
+  and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check.
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
 tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs.
@@ -65,6 +66,13 @@ SIMCORE_PATHS = (
 # The runs of the agreement runners: the Node runner and the Playwright Worker runner.
 RUNNER_RUNS = ("node --test tools/agreement/node/agreement.test.mjs", "npx playwright test")
 
+# The runners' unit tests: the tables comparison, the agreement server and the record helpers.
+RUNNER_UNIT_TESTS = ("node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs"
+                     " tools/agreement/node/runtime.test.mjs")
+
+# The actions that set up the job's toolchains; every step after them has its own timeout-minutes.
+TOOLCHAIN_ACTIONS = ("actions/checkout@", "actions/setup-dotnet@", "actions/setup-node@")
+
 REQUIRED_BUILDS = "node-interp,node-interp-nojit,chromium-worker"
 SHA_PINNED = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$"
 
@@ -117,6 +125,32 @@ def condition(step):
     text = str(step.get("if", "")).strip()
     wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.S)
     return re.sub(r"\s+", "", wrapped.group(1) if wrapped else text)
+
+
+def playwright_test_timeout_ms():
+    """The `timeout` of tools/agreement/playwright.config.mjs in milliseconds, written as a product of
+    integers (`2 * 60 * 1000`)."""
+    config = (AGREEMENT_TOOLS / "playwright.config.mjs").read_text()
+    found = re.findall(r"^\s*timeout\s*:\s*([0-9_][0-9_\s*]*),", config, re.M)
+    if len(found) != 1:
+        raise AssertionError(f"expected one `timeout:` in playwright.config.mjs, found {found}")
+    value = 1
+    for factor in found[0].split("*"):
+        value *= int(factor.strip().replace("_", ""))
+    return value
+
+
+def run_jq(filter_, document):
+    result = subprocess.run(["jq", "-r", filter_], input=json.dumps(document), capture_output=True,
+                            text=True, check=True, timeout=30)
+    return result.stdout
+
+
+def run_awk(program, text):
+    """Runs one of auto-merge.yml's `awk -F'\\t' '<program>'` lines on `text`, as bash would."""
+    result = subprocess.run(["awk", "-F", "\\t", program], input=text, capture_output=True, text=True,
+                            check=True, timeout=30)
+    return result.stdout
 
 
 def evaluate(expression, context):
@@ -345,11 +379,58 @@ class AgreementJob(unittest.TestCase):
         self.assertLess(index, runner_indexes()[0])
 
     def test_runner_unit_tests_run_before_the_agreement(self):
-        index, step = only_step(
-            "agreement", "node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs")
+        # runtime.test.mjs pins firstDifferingStep, which decides the Worker's `stream` and `batch` events.
+        index, step = only_step("agreement", RUNNER_UNIT_TESTS)
         self.assertLess(index, runner_indexes()[0])
         self.assertNotIn("continue-on-error", step)
         self.assertNotIn("if", step)
+
+    def test_every_step_after_the_toolchain_setup_has_its_own_bound(self):
+        # A step that hangs then fails on its own instead of the job being cancelled at 10 minutes, so
+        # compare (`!cancelled()`) still runs and the report is still uploaded (`failure()`).
+        job_bound = WORKFLOW["jobs"]["agreement"]["timeout-minutes"]
+        all_job_steps = steps("agreement")
+        toolchain = [i for i, step in enumerate(all_job_steps) if step.get("uses", "").startswith(TOOLCHAIN_ACTIONS)]
+        self.assertEqual(list(range(3)), toolchain, "checkout and the two toolchain setups come first")
+        for step in all_job_steps[3:]:
+            with self.subTest(step=step.get("name")):
+                bound = step.get("timeout-minutes")
+                self.assertIsInstance(bound, int, "timeout-minutes is a whole number of minutes")
+                self.assertGreater(bound, 0)
+                self.assertLess(bound, job_bound)
+
+    def test_optional_browsers_install_after_the_required_runs_within_three_minutes(self):
+        # A slow Firefox or WebKit install cannot use up the required runs' time, and one that times
+        # out fails only itself (continue-on-error), so its run is skipped and compare reports it as
+        # not run.
+        required = [i for text in ("node --test tools/agreement/node/agreement.test.mjs",
+                                   "npx playwright test --project chromium")
+                    for i in indexes("agreement", text)]
+        self.assertEqual(3, len(required))
+        compare, _ = only_step("agreement", "agreement compare --work")
+        for browser in ("firefox", "webkit"):
+            with self.subTest(browser=browser):
+                install_index, install = only_step("agreement", f"npx playwright install --with-deps {browser}")
+                test_index, test = only_step("agreement", f"npx playwright test --project {browser}")
+                self.assertGreater(install_index, max(required))
+                self.assertLess(install_index, test_index)
+                self.assertLess(test_index, compare)
+                self.assertEqual(3, install.get("timeout-minutes"))
+                self.assertIs(True, install.get("continue-on-error"))
+                self.assertEqual(3, test.get("timeout-minutes"))
+
+    def test_playwright_fails_a_stalled_run_before_its_step_bound(self):
+        # Playwright's own test timeout ends first, so its failure and the Worker's events attachment
+        # reach the log before the step is killed.
+        timeout_ms = playwright_test_timeout_ms()
+        self.assertEqual(2 * 60 * 1000, timeout_ms)
+        for browser in ("chromium", "firefox", "webkit"):
+            with self.subTest(browser=browser):
+                _, step = only_step("agreement", f"npx playwright test --project {browser}")
+                self.assertGreater(step["timeout-minutes"] * 60 * 1000, timeout_ms)
+        for step in (steps("agreement")[i] for i in indexes("agreement", "node --test tools/agreement/node/agreement.test.mjs")):
+            with self.subTest(step=step.get("name")):
+                self.assertEqual(2, step.get("timeout-minutes"))
 
     def test_node_runs_with_and_without_the_jiterpreter(self):
         found = [steps("agreement")[i] for i in indexes("agreement", "node --test tools/agreement/node/agreement.test.mjs")]
@@ -436,6 +517,36 @@ class AutoMerge(unittest.TestCase):
         self.assertIn("Workflow tests", run["workflows"])
         self.assertIn(WORKFLOW["name"], run["workflows"])
         self.assertEqual(["completed"], run["types"])
+
+    def test_a_failed_or_pending_agreement_check_holds_the_merge(self):
+        # The agreement job's check run, under the name GitHub gives it (the job's `name`), goes through
+        # auto-merge.yml's own CHECK_RUNS_JQ filter and its `failed=` and `pending=` awk lines: a failed
+        # run is a reason to leave the pull request alone, and a queued one keeps it waiting. A job
+        # named `auto-merge` or `claude` would be filtered out, and the gate would never hold a merge.
+        check = WORKFLOW["jobs"]["agreement"].get("name", "agreement")
+        merge_steps = [step for step in AUTO_MERGE["jobs"]["auto-merge"]["steps"]
+                       if "CHECK_RUNS_JQ" in step.get("env", {})]
+        self.assertEqual(1, len(merge_steps), "one auto-merge step filters the check runs")
+        step = merge_steps[0]
+        self.assertIn('--jq "$CHECK_RUNS_JQ"', step["run"])
+        programs = {}
+        for variable in ("failed", "pending"):
+            found = re.findall(rf"^\s*{variable}=\"\$\(awk -F'\\t' '([^']*)' <<<\"\$checks\"\)\"\s*$", step["run"], re.M)
+            self.assertEqual(1, len(found), f"one `{variable}=` awk line in auto-merge.yml")
+            programs[variable] = found[0]
+
+        for conclusion, rows, failed, pending in (
+                ("failure", [{"status": "completed", "conclusion": "failure"}], check, ""),
+                ("cancelled", [{"status": "completed", "conclusion": "cancelled"}], check, ""),
+                ("queued", [{"status": "queued", "conclusion": None}], "", check),
+                ("in progress", [{"status": "in_progress", "conclusion": None}], "", check),
+                ("success", [{"status": "completed", "conclusion": "success"}], "", "")):
+            with self.subTest(conclusion=conclusion):
+                checks = run_jq(step["env"]["CHECK_RUNS_JQ"], {"check_runs": [{"name": check, **row} for row in rows]})
+                expected_state = "pending" if pending else rows[0]["conclusion"]
+                self.assertEqual(f"{check}\t{expected_state}\n", checks)
+                self.assertEqual(failed, run_awk(programs["failed"], checks).strip())
+                self.assertEqual(pending, run_awk(programs["pending"], checks).strip())
 
 
 if __name__ == "__main__":

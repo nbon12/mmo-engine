@@ -138,8 +138,9 @@ AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" AGREEMENT_BUILD=node-int
   node --test tools/agreement/node/agreement.test.mjs
 ```
 
-Expected: each run passes every test (one per stream, plus the batch, perturbation, refusal and
-cross-build tables checks) and exits 0. The second run has the jiterpreter off.
+Expected: each run passes every test (one per stream, plus the jiterpreter, batch, perturbation,
+refusal and cross-build tables checks) and exits 0. The second run has the jiterpreter off, and its
+jiterpreter check shows the runtime reports it off.
 
 ```bash
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test)
@@ -254,5 +255,6 @@ python3 -m unittest discover -s tests/workflows -v
 
 Expected: every test passes and the command exits 0. `tests/workflows/test_simcore_workflow.py` pins the
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
-the `agreement` job's `timeout-minutes: 10` (SC-006), its three browsers, the `measure` job's steps,
-and the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list.
+the `agreement` job's `timeout-minutes: 10` (SC-006) and each step's own bound inside it, its three
+browsers, the `measure` job's steps, the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list,
+and that auto-merge's check filter holds a merge on a failed or pending `agreement` check.

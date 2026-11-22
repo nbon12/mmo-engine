@@ -8,6 +8,10 @@ name: SimCore
 #              (tools/agreement/specs/worker.spec.mjs: Chromium always, Firefox and WebKit when they
 #              install), and gates the pull request on `simcore agreement compare`, which exits non-zero
 #              on any divergent step, any cross-build table mismatch or a required build that did not run.
+#              Every step after the toolchain setup has its own timeout-minutes, so a step that hangs
+#              fails on its own (a failure, not a cancel) and compare still reports inside the job's
+#              10 minutes; the optional browsers install after the required runs, so they cannot use up
+#              the required runs' time.
 # auto-merge.yml lists this workflow's name in its workflow_run trigger, so a pull request waits for it.
 # tests/workflows/test_simcore_workflow.py pins this file.
 on:
@@ -81,65 +85,81 @@ jobs:
       # The publish output's served root and a work directory that does not exist yet, which
       # `agreement prepare` requires. Every later step reads them from the environment.
       - name: Name the app and work directories
+        timeout-minutes: 1
         run: |
           echo "AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot" >> "$GITHUB_ENV"
           echo "AGREEMENT_WORK=$RUNNER_TEMP/agreement-work" >> "$GITHUB_ENV"
 
       # Against the prebuilt runtime pack: no workload is installed in this job.
       - name: Publish the WebAssembly build
+        timeout-minutes: 5
         run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/simcore-app"
 
       - name: Prepare the agreement work directory (19 committed streams, 50 generated seeds)
+        timeout-minutes: 4
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$AGREEMENT_WORK"
 
       - name: Install the runners' pinned Playwright
+        timeout-minutes: 2
         working-directory: tools/agreement
         run: npm ci
 
       # Each Playwright step runs in tools/agreement, so npx runs the lockfile's 1.63.0 and installs the
       # browsers that version launches.
       - name: Install Chromium
+        timeout-minutes: 4
         working-directory: tools/agreement
         run: npx playwright install --with-deps chromium
 
-      # Firefox and WebKit are optional: a failed install skips their run, and compare reports them as
-      # not run. A build that installs and then disagrees still fails the job.
-      - name: Install Firefox
-        id: firefox
-        continue-on-error: true
-        working-directory: tools/agreement
-        run: npx playwright install --with-deps firefox
-
-      - name: Install WebKit
-        id: webkit
-        continue-on-error: true
-        working-directory: tools/agreement
-        run: npx playwright install --with-deps webkit
-
-      - name: Test the runners (tables comparison and agreement server)
-        run: node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs
+      - name: Test the runners (tables comparison, agreement server and record helpers)
+        timeout-minutes: 2
+        run: node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs tools/agreement/node/runtime.test.mjs
 
       - name: Agreement in Node (jiterpreter on)
+        timeout-minutes: 2
         env:
           AGREEMENT_BUILD: node-interp
         run: node --test tools/agreement/node/agreement.test.mjs
 
       - name: Agreement in Node (jiterpreter off)
+        timeout-minutes: 2
         env:
           AGREEMENT_BUILD: node-interp-nojit
         run: node --test tools/agreement/node/agreement.test.mjs
 
+      # Playwright's own 2-minute test timeout (playwright.config.mjs) ends a stalled run first, so its
+      # failure and the Worker's events reach the log before the step's bound.
       - name: Agreement in a Chromium Worker
+        timeout-minutes: 3
         working-directory: tools/agreement
         run: npx playwright test --project chromium
 
+      # Firefox and WebKit are optional and come after the required runs: an install that fails or
+      # times out skips its run, and compare reports that build as not run. A build that installs and
+      # then disagrees still fails the job.
+      - name: Install Firefox
+        id: firefox
+        timeout-minutes: 3
+        continue-on-error: true
+        working-directory: tools/agreement
+        run: npx playwright install --with-deps firefox
+
       - name: Agreement in a Firefox Worker
         if: steps.firefox.outcome == 'success'
+        timeout-minutes: 3
         working-directory: tools/agreement
         run: npx playwright test --project firefox
 
+      - name: Install WebKit
+        id: webkit
+        timeout-minutes: 3
+        continue-on-error: true
+        working-directory: tools/agreement
+        run: npx playwright install --with-deps webkit
+
       - name: Agreement in a WebKit Worker
         if: steps.webkit.outcome == 'success'
+        timeout-minutes: 3
         working-directory: tools/agreement
         run: npx playwright test --project webkit
 
@@ -148,10 +168,12 @@ jobs:
       # node-interp-nojit and chromium-worker.
       - name: Compare every build with the server
         if: ${{ !cancelled() }}
+        timeout-minutes: 3
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$AGREEMENT_WORK" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the agreement report
         if: failure()
+        timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simcore-agreement-report

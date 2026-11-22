@@ -518,7 +518,14 @@ export async function bootRuntime(dotnetJsUrl, { jiterpreter = true } = {}) {
     .MmoEngine.SimCore.Wasm.SimCoreExports;
   const tCreate = performance.now();
   return { runtime, exports, buildInfo: runtime.runtimeBuildInfo,
+           jiterpreter: jiterpreterState(runtime),
            timings: { importMs: tImport - t0, createMs: tCreate - tImport } };
+}
+
+export function jiterpreterState(runtime) {
+  const o = runtime?.INTERNAL?.jiterpreter_get_options?.();
+  return o == null ? null : { traces: Boolean(o.enableTraces),
+    interpEntry: Boolean(o.enableInterpEntry), jitCall: Boolean(o.enableJitCall) };
 }
 ```
 
@@ -532,6 +539,14 @@ export async function bootRuntime(dotnetJsUrl, { jiterpreter = true } = {}) {
 - **`withRuntimeOptions`** exists in runtime 10.0.15 but is missing from `dotnet.d.ts` [measured]. The
   jiterpreter-off flags take effect: the trig table took 12.1–12.5 s with them, against 6.1–6.5 s
   without [measured]. The jiterpreter is a separate code generator, so the agreement suite runs both.
+- **The jiterpreter's effective state.** The runtime ignores a runtime option it does not know, without
+  a warning: `withRuntimeOptions(['--no-jiterpreter-traces-renamed', …])` boots with the jiterpreter on
+  [measured]. So `bootRuntime` also returns `jiterpreter`, the runtime's own report right after
+  `create()`, read by `jiterpreterState(runtime)` through the internal
+  `INTERNAL.jiterpreter_get_options()`: `{ traces, interpEntry, jitCall }` from its `enableTraces`,
+  `enableInterpEntry` and `enableJitCall` (numbers, 1 or 0, in runtime 10.0.15 [measured]), or `null`
+  when the runtime has no such accessor. The SDK is pinned by global.json, so the accessor is stable for
+  these runners. The Node runner asserts it ([Node](#node)); the Worker records nothing of it.
 - **`runtime.runtimeBuildInfo`** gives `productVersion`, `gitHash`, `buildConfiguration`,
   `wasmEnableThreads`, `wasmEnableSIMD` and `wasmEnableExceptionHandling`. The runners record it.
 - **Playwright's Node-side loader** treats `dotnet.js` as CommonJS (`SyntaxError: Cannot use
@@ -544,6 +559,8 @@ export async function bootRuntime(dotnetJsUrl, { jiterpreter = true } = {}) {
   missing or cut off, has another step number, or differs in state bytes or hash; then, past the
   server's last record, the build's first extra record (its step, or the server's last step + 1 when it
   is cut off); `null` when both are equal. The module uses no Node API, so the Worker imports it too.
+  `tools/agreement/node/runtime.test.mjs` pins the helpers and `jiterpreterState` with table rows
+  ([Tests](#tests)).
 
 ## Served files
 
@@ -602,10 +619,14 @@ and 3). A thrown error is written to `<stream>.error.txt` and fails that test. I
   `tables` entry, written to `AGREEMENT_WORK/<build>/tables.bin`, must match `server/tables.bin` under
   the [comparison rule](#cross-build-tables); a failure names the first mismatching row (US3
   scenario 8, SC-004, US5 scenario 5). A thrown error is written to `tables.error.txt` and fails the
-  test.
+  test;
+- **the jiterpreter check** (`'the jiterpreter is on or off as the build says'`): `bootRuntime`'s
+  `jiterpreter`, the runtime's own report ([Boot](#boot)), is not `null` and is all `true` for a build
+  without `-nojit` and all `false` for `node-interp-nojit`, so the jiterpreter-off run cannot silently
+  run with the jiterpreter.
 
-It writes `AGREEMENT_WORK/<build>/run.json` with the build name, runtime options, `runtimeBuildInfo`,
-Node's version and the start and end times.
+It writes `AGREEMENT_WORK/<build>/run.json` with the build name, runtime options, the reported
+jiterpreter state (`jiterpreter`), `runtimeBuildInfo`, Node's version and the start and end times.
 
 ### Worker (Playwright)
 
@@ -643,10 +664,18 @@ Messages:
 | Worker → page | `fatal` | `message` (boot or manifest failure, or a `start` with no build or with runtime options; the agreement Worker boots with the defaults) |
 
 The spec asserts: a `booted` message with `inWorker` and `crossOriginIsolated` true; one `stream` message per manifest stream,
-each with `match` true; no `error` and no `fatal`; every `batch` message with `match` true; one
-`tables` message with `match` true; `done`'s counts agree; and no console message about the content
-type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scenario 5). The records it
-`PUT` let `simcore agreement compare` write the field-level report for any mismatch (US2 scenario 4).
+each with `match` true and `firstMismatchStep` null; no `error` and no `fatal`; one `batch` message per
+batchable stream, each with `match` true and `firstMismatchStep` null; one `tables` message with
+`match` true; `done`'s counts agree; and no console message about the content type. It does not rest on
+the Worker's own verdicts: after `done` it reads the files the Worker `PUT` and checks that every
+`<build>/<stream>.records` equals `server/<stream>.records` byte for byte (a missing file is a
+difference) and that `compareTables` on `<build>/tables.bin` against `server/tables.bin` matches (US2
+scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scenario 5). The same records let
+`simcore agreement compare` write the field-level report for any mismatch (US2 scenario 4).
+
+The configuration's 2-minute test timeout is shorter than each Worker step's 3-minute
+`timeout-minutes` in `.github/workflows/simcore.yml`, so a stalled run fails in Playwright, with its
+report and the Worker's events attached, before the step is stopped.
 
 ## Tests
 
@@ -667,6 +696,7 @@ type (US2 scenarios 2 and 6, and in a Worker US3 scenario 8, SC-004 and US5 scen
 | `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3), and every out-of-domain row gives NaN, counted explicitly. It is the only definition of an out-of-domain row: a or b NaN; a = ±∞ for functions 1–4; \|a\| > 1 for 5 and 6; a < 0 and not −0 for 10 |
 | `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.ReportsTheFirstDifferingRow` (Theory: one bit flipped in a math row, in a pose row, a NaN against a finite value) and `TablesComparisonTests.AnyNaNMatchesANaNRow` | the comparison rule and its report |
 | `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests` (every export called as a plain method on x64) and `EntryPointReturnsZero` | the host, and its coverage gate |
-| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5 |
-| `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker; FR-024; its `tables` assertion is the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
+| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5; its jiterpreter check shows the `-nojit` run ran without the jiterpreter |
+| `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker, checked on the records the Worker wrote too; FR-024; its `tables` assertion and its own `compareTables` on the Worker's `tables.bin` are the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
+| `tools/agreement/node/runtime.test.mjs` (`node --test`) | `firstDifferingStep` (equal, a state byte, a state length or only the hash differing, another step number, missing, cut-off and extra records), `readRecords` (each record's fields; a `RangeError` on a cut-off record) and `jiterpreterState` (on, off, each option, no accessor), on records built in memory |
 | `tools/agreement/node/tables.test.mjs` (`node --test`) | `compareTables` on fixture results: an identical pair matches, a flipped bit in a math or pose row reports that row, a NaN row matches any NaN and not a finite value |

@@ -3,12 +3,20 @@
  * contracts/wasm-api.md#boot).
  *
  * - `bootRuntime(dotnetJsUrl, { jiterpreter = true })` imports the publish output's `dotnet.js`, creates
- *   one runtime with the given runtime options, and returns `{ runtime, exports, buildInfo, timings }`:
- *   the runtime, the host's `SimCoreExports` (contracts/wasm-api.md#host-exports), the runtime's
- *   `runtimeBuildInfo`, and `{ importMs, createMs }`, the time to import `dotnet.js` and the time to
- *   create the runtime and get its exports. `jiterpreter: false` passes `JITERPRETER_OFF`. The runners
- *   never call `runMain`; the exports work without it. Runtime options are fixed at `create()`, so a
- *   process or Worker boots once, and the jiterpreter-off run is a separate process.
+ *   one runtime with the given runtime options, and returns
+ *   `{ runtime, exports, buildInfo, jiterpreter, timings }`: the runtime, the host's `SimCoreExports`
+ *   (contracts/wasm-api.md#host-exports), the runtime's `runtimeBuildInfo`, the jiterpreter's effective
+ *   state right after `create()` (`jiterpreterState`), and `{ importMs, createMs }`, the time to import
+ *   `dotnet.js` and the time to create the runtime and get its exports. `jiterpreter: false` passes
+ *   `JITERPRETER_OFF`. The runners never call `runMain`; the exports work without it. Runtime options
+ *   are fixed at `create()`, so a process or Worker boots once, and the jiterpreter-off run is a
+ *   separate process.
+ * - `jiterpreterState(runtime)` is what the runtime itself reports for the three options
+ *   `JITERPRETER_OFF` turns off, `{ traces, interpEntry, jitCall }` as booleans, read through the
+ *   runtime's internal `INTERNAL.jiterpreter_get_options()`, or `null` when the runtime has no such
+ *   accessor. The runtime ignores a runtime option it does not know without a warning, so this, not the
+ *   options passed, is what shows that a jiterpreter-off build really ran without it. The SDK is pinned
+ *   by global.json, so the accessor is stable for these runners.
  * - `readRecords(bytes)` reads packed step records, `u32 step | u32 stateLength | state | u64 hash`,
  *   little-endian, the next record at `o + 16 + stateLength`
  *   (contracts/state-serialization.md#step-record), exactly what `RunStream` returns and a `.records`
@@ -47,6 +55,7 @@ const RECORD_OVERHEAD = 16;
  *   Node, an `http:` URL in a Worker)
  * @param {{ jiterpreter?: boolean }} [options] `jiterpreter: false` boots with `JITERPRETER_OFF`
  * @returns {Promise<{ runtime: object, exports: object, buildInfo: object,
+ *   jiterpreter: { traces: boolean, interpEntry: boolean, jitCall: boolean } | null,
  *   timings: { importMs: number, createMs: number } }>}
  * @throws {Error} `dotnet.js` does not load, the runtime does not start, or the host's exports are
  *   missing
@@ -66,7 +75,29 @@ export async function bootRuntime(dotnetJsUrl, { jiterpreter = true } = {}) {
         runtime,
         exports,
         buildInfo: runtime.runtimeBuildInfo,
+        jiterpreter: jiterpreterState(runtime),
         timings: { importMs: tImport - t0, createMs: tCreate - tImport },
+    };
+}
+
+/**
+ * The jiterpreter's effective state, as the runtime reports it: whether its traces, its interpreter
+ * entries and its JIT calls are enabled, the three options `JITERPRETER_OFF` turns off.
+ *
+ * @param {object} runtime a runtime `bootRuntime` created
+ * @returns {{ traces: boolean, interpEntry: boolean, jitCall: boolean } | null} null when the runtime has
+ *   no `INTERNAL.jiterpreter_get_options()`
+ */
+export function jiterpreterState(runtime) {
+    const options = runtime?.INTERNAL?.jiterpreter_get_options?.();
+    if (options === undefined || options === null) {
+        return null;
+    }
+
+    return {
+        traces: Boolean(options.enableTraces),
+        interpEntry: Boolean(options.enableInterpEntry),
+        jitCall: Boolean(options.enableJitCall),
     };
 }
 
