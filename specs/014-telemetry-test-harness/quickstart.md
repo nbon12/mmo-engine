@@ -25,6 +25,12 @@ infra/harness/smoke.sh                          # the checks CI runs
 infra/harness/down.sh                           # deletes the cluster
 ```
 
+A sweep runs as an indexed Kubernetes Job on that cluster (FR-032): one pod per shard, merged afterwards.
+
+```bash
+infra/sweeps/k8s-sweep.sh spacing 4 /tmp/spacing-job   # merged sweep in /tmp/spacing-job/spacing/
+```
+
 ## A ClickHouse to point the tools at
 
 Without the cluster, use a throwaway container:
@@ -45,13 +51,16 @@ dotnet run --project src/MmoEngine.Harness.Cli -- rules run --run-id <runId from
 echo $?   # 0 passed, 5 failed, 6 inconclusive
 ```
 
-## Load the decision memo's sweep results
+## Load the committed full-scale sweep results
 
 ```bash
-for sweep in docs/simulator/results/first-pass/*/; do
+for sweep in docs/simulator/results/full/*/; do
   dotnet run --project src/MmoEngine.Harness.Cli -- load "$sweep"
 done
 ```
+
+This loads the decision memo's 13 sweeps plus `claim-radius-grid` (PR #59), which the memo's rules
+don't read.
 
 ## Golden runs
 

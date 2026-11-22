@@ -494,9 +494,12 @@ that the sections, regions and entities match the regionizer's state at that tic
   model it reports. Golden runs are recorded on that class by a CI job, and committed from its
   artifact. A dedicated self-hosted runner can replace it later. That only changes the class name.
 - The 24-hour soak and the full-scale sweeps keep running outside CI, and their folders are loaded with
-  the loader. This feature doesn't re-run them.
+  the loader. This feature doesn't re-run them. Amended 2026-11-16 by PR #55: the full-scale sweeps now
+  also run in the manual Sweeps workflow (`.github/workflows/sweeps.yml`); the soak still runs outside CI.
 - The decision memo's first-pass sweep results are loaded from the folders sub-spec 1 committed, where
-  they exist in the repo, or from a re-run of the committed sweep specs.
+  they exist in the repo, or from a re-run of the committed sweep specs. Amended 2026-11-16 by PR #58:
+  the memo is now full scale, and its sweep results are committed in `docs/simulator/results/full/` (that folder also holds
+  `claim-radius-grid`, PR #59, which the memo doesn't read).
 - Full 5-minute calibrations of the impaired profiles need netem, which needs root on the host or
   Chaos Mesh in the cluster. CI's cluster job runs them. In-process tests cover calibration maths with
   synthetic samples and the probe pair over unimpaired loopback.
@@ -513,4 +516,5 @@ that the sections, regions and entities match the regionizer's state at that tic
 - Jitter alone didn't reorder packets on the per-direction veth setup, so reordering variants use
   netem's `reorder` (25%, 50% correlation) on top of their base profile's settings and in-order rate.
   They apply their base's calibrated settings and aren't searched or stored separately.
-- Exit codes 5 to 8 are new and don't collide with sub-spec 1's 0 to 4.
+- Exit codes 5 to 9 are new (9: a probe run or calibration outside tolerance, as in
+  [contracts/harness-cli.md](contracts/harness-cli.md)) and don't collide with sub-spec 1's 0 to 4.
