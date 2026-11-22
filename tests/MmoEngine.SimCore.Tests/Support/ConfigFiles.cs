@@ -3,10 +3,11 @@ using System.Text;
 namespace MmoEngine.SimCore.Tests.Support;
 
 /// <summary>
-/// Configuration inputs for the bounded-read rows of <c>SimConfigJsonTests</c> and <c>ConfigCommandTests</c>
-/// (contracts/simcore-cli.md#config-check): <c>simcore/config/default.json</c>, read-only through
-/// <see cref="RepoPaths"/>, padded to an exact length, and a file in a test's own temp directory that grows
-/// after its length is checked.
+/// Configuration inputs for the bounded-read and unreadable-file rows of <c>SimConfigJsonTests</c> and
+/// <c>ConfigCommandTests</c> (contracts/simcore-cli.md#config-check): <c>simcore/config/default.json</c>,
+/// read-only through <see cref="RepoPaths"/>, padded to an exact length, a file in a test's own temp
+/// directory that grows after its length is checked, and a copy there that another handle holds so it
+/// cannot be read.
 /// </summary>
 public static class ConfigFiles
 {
@@ -38,5 +39,35 @@ public static class ConfigFiles
         }
 
         return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+    }
+
+    /// <summary>
+    /// Writes a copy of <c>simcore/config/default.json</c> to <paramref name="path"/>, in a test's own temp
+    /// directory, and returns a handle that holds it open sharing nothing (<see cref="FileShare.None"/>), so
+    /// the file exists and is short enough but cannot be read until the handle is disposed. On Unix that rests
+    /// on .NET's advisory <c>flock</c> emulation of the share mode, which <c>DOTNET_SYSTEM_IO_DISABLEFILELOCKING</c>
+    /// or the <c>System.IO.DisableFileLocking</c> switch turns off. So before the handle is returned, the lock
+    /// is checked with the open the commands make (read-only, shared for reading): when that open does not
+    /// fail with an <see cref="IOException"/>, the handle is disposed and the test fails naming the cause,
+    /// rather than looking like a command that read a file it should refuse.
+    /// </summary>
+    public static FileStream WriteHeldCopy(string path)
+    {
+        File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
+        var hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var blocked = Record.Exception(() =>
+        {
+            using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            probe.ReadByte();
+        });
+        if (blocked is not IOException)
+        {
+            hold.Dispose();
+            Assert.Fail(
+                $"the FileShare.None handle did not block a read-only open of {path} ({blocked?.GetType().Name ?? "the open succeeded"}): " +
+                ".NET file locking is off (DOTNET_SYSTEM_IO_DISABLEFILELOCKING or System.IO.DisableFileLocking) or the temp file system does not support flock");
+        }
+
+        return hold;
     }
 }

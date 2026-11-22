@@ -211,10 +211,11 @@ saying the file is appended by `simcore streams record`. Each regeneration appen
 - "Rules revision" shows the old value when any changed stream carried another one.
 - Unchanged streams are not listed.
 - The reason is written exactly as given.
-- When the file does not exist, the first entry creates it, after the heading and the sentence. Each
-  entry is appended after a blank line, and starts on a line of its own even when the file did not end
-  with a line feed (an empty file counts as ending with one). The CLI test
-  `RecordStartsOrExtendsTheRegenerationLog` checks the four cases.
+- When the file does not exist or is empty, the first entry creates it after the heading and the
+  sentence, so the file always starts with the heading. Each entry is appended after a blank line, and
+  starts on a line of its own even when the file did not end with a line feed. The CLI test
+  `RecordStartsOrExtendsTheRegenerationLog` checks the four cases: no file, an empty file, and a file
+  with and without a final line feed.
 
 The entry is committed with the streams, so every change to an expected hash is a visible commit
 with its reason (FR-028). The CLI test `RecordAppendsTheReasonAndOldAndNewHashes` runs the command

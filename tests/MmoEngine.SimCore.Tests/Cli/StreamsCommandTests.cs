@@ -283,9 +283,10 @@ public sealed class StreamsCommandTests
     /// <c># Old log</c>, a blank line and <c>- an entry without a final line feed</c> with no line feed after
     /// it, or (<c>final-line-feed</c>) replaced by <c># Old log</c> and a line feed, When
     /// <c>streams record --scenario stairs-climb --reason "Log shape"</c> runs on the copies, Then it exits 0
-    /// and the log is exactly its old text (for <c>no-log</c>, the <c># Stream regenerations</c> heading, a
-    /// blank line and the sentence saying <c>simcore streams record</c> appends the file), one line feed when
-    /// that text did not end with one, a blank line, and the entry: the UTC heading, a blank line, the
+    /// and the log is exactly its old text (for <c>no-log</c> and <c>empty-log</c>, the
+    /// <c># Stream regenerations</c> heading, a blank line and the sentence saying <c>simcore streams record</c>
+    /// appends the file, so the log starts with its heading), one line feed when that text did not end with
+    /// one, a blank line, and the entry: the UTC heading, a blank line, the
     /// reason, command and rules revision lines, a blank line, the table header and rule, and the
     /// <c>stairs-climb</c> row, each line ending with a line feed.
     /// </summary>
@@ -301,8 +302,7 @@ public sealed class StreamsCommandTests
         File.Delete(sandbox.Stream(scenario));
         var prefix = caseName switch
         {
-            "no-log" => preamble,
-            "empty-log" => string.Empty,
+            "no-log" or "empty-log" => preamble,
             "no-final-line-feed" => "# Old log\n\n- an entry without a final line feed\n",
             "final-line-feed" => "# Old log\n",
             _ => throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown row."),
@@ -311,6 +311,9 @@ public sealed class StreamsCommandTests
         {
             case "no-log":
                 File.Delete(sandbox.LogPath);
+                break;
+            case "empty-log":
+                File.WriteAllText(sandbox.LogPath, string.Empty);
                 break;
             case "no-final-line-feed":
                 File.WriteAllText(sandbox.LogPath, prefix[..^1]);

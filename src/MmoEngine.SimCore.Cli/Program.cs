@@ -73,11 +73,16 @@ public static class Program
     }
 
     /// <summary>
-    /// The command tree <see cref="Run(string[], TextWriter, TextWriter)"/> parses, for parsing only: its
-    /// actions would write to <see cref="TextWriter.Null"/> and a logger that drops every event, and
-    /// <c>streams record</c> runs streams through the server build's <see cref="StreamRunner"/>. A test parses
-    /// the quickstart's commands against it.
+    /// The command tree <see cref="Run(string[], TextWriter, TextWriter)"/> parses, with the server build's
+    /// <see cref="StreamRunner"/> as <c>streams record</c>'s stream runner. A test parses the quickstart's
+    /// commands against it.
     /// </summary>
+    /// <remarks>
+    /// For parsing only: never invoke it. Its actions are the real ones, and only their results, refusals
+    /// and log events are dropped (<see cref="TextWriter.Null"/>, <see cref="Logger.None"/>). Invoked,
+    /// <c>content generate</c>, <c>golden write</c> and <c>streams record</c> would still write their files
+    /// (by default under <c>simcore/</c>), silently and without <c>Run</c>'s <c>DOTNET_ENVIRONMENT</c> check.
+    /// </remarks>
     internal static RootCommand CreateRootCommand() =>
         CreateRootCommand(RunOnServer);
 
@@ -85,6 +90,10 @@ public static class Program
     /// <see cref="CreateRootCommand()"/> with <paramref name="runStream"/> as <c>streams record</c>'s stream
     /// runner.
     /// </summary>
+    /// <remarks>
+    /// For parsing only, as <see cref="CreateRootCommand()"/>: the actions write their files when invoked,
+    /// with every result, refusal and log event dropped and no environment check.
+    /// </remarks>
     internal static RootCommand CreateRootCommand(Func<ReadOnlyMemory<byte>, IReadOnlyList<CollisionWorld>, byte[]> runStream) =>
         CreateRootCommand(TextWriter.Null, TextWriter.Null, Logger.None, runStream);
 

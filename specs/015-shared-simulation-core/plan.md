@@ -1770,7 +1770,9 @@ The design documents settled these points, which the spec leaves open. They are 
   which `Run` calls with its own writers, its run's logger and its `runStream`. `CreateRootCommand(runStream)`
   builds the same tree over `TextWriter.Null` and Serilog's `Logger.None`, and `CreateRootCommand()`
   passes it the server build's `StreamRunner`, so the quickstart test parses exactly the tree `Run`
-  parses without anything able to write. Reading the writers from `ParseResult.InvocationConfiguration`
+  parses. The test only parses it: the actions are the real ones, so invoked they would still write
+  their files, just silently and without `Run`'s environment check, and the builder's remarks say never
+  to invoke it (Phase 10 review). Reading the writers from `ParseResult.InvocationConfiguration`
   inside every action was not chosen: it changes all six command factories and their tests for a
   parse-only caller. T256 says so.
 - **The `Random` audit lists the analyzer's own mentions (T261).** T261's grep was to list only
@@ -1786,13 +1788,20 @@ The design documents settled these points, which the spec leaves open. They are 
   branch is gone and the method's summary says an entry ends with its own line feed. The four log
   shapes (no log, an empty log, and a log with and without a final line feed) are now exercised through
   the command by `StreamsCommandTests.RecordStartsOrExtendsTheRegenerationLog`, and
-  contracts/simcore-cli.md#regenerationsmd states them.
+  contracts/simcore-cli.md#regenerationsmd states them. Since the Phase 10 review an empty log is
+  treated like a missing one (below).
 - **Two refusals are tested with a file another handle holds open (T260).** `config check` and
   `SimConfigJson.Load` refuse a file they cannot read, and the top-up needed a file that exists and is
   small enough but fails to read. A permission bit does not do it, since a test run as root reads
   anything. The rows instead open the file with `FileShare.None` while the command runs: .NET takes an
   exclusive lock for that share mode, so the command's own open fails with an `IOException`. The
-  tests clean up through the handle's `Dispose`, so they stay parallel-safe and rerun-safe.
+  tests clean up through the handle's `Dispose`, so they stay parallel-safe and rerun-safe. On Unix the
+  lock is .NET's default advisory `flock`, which `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` or the
+  `System.IO.DisableFileLocking` switch turns off, so since the Phase 10 review both rows get the file
+  from `ConfigFiles.WriteHeldCopy`, which checks with the commands' own read-only open that the hold
+  blocks it, and fails naming the cause when it does not, rather than the row failing as if the command
+  had regressed. The `config check` row also asserts all of stderr against one pattern, one line with a
+  non-empty reason, instead of its opening words.
 - **T258's golden write check names the contract's line (T258).** T258 said every case line of
   `golden write` ends `unchanged`, but contracts/simcore-cli.md#golden-write gives each case line its
   byte count after the state (`input/example: unchanged, 17 bytes`), and the command and its tests
@@ -1838,6 +1847,15 @@ The design documents settled these points, which the spec leaves open. They are 
   take the stream opener through internal overloads, so the tests give a stream without a length and a
   file that grows between the check and the open; `UnseekableStream` moved to the tests' `Support/`.
   simcore-cli.md#config-check, config-rules.md#server, T242 and T250 say so.
+- **An empty regeneration log gets the heading (Phase 10 review).** `StreamFiles.AppendRegenerations`
+  wrote the heading and sentence only when `REGENERATIONS.md` did not exist, and counted an empty file
+  as one ending with a line feed, so an emptied log became a blank line and a `## <UTC>` entry with no
+  heading, against contracts/simcore-cli.md#regenerationsmd's rule that the file starts with the
+  heading. A missing and an empty log are now both started with the heading and the sentence. The check
+  reads the last byte through one open that returns nothing for a missing or empty file, so no branch
+  is left that no log shape reaches, which keeps `StreamFiles.cs` inside the coverage gate. The
+  `empty-log` row of `RecordStartsOrExtendsTheRegenerationLog` now expects the heading, and the
+  contract's bullet and T107 say so.
 
 ## Delivery
 

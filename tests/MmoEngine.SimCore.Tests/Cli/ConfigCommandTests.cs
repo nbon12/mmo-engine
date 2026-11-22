@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using MmoEngine.SimCore.Cli.Commands;
 using MmoEngine.SimCore.Tests.Support;
 using Serilog.Core;
@@ -11,7 +12,8 @@ namespace MmoEngine.SimCore.Tests.Cli;
 /// <c>path: message</c> line per error on stdout, in rule-table order, and nothing when the file is
 /// valid. It exits 0 when valid, 1 when invalid, and 2 on a usage error or a refused input: a missing
 /// file, one longer than 1 MiB (from its length, or once more than 1 MiB has been read) or one that cannot
-/// be read, named on stderr, or an empty or whitespace-only file argument, refused as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
+/// be read, named in one line that is all of stderr, with nothing on stdout, or an empty or
+/// whitespace-only file argument, refused as <c>&lt;file&gt;: the path must not be empty or whitespace</c>.
 /// </summary>
 public sealed class ConfigCommandTests
 {
@@ -46,9 +48,19 @@ public sealed class ConfigCommandTests
             Assert.Equal(row.Stdout, stdout);
         }
 
+        if (row.Stderr is not null)
+        {
+            Assert.Equal(row.Stderr, stderr);
+        }
+
         if (row.StderrContains is not null)
         {
             Assert.Contains(row.StderrContains, stderr, StringComparison.Ordinal);
+        }
+
+        if (row.StderrPattern is not null)
+        {
+            Assert.Matches(row.StderrPattern, stderr);
         }
     }
 
@@ -100,8 +112,9 @@ public sealed class ConfigCommandTests
     }
 
     /// <summary>
-    /// A row's arguments and what it must give. Only the invalid and oversized rows write a file, into
-    /// <paramref name="directory"/>.
+    /// A row's arguments and what it must give. Only the invalid, oversized and unreadable rows write a file,
+    /// into <paramref name="directory"/>; the unreadable row also returns, as <c>Hold</c>, the exclusive
+    /// handle that keeps the file unreadable for the run.
     /// </summary>
     private static ConfigCheckRow Row(string caseName, TempDirectory directory)
     {
@@ -115,7 +128,7 @@ public sealed class ConfigCommandTests
 
             case "missing-file":
                 var missing = directory.Combine("missing.json");
-                return new(["config", "check", missing], Exit: 2, StderrContains: $"{missing}: the file does not exist");
+                return new(["config", "check", missing], Exit: 2, Stdout: string.Empty, Stderr: $"{missing}: the file does not exist\n");
 
             // One byte over the limit: refused from its length, before it is read, so nothing is
             // bound and nothing reaches stdout.
@@ -125,18 +138,20 @@ public sealed class ConfigCommandTests
                     ["config", "check", oversized],
                     Exit: 2,
                     Stdout: string.Empty,
-                    StderrContains: $"{oversized}: the file is {MaxFileLength + 1} bytes; the limit is {MaxFileLength}");
+                    Stderr: $"{oversized}: the file is {MaxFileLength + 1} bytes; the limit is {MaxFileLength}\n");
 
             // A valid copy that another handle holds exclusively (FileShare.None) for the whole run, so it
-            // exists and is short enough, but reading it fails: it is named on stderr with the reason, and
-            // nothing is bound or printed on stdout.
+            // exists and is short enough, but reading it fails: stderr is exactly one line naming it with a
+            // non-empty reason in parentheses, and nothing is bound or printed on stdout. The pattern ends
+            // with \z, not $, which would also accept a final extra line feed; . does not match one.
             case "unreadable-file":
-                var locked = WriteLockedCopy(directory, out var hold);
+                var locked = directory.Combine("locked.json");
+                var hold = ConfigFiles.WriteHeldCopy(locked);
                 return new(
                     ["config", "check", locked],
                     Exit: 2,
                     Stdout: string.Empty,
-                    StderrContains: $"{locked}: the file cannot be read (",
+                    StderrPattern: $@"^{Regex.Escape(locked)}: the file cannot be read \(.+\)\n\z",
                     Hold: hold);
 
             case "no-file-argument":
@@ -172,19 +187,6 @@ public sealed class ConfigCommandTests
         return path;
     }
 
-    /// <summary>
-    /// A copy of <c>simcore/config/default.json</c> in <paramref name="directory"/>, with
-    /// <paramref name="hold"/> an open handle that shares nothing, so no other open of the file can read
-    /// it until the handle is disposed.
-    /// </summary>
-    private static string WriteLockedCopy(TempDirectory directory, out FileStream hold)
-    {
-        var path = directory.Combine("locked.json");
-        File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
-        hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        return path;
-    }
-
     /// <summary>A sparse file one byte longer than 1 MiB, written into <paramref name="directory"/>.</summary>
     private static string WriteOversizedFile(TempDirectory directory)
     {
@@ -195,8 +197,16 @@ public sealed class ConfigCommandTests
     }
 
     /// <summary>
-    /// The arguments, the exit code, the exact stdout when given, a text stderr must contain when given, and
-    /// a handle the row holds open while the command runs, if any.
+    /// The arguments, the exit code, and, each when given, the exact stdout, the exact stderr, a text stderr
+    /// must contain and a pattern all of stderr must match; and a handle the row holds open while the command
+    /// runs, if any.
     /// </summary>
-    private sealed record ConfigCheckRow(string[] Args, int Exit, string? Stdout = null, string? StderrContains = null, IDisposable? Hold = null);
+    private sealed record ConfigCheckRow(
+        string[] Args,
+        int Exit,
+        string? Stdout = null,
+        string? Stderr = null,
+        string? StderrContains = null,
+        string? StderrPattern = null,
+        IDisposable? Hold = null);
 }

@@ -79,7 +79,8 @@ public sealed class SimConfigJsonTests
     /// configuration (contracts/config-rules.md#server): Given (<c>missing-file</c>) a path in a fresh temp
     /// directory that names no file, (<c>oversized-file</c>) a sparse file of 1 MiB + 1 byte, or
     /// (<c>unreadable-file</c>) a copy of <c>simcore/config/default.json</c> that another handle holds open
-    /// sharing nothing, When it is loaded, Then the error is exactly <c>config: file '&lt;path&gt;' does not
+    /// sharing nothing (<see cref="ConfigFiles.WriteHeldCopy"/>, which first checks that the hold blocks a
+    /// read-only open), When it is loaded, Then the error is exactly <c>config: file '&lt;path&gt;' does not
     /// exist</c> or <c>config: the file is 1048577 bytes; the limit is 1048576</c>, or starts
     /// <c>config: file '&lt;path&gt;' cannot be read (</c> and ends with the reason's closing parenthesis.
     /// </summary>
@@ -102,8 +103,7 @@ public sealed class SimConfigJsonTests
 
                 break;
             case "unreadable-file":
-                File.WriteAllText(path, RepoPaths.ReadAllText("simcore", "config", "default.json"));
-                hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                hold = ConfigFiles.WriteHeldCopy(path);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(caseName), caseName, "Unknown case.");

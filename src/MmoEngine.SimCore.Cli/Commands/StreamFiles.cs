@@ -52,10 +52,11 @@ internal static class StreamFiles
 
     /// <summary>
     /// Appends <paramref name="entry"/> to <c>&lt;outDir&gt;/REGENERATIONS.md</c> in one write. When the log
-    /// does not exist, that write creates it with the <c># Stream regenerations</c> heading and the sentence
-    /// saying the file is appended by <c>simcore streams record</c>, then the entry. The entry starts on a
-    /// line of its own, after a blank line, and ends with its own line feed, as every entry
-    /// <c>streams record</c> builds does.
+    /// does not exist or is empty, that write starts it with the <c># Stream regenerations</c> heading and the
+    /// sentence saying the file is appended by <c>simcore streams record</c>, then the entry, so the log always
+    /// starts with its heading (contracts/simcore-cli.md#regenerationsmd). The entry starts on a line of its
+    /// own, after a blank line, and ends with its own line feed, as every entry <c>streams record</c> builds
+    /// does.
     /// </summary>
     public static void AppendRegenerations(string outDir, string entry)
     {
@@ -64,11 +65,12 @@ internal static class StreamFiles
         Directory.CreateDirectory(outDir);
         var path = RegenerationLogPath(outDir);
         var text = new StringBuilder();
-        if (!File.Exists(path))
+        var last = LastByte(path);
+        if (last is null)
         {
             text.Append(LogPreamble);
         }
-        else if (!EndsWithNewLine(path))
+        else if (last != '\n')
         {
             text.Append('\n');
         }
@@ -81,16 +83,21 @@ internal static class StreamFiles
         stream.Flush(flushToDisk: true);
     }
 
-    /// <summary>Whether the file is empty or its last byte is a line feed.</summary>
-    private static bool EndsWithNewLine(string path)
+    /// <summary>The file's last byte, or null when the file does not exist or is empty.</summary>
+    private static int? LastByte(string path)
     {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         if (stream.Length == 0)
         {
-            return true;
+            return null;
         }
 
         stream.Seek(-1, SeekOrigin.End);
-        return stream.ReadByte() == '\n';
+        return stream.ReadByte();
     }
 }
