@@ -3112,7 +3112,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
   Makes T281 (TriggersAndPaths), T282 (Pins) and T283 (AgreementJob) pass.
 - [X] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. Change nothing else, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
-- [ ] T292 [US2] Run the `agreement` job's commands end to end locally, in the workflow's order, on fresh `mktemp -d` app and work directories (US2-IT, SC-001):
+- [X] T292 [US2] Run the `agreement` job's commands end to end locally, in the workflow's order, on fresh `mktemp -d` app and work directories (US2-IT, SC-001):
   - publish;
   - `agreement prepare --seeds 1-50`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`;
   - the two runner unit-test files;
