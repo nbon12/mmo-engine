@@ -1919,6 +1919,20 @@ The design documents settled these points, which the spec leaves open. They are 
   worktree (not committed; T285 adds it): all ten cases pass, each method also passes alone in its own
   process, and a host that truncates the salt to 32 bits, ignores `perturbStep`, or returns a 64 KiB
   report segment each fails the matching test.
+- **T274 and T287: `tables.error.txt` is accepted, and four server rows wait for the served files.**
+  T287 said a PUT name is "never `tables` for `.records` or `.error.txt`", which would refuse
+  `PUT /work/<build>/tables.error.txt`, the fourth form that T274 and contracts/wasm-api.md#served-files
+  accept with 204. The route table is right: `tables` is refused as a stream name, so only
+  `tables.records` is refused, and T287 now says so. T274 also compares the bodies of `/web/worker.mjs`,
+  `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs` with the package's own files, as its
+  "a served file's body equals the file's bytes" asks, and those files come from T289, T288 and T286.
+  So T287 alone turns 19 of T274's 23 tests green, and the other four once those tasks land; T287's
+  "Makes T274 pass" now says that. Placeholder files to get green earlier were not added.
+- **T283 and T290: every Playwright step runs in `tools/agreement`.** T290 put only the three
+  `npx playwright test` steps there. Run from the repository root, where no `npm ci` installed
+  anything, `npx playwright install` would download the latest Playwright and install the browsers
+  that version launches, not the ones the pinned 1.63.0 needs. T283's test asserts
+  `working-directory: tools/agreement` on the install steps too, and T283 and T290 now say so.
 
 ## Delivery
 

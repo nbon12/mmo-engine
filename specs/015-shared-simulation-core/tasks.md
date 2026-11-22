@@ -2907,7 +2907,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `EntryPointReturnsZero`: `Program.Main()` returns 0.
 
   Run `dotnet test tests/MmoEngine.SimCore.Wasm.Tests --filter "FullyQualifiedName~SimCoreExportsTests"` and confirm it fails: the project does not compile without the host.
-- [ ] T273 [P] [US2] Write failing `node:test` tests in `tools/agreement/node/tables.test.mjs` for `compareTables(inputs, serverResults, buildResults, buildName)` from `tools/agreement/lib/tables.mjs`. It returns `{ match, firstMismatch }` under the comparison rule of contracts/wasm-api.md#cross-build-tables. The fixtures come from `tools/agreement/node/fixtures/tables-fixture.mjs`, a deterministic in-memory builder of MMXT inputs and MMXR results with chosen rows set, so no binary is committed:
+- [X] T273 [P] [US2] Write failing `node:test` tests in `tools/agreement/node/tables.test.mjs` for `compareTables(inputs, serverResults, buildResults, buildName)` from `tools/agreement/lib/tables.mjs`. It returns `{ match, firstMismatch }` under the comparison rule of contracts/wasm-api.md#cross-build-tables. The fixtures come from `tools/agreement/node/fixtures/tables-fixture.mjs`, a deterministic in-memory builder of MMXT inputs and MMXR results with chosen rows set, so no binary is committed:
   - An identical pair gives `{ match: true, firstMismatch: null }`.
   - A math table of 41,208 rows, where row 41207 is Atan2 (function ID 8, a `0x3F000000`, b `0xBF800000`) with server r0 `0x402B6374` and build r0 `0x402B6375`, gives `match` false and `firstMismatch` exactly `tables: build chromium-worker, first mismatch at math row 41207: Atan2(a 0x3F000000, b 0xBF800000) r0 server 0x402B6374 build 0x402B6375`.
   - Identical math rows and 3,872 pose rows, where pose row 3871 is Crouched, yaw `0x4000`, at (4096.25, 37.5, −7000.125), with server torso A.x `0x45800266` and build `0x45800267` (float 7 of the row, byte offset 16 + 8·M + 100·3871 + 28), give exactly `tables: build node-aot, first mismatch at pose row 3871: Crouched yaw 0x4000 at (4096.25, 37.5, -7000.125) torso A.x server 0x45800266 build 0x45800267`.
@@ -2917,7 +2917,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - Results whose header counts differ do not match, with a `firstMismatch` that starts `tables: build <name>, ` in `TablesComparison`'s header wording (src/MmoEngine.SimCore.Server/TablesComparison.cs).
 
   Run `node --test tools/agreement/node/tables.test.mjs` and confirm it fails, because `lib/tables.mjs` does not exist.
-- [ ] T274 [P] [US2] Write failing `node:test` tests in `tools/agreement/node/server.test.mjs` for `startServer({ app, work })` from `tools/agreement/lib/server.mjs`, per contracts/wasm-api.md#served-files. Each test uses a fresh `fs.mkdtemp` app root holding `_framework/dotnet.js`, `x.wasm`, `x.json` and `x.dat`, and a fresh work root holding `manifest.json`. Each closes the server afterwards:
+- [X] T274 [P] [US2] Write failing `node:test` tests in `tools/agreement/node/server.test.mjs` for `startServer({ app, work })` from `tools/agreement/lib/server.mjs`, per contracts/wasm-api.md#served-files. Each test uses a fresh `fs.mkdtemp` app root holding `_framework/dotnet.js`, `x.wasm`, `x.json` and `x.dat`, and a fresh work root holding `manifest.json`. Each closes the server afterwards:
   - The server listens on `127.0.0.1` with a dynamic port.
   - `Content-Type` is `application/wasm` for `.wasm`, `text/javascript` for `/_framework/dotnet.js`, `/web/worker.mjs`, `/lib/runtime.mjs` and `/lib/tables.mjs`, `application/json` for `/work/manifest.json`, `text/html; charset=utf-8` for `/web/page.html`, and `application/octet-stream` for `.dat`.
   - Every response, a 404 and a 403 included, carries `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` and `Cache-Control: no-store`, and no `Content-Encoding`. A served file's body equals the file's bytes.
@@ -2927,33 +2927,33 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `GET /nothing` returns 404.
 
   Run `node --test tools/agreement/node/server.test.mjs` and confirm it fails, because `lib/server.mjs` does not exist.
-- [ ] T275 [US2] Write the failing Node agreement runner `tools/agreement/node/agreement.test.mjs` with its per-stream tests (US2.1; US4-ITb through `test('rifle-burst')`, `test('reload-and-empty')` and `test('heat-overheat')`; US4.2b through those three and `test('launcher-arc')`; and US5-ITb through `test('shots-at-known-distances')`), per contracts/wasm-api.md#node:
+- [X] T275 [US2] Write the failing Node agreement runner `tools/agreement/node/agreement.test.mjs` with its per-stream tests (US2.1; US4-ITb through `test('rifle-burst')`, `test('reload-and-empty')` and `test('heat-overheat')`; US4.2b through those three and `test('launcher-arc')`; and US5-ITb through `test('shots-at-known-distances')`), per contracts/wasm-api.md#node:
   - At module top level, before any test, read `AGREEMENT_APP`, `AGREEMENT_WORK` and `AGREEMENT_BUILD`. Throw with a message naming the variable when one is missing, when a directory does not exist, or when the build is not one of `node-interp`, `node-interp-nojit`, `node-interp-relinked` or `node-aot`.
   - In `before`, boot one runtime with `bootRuntime(pathToFileURL(join(AGREEMENT_APP, '_framework', 'dotnet.js')).href, { jiterpreter: !build.endsWith('-nojit') })` from `../lib/runtime.mjs`, and create `AGREEMENT_WORK/<build>/`.
   - One `test('<stream name>')` per `manifest.streams` entry, in manifest order. It calls `RunStream(stream bytes, collision bytes, -1)`, writes `<build>/<name>.records`, and asserts the bytes equal `server/<name>.records`. A failure message names the first record step that differs, found with `firstDifferingStep` from `lib/runtime.mjs`. A thrown error is written to `<build>/<name>.error.txt` and fails the test.
   - In `after`, write `<build>/run.json` with `build`, `runtimeOptions`, `runtimeBuildInfo`, `node: process.version`, `startedAt` and `endedAt`.
 
   The agreement job then requires `simcore agreement compare` to print `node-interp: match, 69 streams, <steps> steps, tables match`, and the same for `node-interp-nojit`. Confirm red: `AGREEMENT_APP="$(mktemp -d)" AGREEMENT_WORK="$(mktemp -d)" AGREEMENT_BUILD=node-interp node --test tools/agreement/node/agreement.test.mjs` exits non-zero (no `dotnet.js`, no `lib/runtime.mjs`).
-- [ ] T276 [US2] Add the test `'manifest holds the 50 generated seeds'` to `tools/agreement/node/agreement.test.mjs` (US2.3). It asserts:
+- [X] T276 [US2] Add the test `'manifest holds the 50 generated seeds'` to `tools/agreement/node/agreement.test.mjs` (US2.3). It asserts:
   - `manifest.seeds` deep-equals `{ first: 1, last: 50 }`;
   - the `origin: 'generated'` entries are exactly `seed-001` to `seed-050` in order, with `seed` 1 to 50;
   - the `origin: 'committed'` entries number 19.
 
   Their per-stream tests (T275) then run every seed in both Node builds and the Worker, and compare reports zero divergent streams. Confirm it fails with T275's red command.
-- [ ] T277 [US2] Add the test `'perturbation diverges at exactly its step'` to `tools/agreement/node/agreement.test.mjs` (US2-IT, SC-002 in WebAssembly). Take `p = manifest.perturbation` and assert:
+- [X] T277 [US2] Add the test `'perturbation diverges at exactly its step'` to `tools/agreement/node/agreement.test.mjs` (US2-IT, SC-002 in WebAssembly). Take `p = manifest.perturbation` and assert:
   - `p.stream === 'flat-run-30hz'` and `p.field === 'characters[0].position.x'`;
   - `RunStream(stream, collision, p.step)` gives records byte-equal to the server's for every step below `p.step`;
   - `firstDifferingStep(server, perturbed) === p.step`;
   - in that record, the `u32` at state offset 16 (record offset 24, `characters[0].position.x` per contracts/state-serialization.md#character-record) equals the server's bits + 1, and the record's hash differs from the server's.
 
   Confirm it fails with T275's red command.
-- [ ] T278 [US2] Add the test `'cross-build tables match the server'` to `tools/agreement/node/agreement.test.mjs` (US3.8b and US5.5b, the bit half of SC-004):
+- [X] T278 [US2] Add the test `'cross-build tables match the server'` to `tools/agreement/node/agreement.test.mjs` (US3.8b and US5.5b, the bit half of SC-004):
   - Call `EvaluateTables(tables/inputs.bin, tables/config.bin)` from `manifest.tables` and write the result to `<build>/tables.bin`. A thrown error is written to `<build>/tables.error.txt` and fails the test.
   - Assert `compareTables(inputs, server/tables.bin, result, build)` is `{ match: true, firstMismatch: null }`, so every in-domain math row matches bit for bit, NaN rows match any NaN, and every pose row matches bit for bit.
   - Assert the result header's pose row count is 6,192 and its length is 16 + 8·M + 100·6,192.
 
   Confirm it fails with T275's red command.
-- [ ] T279 [US2] Add the supporting tests `'batch inputs through StepQueued equal RunStream'` (US2.6 in WebAssembly) and `'refusals throw their expected message'` (US2.5 and US6.5 in WebAssembly) to `tools/agreement/node/agreement.test.mjs`:
+- [X] T279 [US2] Add the supporting tests `'batch inputs through StepQueued equal RunStream'` (US2.6 in WebAssembly) and `'refusals throw their expected message'` (US2.5 and US6.5 in WebAssembly) to `tools/agreement/node/agreement.test.mjs`:
   - **Batch.** For each manifest stream whose `batch` is not null (every stream that meets contracts/simcore-cli.md's batchable rule, named or generated; among them flat-run-30hz, rifle-burst and launcher-arc, which the measurement also uses; no fixed count or list is asserted):
     - `LoadCollision`, `LoadConfig` and `Reset(initialState, BigInt.asIntN(64, BigInt('0x' + matchSalt)))` each return 0.
     - Fetch `ReportBuffer()` again after `LoadConfig`, and dispose the old view.
@@ -2962,7 +2962,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - **Refusals.** `manifest.refusals` has exactly `unsupported-version`, `rules-revision` and `collision-missing`, and each `RunStream(stream, collision, -1)` throws an `Error` whose message contains its `expected`: `unsupported version 2; this reader supports version 1`, `rulesRevision at offset 8` and `collisionChecksum at offset 36`.
 
   Confirm they fail with T275's red command.
-- [ ] T280 [P] [US2] Create the runner package and write the failing Worker spec (US2.2, plus the Worker half of US3.8b, US4.2b, US4-ITb, US5.5b, US5-ITb and US2.6):
+- [X] T280 [P] [US2] Create the runner package and write the failing Worker spec (US2.2, plus the Worker half of US3.8b, US4.2b, US4-ITb, US5.5b, US5-ITb and US2.6):
   - **Package.**
     - `tools/agreement/package.json`: `"private": true`, `"type": "module"`, and only `"devDependencies": { "@playwright/test": "1.63.0" }`, exact.
     - `tools/agreement/package-lock.json` from `npm install --save-exact` in `tools/agreement/` (lockfileVersion 3).
@@ -2981,7 +2981,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - No console message contains `expected content type`.
 
   Run `cd tools/agreement && npm ci && npx playwright install chromium && AGREEMENT_APP="$(mktemp -d)" AGREEMENT_WORK="$(mktemp -d)" npx playwright test --project chromium` and confirm it fails (no `playwright.config.mjs`, no `lib/server.mjs`, no page).
-- [ ] T281 [US2] Write the failing workflow test `tests/workflows/test_simcore_workflow.py`, class `TriggersAndPaths` (US2.7, FR-027).
+- [X] T281 [US2] Write the failing workflow test `tests/workflows/test_simcore_workflow.py`, class `TriggersAndPaths` (US2.7, FR-027).
   - Set-up, in the style of `tests/workflows/test_harness_workflow.py`:
     - a module docstring;
     - `ROOT`, with `WORKFLOW = yaml.safe_load(.github/workflows/simcore.yml)` and `TRIGGERS = WORKFLOW.get("on", WORKFLOW.get(True))`;
@@ -2992,7 +2992,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `test_token_is_read_only`: `WORKFLOW["permissions"] == {"contents": "read"}`.
 
   Run `python3 -m unittest tests/workflows/test_simcore_workflow.py -v` and confirm it fails (`simcore.yml` is missing).
-- [ ] T282 [US2] Add class `Pins` to `tests/workflows/test_simcore_workflow.py`:
+- [X] T282 [US2] Add class `Pins` to `tests/workflows/test_simcore_workflow.py`:
   - `test_every_action_is_pinned_to_a_commit`: every `uses` in every job matches `^[\w.-]+/[\w.-]+@[0-9a-f]{40}$`.
   - `test_checkouts_do_not_persist_credentials`: every `actions/checkout@` step has `persist-credentials: false`.
   - `test_playwright_is_pinned_exactly`:
@@ -3002,7 +3002,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `test_toolchains_come_from_global_json_and_node_22`: `actions/setup-dotnet` has `global-json-file: global.json`, and `actions/setup-node` has `node-version: "22"`.
 
   Confirm it fails with the command above.
-- [ ] T283 [US2] Add class `AgreementJob` to `tests/workflows/test_simcore_workflow.py` (US2.7, SC-001, SC-006):
+- [X] T283 [US2] Add class `AgreementJob` to `tests/workflows/test_simcore_workflow.py` (US2.7, SC-001, SC-006):
   - `test_compare_gates_the_job` (US2.7):
     - exactly one step runs `agreement compare --work`, with `--summary "$GITHUB_STEP_SUMMARY"`;
     - it has no `continue-on-error`, and its `if` is `${{ !cancelled() }}`, so it reports even after a runner step failed;
@@ -3015,6 +3015,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `test_node_runs_with_and_without_the_jiterpreter`: two steps run `node --test tools/agreement/node/agreement.test.mjs`, with `env.AGREEMENT_BUILD` `node-interp` and `node-interp-nojit`, and neither has `continue-on-error`.
   - `test_three_browser_projects_run_and_optional_ones_may_not_install`:
     - the `npx playwright install --with-deps chromium` step has no `continue-on-error`;
+    - every Playwright install and test step has `working-directory: tools/agreement`, where `npm ci` installed the pinned 1.63.0;
     - the firefox and webkit install steps each have an `id` and `continue-on-error: true`;
     - `npx playwright test --project chromium` runs unconditionally;
     - `--project firefox` and `--project webkit` run with `if` on their install step's `outcome == 'success'`, and none of the three test steps has `continue-on-error`;
@@ -3024,7 +3025,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `test_steps_run_with_pipefail`: `WORKFLOW["defaults"]["run"]["shell"] == "bash"`.
 
   Confirm it fails with the command above.
-- [ ] T284 [US2] Add class `AutoMerge` to `tests/workflows/test_simcore_workflow.py` (US2.7). `test_auto_merge_waits_for_simcore`: the `auto-merge.yml` `on.workflow_run.workflows` list (`AUTO_MERGE.get("on", AUTO_MERGE.get(True))`) contains both `"SimCore"` and `"Workflow tests"`, and `types == ["completed"]`. Confirm it fails with the command above (`"SimCore"` is absent).
+- [X] T284 [US2] Add class `AutoMerge` to `tests/workflows/test_simcore_workflow.py` (US2.7). `test_auto_merge_waits_for_simcore`: the `auto-merge.yml` `on.workflow_run.workflows` list (`AUTO_MERGE.get("on", AUTO_MERGE.get(True))`) contains both `"SimCore"` and `"Workflow tests"`, and `types == ["completed"]`. Confirm it fails with the command above (`"SimCore"` is absent).
 
 ### Implementation
 
@@ -3061,9 +3062,9 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - The MIME table, plus COOP `same-origin`, COEP `require-corp` and `Cache-Control: no-store` on every response.
   - Files are streamed unmodified, without `Content-Encoding`.
   - A decoded path that resolves outside its root returns 403.
-  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` or `.error.txt`; the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. The server answers 204, or 403 for anything else, and 404 for unknown paths.
+  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. The server answers 204, or 403 for anything else, and 404 for unknown paths.
 
-  Makes T274 (server.test.mjs) pass.
+  Makes T274 (server.test.mjs) pass: 19 of its 23 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
 - [ ] T288 [US2] Implement `tools/agreement/lib/runtime.mjs` (contracts/wasm-api.md#boot), after T285:
   - `JITERPRETER_OFF`, the three `--no-jiterpreter-*` flags;
   - `bootRuntime(dotnetJsUrl, { jiterpreter = true })`, which uses `dotnet.withRuntimeOptions(...)`, gets `getAssemblyExports('MmoEngine.SimCore.Wasm.dll')` and returns `{ runtime, exports, buildInfo, timings }`;
@@ -3101,8 +3102,8 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     4. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/simcore-app"`. This is the prebuilt runtime; no workload is ever installed here.
     5. `dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$AGREEMENT_WORK"`.
     6. `npm ci` in `tools/agreement`.
-    7. `npx playwright install --with-deps chromium`.
-    8. `npx playwright install --with-deps firefox` (`id: firefox`, `continue-on-error: true`), then the same for webkit (`id: webkit`).
+    7. `npx playwright install --with-deps chromium`, with `working-directory: tools/agreement` like every Playwright step, so `npx` runs the lockfile's 1.63.0.
+    8. `npx playwright install --with-deps firefox` (`id: firefox`, `continue-on-error: true`), then the same for webkit (`id: webkit`), both in `tools/agreement`.
     9. `node --test tools/agreement/node/tables.test.mjs tools/agreement/node/server.test.mjs`.
     10. `node --test tools/agreement/node/agreement.test.mjs` with `AGREEMENT_BUILD: node-interp`, then again with `node-interp-nojit`.
     11. `npx playwright test --project chromium`, then `--project firefox` and `--project webkit`, each `if: steps.<id>.outcome == 'success'`. All three run in `tools/agreement`.
