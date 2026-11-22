@@ -20,6 +20,61 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-22 — Shared simulation core, slice 2: WebAssembly host and agreement suite
+
+Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #74
+
+### Behavior and contract changes
+
+- **`src/MmoEngine.SimCore.Wasm`** is the browser build of the core: a .NET WebAssembly host whose
+  `[JSExport]` exports delegate to `BatchStepper` and `StreamRunner` (load config and collision,
+  reset, step, batch step, run a stream, and `EvaluateTables`). The exports, byte layouts and codes
+  are in `specs/015-shared-simulation-core/contracts/wasm-api.md`. It publishes on the prebuilt
+  runtime: pass `-p:UsingBrowserRuntimeWorkload=false`, or a machine with the `wasm-tools` workload
+  relinks and tests a different build from CI.
+- **`tools/agreement/`** holds the runners:
+  - the Node runner (`node/agreement.test.mjs`), run with the jiterpreter on (`node-interp`) and off
+    (`node-interp-nojit`), and it asserts the runtime's own jiterpreter state;
+  - the Playwright Worker runner (`specs/worker.spec.mjs`), which steps every stream in a dedicated
+    Web Worker and compares the bytes it wrote with the server's records;
+  - a static server with cross-origin-isolation headers and a guarded `PUT /work/`;
+  - one package, `@playwright/test` 1.63.0, pinned exactly. Run `npx` from `tools/agreement`, never
+    from the repo root.
+- **The `SimCore` workflow** (`.github/workflows/simcore.yml`) runs on changes to the core, its
+  streams, its runners or its build:
+  - `agreement` gates: 69 streams (19 committed plus 50 generated) and the cross-build tables, across
+    `node-interp`, `node-interp-nojit` and `chromium-worker`, with Firefox and WebKit optional, then
+    `simcore agreement compare`. It has `timeout-minutes: 10`, a bound on every step, and one shared
+    deadline for the optional browsers so compare always reports.
+  - `measure` uploads the `simcore-measurement` artifact: server benchmarks, plus download size,
+    cold start and per-step cost for the prebuilt, relinked and AOT builds. It fails when the
+    relinked or AOT build disagrees with the server or the report does not validate; its numbers
+    never gate.
+- **`auto-merge.yml`** now also waits for `SimCore` (`on.workflow_run.workflows` is
+  `["Workflow tests", "SimCore"]`).
+
+### Shared pieces to reuse
+
+- The `[JSExport]` exports and the one-frame JavaScript pattern of `tools/agreement/web/worker.mjs`,
+  for sub-spec 8's browser client.
+- `tools/agreement/lib/runtime.mjs` (boot, record helpers, `firstDifferingStep`),
+  `lib/server.mjs`, `lib/tables.mjs` and `lib/passes.mjs`.
+- `simcore agreement prepare` and `simcore agreement compare` for any new build to compare with the server.
+
+### Open follow-ups
+
+- Gate 9's WebAssembly build mode (prebuilt interpreter, relinked or AOT), chosen from the
+  measurements the `measure` job records.
+- Firefox and WebKit stay optional while Playwright cannot always install them.
+- `.routines/merge-policy.md` still says `Workflow tests` is the only CI.
+- `auto-merge.yml`'s `workflow_run` list does not name `.NET` or `Harness`, which also run on pull
+  requests. This is older than this slice and outside its one-entry change, so a pull request whose
+  last check to finish is one of theirs waits for its next pull request event.
+- While `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for an `agreement` check run that has
+  not registered on the head commit yet (plan.md, the T284 Phase 11 review decision). Making it a
+  required check first needs the check to report on every pull request, then the admin-only
+  branch-protection setting.
+
 ## 2026-11-22 — Config JSON refuses an omitted leaf field
 
 Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #73 · Issue: #71
