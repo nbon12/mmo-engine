@@ -5,8 +5,12 @@
  * `npx playwright test --project <browser>` from `tools/agreement/` runs every spec in `specs/` in a
  * headless Chromium, Firefox or WebKit, where the build is `<project>-worker`: `specs/worker.spec.mjs`,
  * which starts its own agreement server (`lib/server.mjs`) and reads `AGREEMENT_APP` and
- * `AGREEMENT_WORK`, and `specs/worker-load-refusal.spec.mjs`, the Worker's load refusals against a
- * stand-in runtime, which writes its own publish folder and work directory and needs neither.
+ * `AGREEMENT_WORK`; `specs/worker-load-refusal.spec.mjs`, the Worker's load refusals against a
+ * stand-in runtime; and `specs/measure-worker.spec.mjs` (T320 third spec-test review), the measurement
+ * page and its Worker (`web/measure.html`, `web/measure-worker.mjs`) against a stand-in runtime, the
+ * messages `lib/measure.mjs` reads for a cold start and for the step passes. The last two each write
+ * their own publish folder and work directory and need neither variable, so the CI step that runs
+ * `--project chromium` runs them too.
  *
  * - `retries: 0`: a disagreement fails the run the first time; a rerun never hides it.
  * - `workers: 1`: one browser at a time, so a run's timings and its Worker are its own.

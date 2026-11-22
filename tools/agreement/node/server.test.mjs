@@ -32,18 +32,28 @@
  * Requests go through `node:http` with the raw path, because `fetch` would normalise `%2e%2e`
  * segments before sending them.
  *
+ * `drain(request, then)`, which drops a refused or unknown request's body before its answer, is also
+ * tested on its own (T322 third independent review): `then` runs exactly once, on the request's `end`,
+ * or on an `error` or `close` before it, never twice when several fire. Through the server, a raw
+ * socket sends a refused PUT, a POST or an undecodable path with a 1 MiB `Content-Length`, then
+ * destroys itself mid-body once the server is dropping the body; the response is ended exactly once,
+ * with the refusal's status, and the server serves the next request.
+ *
  * Run: node --test tools/agreement/node/server.test.mjs
  */
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter, once } from 'node:events';
 import http from 'node:http';
+import net from 'node:net';
 import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { startServer } from '../lib/server.mjs';
+import { drain, startServer } from '../lib/server.mjs';
 
 /** `tools/agreement/`, which holds the `web/` and `lib/` folders the server serves. */
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -516,6 +526,201 @@ describe('a 403, 404 or 500 carries a one-line text/plain body', () => {
             assert.equal(res.body.toString('utf8'), text, `${what}: body`);
             assertEveryResponseHeader(res, what);
             assert.deepEqual(await filesUnder(fixture.work), workFiles, `${what} wrote nothing under the work root`);
+        });
+    }
+});
+
+/**
+ * A stand-in request for `drain`: an EventEmitter whose body has not ended, counting its `resume()`
+ * calls. Like a real stream, emitting `error` on it throws when nothing listens.
+ */
+function fakeRequest() {
+    const request = new EventEmitter();
+    request.readableEnded = false;
+    request.resumeCalls = 0;
+    request.resume = () => {
+        request.resumeCalls += 1;
+        return request;
+    };
+    return request;
+}
+
+/** A stand-in response that records the arguments of each `end()` call. */
+function fakeResponse() {
+    const ends = [];
+    return { ends, end: (...args) => ends.push(args) };
+}
+
+/** Resolves on the emitter's `close`; unlike `events.once`, an `error` before it does not reject. */
+function closeOf(emitter) {
+    return new Promise((resolveClose) => emitter.once('close', resolveClose));
+}
+
+/** The error a request emits when its client resets the connection mid-body. */
+function resetError() {
+    return Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
+}
+
+describe('drain answers a request exactly once: on its end, or on an error or close before it', () => {
+    // T322 (third independent review): `drain` answered only on `end`, so a request whose body errored
+    // first (a client reset mid-body) never had its response ended.
+    const rows = [
+        { what: "an 'error' before the body ends", events: ['error'] },
+        { what: "an 'error', then the 'close' after it", events: ['error', 'close'] },
+        { what: "the body's 'end'", events: ['end'] },
+        { what: "the body's 'end', then the 'close' after it", events: ['end', 'close'] },
+        { what: "the body's 'end', then a late 'error'", events: ['end', 'error'] },
+        { what: "an 'error', then a late 'end'", events: ['error', 'end'] },
+        { what: "a 'close' with no 'end' and no 'error'", events: ['close'] },
+    ];
+
+    for (const { what, events } of rows) {
+        test(`drain: ${what} answers once`, () => {
+            const request = fakeRequest();
+            const response = fakeResponse();
+
+            drain(request, () => response.end('403 Forbidden\n'));
+
+            assert.deepEqual(response.ends, [], 'nothing is answered before the request ends, errors or closes');
+            assert.equal(request.resumeCalls, 1, 'the body is resumed once, so it is read and dropped');
+            for (const [index, event] of events.entries()) {
+                request.emit(event, ...(event === 'error' ? [resetError()] : []));
+                assert.deepEqual(
+                    response.ends,
+                    [['403 Forbidden\n']],
+                    `after ${events.slice(0, index + 1).join(', then ')}: end() called exactly once`,
+                );
+            }
+
+            // A later error is still handled: `emit` returns true when a listener took it, and throws when
+            // none did.
+            assert.equal(request.emit('error', resetError()), true, 'an error after the answer has a listener');
+            assert.deepEqual(response.ends, [['403 Forbidden\n']], 'an error after the answer ends nothing more');
+        });
+    }
+
+    test('drain: a body that has already ended is answered at once, without resuming it', () => {
+        const request = fakeRequest();
+        request.readableEnded = true;
+        const response = fakeResponse();
+
+        drain(request, () => response.end('404 Not Found\n'));
+
+        assert.deepEqual(response.ends, [['404 Not Found\n']], 'end() called exactly once, at once');
+        assert.equal(request.resumeCalls, 0, 'an ended body is not resumed');
+        assert.deepEqual(
+            ['end', 'error', 'close'].map((event) => request.listenerCount(event)),
+            [0, 0, 0],
+            'no listener is added for an ended body',
+        );
+    });
+
+    test('drain: a stream destroyed mid-body with an error answers once, though its close follows', async () => {
+        const request = new PassThrough();
+        request.write(patternBytes(1_024, 16));
+        const response = fakeResponse();
+        const closed = closeOf(request);
+
+        drain(request, () => response.end('403 Forbidden\n'));
+        request.destroy(resetError());
+        await closed;
+
+        assert.deepEqual(response.ends, [['403 Forbidden\n']], 'end() called exactly once');
+    });
+
+    test('drain: a stream whose body ends answers once, though its close follows', async () => {
+        const request = new PassThrough();
+        const response = fakeResponse();
+        const closed = closeOf(request);
+
+        drain(request, () => response.end('404 Not Found\n'));
+        request.end(patternBytes(1_024, 17));
+        await closed;
+
+        assert.deepEqual(response.ends, [['404 Not Found\n']], 'end() called exactly once');
+    });
+});
+
+/**
+ * Records the receiver of every call of `prototype[name]` for the rest of the test, calling through to
+ * the method, and restores the prototype exactly afterwards: an inherited method's own property is
+ * removed again.
+ */
+function spyOnPrototype(t, prototype, name) {
+    const own = Object.getOwnPropertyDescriptor(prototype, name);
+    const original = prototype[name];
+    const receivers = [];
+    Object.defineProperty(prototype, name, {
+        configurable: true,
+        writable: true,
+        value: function spied(...args) {
+            receivers.push(this);
+            return original.apply(this, args);
+        },
+    });
+    t.after(() => {
+        if (own === undefined) {
+            delete prototype[name];
+        } else {
+            Object.defineProperty(prototype, name, own);
+        }
+    });
+    return receivers;
+}
+
+/** Waits until `condition()` holds, failing with `<what> within <timeoutMs> ms` when it does not. */
+async function waitFor(condition, what, timeoutMs = 5_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition()) {
+        if (Date.now() > deadline) {
+            assert.fail(`${what} within ${timeoutMs} ms`);
+        }
+
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+}
+
+describe('a refused or unknown request reset mid-body is answered once, and the server serves the next one', () => {
+    // T322 (third independent review): each request declares a 1 MiB body, which the server drops with
+    // `drain` before its answer; the client sends 1 KiB of it and destroys its socket, so the request
+    // errors before its body ends.
+    const rows = [
+        { what: 'a refused PUT', method: 'PUT', path: '/work/node-interp/x.records', status: 403 },
+        { what: 'a POST', method: 'POST', path: '/work/chromium-worker/x.records', status: 404 },
+        { what: 'a PUT whose path does not decode', method: 'PUT', path: '/work/chromium-worker/%E0%A4%A.records', status: 403 },
+    ];
+
+    for (const { what, method, path, status } of rows) {
+        test(`${what} (${method} ${path}) reset mid-body is answered ${status} once`, async (t) => {
+            const { work, server, get } = await startFixtureServer(t);
+            const resumed = spyOnPrototype(t, http.IncomingMessage.prototype, 'resume');
+            const ended = spyOnPrototype(t, http.ServerResponse.prototype, 'end');
+            const isTheRequest = (request) => request?.method === method && request?.url === path;
+
+            // Given a request whose body the server is dropping, 1 KiB of its 1 MiB sent.
+            const socket = net.connect({ host: '127.0.0.1', port: server.port });
+            await once(socket, 'connect');
+            socket.write(`${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${MIB}\r\n\r\n`);
+            socket.write(patternBytes(1_024, 15));
+            await waitFor(() => resumed.some(isTheRequest), `the server did not start dropping the body of ${method} ${path}`);
+
+            // When the client destroys its socket mid-body.
+            const closed = closeOf(socket);
+            socket.destroy();
+            await closed;
+
+            // Then that request's response is ended once, with its status, and the next request is served.
+            const answered = () => ended.filter((response) => isTheRequest(response.req));
+            await waitFor(() => answered().length > 0, `the response to ${method} ${path} was not ended`);
+            const next = await get('/work/manifest.json');
+            assert.equal(next.status, 200, 'GET /work/manifest.json after the reset: status');
+            assert.ok(next.body.equals(WORK_FILES['manifest.json']), 'GET /work/manifest.json after the reset: the body equals the file');
+            assert.deepEqual(
+                answered().map((response) => response.statusCode),
+                [status],
+                `${method} ${path}: the status of each end() of its response`,
+            );
+            assert.deepEqual(await filesUnder(work), ['manifest.json'], `${method} ${path} wrote nothing under the work root`);
         });
     }
 });

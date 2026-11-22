@@ -42,7 +42,9 @@
  *   So a rerun on the same work directory never leaves an error file beside the output it stands in
  *   place of, which `simcore agreement compare` would read first. The answer is 204,
  *   or 403 for any other PUT under `/work/`; a refused body is read to its end and dropped before the
- *   answer, so the client always gets the 403, and nothing is written or removed.
+ *   answer, so the client always gets the 403, and nothing is written or removed. A refused or unknown
+ *   request whose body errors or closes before it ends (a client that resets mid-body) is answered once
+ *   all the same, so its response is never left open (`drain`, exported for the tests).
  * - **Anything else** is 404. A failure of the server itself (a file it cannot read or write for a reason
  *   other than a missing file, such as a build folder that is a regular file) is 500, not 403, so the
  *   runner sees a fault rather than a refusal.
@@ -364,15 +366,31 @@ function readBody(request) {
     });
 }
 
-/** Reads the request's body to its end, dropping it, then calls `then`. */
-function drain(request, then) {
+/**
+ * Reads the request's body to its end, dropping it, then calls `then` exactly once: on the request's
+ * `end`, or on its `error` or `close` when the body does not end (a client that resets the connection
+ * mid-body), so a refused or unknown request's response is always ended. A later `end`, `error` or
+ * `close` calls nothing, and an `error` is never left unhandled. Exported for `node/server.test.mjs`.
+ *
+ * @param {import('node:http').IncomingMessage} request the request whose body is dropped
+ * @param {() => void} then the answer, called once
+ */
+export function drain(request, then) {
     if (request.readableEnded) {
         then();
         return;
     }
 
-    request.on('end', then);
-    request.on('error', () => {});
+    let answered = false;
+    const answerOnce = () => {
+        if (!answered) {
+            answered = true;
+            then();
+        }
+    };
+    request.on('end', answerOnce);
+    request.on('error', answerOnce);
+    request.on('close', answerOnce);
     request.resume();
 }
 

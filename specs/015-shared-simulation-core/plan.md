@@ -2656,6 +2656,47 @@ The design documents settled these points, which the spec leaves open. They are 
   qualified case now says it held until this bullet. `MeasureJob`'s row for the AOT build that
   diverged at `flat-run-30hz`'s first step now has the measurement succeed, runs validation, the
   report and both uploads, and fails the job on its gate.
+- **T322 (third independent review), T274 and T287: the server answers a refused or unknown request
+  exactly once, even when its body errors.** `drain`, which reads a refused PUT's, a non-GET request's
+  or an undecodable path's body to its end before the answer, called `then` only on the request's
+  `end` and swallowed its `error`, so a client that reset the connection mid-body left the response
+  never ended. It now answers on the first of `end`, `error` and `close`, never twice, keeps its error
+  listener, and is exported for the tests. `node/server.test.mjs` gains
+  `'drain answers a request exactly once: on its end, or on an error or close before it'` (each order
+  of the three events on a stand-in request, an ended body, and a `PassThrough` destroyed with an
+  error or ended) and `'a refused or unknown request reset mid-body is answered once, and the server
+  serves the next one'` (a refused PUT, a POST and an undecodable PUT, each declaring 1 MiB, sending
+  1 KiB from a raw socket that is destroyed once the server is dropping the body; the server's own
+  `IncomingMessage.resume` and `ServerResponse.end` are wrapped for the test to see that, and restored
+  exactly). Answering a response whose socket is gone was checked first: `writeHead` and `end` do not
+  throw and set `writableEnded`. Probes: the old `drain` fails 8 of the 49 tests (the four rows whose
+  first event is an `error` or a `close`, the destroyed `PassThrough`, and the three reset rows, each
+  `the response to <method> <path> was not ended within 5000 ms`); dropping the once guard fails 19,
+  the double answer becoming a 500. As fixed, all 49 pass.
+- **T320 (third spec-test review), T307: the measurement Worker runs in a Playwright spec.** Nothing
+  ran `web/measure-worker.mjs` but CI's `measure` job, so its one call into `timeFirstStep` was
+  guarded only there. `specs/measure-worker.spec.mjs`, modelled on `specs/worker-load-refusal.spec.mjs`,
+  writes its own publish folder and work directory and starts its own server per test, so it needs
+  neither `AGREEMENT_APP` nor `AGREEMENT_WORK` and runs in CI's existing `--project chromium` step (and
+  in the optional Firefox and WebKit runs, like the load-refusal spec). Its stand-in runtime puts a
+  floor under each interval with busy waits on the Worker's own clock (40 ms on import, 100 ms in
+  `create()`, 20 ms per `LoadCollision`), which is what lets the spec tell `bootRuntime`'s timings from
+  any others; finite and non-negative alone would pass zeros. Each `StepQueued(16)` busy-waits 0.1 ms
+  too, so each kind's `meanNs` and `p99Ns` are at least 6,250 ns (the clock and floating-point rounding
+  are both monotonic, so the floor holds exactly). Its `StepQueued` refuses a world or
+  commands that are not one measured stream's, and the manifest lists a decoy stream first.
+  `'a cold start posts booted, then the first step it committed with its timings, then done'` and
+  `'a steps run posts booted, then each step kind's cost in the report's order, then done'` assert the
+  exact messages. Probes on `measure-worker.mjs`: exports whose `StepQueued` returns 1 without writing
+  fail the cold start with the `fatal` `StepQueued(1) returned 1, but the report buffer holds 0 records
+  in 0 bytes, not one whole step record`; timings `{importMs: 0, createMs: 0}` fail `coldStart.importMs
+  is at least 40`; `bootRuntime`'s two timings swapped fail `coldStart.createMs is at least 100`;
+  timings `{}` post `undefined` intervals; taking the manifest's first stream fails both tests on the
+  decoy; and a step batch of 1 fails the steps test. The independent verification found that the
+  steps test, then checking only finite and non-negative costs, passed a step pass timed on a clock
+  that does not move (`now: () => 0`) or with `unitNs: 1e3`; with the 0.1 ms wait both fail
+  `steps movement: meanNs is at least 6250` (received 0 and 7.56). Restored, the Chromium project
+  passes all five specs, the full agreement run included, on a real publish.
 
 ## Delivery
 
