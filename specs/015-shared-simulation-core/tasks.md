@@ -2844,7 +2844,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 - [X] T268 Audit for human steps (Principle XIII) with commands:
   - `grep -n -i -E "manual|by hand|sign-off|sign off|approv|QA|stop and validate|reviewer must|ask the (owner|maintainer)"` over `specs/015-shared-simulation-core/tasks.md`, `specs/015-shared-simulation-core/spec.md`, `specs/015-shared-simulation-core/quickstart.md` and the PR body file. Every hit must describe system behaviour or an automated check, not a step a person performs. Reword any that does not.
   - Confirm with `gh pr view <n> --json body` that the final description contains no such step.
-- [ ] T269 Mark the PR ready and see it merged under `.routines/merge-policy.md`. This depends on every task above.
+- [X] T269 Mark the PR ready and see it merged under `.routines/merge-policy.md`. This depends on every task above.
   - **Wait for checks**: First wait for every check on the head commit to complete green with `gh pr checks <n> --watch`. That is the `.NET` workflow's `dotnet` job, plus `Workflow tests` if it ran. `auto-merge.yml` listens only to `Workflow tests` completions, so the PR is marked ready after `.NET` has passed and the `ready_for_review` event sees every check green.
   - **Confirm the rules**: No review thread is unresolved and no review requests changes (`gh pr view <n> --json reviewDecision,reviews`), and the description lists what was verified. Then run `gh pr ready <n>`.
   - **Check the outcome**: Read the `auto-merge` run's summary (`gh run list --workflow auto-merge.yml --branch 015-shared-simulation-core`, then `gh run view <id>`). If it squash-merged, the task is done.
