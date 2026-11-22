@@ -13,13 +13,15 @@ that job depends on:
   (SC-006), each step's own bound inside it, the optional browsers' shared deadline that leaves compare
   the rest of the 10 minutes, and the three browser projects;
 - the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate,
-  and that auto-merge's own check filter holds the merge on a failed or pending `agreement` check;
+  that auto-merge's own check filter holds the merge on a failed or pending `agreement` check, and that
+  its decision step, run under bash with a stand-in gh, leaves the pull request alone or keeps it waiting
+  then and merges it only once the check passed;
 - the `measure` job (US7.2, US7-IT, SC-007, FR-030, FR-031): the server benchmarks on the runner class,
   the prebuilt, relinked and AOT publishes in the contract's order, each mode recorded as produced or
   with its reason (a publish that does not finish within its `timeout` included), the relinked and AOT
   agreement gate, which fails the job when a runner or compare fails and still reports after a failed
   run, each step's own bound inside the job's 30 minutes, the exhaustive trig sweeps that run only
-  there, and the measurement report validated and then uploaded.
+  there, and the measurement report validated, shown in the job log and summary, and then uploaded.
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
 tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs. The measurement
@@ -163,6 +165,73 @@ time.sleep(float(os.environ.get("FAKE_" + name.upper() + "_SLEEP", "0")))
 sys.exit(int(os.environ.get("FAKE_" + name.upper() + "_EXIT", "0")))
 """
 FAKE_TOOLS = ("dotnet", "node", "npm", "npx")
+
+# A stand-in for gh in the auto-merge step runs below. It appends its arguments to $FAKE_GH_LOG as one
+# JSON line and answers from $FAKE_GH_ANSWERS, a JSON object with the pull request's number, repository
+# and fields (`pr`) and the API's responses by `<METHOD> <endpoint>` (`api`). `pr view` prints the fields
+# its --json names, `pr merge` prints nothing, and `api` prints the response, through `jq -r` when given
+# --jq, as gh does. Any other call, or an endpoint without an answer, exits 1, as a failed API call would.
+FAKE_GH = r"""
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\n")
+with open(os.environ["FAKE_GH_ANSWERS"], encoding="utf-8") as file:
+    answers = json.load(file)
+
+
+def fail(message):
+    sys.stderr.write("fake gh: " + message + ": " + " ".join(args) + "\n")
+    sys.exit(1)
+
+
+if args[:2] in (["pr", "view"], ["pr", "merge"]):
+    if args[2:5] != [answers["number"], "--repo", answers["repo"]]:
+        fail("another pull request or repository")
+    if args[1] == "view":
+        fields = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "--json"]
+        if len(fields) != 1:
+            fail("pr view without one --json")
+        print(json.dumps(dict((field, answers["pr"].get(field)) for field in fields[0].split(","))))
+elif args[:1] == ["api"]:
+    method, jq, endpoints, rest = "GET", None, [], iter(args[1:])
+    for arg in rest:
+        if arg == "--method":
+            method = next(rest)
+        elif arg == "--jq":
+            jq = next(rest)
+        elif arg == "-f":
+            next(rest)
+        elif arg == "--paginate":
+            pass
+        elif arg.startswith("-"):
+            fail("an option it does not know")
+        else:
+            endpoints.append(arg)
+    key = method + " " + (endpoints[0] if len(endpoints) == 1 else "?")
+    if key not in answers["api"]:
+        fail("no answer for " + key)
+    response = json.dumps(answers["api"][key])
+    if jq is None:
+        print(response)
+    else:
+        sys.exit(subprocess.run(["jq", "-r", jq], input=response, text=True).returncode)
+else:
+    fail("a command it does not know")
+"""
+
+# auto-merge.yml's step that decides, and the values the runner gives its `${{ }}` expressions on a
+# pull_request_target event for one pull request of this repository.
+AUTO_MERGE_STEP = "Merge, wait, or leave it"
+AUTO_MERGE_REPO = "nbon12/mmo-engine"
+AUTO_MERGE_PR = "74"
+AUTO_MERGE_HEAD = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"
+AUTO_MERGE_EVENT = {
+    "secrets.MERGE_TOKEN": "stand-in-merge-token",
+    "github.repository": AUTO_MERGE_REPO,
+    "github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number": AUTO_MERGE_PR,
+    "github.event.repository.default_branch": "main",
+}
 
 
 def steps(job):
@@ -410,9 +479,9 @@ def run_step(job, name, steps_context=None, env=None, exits=None, setup=None, sl
     run before it runs (a test shortens a bound with it).
 
     Returns the step's exit code, stdout (where the runner reads `::warning::` and `::error::` lines) and
-    stderr, the RUNNER_TEMP and step summary file it ran with, the env it was given, each tool call as
-    [tool, *args], the outputs and env variables it appended, and, for each appended variable that names a
-    directory, whether that directory was empty afterwards.
+    stderr, the RUNNER_TEMP and step summary file it ran with and the text the step left in that file,
+    the env it was given, each tool call as [tool, *args], the outputs and env variables it appended, and,
+    for each appended variable that names a directory, whether that directory was empty afterwards.
     """
     index, step = step_named(job, name)
     with tempfile.TemporaryDirectory() as temp:
@@ -459,7 +528,8 @@ def run_step(job, name, steps_context=None, env=None, exits=None, setup=None, sl
         empty_dirs = {key: not any(Path(value).iterdir()) for key, value in appended.items()
                       if os.path.isabs(value) and Path(value).is_dir()}
         return SimpleNamespace(index=index, step=step, returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,
-                               runner_temp=runner_temp, summary_path=str(files["step-summary"]), given=given,
+                               runner_temp=runner_temp, summary_path=str(files["step-summary"]),
+                               summary=files["step-summary"].read_text(), given=given,
                                calls=[json.loads(line) for line in files["tool-log"].read_text().splitlines()],
                                outputs=parse_github_env(files["github-output"].read_text()), env=appended,
                                empty_dirs=empty_dirs)
@@ -532,6 +602,96 @@ def run_measure(relinked, aot):
         else:
             options.setdefault(arg, []).append(value)
     return run, options, modes
+
+
+def auto_merge_step(name):
+    """auto-merge.yml's one step called `name`; fails naming the step when there is none."""
+    found = [step for step in AUTO_MERGE["jobs"]["auto-merge"]["steps"] if step.get("name") == name]
+    if len(found) != 1:
+        raise AssertionError(f"expected exactly one auto-merge step named {name!r}, found {len(found)}")
+    return found[0]
+
+
+def render_event(text):
+    """Substitutes each `${{ ... }}` of an auto-merge.yml string with its AUTO_MERGE_EVENT value."""
+    def substitute(match):
+        expression = match.group(1).strip()
+        if expression not in AUTO_MERGE_EVENT:
+            raise AssertionError(f"AUTO_MERGE_EVENT has no value for the expression {expression!r}")
+        return AUTO_MERGE_EVENT[expression]
+
+    return re.sub(r"\$\{\{(.*?)\}\}", substitute, text)
+
+
+def run_auto_merge_step(check_runs, labels=(), auto_merge=None):
+    """Runs auto-merge.yml's "Merge, wait, or leave it" step under bash, as the runner runs a step without
+    a `shell` (`bash -e`), with the step's own env and FAKE_GH standing in for gh.
+
+    The pull request qualifies for a merge in every way but its check runs: it is open, ready for review,
+    nbon12's, from this repository and based on main, with no review decision and no `hold` label. Its
+    head commit is an owner commit, its three changed files are none of GUARDED_PATHS, the commit has no
+    statuses, main has no required checks, and GitHub reads it as CLEAN. `check_runs` are the head
+    commit's check runs, `labels` the pull request's label names and `auto_merge` its autoMergeRequest
+    (None: auto-merge is off).
+
+    Returns the exit code, stdout, stderr, the text the step left in $GITHUB_STEP_SUMMARY and each gh call
+    as its argument list.
+    """
+    step = auto_merge_step(AUTO_MERGE_STEP)
+    repo, head = AUTO_MERGE_REPO, AUTO_MERGE_HEAD
+    answers = {
+        "number": AUTO_MERGE_PR,
+        "repo": repo,
+        "pr": {"state": "OPEN", "author": {"login": "nbon12"}, "isCrossRepository": False, "isDraft": False,
+               "baseRefName": "main", "headRefOid": head, "labels": [{"name": name} for name in labels],
+               "autoMergeRequest": auto_merge, "reviewDecision": "", "mergeStateStatus": "CLEAN"},
+        "api": {
+            f"GET repos/{repo}/commits/{head}": {
+                "sha": head, "author": {"login": "nbon12"}, "committer": {"login": "web-flow"},
+                "commit": {"author": {"name": "nbon12", "email": "nbon12@users.noreply.github.com"},
+                           "committer": {"name": "GitHub", "email": "noreply@github.com"}}},
+            f"GET repos/{repo}/compare/main...{head}": {"files": [
+                {"filename": "src/MmoEngine.SimCore/Movement/CharacterMover.cs", "status": "modified"},
+                {"filename": "tools/agreement/node/agreement.test.mjs", "status": "modified"},
+                {"filename": "simcore/streams/flat-run-30hz.mmrs", "status": "renamed",
+                 "previous_filename": "simcore/streams/flat-run.mmrs"}]},
+            f"GET repos/{repo}/commits/{head}/check-runs?per_page=100": {"total_count": len(check_runs),
+                                                                       "check_runs": list(check_runs)},
+            f"GET repos/{repo}/commits/{head}/status": {"state": "pending", "statuses": [], "total_count": 0},
+            f"GET repos/{repo}/branches/main": {
+                "name": "main", "protected": False,
+                "protection": {"enabled": False,
+                               "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}},
+            f"GET repos/{repo}/rules/branches/main": [],
+            f"POST repos/{repo}/issues/{AUTO_MERGE_PR}/labels": [{"name": "auto-merge"}],
+            f"DELETE repos/{repo}/issues/{AUTO_MERGE_PR}/labels/auto-merge": [],
+        },
+    }
+    with tempfile.TemporaryDirectory() as temp:
+        temp = Path(temp)
+        tools = temp / "bin"
+        tools.mkdir()
+        (tools / "gh").write_text(f"#!{sys.executable}\n{FAKE_GH}")
+        (tools / "gh").chmod(0o755)
+        files = {key: temp / key for key in ("step-summary", "gh-log", "gh-answers")}
+        files["step-summary"].write_text("")
+        files["gh-log"].write_text("")
+        files["gh-answers"].write_text(json.dumps(answers))
+        process_env = {key: render_event(value if isinstance(value, str) else gh_expr.to_str(value))
+                       for key, value in step.get("env", {}).items()}
+        process_env.update({
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "HOME": str(temp),
+            "GITHUB_STEP_SUMMARY": str(files["step-summary"]),
+            "FAKE_GH_LOG": str(files["gh-log"]),
+            "FAKE_GH_ANSWERS": str(files["gh-answers"]),
+        })
+        script = render_event(step["run"])
+        result = subprocess.run(["bash", "-e", "-c", script], env=process_env, cwd=temp, capture_output=True,
+                                text=True, timeout=60)
+        return SimpleNamespace(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,
+                               summary=files["step-summary"].read_text(),
+                               calls=[json.loads(line) for line in files["gh-log"].read_text().splitlines()])
 
 
 class TriggersAndPaths(unittest.TestCase):
@@ -1235,13 +1395,23 @@ class MeasureJob(unittest.TestCase):
         # When an agreement run or compare failed, the job uploads report/, the folder compare writes under
         # the prepared work directory.
         upload_index, upload = step_named("measure", "Upload the agreement report")
-        self.assertEqual("failure()", condition(upload))
+        self.assertEqual("failure()&&steps.prepare.outcome=='success'", condition(upload))
+        self.assertTrue(str(upload["if"]).strip().startswith("${{"), upload["if"])
         self.assertRegex(upload.get("uses", ""), r"^actions/upload-artifact@[0-9a-f]{40}$")
         self.assertEqual("simcore-measure-agreement-report", upload["with"]["name"])
         self.assertGreater(upload_index, compare_index)
-        self.assertIs(True, would_run(upload, {}, failed=True))
-        self.assertIs(False, would_run(upload, {}))
         self.assertEqual(f"{work}/report/", expand(upload["with"]["path"], prepare_run.runner_temp, prepare_run.env))
+        # Only prepare puts WORK in the environment, so before it succeeded the path would be /report/:
+        # the upload then does not run. After a later step failed, it does.
+        self.assertEqual("/report/", expand(upload["with"]["path"], prepare_run.runner_temp, {}))
+        for label, prepare_outcome, failed, cancelled, runs_it in (
+                ("a step before prepare failed (the benchmarks or the prebuilt publish)", "skipped", True, False, False),
+                ("prepare failed", "failure", True, False, False),
+                ("a step after prepare failed (an agreement run or compare)", "success", True, False, True),
+                ("nothing failed", "success", False, False, False),
+                ("the run was cancelled after prepare", "success", False, True, False)):
+            with self.subTest(upload=label):
+                self.assertIs(runs_it, would_run(upload, after_prepare({}, prepare_outcome), failed=failed, cancelled=cancelled))
 
         # The agreement job's gate still requires only its own builds.
         _, agreement_compare = only_step("agreement", "agreement compare --work")
@@ -1366,11 +1536,54 @@ class MeasureJob(unittest.TestCase):
                 self.assertLess(index, measure_index)
                 self.assertNotIn("continue-on-error", step)
 
+    def test_the_report_is_shown_in_the_job_log_and_summary(self):
+        # The numbers are readable without downloading the artifact: the validated report is printed to
+        # the job log and appended to the job summary as a fenced json block.
+        validate_index, _ = step_named("measure", "Validate the measurement report")
+        index, step = step_named("measure", "Show the measurement report")
+        upload_index, _ = step_named("measure", "Upload the measurement report")
+        self.assertEqual(validate_index + 1, index, "it comes right after validation")
+        self.assertLess(index, upload_index)
+        self.assertEqual(1, step.get("timeout-minutes"))
+        # Only after validation passed: no `if`, so the implicit success() skips it after a failed
+        # validation, and nothing turns its own failure into a pass.
+        self.assertNotIn("if", step)
+        self.assertNotIn("continue-on-error", step)
+        self.assertIs(True, would_run(step, {}))
+        self.assertIs(False, would_run(step, {}, failed=True))
+        self.assertIs(False, would_run(step, {}, cancelled=True))
+        # No expression is interpolated into the script; it reads the report through $RUNNER_TEMP.
+        self.assertNotIn("${{", step["run"])
+        self.assertNotIn("env", step)
+        text = command(step)
+        self.assertEqual(2, text.count(f'cat "{MEASUREMENT_REPORT}"'), "once to the log, once to the summary")
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', text)
+
+        # Run on a report, with and without its final newline: the log is the report, and the summary is
+        # the heading and the report in a json block whose closing fence starts its own line.
+        report = json.dumps({"formatVersion": 1, "kind": "simcore-measurement", "runnerClass": "gha-ubuntu-latest-x64"},
+                            indent=2)
+        for label, written in (("ends with a newline", report + "\n"), ("no final newline", report)):
+            with self.subTest(report=label):
+                def setup(runner_temp, repo, written=written):
+                    Path(expand(MEASUREMENT_REPORT, runner_temp)).write_text(written)
+
+                run = run_step("measure", "Show the measurement report", setup=setup)
+                self.assertEqual(0, run.returncode, run.stderr)
+                self.assertEqual(written, run.stdout)
+                self.assertEqual(f"### simcore-measurement\n\n```json\n{report}\n```\n", run.summary)
+                self.assertEqual([], run.calls)
+        # A missing report fails the step, so the upload after it does not run either.
+        run = run_step("measure", "Show the measurement report")
+        self.assertNotEqual(0, run.returncode)
+
 
 class AutoMerge(unittest.TestCase):
     """US2.7's gate on the pull request: auto-merge.yml merges once every check on the pull request has
     passed, and hears about a finished workflow only through its workflow_run list. Without "SimCore"
-    there, a pull request could merge before the agreement job reports."""
+    there, a pull request could merge before the agreement job reports.
+    test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs runs the step that
+    decides, so what is pinned is the script's handling of the check, not only its filter."""
 
     def test_auto_merge_waits_for_simcore(self):
         run = AUTO_MERGE.get("on", AUTO_MERGE.get(True))["workflow_run"]
@@ -1409,6 +1622,57 @@ class AutoMerge(unittest.TestCase):
                 self.assertEqual(f"{check}\t{expected_state}\n", checks)
                 self.assertEqual(failed, run_awk(programs["failed"], checks).strip())
                 self.assertEqual(pending, run_awk(programs["pending"], checks).strip())
+
+    def test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs(self):
+        # auto-merge.yml's "Merge, wait, or leave it" step itself, run under bash with a stand-in gh, on a
+        # pull request that qualifies in every other way: the head commit's `agreement` check run decides.
+        # A failed or cancelled run is a reason to leave it alone, a queued or in-progress one keeps it
+        # waiting, and where this workflow had turned auto-merge on, it turns it off, since GitHub's
+        # auto-merge waits only for required checks. Only a passed run merges.
+        check = WORKFLOW["jobs"]["agreement"].get("name", "agreement")
+        pr, repo, head = AUTO_MERGE_PR, AUTO_MERGE_REPO, AUTO_MERGE_HEAD
+        check_runs_jq = auto_merge_step(AUTO_MERGE_STEP)["env"]["CHECK_RUNS_JQ"]
+        # The SimCore measure job passed, and this job's own check (still running) is not counted.
+        others = [{"name": "measure", "status": "completed", "conclusion": "success"},
+                  {"name": "auto-merge", "status": "in_progress", "conclusion": None}]
+        failure = {"status": "completed", "conclusion": "failure"}
+        cancelled = {"status": "completed", "conclusion": "cancelled"}
+        queued = {"status": "queued", "conclusion": None}
+        in_progress = {"status": "in_progress", "conclusion": None}
+        # Auto-merge this workflow turned on: it carries the workflow's label.
+        turned_on = {"enabledBy": {"login": "nbon12"}, "mergeMethod": "SQUASH"}
+        disable = ["pr", "merge", pr, "--repo", repo, "--disable-auto"]
+        for label, agreement, auto_merge, summary, merges in (
+                ("failure", failure, None, f"Left #{pr} alone because these checks failed: {check}.", []),
+                ("cancelled", cancelled, None, f"Left #{pr} alone because these checks failed: {check}.", []),
+                ("queued", queued, None, f"#{pr} merges once these checks pass: {check}.", []),
+                ("in progress", in_progress, None, f"#{pr} merges once these checks pass: {check}.", []),
+                ("failure, auto-merge on", failure, turned_on,
+                 f"Auto-merge turned off for #{pr} because these checks failed: {check}.", [disable]),
+                ("cancelled, auto-merge on", cancelled, turned_on,
+                 f"Auto-merge turned off for #{pr} because these checks failed: {check}.", [disable]),
+                ("queued, auto-merge on", queued, turned_on,
+                 f"Auto-merge paused for #{pr} until these checks finish: {check}.", [disable]),
+                ("in progress, auto-merge on", in_progress, turned_on,
+                 f"Auto-merge paused for #{pr} until these checks finish: {check}.", [disable])):
+            with self.subTest(agreement=label):
+                run = run_auto_merge_step([{"name": check, **agreement}, *others],
+                                          labels=("auto-merge",) if auto_merge else (), auto_merge=auto_merge)
+                self.assertEqual(0, run.returncode, run.stderr)
+                pr_merges = [call for call in run.calls if call[:2] == ["pr", "merge"]]
+                self.assertEqual([], [call for call in pr_merges if "--squash" in call or "--auto" in call],
+                                 "the step must neither merge nor turn auto-merge on")
+                self.assertEqual(merges, pr_merges)
+                self.assertEqual(summary + "\n", run.summary)
+                self.assertIn(["api", "--paginate", f"repos/{repo}/commits/{head}/check-runs?per_page=100",
+                               "--jq", check_runs_jq], run.calls)
+
+        # The control: with the agreement run passed, the same pull request squash-merges at its head.
+        run = run_auto_merge_step([{"name": check, "status": "completed", "conclusion": "success"}, *others])
+        self.assertEqual(0, run.returncode, run.stderr)
+        self.assertEqual([["pr", "merge", pr, "--repo", repo, "--squash", "--match-head-commit", head]],
+                         [call for call in run.calls if call[:2] == ["pr", "merge"]])
+        self.assertEqual(f"Squash-merged #{pr}: every check passed.\n", run.summary)
 
 
 if __name__ == "__main__":

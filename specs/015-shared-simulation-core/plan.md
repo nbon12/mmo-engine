@@ -2323,6 +2323,96 @@ The design documents settled these points, which the spec leaves open. They are 
   first Phase 13 review. Slice 1's `Collect` in `EverySliceOneQuickstartCommandParses` keeps its own
   heading scan, since this review covered T311 to T316 only; quickstart.md holds no `## ` line inside a
   fenced block, so both scans read its headings alike.
+- **T320 (spec-test review), T284: US2.7's "auto-merge does not merge" half runs auto-merge's own
+  decision step.** `test_a_failed_or_pending_agreement_check_holds_the_merge` ran only the step's
+  `CHECK_RUNS_JQ` and its `failed=` and `pending=` awk lines, never the code that turns those lists
+  into "leave it alone" or "wait", so deleting the failed-check reason left every workflow test green.
+  `test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs` now runs the "Merge,
+  wait, or leave it" step's script, taken from `auto-merge.yml` by name, under `bash -e` with a
+  stand-in `gh` that logs each call and answers the pull request and every endpoint the script reads.
+  Only the `agreement` check run differs between rows; a failed, cancelled, queued or in-progress run
+  never merges and writes its exact summary line, and where this workflow had turned auto-merge on,
+  it turns it off, since GitHub's auto-merge waits only for required checks. The passed control row
+  squash-merges at the head commit. Deleting the reason fails the four failed rows and turning the
+  waiting branch off fails the four pending ones. The alternative, matching the script's text for the
+  reason and the exits, was not chosen, because text matching passes a script whose branches no
+  longer connect. `auto-merge.yml` is unchanged.
+- **T322 (independent review), T297 and T310: the measure job's agreement-report upload needs a
+  prepared work directory, and the measurement report is shown in the job log and summary.** `WORK`
+  is in the environment only once prepare succeeded, so after the benchmarks or the prebuilt publish
+  failed, the `failure()` upload ran with the path `/report/` and only warned about missing files. Its
+  `if` is now `failure() && steps.prepare.outcome == 'success'`. The agreement job's upload was left
+  alone: its path is the fixed `${{ runner.temp }}/agreement-work/report/`, which never becomes
+  `/report/`, so a failure before its prepare step only finds no report there. Alongside that review,
+  a new "Show the measurement report" step right after validation prints the validated report to the
+  job log and appends it to the job summary in a fenced `json` block, because the numbers were only in
+  the `simcore-measurement` artifact, which readers without artifact access cannot open. It has no `if`,
+  so it runs only after validation passed, a 1-minute bound and no interpolated expression; valid JSON
+  has no line that starts with `::`, so the log reads no workflow command from it. Its closing fence
+  starts its own line whether or not the file ends with a newline. The upload still follows it, so a
+  report that cannot be shown is not uploaded either; that is the same file the upload would fail on.
+- **T320 (spec-test review), T302, T305 and T309: the report's `startup.coldStarts` is counted from
+  the samples, and a test runs the cold-start loops.** `assembleReport` wrote the constant 10, so
+  `validate-report`'s "must be 10" passed whatever the loops did, and no test ran `measureMode`: a
+  probe that made the Node loop run once left every test green. `measureMode` is now exported with
+  its runners injectable (`spawn`, `serve`, `launchChromium` and the page and close bounds), and its
+  startup is `summarizeStartup`, whose `coldStarts` is the number of samples and which fails the
+  mode unless Node and the Chromium Worker each measured 10. `'a mode is measured over exactly ten
+  cold starts in each runtime'` asserts the ten `cold-start` processes, the ten fresh contexts on
+  `?run=cold-start` and summaries that only those ten samples give (no shorter run of consecutive
+  cold starts has the same median and p90, which the test checks), and `'the startup summary needs
+  ten cold starts in each runtime'` the count's failure. With the Node loop, or the Chromium loop,
+  made to run once, the first fails. The count is checked once, at the end, rather than after each
+  loop, because both counts belong in the one message; the loops are fixed at 10, so the check
+  guards the code, not a run.
+- **T322 (independent review), T302, T305, T306 and T309: the measurement's jiterpreter, Worker and
+  bounds checks, and the runtime version's order.** (1) `runtime.jiterpreter` was the constant true
+  although `bootRuntime` reports the runtime's own state: `measure-node.mjs cold-start` now prints
+  it, every cold start's must be present and the same as the first's (checked before the steps
+  process, so a bad state fails at once), and the report's value is true only when all three options
+  are on, the defaults the contract's "left at their defaults" means. `runtimeOptions` stays `[]`:
+  it is what both halves pass, and the cold-start test's `dotnet.js` stand-in refuses any other. The
+  Chromium Worker's own state is not read: it boots with the same defaults, and the report's
+  `runtime`, like its `buildInfo`, describes the Node cold starts' runtime. (2) A page's `booted`
+  message must say `inWorker: true` (the Worker already sent it), so a page whose numbers did not
+  come from a `WorkerGlobalScope` fails instead of being recorded as `chromiumWorker`. (3) `newContext`, `newPage` and `evaluate` had no timeout, so a wedged browser held
+  the job until its step's bound with no `measure:` line (an earlier Phase 12 decision had accepted
+  that). Every call of a page is now raced against what is left of its one bound, the navigation and
+  the wait included (they keep Playwright's own timeouts too), and closing a page's context or the
+  browser has 10 seconds, since a browser that does not answer a page will not answer its close
+  either; the agreement server's close needed no bound, as it closes every connection itself. (4)
+  `compareVersions` ordered prerelease suffixes as text, so `10.0.0-rc.10` sorted below
+  `10.0.0-rc.2`; it now follows SemVer 2.0 precedence, and the runtime line accepts only a SemVer
+  version, so a line it cannot order is not listed rather than thrown on. A prerelease runtime still
+  fails `validate-report`'s `<major>.<minor>.<patch>` format, as the contract says; only the choice
+  among several runtimes changed. The order's one use is pinned too: `dotnetVersions(run)` is
+  exported with `run` (a `dotnet` command's standard output) defaulting to the real `dotnet`, and
+  the entry point calls it with that default. Its new `dotnetVersions:` rows of T302's SemVer test
+  give it a fake `dotnet` whose listing puts the highest runtime first (`rc.10` above `rc.2`) or in
+  the middle (`10.0.0` between them), and a listing of only a non-SemVer `10.0.99x` and 9.0 lines,
+  and assert the exact `{sdk, runtime}` or MeasurementError. With the pre-fix line back in
+  `dotnetVersions` (any `10.` version, sorted as text), `highestRuntime` bypassed, or the last or
+  first listed runtime taken, the test fails; before, only the helpers were tested, and the
+  entry-point rows end before a report, so the chosen version was never checked.
+- **T322 (independent review), T311 and T312: the quickstart readers' fence scan follows
+  CommonMark.** `QuickstartSections`' scan closed a block on any line of three or more backticks,
+  whatever the opening fence's length, and did not know `~~~` fences, so a ````` ```` ````` block
+  quoting a ```` ```bash ```` sample would close at the sample's own closing fence, and the lines
+  after it would be read as bash lines or headings. The scan now remembers the opening fence's
+  character and run length (at least three, after at most three spaces; a backtick fence's info
+  string holds no backtick), closes only on a run of the same character at least as long with nothing
+  but spaces or tabs after it, and takes the info string's first word as the language after either
+  character. `Headings` and `BashLines` still share that one scan, so the section check and the bash
+  reader agree on every fence. New rows of `QuickstartTests.QuickstartHeadingsAreReadOutsideFences`
+  and the new `QuickstartTests.QuickstartBashLinesFollowTheirFences` pin it; with the old rule, rows
+  of both fail. quickstart.md uses only column-0 three-backtick fences, so its readings, and the
+  slice-1 and slice-2 tests' expected lists, are unchanged; the quickstart itself needs no change.
+  The verifiers' mutation probes then found four rules the scan states but no row pinned, so rows were
+  added for each: a run of two backticks or tildes is no fence; a closing fence indented by four spaces
+  is block content; a tab before a run makes the line no fence (a tab reaches CommonMark's
+  four-column tab stop); and a closing run followed by a tab still closes. Each new row fails when its
+  rule is broken. The section check's message and T311's and T312's text now say "bash block", not
+  ```` ```bash ```` block, since a `~~~bash` block counts too.
 
 ## Delivery
 

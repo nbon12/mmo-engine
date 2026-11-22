@@ -23,8 +23,9 @@ name: SimCore
 #              the job; the exhaustive trig sweeps write their ulp errors to the job summary without
 #              gating. tools/agreement/lib/measure.mjs then measures each produced build's download,
 #              cold starts and step costs in Node and in a Chromium Worker, `simcore measure
-#              validate-report` checks the report's structure, and the report is uploaded as the
-#              simcore-measurement artifact. No measured number is compared with a threshold.
+#              validate-report` checks the report's structure, the job log and summary show it, and it
+#              is uploaded as the simcore-measurement artifact. No measured number is compared with a
+#              threshold.
 #              Every step after the toolchain setup has its own timeout-minutes, and the relinked and AOT
 #              publishes bound `dotnet publish` with `timeout`, so a hang in an optional step (the
 #              workload, a publish, the sweeps) is recorded inside the job's 30 minutes instead of
@@ -442,6 +443,25 @@ jobs:
         timeout-minutes: 2
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- measure validate-report "$RUNNER_TEMP/simcore-measurement.json"
 
+      # The numbers in the job log and the job summary too, for a reader who cannot download the
+      # artifact. It runs only after validation passed; valid JSON has no line that starts with `::`,
+      # so the log reads no workflow command from it.
+      - name: Show the measurement report
+        timeout-minutes: 1
+        run: |
+          cat "$RUNNER_TEMP/simcore-measurement.json"
+          {
+            echo '### simcore-measurement'
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/simcore-measurement.json"
+            # The closing fence starts its own line, whether or not the file ends with a newline.
+            if [ -n "$(tail -c 1 "$RUNNER_TEMP/simcore-measurement.json")" ]; then
+              echo
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload the measurement report
         timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -450,8 +470,10 @@ jobs:
           path: ${{ runner.temp }}/simcore-measurement.json
           if-no-files-found: error
 
+      # Only prepare puts WORK in the environment: after a failure before it, the path would be /report/,
+      # so the upload needs a prepared work directory as well as a failed step.
       - name: Upload the agreement report
-        if: failure()
+        if: ${{ failure() && steps.prepare.outcome == 'success' }}
         timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

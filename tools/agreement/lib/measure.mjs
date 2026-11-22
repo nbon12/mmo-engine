@@ -33,32 +33,50 @@
  * - `checkStepKinds(steps, what)`: a half's step costs, checked to be one entry per kind of `STEP_KINDS`
  *   (`./passes.mjs`), with its stream, in the report's order.
  * - `assembleReport(inputs)`: the whole report from what the entry point gathered (below).
- * - `runPage(browser, url, what, boundMs)`: one measurement page in a fresh context of a Playwright
- *   `browser`, within one bound (2 minutes by default), giving the events its Worker posted; every way
- *   the page can fail is the MeasurementError `<what>: <message>`.
+ * - `runPage(browser, url, what, boundMs, closeBoundMs)`: one measurement page in a fresh context of a
+ *   Playwright `browser`, within one bound (2 minutes by default) that every call of the page shares,
+ *   giving the events its Worker posted; every way the page can fail is the MeasurementError
+ *   `<what>: <message>`. Closing its context has its own bound (10 seconds by default).
+ * - `measureMode(mode, dir, work, runners)`: one produced mode measured (steps 1 to 4 below), as the
+ *   mode's `assembleReport` input and the Chromium version. `runners` replaces the Node processes, the
+ *   agreement server and the browser, so the tests drive it with fakes.
+ * - `summarizeStartup(mode, {node, chromiumWorker, crossOriginIsolated})`: the report's `startup` input
+ *   from the cold starts each runtime measured, `coldStarts` being their number; a MeasurementError
+ *   unless each runtime measured exactly 10.
+ * - `compareVersions(a, b)`: SemVer 2.0 precedence of two `<major>.<minor>.<patch>[-<prerelease>]
+ *   [+<build>]` versions, and `highestRuntime(text)`: the highest `Microsoft.NETCore.App 10.` runtime of
+ *   a `dotnet --list-runtimes` output by that order, or null.
+ * - `dotnetVersions(run)`: the report's `{sdk, runtime}`, from `run(['--version'])` trimmed and
+ *   `highestRuntime(run(['--list-runtimes']))`; a MeasurementError when no `Microsoft.NETCore.App 10.`
+ *   runtime is listed. `run` gives a `dotnet` command's standard output: the real `dotnet` by default,
+ *   so the tests drive it with a fake.
  * - `UsageError`, and `MeasurementError` re-exported from `./passes.mjs`, so a caller catches the
  *   measurement failures of both modules as one class.
  *
  * Run as a script (the entry point at the end of this file), it first reads the `--server-benchmarks`
- * object, the versions `dotnet --version` and `dotnet --list-runtimes` give (the highest
- * `Microsoft.NETCore.App 10.` runtime) and the machine (`os`), so a missing or malformed export or a
- * toolchain without a .NET 10 runtime fails before anything is measured. It then measures each produced
- * mode, in the report's order:
+ * object, the versions `dotnet --version` and `dotnet --list-runtimes` give (`highestRuntime`) and the
+ * machine (`os`), so a missing or malformed export or a toolchain without a .NET 10 runtime fails
+ * before anything is measured. It then measures each produced mode with `measureMode`, in the report's
+ * order:
  *
  * 1. `measureDownload(<dir>)`.
  * 2. Ten Node cold starts, each a fresh `node lib/measure-node.mjs cold-start` process, then one
- *    `measure-node.mjs steps` process for the step costs, whose line `checkStepKinds` checks.
+ *    `measure-node.mjs steps` process for the step costs, whose line `checkStepKinds` checks. Every
+ *    cold start's runtime must report its jiterpreter state (`jiterpreterState`, `./runtime.mjs`), and
+ *    the same one as the first cold start's, or the measurement fails before the steps process runs;
+ *    the report's `runtime.jiterpreter` is true only when that state has all three options on.
  * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
  *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
  *    `/web/measure.html?run=cold-start` ten times with `runPage`, each in a fresh browser context, then
  *    `?run=steps` once. A page that fails as `runPage` says (a `fatal` event, a page that does not load
  *    or finish within its 2 minutes, the runtime's console warning that `.wasm` was not served as
  *    `application/wasm`) fails the measurement, and so does a page that does not post exactly one
- *    `booted` and one `coldStart`, or `steps` messages that `checkStepKinds` refuses.
- *    `crossOriginIsolated` is true only when every `booted` message says so. The pages' contexts, the
- *    browser and the server are closed however the run ends, and a close that fails never takes the
- *    place of the failure it followed.
- * 4. Each startup interval summarized with `summarize` (`./passes.mjs`).
+ *    `booted`, with `inWorker` true, and one `coldStart`, or `steps` messages that `checkStepKinds`
+ *    refuses. `crossOriginIsolated` is true only when every `booted` message says so. The pages'
+ *    contexts, the browser and the server are closed however the run ends, the browser within 10
+ *    seconds, and a close that fails never takes the place of the failure it followed.
+ * 4. Each startup interval summarized with `summarize` (`./passes.mjs`) by `summarizeStartup`, over the
+ *    cold starts steps 2 and 3 measured, which must be 10 in each runtime.
  *
  * It then adds `process.version`, Playwright's `browser.version()`, `GITHUB_SHA` and the two `DOTNET_`
  * variables, calls `assembleReport` and writes `--out` atomically (a temporary file in the same
@@ -415,7 +433,9 @@ export async function measureDownload(publishDir) {
  * @param {{ dotnetSdk: string, dotnetRuntime: string, node: string, chromium: string }} inputs.versions
  * @param {object} inputs.server the `--server-benchmarks` object, copied as is
  * @param {Record<string, object>} inputs.modes per mode, `{produced: false, reason}` or `{produced: true,
- *   dir, manifest, buildInfo, download, startup: {node, chromiumWorker}, steps: {node, chromiumWorker}}`
+ *   dir, manifest, buildInfo, jiterpreter, download, startup: {coldStarts, node, chromiumWorker},
+ *   steps: {node, chromiumWorker}}`, where `jiterpreter` is the Node cold starts' `{traces, interpEntry,
+ *   jitCall}` and `startup` is `summarizeStartup`'s result
  * @returns {Promise<object>} the report
  * @throws {MeasurementError} `agreement.json` exists but cannot be read as JSON
  */
@@ -460,9 +480,13 @@ export async function assembleReport({ runnerClass, env, work, machine, versions
     };
 }
 
-/** A produced mode's report entry. */
+/**
+ * A produced mode's report entry. `runtimeOptions` is `[]` because both halves boot with `bootRuntime`'s
+ * defaults (`lib/measure-node.mjs`, `web/measure-worker.mjs`); `jiterpreter` is what the Node cold starts'
+ * runtimes reported, true only when all three of its options were on, their defaults.
+ */
 function producedMode(mode, input, agreement) {
-    const { manifest, buildInfo, download, startup, steps } = input;
+    const { manifest, buildInfo, jiterpreter, download, startup, steps } = input;
     return {
         produced: true,
         reason: null,
@@ -472,7 +496,7 @@ function producedMode(mode, input, agreement) {
             debugLevel: manifest.debugLevel,
             globalizationMode: manifest.globalizationMode,
             runtimeOptions: [],
-            jiterpreter: true,
+            jiterpreter: jiterpreter.traces === true && jiterpreter.interpEntry === true && jiterpreter.jitCall === true,
         },
         download: {
             files: download.files.map(({ name, group, rawBytes, brotliBytes, gzipBytes }) => ({
@@ -490,7 +514,7 @@ function producedMode(mode, input, agreement) {
             },
         },
         startup: {
-            coldStarts: COLD_STARTS,
+            coldStarts: startup.coldStarts,
             node: intervals(startup.node),
             chromiumWorker: { crossOriginIsolated: startup.chromiumWorker.crossOriginIsolated, ...intervals(startup.chromiumWorker) },
         },
@@ -582,31 +606,42 @@ const CONTENT_TYPE_WARNING = 'does not have the expected content type "applicati
 const RUN_BOUND_MS = 2 * 60 * 1000;
 
 /**
+ * How long closing a page's browser context, or the browser, may take: a wedged browser may never answer
+ * a close, and a close that never returns would hide the failure it followed.
+ */
+const CLOSE_BOUND_MS = 10 * 1000;
+
+/**
  * One measurement page in a fresh browser context: `url` (`/web/measure.html?run=<run>`), waited on until
  * the page sets `window.__measure.done`, then its events read.
  *
- * The page has one bound, `boundMs` from the call: the navigation gets it and the wait gets what the
- * navigation left, so a slow load does not extend the page's time. Every failure is the MeasurementError
- * `<what>: <message>`, with the first line of the error's message: a context or page that cannot be
- * made, a navigation that fails or answers another status than 200, a wait that ends without a timeout
- * (a crash), events that cannot be read, a `fatal` event, or the runtime's console warning that `.wasm`
- * was not served as `application/wasm`. A Playwright
- * timeout is `<what>: the page did not finish within <bound> s`. The context is closed however the page
- * ended, and a failed close never takes the place of the page's own failure (`closeAfter`).
+ * The page has one bound, `boundMs` from the call, which every call of the page shares: `newContext()`,
+ * `newPage()`, the navigation, the wait and `evaluate()` each get what the calls before it left, so a
+ * slow load does not extend the page's time and a call that never returns (a wedged browser; Playwright
+ * gives `newContext`, `newPage` and `evaluate` no timeout) does not outlive it. Every failure is the
+ * MeasurementError `<what>: <message>`, with the first line of the error's message: a context or page
+ * that cannot be made, a navigation that fails or answers another status than 200, a wait that ends
+ * without a timeout (a crash), events that cannot be read, a `fatal` event, or the runtime's console
+ * warning that `.wasm` was not served as `application/wasm`. A Playwright timeout, or a call still
+ * running when the bound ends, is `<what>: the page did not finish within <bound> s`. The context is
+ * closed however the page ended, within `closeBoundMs`, and a failed or unfinished close never takes the
+ * place of the page's own failure (`closeAfter`).
  *
  * @param {{ newContext(): Promise<object> }} browser a Playwright `Browser`
  * @param {string} url the page to open
  * @param {string} what names the page in a failure: `<mode>: chromium cold start <i>` or
  *   `<mode>: chromium steps`
  * @param {number} [boundMs] the page's bound, 2 minutes by default
+ * @param {number} [closeBoundMs] the bound on closing its context, 10 seconds by default
  * @returns {Promise<object[]>} the events the Worker posted
  * @throws {MeasurementError}
  */
-export async function runPage(browser, url, what, boundMs = RUN_BOUND_MS) {
+export async function runPage(browser, url, what, boundMs = RUN_BOUND_MS, closeBoundMs = CLOSE_BOUND_MS) {
     const deadline = Date.now() + boundMs;
+    const remainingMs = () => Math.max(1, deadline - Date.now());
     let context;
     try {
-        context = await browser.newContext();
+        context = await within(() => browser.newContext(), remainingMs());
     } catch (error) {
         throw pageFailure(error, what, boundMs);
     }
@@ -614,20 +649,20 @@ export async function runPage(browser, url, what, boundMs = RUN_BOUND_MS) {
     return closeAfter(
         async () => {
             try {
-                return await loadPage(context, url, what, () => Math.max(1, deadline - Date.now()));
+                return await loadPage(context, url, what, remainingMs);
             } catch (error) {
                 throw pageFailure(error, what, boundMs);
             }
         },
-        () => context.close(),
+        () => within(() => context.close(), closeBoundMs),
         what,
         'its browser context',
     );
 }
 
-/** The page's events, or a failure that `runPage` names. */
+/** The page's events, or a failure that `runPage` names; each call gets what is left of the page's bound. */
 async function loadPage(context, url, what, remainingMs) {
-    const page = await context.newPage();
+    const page = await within(() => context.newPage(), remainingMs());
     const warnings = [];
     const onConsole = (message) => {
         if (message.text().includes(CONTENT_TYPE_WARNING)) {
@@ -637,13 +672,15 @@ async function loadPage(context, url, what, remainingMs) {
     page.on('console', onConsole);
     page.on('worker', (worker) => worker.on('console', onConsole));
 
-    const response = await page.goto(url, { timeout: remainingMs() });
+    const gotoMs = remainingMs();
+    const response = await within(() => page.goto(url, { timeout: gotoMs }), gotoMs);
     if (response?.status() !== 200) {
         throw new MeasurementError(`${what}: GET ${url} answered ${response?.status() ?? 'nothing'}`);
     }
 
-    await page.waitForFunction(() => window.__measure?.done === true, undefined, { timeout: remainingMs() });
-    const events = await page.evaluate(() => window.__measure.events);
+    const waitMs = remainingMs();
+    await within(() => page.waitForFunction(() => window.__measure?.done === true, undefined, { timeout: waitMs }), waitMs);
+    const events = await within(() => page.evaluate(() => window.__measure.events), remainingMs());
     const fatal = events.find((event) => event?.type === 'fatal');
     if (fatal !== undefined) {
         throw new MeasurementError(`${what}: ${fatal.message}`);
@@ -667,6 +704,35 @@ function pageFailure(error, what, boundMs) {
     }
 
     return new MeasurementError(`${what}: ${firstLine(error)}`, { cause: error });
+}
+
+/**
+ * What `call()` returns, or, when it has not settled within `ms`, a rejection with an Error named
+ * `TimeoutError`, as Playwright names its own, with the message `did not finish within <ms / 1000> s`.
+ * A synchronous throw from `call` is its rejection. The timer is cleared when the call settles first.
+ *
+ * @template T
+ * @param {() => T | Promise<T>} call
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function within(call, ms) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(Object.assign(new Error(`did not finish within ${ms / 1000} s`), { name: 'TimeoutError' })),
+            ms,
+        );
+        Promise.resolve().then(call).then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
 }
 
 /**
@@ -731,8 +797,20 @@ const MEASURE_NODE = fileURLToPath(new URL('./measure-node.mjs', import.meta.url
 /** The most output one `measure-node.mjs` process may print. */
 const NODE_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
-/** The .NET runtime line the report records: `Microsoft.NETCore.App 10.<minor>.<patch> [<path>]`. */
-const RUNTIME_LINE = /^Microsoft\.NETCore\.App (10\.\d+\.\d+\S*) \[/gm;
+/** A SemVer 2.0 prerelease or build part: dot-separated identifiers of ASCII letters, digits and hyphens. */
+const SEMVER_IDENTIFIERS = '[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*';
+
+/**
+ * The .NET runtime lines the report records one of: `Microsoft.NETCore.App 10.<minor>.<patch>[-<prerelease>]
+ * [+<build>] [<path>]`. A line whose version is not of that form is not listed.
+ */
+const RUNTIME_LINE = new RegExp(
+    `^Microsoft\\.NETCore\\.App (10\\.\\d+\\.\\d+(?:-${SEMVER_IDENTIFIERS})?(?:\\+${SEMVER_IDENTIFIERS})?) \\[`,
+    'gm',
+);
+
+/** A version `compareVersions` orders: the three numbers, then the prerelease and build parts. */
+const SEMVER = new RegExp(`^(\\d+)\\.(\\d+)\\.(\\d+)(?:-(${SEMVER_IDENTIFIERS}))?(?:\\+${SEMVER_IDENTIFIERS})?$`);
 
 /**
  * Measures every produced mode and writes the report.
@@ -791,21 +869,42 @@ async function main(argv, env) {
  * One produced mode, measured: its download, ten Node cold starts and the Node step costs, then ten
  * Chromium Worker cold starts and the Worker step costs.
  *
+ * The Node cold starts' runtimes must all report the same jiterpreter state (`jiterpreterOfColdStarts`),
+ * which is checked before the steps process runs, and each Chromium page's `booted` message must come
+ * from a Worker. `startup` is `summarizeStartup` over the cold starts the two loops measured, so its
+ * `coldStarts` is their number and a loop that measured another number than 10 fails the mode.
+ *
+ * @param {string} mode the mode, which names it in a failure
+ * @param {string} dir the mode's publish directory, which holds `wwwroot/_framework/`
+ * @param {string} work the prepared work directory
+ * @param {object} [runners] what the measurement drives, each the real one by default: `spawn(command,
+ *   args, options)` runs one `measure-node.mjs` process with `spawnSync`'s arguments and result;
+ *   `serve({app, work})` starts the agreement server (`startServer`, `lib/server.mjs`); `launchChromium()`
+ *   launches the browser (Playwright's `chromium.launch()`); `pageBoundMs` bounds each page (2 minutes)
+ *   and `closeBoundMs` each close of a page's context or of the browser (10 seconds)
  * @returns {Promise<{ input: object, chromiumVersion: string }>} the mode's `assembleReport` input and the
  *   version of the Chromium that measured it
+ * @throws {MeasurementError} a measurement failed, naming the mode and the run
  */
-async function measureMode(mode, dir, work) {
+export async function measureMode(mode, dir, work, {
+    spawn = spawnSync,
+    serve = startServer,
+    launchChromium = launchPlaywrightChromium,
+    pageBoundMs = RUN_BOUND_MS,
+    closeBoundMs = CLOSE_BOUND_MS,
+} = {}) {
     const download = await measureDownload(dir);
     const manifest = parseBootManifest(await readFile(join(dir, 'wwwroot', '_framework', 'dotnet.js'), 'utf8'));
     const app = join(dir, 'wwwroot');
 
     const nodeColdStarts = [];
     for (let i = 1; i <= COLD_STARTS; i++) {
-        nodeColdStarts.push(runNodeHalf(mode, 'cold-start', app, work, `node cold start ${i}`));
+        nodeColdStarts.push(runNodeHalf(spawn, mode, 'cold-start', app, work, `node cold start ${i}`));
     }
 
-    const nodeSteps = checkStepKinds(runNodeHalf(mode, 'steps', app, work, 'node steps'), `${mode}: node steps`);
-    const worker = await measureInChromium(mode, app, work);
+    const jiterpreter = jiterpreterOfColdStarts(mode, nodeColdStarts);
+    const nodeSteps = checkStepKinds(runNodeHalf(spawn, mode, 'steps', app, work, 'node steps'), `${mode}: node steps`);
+    const worker = await measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs });
 
     return {
         chromiumVersion: worker.version,
@@ -813,26 +912,96 @@ async function measureMode(mode, dir, work) {
             produced: true,
             dir,
             manifest,
-            buildInfo: nodeColdStarts[0].buildInfo,
+            buildInfo: nodeColdStarts[0]?.buildInfo,
+            jiterpreter,
             download,
-            startup: {
-                node: summarizeIntervals(nodeColdStarts),
-                chromiumWorker: { crossOriginIsolated: worker.crossOriginIsolated, ...summarizeIntervals(worker.coldStarts) },
-            },
+            startup: summarizeStartup(mode, {
+                node: nodeColdStarts,
+                chromiumWorker: worker.coldStarts,
+                crossOriginIsolated: worker.crossOriginIsolated,
+            }),
             steps: { node: nodeSteps, chromiumWorker: worker.steps },
         },
     };
 }
 
 /**
+ * A mode's `startup` input: `coldStarts`, the number of cold starts each runtime measured, and each
+ * interval's `{median, p90}` over them (`summarize`), the Worker's with its `crossOriginIsolated`.
+ *
+ * @param {string} mode names the mode in a failure
+ * @param {{ node: object[], chromiumWorker: object[], crossOriginIsolated: boolean }} coldStarts each
+ *   runtime's cold starts, `{importMs, createMs, firstStepMs, totalMs}` each, and the Worker's
+ *   `crossOriginIsolated`
+ * @returns {{ coldStarts: number, node: object, chromiumWorker: object }}
+ * @throws {MeasurementError} `<mode>: <n> Node and <m> Chromium Worker cold starts were measured, not 10
+ *   each`
+ */
+export function summarizeStartup(mode, { node, chromiumWorker, crossOriginIsolated }) {
+    if (node.length !== COLD_STARTS || chromiumWorker.length !== COLD_STARTS) {
+        throw new MeasurementError(
+            `${mode}: ${node.length} Node and ${chromiumWorker.length} Chromium Worker cold starts were measured, `
+            + `not ${COLD_STARTS} each`,
+        );
+    }
+
+    return {
+        coldStarts: node.length,
+        node: summarizeIntervals(node),
+        chromiumWorker: { crossOriginIsolated, ...summarizeIntervals(chromiumWorker) },
+    };
+}
+
+/**
+ * The jiterpreter state every Node cold start's runtime reported (`jiterpreterState`, `./runtime.mjs`), or
+ * null when there was no cold start.
+ *
+ * @throws {MeasurementError} `<mode>: node cold start <i>: the runtime reported no jiterpreter state, so
+ *   the report cannot say whether the jiterpreter ran`, or `<mode>: node cold start <i>: the runtime
+ *   reported the jiterpreter <state>, but node cold start 1 reported <state>`
+ */
+function jiterpreterOfColdStarts(mode, coldStarts) {
+    let first = null;
+    for (const [i, coldStart] of coldStarts.entries()) {
+        const state = coldStart?.jiterpreter;
+        const what = `${mode}: node cold start ${i + 1}`;
+        if (!isJiterpreterState(state)) {
+            throw new MeasurementError(
+                `${what}: the runtime reported no jiterpreter state, so the report cannot say whether the jiterpreter ran`,
+            );
+        }
+
+        const reported = { traces: state.traces, interpEntry: state.interpEntry, jitCall: state.jitCall };
+        if (first === null) {
+            first = reported;
+        } else if (JSON.stringify(reported) !== JSON.stringify(first)) {
+            throw new MeasurementError(
+                `${what}: the runtime reported the jiterpreter ${JSON.stringify(reported)}, `
+                + `but node cold start 1 reported ${JSON.stringify(first)}`,
+            );
+        }
+    }
+
+    return first;
+}
+
+/** Whether `state` is `jiterpreterState`'s `{traces, interpEntry, jitCall}`, three booleans. */
+function isJiterpreterState(state) {
+    return state !== null
+        && typeof state === 'object'
+        && ['traces', 'interpEntry', 'jitCall'].every((option) => typeof state[option] === 'boolean');
+}
+
+/**
  * One `node measure-node.mjs <run>` process: a fresh Node, so a cold start is a cold start.
  *
+ * @param {typeof spawnSync} spawn runs the process (`spawnSync`, or a test's fake)
  * @returns {object} the JSON line it printed
  * @throws {MeasurementError} `<mode>: <what> exited <code>: <stderr>`, or it did not start, finish or
  *   print JSON
  */
-function runNodeHalf(mode, run, app, work, what) {
-    const result = spawnSync(process.execPath, [MEASURE_NODE, run, '--app', app, '--work', work], {
+function runNodeHalf(spawn, mode, run, app, work, what) {
+    const result = spawn(process.execPath, [MEASURE_NODE, run, '--app', app, '--work', work], {
         encoding: 'utf8',
         maxBuffer: NODE_OUTPUT_LIMIT_BYTES,
         timeout: RUN_BOUND_MS,
@@ -863,14 +1032,13 @@ function runNodeHalf(mode, run, app, work, what) {
  *
  * @returns {Promise<{ version: string, crossOriginIsolated: boolean, coldStarts: object[], steps: object[] }>}
  * @throws {MeasurementError} the server did not start or Chromium did not launch, a page failed (see
- *   `runPage`) or did not post what its run posts, or closing the browser or the server failed
- *   (`closeAfter`)
+ *   `runPage`) or did not post what its run posts, or closing the browser (within `closeBoundMs`) or the
+ *   server failed (`closeAfter`)
  */
-async function measureInChromium(mode, app, work) {
-    const { chromium } = await import('@playwright/test');
+async function measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs }) {
     let server;
     try {
-        server = await startServer({ app, work });
+        server = await serve({ app, work });
     } catch (error) {
         throw new MeasurementError(`${mode}: the agreement server did not start: ${firstLine(error)}`, { cause: error });
     }
@@ -879,12 +1047,17 @@ async function measureInChromium(mode, app, work) {
         async () => {
             let browser;
             try {
-                browser = await chromium.launch();
+                browser = await launchChromium();
             } catch (error) {
                 throw new MeasurementError(`${mode}: Chromium did not launch: ${firstLine(error)}`, { cause: error });
             }
 
-            return closeAfter(() => measurePages(mode, browser, server.url), () => browser.close(), mode, 'Chromium');
+            return closeAfter(
+                () => measurePages(mode, browser, server.url, pageBoundMs, closeBoundMs),
+                () => within(() => browser.close(), closeBoundMs),
+                mode,
+                'Chromium',
+            );
         },
         () => server.close(),
         mode,
@@ -892,20 +1065,26 @@ async function measureInChromium(mode, app, work) {
     );
 }
 
+/** Playwright's Chromium, launched; `@playwright/test` is imported only here, so the tests need no browser. */
+async function launchPlaywrightChromium() {
+    const { chromium } = await import('@playwright/test');
+    return chromium.launch();
+}
+
 /** The ten cold-start pages and the steps page of one mode, checked as `measureInChromium` says. */
-async function measurePages(mode, browser, origin) {
+async function measurePages(mode, browser, origin, boundMs, closeBoundMs) {
     const booted = [];
     const coldStarts = [];
     for (let i = 1; i <= COLD_STARTS; i++) {
         const what = `${mode}: chromium cold start ${i}`;
-        const events = await runPage(browser, `${origin}/web/measure.html?run=cold-start`, what);
-        booted.push(onlyEvent(events, 'booted', what));
+        const events = await runPage(browser, `${origin}/web/measure.html?run=cold-start`, what, boundMs, closeBoundMs);
+        booted.push(bootedInWorker(events, what));
         coldStarts.push(onlyEvent(events, 'coldStart', what));
     }
 
     const what = `${mode}: chromium steps`;
-    const events = await runPage(browser, `${origin}/web/measure.html?run=steps`, what);
-    booted.push(onlyEvent(events, 'booted', what));
+    const events = await runPage(browser, `${origin}/web/measure.html?run=steps`, what, boundMs, closeBoundMs);
+    booted.push(bootedInWorker(events, what));
     const steps = checkStepKinds(events.filter((event) => event?.type === 'steps').map(stepEntry), what);
 
     return {
@@ -924,6 +1103,22 @@ function onlyEvent(events, type, what) {
     }
 
     return found[0];
+}
+
+/**
+ * A page's one `booted` message, which must say `inWorker: true`: the Worker sets it when `self` is a
+ * `WorkerGlobalScope`, so numbers from code that ran anywhere else are never recorded as the Worker's.
+ */
+function bootedInWorker(events, what) {
+    const booted = onlyEvent(events, 'booted', what);
+    if (booted.inWorker !== true) {
+        throw new MeasurementError(
+            `${what}: the booted message has inWorker ${String(JSON.stringify(booted.inWorker))}, not true, `
+            + 'so its numbers are not a Worker\'s',
+        );
+    }
+
+    return booted;
 }
 
 /** Each startup interval's `{median, p90}` over the cold starts. */
@@ -953,17 +1148,32 @@ async function readServerBenchmarks(file) {
  * The .NET SDK version (`dotnet --version`) and the highest `Microsoft.NETCore.App 10.` runtime of
  * `dotnet --list-runtimes`, in the job that ran the benchmarks.
  *
+ * @param {(args: string[]) => string} [run] runs `dotnet <args>` and gives its standard output; the
+ *   real `dotnet` on PATH by default, a fake in the tests
  * @returns {{ sdk: string, runtime: string }}
  * @throws {MeasurementError} `dotnet` did not run, or lists no .NET 10 runtime
  */
-function dotnetVersions() {
-    const sdk = runDotnet(['--version']).trim();
-    const runtimes = [...runDotnet(['--list-runtimes']).matchAll(RUNTIME_LINE)].map((match) => match[1]);
-    if (runtimes.length === 0) {
+export function dotnetVersions(run = runDotnet) {
+    const sdk = run(['--version']).trim();
+    const runtime = highestRuntime(run(['--list-runtimes']));
+    if (runtime === null) {
         throw new MeasurementError('dotnet --list-runtimes lists no Microsoft.NETCore.App 10. runtime');
     }
 
-    return { sdk, runtime: runtimes.sort(compareVersions).at(-1) };
+    return { sdk, runtime };
+}
+
+/**
+ * The highest `Microsoft.NETCore.App 10.` runtime that `dotnet --list-runtimes` printed, by SemVer
+ * precedence (`compareVersions`), so `10.0.0-rc.10` is above `10.0.0-rc.2` and `10.0.0` above both.
+ *
+ * @param {string} text the command's standard output, one `<name> <version> [<path>]` line per runtime
+ * @returns {string | null} the version, or null when no line names a `Microsoft.NETCore.App 10.` runtime
+ *   with a `<major>.<minor>.<patch>[-<prerelease>][+<build>]` version
+ */
+export function highestRuntime(text) {
+    const runtimes = [...text.matchAll(RUNTIME_LINE)].map((match) => match[1]);
+    return runtimes.length === 0 ? null : runtimes.sort(compareVersions).at(-1);
 }
 
 /** The standard output of one `dotnet` command. */
@@ -980,29 +1190,73 @@ function runDotnet(args) {
     return result.stdout;
 }
 
-/** Orders `<major>.<minor>.<patch>[<suffix>]` versions by their numbers, a release after its prereleases. */
-function compareVersions(a, b) {
-    const parse = (version) => {
-        const [, major, minor, patch, suffix] = /^(\d+)\.(\d+)\.(\d+)(.*)$/.exec(version);
-        return { numbers: [Number(major), Number(minor), Number(patch)], suffix };
-    };
-    const left = parse(a);
-    const right = parse(b);
+/**
+ * Orders two versions by SemVer 2.0 precedence (semver.org, section 11): the major, minor and patch
+ * numbers, compared numerically; then a release above its prereleases; then the prerelease identifiers
+ * left to right, numeric ones compared numerically, a numeric one below an alphanumeric one, alphanumeric
+ * ones in ASCII order, and a prerelease with more identifiers above one that it begins. Build metadata
+ * (`+<build>`) is ignored.
+ *
+ * @param {string} a `<major>.<minor>.<patch>[-<prerelease>][+<build>]`
+ * @param {string} b the same
+ * @returns {-1 | 0 | 1} -1 when `a` is below `b`, 1 when above, 0 when they have the same precedence
+ * @throws {RangeError} a version is not of that form
+ */
+export function compareVersions(a, b) {
+    const left = parseVersion(a);
+    const right = parseVersion(b);
     for (let i = 0; i < 3; i++) {
         if (left.numbers[i] !== right.numbers[i]) {
-            return left.numbers[i] - right.numbers[i];
+            return left.numbers[i] < right.numbers[i] ? -1 : 1;
         }
     }
 
-    if (left.suffix === right.suffix) {
-        return 0;
+    if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+        // A release is above its prereleases, and two releases of the same numbers are equal.
+        return (left.prerelease.length === 0 ? 1 : 0) - (right.prerelease.length === 0 ? 1 : 0);
     }
 
-    if (left.suffix === '' || right.suffix === '') {
-        return left.suffix === '' ? 1 : -1;
+    for (let i = 0; i < Math.min(left.prerelease.length, right.prerelease.length); i++) {
+        const order = compareIdentifiers(left.prerelease[i], right.prerelease[i]);
+        if (order !== 0) {
+            return order;
+        }
     }
 
-    return left.suffix < right.suffix ? -1 : 1;
+    return Math.sign(left.prerelease.length - right.prerelease.length);
+}
+
+/** A version's three numbers, as BigInts so that no number is rounded, and its prerelease identifiers. */
+function parseVersion(version) {
+    const match = typeof version === 'string' ? SEMVER.exec(version) : null;
+    if (match === null) {
+        throw new RangeError(
+            `compareVersions: ${JSON.stringify(version)} is not a <major>.<minor>.<patch>[-<prerelease>][+<build>] version`,
+        );
+    }
+
+    const [, major, minor, patch, prerelease] = match;
+    return {
+        numbers: [BigInt(major), BigInt(minor), BigInt(patch)],
+        prerelease: prerelease === undefined ? [] : prerelease.split('.'),
+    };
+}
+
+/** Two prerelease identifiers in SemVer order: digits only numerically, below any other, the rest in ASCII order. */
+function compareIdentifiers(a, b) {
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) {
+        const x = BigInt(a);
+        const y = BigInt(b);
+        return x === y ? 0 : (x < y ? -1 : 1);
+    }
+
+    if (aNumeric !== bNumeric) {
+        return aNumeric ? -1 : 1;
+    }
+
+    return a === b ? 0 : (a < b ? -1 : 1);
 }
 
 /** The machine the measurements ran on, as Node reports it. */

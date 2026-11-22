@@ -483,9 +483,15 @@ public sealed class QuickstartTests
     /// <summary>
     /// <see cref="QuickstartSections.Headings"/>, which the section check reads, takes a <c>## </c> line
     /// as a heading only outside a fenced block, with <see cref="QuickstartSections.BashLines"/>' fence
-    /// handling: a block opens on a line whose trimmed start is three backticks and closes on one of only
-    /// backticks, and a fence line with an info string inside a block is block content. Each heading keeps
-    /// its own line number, so a fenced copy earlier in the file never stands in for it.
+    /// handling, which is CommonMark's: a block opens on up to three spaces and a run of at least three
+    /// backticks or tildes (a backtick run's info string holds no backtick), and closes only on a run of
+    /// the same character at least as long with nothing but spaces or tabs after it. A fence line with an
+    /// info string, a shorter run and a run of the other character inside a block are block content, so a
+    /// <c>## </c> line in a <c>~~~</c> block or in a <c>````</c> block that quotes a <c>```</c> sample is
+    /// no heading. A run of two backticks or two tildes is no fence, and a tab or a fourth space before a
+    /// run makes the line no fence, so it neither opens a block nor closes one; a tab after a closing run
+    /// still closes. Each heading keeps its own line number, so a fenced copy earlier in the file never
+    /// stands in for it.
     /// </summary>
     [Theory]
     [InlineData("## A\ntext\n## B", "A@1 B@3")]
@@ -494,11 +500,59 @@ public sealed class QuickstartTests
     [InlineData("  ```\n## A\n```bash\n## B\n```\n## C", "C@6")]
     [InlineData("### A\n##B\n ## C\n## D ", "D@4")]
     [InlineData("## A\r\n```\r\n## B\r\n```\r\n## C", "A@1 C@5")]
+    [InlineData("~~~\n## A\n~~~\n## B", "B@4")]
+    [InlineData("~~~markdown\n## A\n~~~\n## A", "A@4")]
+    [InlineData("````markdown\n```bash\n## A\n```\n## B\n````\n## C", "C@7")]
+    [InlineData("~~~\n```\n## A\n~~~\n## B", "B@5")]
+    [InlineData("```\n~~~\n## A\n```\n## B", "B@5")]
+    [InlineData("~~~~\n~~~\n## A\n~~~~\n## B", "B@5")]
+    [InlineData("```\n## A\n``` x\n## B\n```  \n## C", "C@6")]
+    [InlineData("   ```\n## A\n```\n## B", "B@4")]
+    [InlineData("    ```\n## A\n```\n## B", "A@2")]
+    [InlineData("```a`b\n## A", "A@2")]
+    [InlineData("~~~ a`b\n## A\n~~~\n## B", "B@4")]
+    [InlineData("``\n## A\n``\n## B", "A@2 B@4")]
+    [InlineData("~~\n## A\n~~\n## B", "A@2 B@4")]
+    [InlineData("```\n## A\n    ```\n## B\n```\n## C", "C@6")]
+    [InlineData("\t```\n## A\n```\n## B", "A@2")]
+    [InlineData("```\n## A\n```\t\n## B", "B@4")]
     public void QuickstartHeadingsAreReadOutsideFences(string markdown, string expected)
     {
         var headings = QuickstartSections.Headings(markdown).Select(heading => $"{heading.Heading}@{heading.Line}");
 
         Assert.Equal(expected, string.Join(' ', headings));
+    }
+
+    /// <summary>
+    /// <see cref="QuickstartSections.BashLines"/> reads the lines of a section's bash blocks with the same
+    /// CommonMark fences as <see cref="QuickstartHeadingsAreReadOutsideFences"/>: a block is bash when its
+    /// info string's first word is <c>bash</c>, after backticks or tildes; a <c>````</c> block that quotes
+    /// a <c>```bash</c> sample yields none of the sample's lines and runs to its own <c>````</c>, its
+    /// <c>## </c> line not ending the section; a run of the other character or a shorter run is block
+    /// content, not a close; a run of two backticks opens no block; and a fence indented by four spaces is
+    /// no fence, so such a closing fence is a line of the block. Each entry reads
+    /// <c>text@line#fence</c>: its text, its first line and the line of the fence that opens its block.
+    /// </summary>
+    [Theory]
+    [InlineData("## S\n```bash\necho a\n```", "echo a@3#2")]
+    [InlineData("## S\n````markdown\n```bash\necho inner\n```\n## X\necho still-inner\n````\n```bash\necho after\n```", "echo after@10#9")]
+    [InlineData("## S\n~~~bash\necho a\n~~~", "echo a@3#2")]
+    [InlineData("## S\n~~~ bash docs-test=skip\necho a\n~~~\n## T\n~~~bash\necho b\n~~~", "echo a@3#2")]
+    [InlineData("## S\n~~~\n```\n~~~\n```bash\necho a\n```", "echo a@6#5")]
+    [InlineData("## S\n```\n~~~\n```\n~~~bash\necho a\n~~~", "echo a@6#5")]
+    [InlineData("## S\n~~~bash\necho a\n```\necho b\n~~~", "echo a@3#2 | ```@4#2 | echo b@5#2")]
+    [InlineData("## S\n````bash\necho a\n```\necho b\n````\necho c", "echo a@3#2 | ```@4#2 | echo b@5#2")]
+    [InlineData("## S\n~~~~bash\necho a\n~~~\necho b\n~~~~", "echo a@3#2 | ~~~@4#2 | echo b@5#2")]
+    [InlineData("## S\n```bash\necho a\n`````\necho b", "echo a@3#2")]
+    [InlineData("## S\n   ```bash\necho a\n   ```", "echo a@3#2")]
+    [InlineData("## S\n    ```bash\necho a\n    ```", "")]
+    [InlineData("## S\n``bash\necho a\n``", "")]
+    [InlineData("## S\n```bash\necho a\n    ```\necho b\n```", "echo a@3#2 |     ```@4#2 | echo b@5#2")]
+    public void QuickstartBashLinesFollowTheirFences(string markdown, string expected)
+    {
+        var lines = QuickstartSections.BashLines(markdown, "S").Select(line => $"{line.Text}@{line.First}#{line.Fence}");
+
+        Assert.Equal(expected, string.Join(" | ", lines));
     }
 
     [Theory]
@@ -554,7 +608,7 @@ public sealed class QuickstartTests
             }
             else if (!QuickstartSections.BashLines(markdown, heading).Any())
             {
-                failures.Add(new QuickstartFailure(SectionCheck, number, number, $"## {heading}", "has no line in a ```bash block"));
+                failures.Add(new QuickstartFailure(SectionCheck, number, number, $"## {heading}", "has no line in a bash block"));
             }
         }
 
@@ -563,8 +617,8 @@ public sealed class QuickstartTests
 
     /// <summary>
     /// The simple commands of every bash line of the slice-2 sections, in document order, each with the
-    /// directory it runs in. Each <c>```bash</c> block starts in the repository root, as the quickstart says
-    /// its commands run, and a <c>cd</c> outside <c>( ... )</c> carries to the block's later lines. A line
+    /// directory it runs in. Each bash block starts in the repository root, as the quickstart says its
+    /// commands run, and a <c>cd</c> outside <c>( ... )</c> carries to the block's later lines. A line
     /// whose quotes do not close adds a <see cref="ShellCheck"/> failure to <paramref name="failures"/>
     /// instead, and leaves the directory as it was.
     /// </summary>

@@ -724,6 +724,16 @@ about the `.wasm` content type, or a page that fails to load or finish is a fail
 `<mode>: chromium cold start <i>: <message>` or `<mode>: chromium steps: <message>`. The report's
 `crossOriginIsolated` is true only when every `booted` message says so.
 
+Since the PR's independent review, every call of a page shares its 2 minutes, not only the navigation
+and the wait: `newContext()`, `newPage()` and `evaluate()`, which Playwright gives no timeout, are each
+raced against what is left of the bound, and closing the page's context, or the browser, has 10
+seconds. So a wedged browser fails the page as `<what>: the page did not finish within 120 s` (or
+`<what>: closing its browser context failed: did not finish within 10 s`) instead of holding the job
+until its step's bound. Each `booted` message must also have `inWorker` true, or its page is the
+failed measurement `<what>: the booted message has inWorker <value>, not true, so its numbers are not
+a Worker's`, so numbers from code that did not run in a `WorkerGlobalScope` are never recorded as
+`chromiumWorker`.
+
 ## Tests
 
 | Test | Covers |

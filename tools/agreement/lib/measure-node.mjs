@@ -8,11 +8,14 @@
  *
  * It prints one JSON line on stdout and exits 0, or prints the error on stderr and exits 1.
  *
- * - `coldStart({app, work})`: `{importMs, createMs, firstStepMs, totalMs, buildInfo}`. `importMs` and
- *   `createMs` are `bootRuntime`'s (`lib/runtime.mjs`). `firstStepMs` runs from the exports being ready
- *   until `LoadCollision`, `LoadConfig`, `Reset` and `StepQueued(1)` on `flat-run-30hz`'s first command
- *   have returned 0, 0, 0 and 1. `totalMs` is the three added: the time to the first completed step.
- *   `buildInfo` is the runtime's six `runtimeBuildInfo` fields the report records.
+ * - `coldStart({app, work})`: `{importMs, createMs, firstStepMs, totalMs, buildInfo, jiterpreter}`.
+ *   `importMs` and `createMs` are `bootRuntime`'s (`lib/runtime.mjs`), which it calls with its defaults,
+ *   no runtime options. `firstStepMs` runs from the exports being ready until `LoadCollision`,
+ *   `LoadConfig`, `Reset` and `StepQueued(1)` on `flat-run-30hz`'s first command have returned 0, 0, 0
+ *   and 1. `totalMs` is the three added: the time to the first completed step. `buildInfo` is the
+ *   runtime's six `runtimeBuildInfo` fields the report records, and `jiterpreter` the jiterpreter state
+ *   the booted runtime reported (`jiterpreterState`: `{traces, interpEntry, jitCall}`, or null when the
+ *   runtime cannot report it), from which `lib/measure.mjs` writes the report's `runtime.jiterpreter`.
  * - `stepCosts({app, work})`: one entry per step kind, `{kind, scenario, batch: 1, steps, meanNs, p99Ns}`,
  *   from `stepKindCosts` (`lib/passes.mjs`, the loop the Worker runs) with one command per `StepQueued(1)`,
  *   each timed with `process.hrtime.bigint()`, over the same passes of whole 16-command batches as the
@@ -65,7 +68,7 @@ class UsageError extends Error {
  *
  * @param {{ app: string, work: string }} options the publish output's `wwwroot` and the work directory
  * @returns {Promise<{ importMs: number, createMs: number, firstStepMs: number, totalMs: number,
- *   buildInfo: object }>}
+ *   buildInfo: object, jiterpreter: { traces: boolean, interpEntry: boolean, jitCall: boolean } | null }>}
  * @throws {MeasurementError} an input is missing, or a call returned another code than it must
  */
 export async function coldStart({ app, work }) {
@@ -96,6 +99,7 @@ export async function coldStart({ app, work }) {
         firstStepMs,
         totalMs: importMs + createMs + firstStepMs,
         buildInfo: pickBuildInfo(booted.buildInfo),
+        jiterpreter: booted.jiterpreter ?? null,
     };
 }
 

@@ -30,9 +30,28 @@
  *                         startup: {node, chromiumWorker}, steps: {node, chromiumWorker}} } }
  *
  *   `manifest` is the parsed boot manifest, `buildInfo` the first Node cold start's `runtimeBuildInfo`,
- *   `download` measureDownload's result, `startup` each runtime's interval summaries (and the Worker's
- *   `crossOriginIsolated`), `steps` each runtime's three step entries. A mode's `agreement` is read from
- *   `<work>/report/agreement.json`.
+ *   `jiterpreter` the Node cold starts' jiterpreter state (`{traces, interpEntry, jitCall}`), `download`
+ *   measureDownload's result, `startup` summarizeStartup's result (`coldStarts` and each runtime's interval
+ *   summaries, with the Worker's `crossOriginIsolated`), `steps` each runtime's three step entries. A
+ *   mode's `agreement` is read from `<work>/report/agreement.json`, and its `runtime.jiterpreter` is true
+ *   only when the state has all three options on.
+ * - runPage(browser, url, what, boundMs, closeBoundMs): one Chromium page with a fake browser; every call
+ *   of the page shares its one bound, and closing its context has its own.
+ * - measureMode(mode, dir, work, runners): one produced mode measured with fakes for the `measure-node.mjs`
+ *   processes (`spawn`, spawnSync's arguments and result), the agreement server (`serve`) and Chromium
+ *   (`launchChromium`): ten cold-start processes, the steps process, ten cold-start pages in fresh contexts
+ *   and the steps page, the cold starts' jiterpreter state, each page's `booted` from a Worker, and the
+ *   page and close bounds (`pageBoundMs`, `closeBoundMs`).
+ * - summarizeStartup(mode, {node, chromiumWorker, crossOriginIsolated}): the `startup` input over exactly
+ *   ten cold starts in each runtime; a MeasurementError naming both counts otherwise.
+ * - compareVersions(a, b) and highestRuntime(text): SemVer 2.0 precedence, and the highest
+ *   `Microsoft.NETCore.App 10.` runtime of a `dotnet --list-runtimes` output by it.
+ * - dotnetVersions(run): the report's `{sdk, runtime}` from a fake `run(args)` that gives the output of
+ *   `dotnet --version` and `dotnet --list-runtimes`; the MeasurementError naming the missing runtime when
+ *   no SemVer `Microsoft.NETCore.App 10.` runtime is listed.
+ *
+ * From `../lib/measure-node.mjs`, run as a child process: the `cold-start` line carries the jiterpreter
+ * state its runtime reported, here a `dotnet.js` stand-in in a temporary publish folder.
  *
  * From `../lib/passes.mjs` (no `node:` imports, so the Worker loads it too):
  * - nearestRank(samples, p) and summarize(samples), the nearest-rank percentiles
@@ -292,9 +311,16 @@ const BUILD_INFO_FIELDS = [
     'wasmEnableThreads',
 ];
 
-/** A produced mode's input, with the measurements of the contract example's mode `fixtureMode`. */
+/** The jiterpreter state of a runtime booted with its defaults: all three options on. */
+const JITERPRETER_ON = Object.freeze({ traces: true, interpEntry: true, jitCall: true });
+
+/**
+ * A produced mode's input, with the measurements of the contract example's mode `fixtureMode`; the Node
+ * cold starts' jiterpreter state is all on, which the example's `jiterpreter: true` records.
+ */
 function producedInput(fixtureMode, dir) {
     const { runtime, startup } = structuredClone(fixtureMode);
+    assert.equal(runtime.jiterpreter, true);
     return {
         produced: true,
         dir,
@@ -306,8 +332,9 @@ function producedInput(fixtureMode, dir) {
             globalizationMode: runtime.globalizationMode,
         },
         buildInfo: Object.fromEntries(BUILD_INFO_FIELDS.map((field) => [field, runtime[field]])),
+        jiterpreter: { ...JITERPRETER_ON },
         download: structuredClone(fixtureMode.download),
-        startup: { node: startup.node, chromiumWorker: startup.chromiumWorker },
+        startup: { coldStarts: startup.coldStarts, node: startup.node, chromiumWorker: startup.chromiumWorker },
         steps: structuredClone(fixtureMode.steps),
     };
 }
@@ -1040,6 +1067,736 @@ test('a measurement page that fails is a MeasurementError naming its mode and ru
             exactly(MeasurementError, `${PAGE_WHAT}: the page did not finish within 1.5 s`),
         );
     });
+
+    // T322 (independent review): Playwright gives newContext, newPage and evaluate no timeout, and a
+    // wedged browser may never answer them or a close. Each call is raced against what is left of the
+    // page's bound, and the context's close against its own, so the page fails with its line instead
+    // of hanging the job until the step's timeout-minutes. The bounds here are 50 ms.
+    const never = () => new Promise(() => {});
+    const timedOut = `${PAGE_WHAT}: the page did not finish within 0.05 s`;
+    const wedged = [
+        { name: 'newContext never returns', overrides: { newContext: never }, message: timedOut, closed: 0 },
+        { name: 'newPage never returns', overrides: { newPage: never }, message: timedOut },
+        { name: 'evaluate never returns', overrides: { evaluate: never }, message: timedOut },
+        { name: 'goto never returns', overrides: { goto: never }, message: timedOut },
+        { name: 'waitForFunction never returns', overrides: { waitForFunction: never }, message: timedOut },
+        {
+            name: 'the context close never returns after the page finished',
+            overrides: { close: never },
+            message: `${PAGE_WHAT}: closing its browser context failed: did not finish within 0.05 s`,
+        },
+        {
+            name: 'the context close never returns after evaluate never returned',
+            overrides: { evaluate: never, close: never },
+            message: `${timedOut}; closing its browser context failed too: did not finish within 0.05 s`,
+        },
+    ];
+    for (const row of wedged) {
+        await t.test(`a wedged browser: ${row.name}`, { timeout: 10_000 }, async () => {
+            const { browser, log } = fakeBrowser(row.overrides);
+            const started = performance.now();
+
+            await assert.rejects(async () => runPage(browser, PAGE_URL, PAGE_WHAT, 50, 50), exactly(MeasurementError, row.message));
+
+            const elapsedMs = performance.now() - started;
+            assert.ok(elapsedMs < 2000, `the page failed after ${elapsedMs} ms, not within its bounds of 50 ms each`);
+            assert.equal(log.closed, row.closed ?? 1, 'a context that was made is closed');
+        });
+    }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// One mode, measured with fakes (T309; T320 spec-test review, T322 independent review)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Each cold start's rank among the ten, in the order the cold starts run, chosen so that no run of
+ * consecutive cold starts shorter than ten has the ten's median and p90 (nearest-rank: the 5th and 9th
+ * smallest), which the test below checks. Dropping only the largest sample keeps both, so it is never
+ * first or last.
+ */
+const NODE_RANKS = Object.freeze([3, 7, 2, 6, 8, 4, 9, 1, 10, 5]);
+const WORKER_RANKS = Object.freeze([8, 2, 6, 4, 7, 3, 5, 10, 1, 9]);
+
+/** A Node cold start's intervals for a rank; each is exact in binary floating point. */
+function nodeSample(rank) {
+    return { importMs: 30 + rank, createMs: 40 + 2 * rank, firstStepMs: 20 + rank / 2, totalMs: 90 + 3.5 * rank };
+}
+
+/** A Chromium Worker cold start's intervals for a rank, distinct from every Node one. */
+function workerSample(rank) {
+    return { importMs: 45 + rank, createMs: 55 + 3 * rank, firstStepMs: 25 + rank / 4, totalMs: 125 + 4.25 * rank };
+}
+
+/** The summaries of NODE_RANKS and WORKER_RANKS: each interval at rank 5 (the median) and rank 9 (the p90). */
+const EXPECTED_STARTUP = Object.freeze({
+    coldStarts: 10,
+    node: {
+        importMs: { median: 35, p90: 39 },
+        createMs: { median: 50, p90: 58 },
+        firstStepMs: { median: 22.5, p90: 24.5 },
+        totalMs: { median: 107.5, p90: 121.5 },
+    },
+    chromiumWorker: {
+        crossOriginIsolated: true,
+        importMs: { median: 50, p90: 54 },
+        createMs: { median: 70, p90: 82 },
+        firstStepMs: { median: 26.25, p90: 27.25 },
+        totalMs: { median: 146.25, p90: 163.25 },
+    },
+});
+
+const STARTUP_INTERVALS = ['importMs', 'createMs', 'firstStepMs', 'totalMs'];
+const MEASURED_BUILD_INFO = Object.freeze({
+    productVersion: '10.0.3',
+    gitHash: '4c8d2e6f1a3b5c7d9e0f2a4b6c8d0e1f3a5b7c9d',
+    buildConfiguration: 'Release',
+    wasmEnableSIMD: true,
+    wasmEnableExceptionHandling: true,
+    wasmEnableThreads: false,
+});
+const FAKE_ORIGIN = 'http://127.0.0.1:4321';
+const FAKE_CHROMIUM_VERSION = '153.0.6943.16';
+const COLD_START_PAGE = `${FAKE_ORIGIN}/web/measure.html?run=cold-start`;
+const STEPS_PAGE = `${FAKE_ORIGIN}/web/measure.html?run=steps`;
+
+/** The three step entries of a half, as `checkStepKinds` takes them. */
+function measuredSteps(batch) {
+    return [
+        { kind: 'movement', scenario: 'flat-run-30hz', batch, steps: 3008, meanNs: 95120, p99Ns: 141300 },
+        { kind: 'weapon', scenario: 'rifle-burst', batch, steps: 3008, meanNs: 61040, p99Ns: 88220 },
+        { kind: 'projectile', scenario: 'launcher-arc', batch, steps: 3008, meanNs: 74310, p99Ns: 119800 },
+    ];
+}
+
+/**
+ * Fakes for `measureMode`'s runners, and the log of what it did with them.
+ *
+ * - `spawn` stands for `spawnSync`: it logs the command and arguments and answers as a `measure-node.mjs`
+ *   process that exits 0. The i-th `cold-start` process prints `nodeSample(NODE_RANKS[i - 1])`, the build
+ *   info and `jiterpreter(i)` (all on by default); a `steps` process prints the batch-1 entries.
+ * - `serve` logs its options and returns a server at FAKE_ORIGIN whose closes are counted.
+ * - `launchChromium` counts its launches and returns a browser whose contexts are logged, each with the
+ *   URL of every page it opened and its closes. The i-th cold-start page posts `booted` (with
+ *   `booted('cold-start', i)` spread over `inWorker: true, crossOriginIsolated: true`), `coldStart` with
+ *   `workerSample(WORKER_RANKS[i - 1])` and `done`; the steps page posts `booted` (with `booted('steps')`),
+ *   the batch-16 entries and `done`. With `wedgedContext` n, the n-th context's `newPage()` never returns;
+ *   with `browserClose`, the browser's close is that function.
+ */
+function fakeMeasurement({ jiterpreter = () => ({ ...JITERPRETER_ON }), booted = () => ({}), wedgedContext, browserClose } = {}) {
+    const log = { spawns: [], served: [], serverClosed: 0, launches: 0, browserClosed: 0, contexts: [] };
+    let nodeColdStarts = 0;
+    let coldStartPages = 0;
+
+    const spawn = (command, args, options) => {
+        log.spawns.push({ command, args, timeout: options?.timeout });
+        let line;
+        if (args[1] === 'cold-start') {
+            nodeColdStarts += 1;
+            line = {
+                ...nodeSample(NODE_RANKS[(nodeColdStarts - 1) % NODE_RANKS.length]),
+                buildInfo: { ...MEASURED_BUILD_INFO },
+                jiterpreter: jiterpreter(nodeColdStarts),
+            };
+        } else {
+            line = measuredSteps(1);
+        }
+
+        return { pid: 4242, status: 0, signal: null, output: [], stdout: `${JSON.stringify(line)}\n`, stderr: '' };
+    };
+
+    function eventsFor(url) {
+        const base = { type: 'booted', inWorker: true, crossOriginIsolated: true, buildInfo: {}, moduleStartMs: 1 };
+        if (url === COLD_START_PAGE) {
+            coldStartPages += 1;
+            return [
+                { ...base, ...booted('cold-start', coldStartPages) },
+                { type: 'coldStart', ...workerSample(WORKER_RANKS[(coldStartPages - 1) % WORKER_RANKS.length]) },
+                { type: 'done' },
+            ];
+        }
+
+        return [
+            { ...base, ...booted('steps') },
+            ...measuredSteps(16).map((entry) => ({ type: 'steps', ...entry })),
+            { type: 'done' },
+        ];
+    }
+
+    const browser = {
+        async newContext() {
+            const context = { pages: [], closed: 0 };
+            log.contexts.push(context);
+            const index = log.contexts.length;
+            return {
+                newPage() {
+                    if (index === wedgedContext) {
+                        return new Promise(() => {});
+                    }
+
+                    const page = { url: null };
+                    context.pages.push(page);
+                    return Promise.resolve({
+                        on() {},
+                        async goto(url) {
+                            page.url = url;
+                            return { status: () => 200 };
+                        },
+                        async waitForFunction() {
+                            return true;
+                        },
+                        async evaluate() {
+                            return eventsFor(page.url);
+                        },
+                    });
+                },
+                async close() {
+                    context.closed += 1;
+                },
+            };
+        },
+        version: () => FAKE_CHROMIUM_VERSION,
+        close() {
+            log.browserClosed += 1;
+            return browserClose ? browserClose() : Promise.resolve();
+        },
+    };
+
+    const runners = {
+        spawn,
+        serve: async (options) => {
+            log.served.push(options);
+            return {
+                url: FAKE_ORIGIN,
+                port: 4321,
+                close: async () => {
+                    log.serverClosed += 1;
+                },
+            };
+        },
+        launchChromium: async () => {
+            log.launches += 1;
+            return browser;
+        },
+    };
+    return { runners, log };
+}
+
+/** A publish directory (T300's `writePublishDir`), its `wwwroot` and a work directory path. */
+function measuredMode(t) {
+    const { publishDir } = writePublishDir(t);
+    return { dir: publishDir, app: path.join(publishDir, 'wwwroot'), work: tempDir(t, 'measure-mode-work-') };
+}
+
+/** The `measure-node.mjs <run>` process `measureMode` starts. */
+function nodeProcess(run, app, work) {
+    return { command: process.execPath, args: [MEASURE_NODE_SCRIPT, run, '--app', app, '--work', work] };
+}
+
+/** What the log shows of the processes: each one's command and arguments. */
+function processesOf(log) {
+    return log.spawns.map(({ command, args }) => ({ command, args }));
+}
+
+/** What the log shows of the browser: each context's page URLs and how often it closed. */
+function contextsOf(log) {
+    return log.contexts.map((context) => ({ urls: context.pages.map((page) => page.url), closed: context.closed }));
+}
+
+test('a mode is measured over exactly ten cold starts in each runtime', async (t) => {
+    // US7 scenario 2: "the time to the first completed step over 10 cold starts ... each in Node and in a
+    // Chromium Worker". Given a produced mode's publish folder and runners that stand for the Node
+    // processes, the agreement server and Chromium, when measureMode measures it, then it starts ten fresh
+    // `measure-node.mjs cold-start` processes and opens ten fresh contexts on the cold-start page, and the
+    // report's startup is their summaries, with coldStarts 10.
+    const { assembleReport, measureDownload, measureMode, parseBootManifest } = await import('../lib/measure.mjs');
+    const { summarize } = await import('../lib/passes.mjs');
+    const { dir, app, work } = measuredMode(t);
+    const fake = fakeMeasurement();
+
+    const measured = await measureMode('interp-prebuilt', dir, work, fake.runners);
+
+    // Ten Node cold starts, each its own process, then one steps process, each with 2 minutes.
+    assert.deepEqual(processesOf(fake.log), [
+        ...Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)),
+        nodeProcess('steps', app, work),
+    ]);
+    assert.deepEqual(fake.log.spawns.map((call) => call.timeout), Array(11).fill(120_000));
+    // Ten Chromium cold starts, each a fresh context with one page, then the steps page; every context,
+    // the browser and the server are closed.
+    assert.deepEqual(fake.log.served, [{ app, work }]);
+    assert.equal(fake.log.launches, 1);
+    assert.deepEqual(contextsOf(fake.log), [
+        ...Array.from({ length: 10 }, () => ({ urls: [COLD_START_PAGE], closed: 1 })),
+        { urls: [STEPS_PAGE], closed: 1 },
+    ]);
+    assert.equal(fake.log.browserClosed, 1);
+    assert.equal(fake.log.serverClosed, 1);
+
+    // The summaries are over exactly those ten samples per runtime.
+    assert.deepEqual(measured.input.startup, EXPECTED_STARTUP);
+    for (const [runtime, ranks, sample] of [['node', NODE_RANKS, nodeSample], ['chromiumWorker', WORKER_RANKS, workerSample]]) {
+        for (const interval of STARTUP_INTERVALS) {
+            const samples = ranks.map((rank) => sample(rank)[interval]);
+            const { median, p90 } = EXPECTED_STARTUP[runtime][interval];
+            assert.deepEqual(summarize(samples), { median, p90 });
+            // No run of consecutive cold starts shorter than ten gives the same summary, so a loop that
+            // ran fewer times, started late or stopped early cannot produce EXPECTED_STARTUP.
+            for (let from = 0; from < samples.length; from++) {
+                for (let to = from + 1; to <= samples.length; to++) {
+                    if (to - from < samples.length) {
+                        assert.notDeepEqual(
+                            summarize(samples.slice(from, to)),
+                            { median, p90 },
+                            `${runtime} ${interval}: cold starts ${from + 1} to ${to}`,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    assert.equal(measured.chromiumVersion, FAKE_CHROMIUM_VERSION);
+    assert.deepEqual(measured.input.download, await measureDownload(dir));
+    assert.deepEqual(measured.input.manifest, parseBootManifest(fs.readFileSync(DOTNET_JS_FIXTURE, 'utf8')));
+    assert.deepEqual(measured.input.buildInfo, MEASURED_BUILD_INFO);
+    assert.deepEqual(measured.input.jiterpreter, JITERPRETER_ON);
+    assert.deepEqual(measured.input.steps, { node: measuredSteps(1), chromiumWorker: measuredSteps(16) });
+
+    // The report records what was measured: coldStarts 10 and the summaries above.
+    const inputs = reportInputs({ work: workDir(t), aot: { produced: false, reason: AOT_REASON } });
+    inputs.modes['interp-prebuilt'] = measured.input;
+    const report = await assembleReport(inputs);
+    assert.deepEqual(report.wasm.modes['interp-prebuilt'].startup, EXPECTED_STARTUP);
+    assert.deepEqual(report.wasm.modes['interp-prebuilt'].runtime.runtimeOptions, []);
+    assert.equal(report.wasm.modes['interp-prebuilt'].runtime.jiterpreter, true);
+});
+
+test('the startup summary needs ten cold starts in each runtime', async (t) => {
+    // The report's coldStarts is the number of cold starts the two loops measured, which must be 10 in
+    // each runtime (contracts/measurement-report.md#fields), so a runtime that yields another number of
+    // samples fails the measurement, naming both counts.
+    const { MeasurementError, summarizeStartup } = await import('../lib/measure.mjs');
+    const node = NODE_RANKS.map(nodeSample);
+    const worker = WORKER_RANKS.map(workerSample);
+
+    await t.test('ten in each runtime', () => {
+        assert.deepEqual(
+            summarizeStartup('interp-relinked', { node, chromiumWorker: worker, crossOriginIsolated: true }),
+            EXPECTED_STARTUP,
+        );
+    });
+
+    const rows = [
+        { name: 'the Node runner yields 9 samples', node: node.slice(0, 9), worker, counts: '9 Node and 10 Chromium Worker' },
+        { name: 'the Worker runner yields 9 samples', node, worker: worker.slice(0, 9), counts: '10 Node and 9 Chromium Worker' },
+        { name: 'both runners yield 9 samples', node: node.slice(0, 9), worker: worker.slice(0, 9), counts: '9 Node and 9 Chromium Worker' },
+        { name: 'each runner yields 1 sample', node: node.slice(0, 1), worker: worker.slice(0, 1), counts: '1 Node and 1 Chromium Worker' },
+        {
+            name: 'both runners yield 11 samples',
+            node: [...node, nodeSample(11)],
+            worker: [...worker, workerSample(11)],
+            counts: '11 Node and 11 Chromium Worker',
+        },
+    ];
+    for (const row of rows) {
+        await t.test(row.name, () => {
+            assert.throws(
+                () => summarizeStartup('interp-relinked', { node: row.node, chromiumWorker: row.worker, crossOriginIsolated: true }),
+                exactly(MeasurementError, `interp-relinked: ${row.counts} cold starts were measured, not 10 each`),
+            );
+        });
+    }
+});
+
+test('the report\'s jiterpreter is what every Node cold start\'s runtime reported', async (t) => {
+    // T322 (independent review): runtime.jiterpreter is true only when every Node cold start's runtime
+    // reported all three jiterpreter options on; a cold start whose runtime reports no state, or another
+    // state than the first, fails the measurement before the steps process or Chromium runs.
+    const { MeasurementError, assembleReport, measureMode } = await import('../lib/measure.mjs');
+
+    const measured = [
+        { name: 'all on in every cold start', jiterpreter: () => ({ ...JITERPRETER_ON }), state: JITERPRETER_ON, report: true },
+        {
+            name: 'the JIT calls off in every cold start',
+            jiterpreter: () => ({ ...JITERPRETER_ON, jitCall: false }),
+            state: { ...JITERPRETER_ON, jitCall: false },
+            report: false,
+        },
+    ];
+    for (const row of measured) {
+        await t.test(row.name, async (sub) => {
+            const { dir, work } = measuredMode(sub);
+            const fake = fakeMeasurement({ jiterpreter: row.jiterpreter });
+
+            const result = await measureMode('interp-relinked', dir, work, fake.runners);
+
+            assert.deepEqual(result.input.jiterpreter, row.state);
+            const inputs = reportInputs({ work: workDir(sub), aot: { produced: false, reason: AOT_REASON } });
+            inputs.modes['interp-relinked'] = result.input;
+            const report = await assembleReport(inputs);
+            assert.equal(report.wasm.modes['interp-relinked'].runtime.jiterpreter, row.report);
+        });
+    }
+
+    const on = JSON.stringify(JITERPRETER_ON);
+    const refused = [
+        {
+            name: 'cold start 4 reports no state',
+            jiterpreter: (i) => (i === 4 ? null : { ...JITERPRETER_ON }),
+            message: 'interp-relinked: node cold start 4: the runtime reported no jiterpreter state, '
+                + 'so the report cannot say whether the jiterpreter ran',
+        },
+        {
+            name: 'cold start 1 has no jiterpreter field',
+            jiterpreter: (i) => (i === 1 ? undefined : { ...JITERPRETER_ON }),
+            message: 'interp-relinked: node cold start 1: the runtime reported no jiterpreter state, '
+                + 'so the report cannot say whether the jiterpreter ran',
+        },
+        {
+            name: 'cold start 7 reports the JIT calls off',
+            jiterpreter: (i) => ({ ...JITERPRETER_ON, jitCall: i !== 7 }),
+            message: 'interp-relinked: node cold start 7: the runtime reported the jiterpreter '
+                + `{"traces":true,"interpEntry":true,"jitCall":false}, but node cold start 1 reported ${on}`,
+        },
+    ];
+    for (const row of refused) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub);
+            const fake = fakeMeasurement({ jiterpreter: row.jiterpreter });
+
+            await assert.rejects(
+                async () => measureMode('interp-relinked', dir, work, fake.runners),
+                exactly(MeasurementError, row.message),
+            );
+            // The ten cold starts ran; the steps process and Chromium did not.
+            assert.deepEqual(processesOf(fake.log), Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)));
+            assert.equal(fake.log.launches, 0);
+        });
+    }
+});
+
+test('a Chromium page whose booted message is not from a Worker fails the measurement', async (t) => {
+    // T322 (independent review): numbers from code that did not run in a WorkerGlobalScope are never
+    // recorded as chromiumWorker, so a booted message without inWorker true fails its page.
+    const { MeasurementError, measureMode } = await import('../lib/measure.mjs');
+    const notAWorker = (value) => `the booted message has inWorker ${value}, not true, so its numbers are not a Worker's`;
+    const rows = [
+        {
+            name: 'cold start 4 says inWorker false',
+            booted: (run, i) => (run === 'cold-start' && i === 4 ? { inWorker: false } : {}),
+            message: `aot: chromium cold start 4: ${notAWorker('false')}`,
+            contexts: 4,
+        },
+        {
+            name: 'cold start 1 says inWorker "true", a string',
+            booted: (run, i) => (run === 'cold-start' && i === 1 ? { inWorker: 'true' } : {}),
+            message: `aot: chromium cold start 1: ${notAWorker('"true"')}`,
+            contexts: 1,
+        },
+        {
+            name: 'the steps page leaves inWorker out',
+            booted: (run) => (run === 'steps' ? { inWorker: undefined } : {}),
+            message: `aot: chromium steps: ${notAWorker('undefined')}`,
+            contexts: 11,
+        },
+    ];
+    for (const row of rows) {
+        await t.test(row.name, async (sub) => {
+            const { dir, work } = measuredMode(sub);
+            const fake = fakeMeasurement({ booted: row.booted });
+
+            await assert.rejects(async () => measureMode('aot', dir, work, fake.runners), exactly(MeasurementError, row.message));
+            assert.equal(fake.log.contexts.length, row.contexts, 'no page runs after the one that failed');
+            assert.deepEqual(fake.log.contexts.filter((context) => context.closed !== 1), [], 'every context is closed');
+            assert.equal(fake.log.browserClosed, 1);
+            assert.equal(fake.log.serverClosed, 1);
+        });
+    }
+});
+
+test('a wedged browser fails the mode within its bounds instead of hanging it', async (t) => {
+    // T322 (independent review): measureMode passes its page and close bounds to every page and to the
+    // browser's close, so a browser that stops answering ends the run with its `measure:` line.
+    const { MeasurementError, measureMode } = await import('../lib/measure.mjs');
+    const bounds = { pageBoundMs: 50, closeBoundMs: 50 };
+
+    await t.test('cold start 2\'s page never opens', { timeout: 10_000 }, async (sub) => {
+        const { dir, work } = measuredMode(sub);
+        const fake = fakeMeasurement({ wedgedContext: 2 });
+
+        await assert.rejects(
+            async () => measureMode('interp-prebuilt', dir, work, { ...fake.runners, ...bounds }),
+            exactly(MeasurementError, 'interp-prebuilt: chromium cold start 2: the page did not finish within 0.05 s'),
+        );
+        assert.deepEqual(contextsOf(fake.log), [{ urls: [COLD_START_PAGE], closed: 1 }, { urls: [], closed: 1 }]);
+        assert.equal(fake.log.browserClosed, 1);
+        assert.equal(fake.log.serverClosed, 1);
+    });
+
+    await t.test('the browser never closes after every page finished', { timeout: 10_000 }, async (sub) => {
+        const { dir, work } = measuredMode(sub);
+        const fake = fakeMeasurement({ browserClose: () => new Promise(() => {}) });
+
+        await assert.rejects(
+            async () => measureMode('interp-prebuilt', dir, work, { ...fake.runners, ...bounds }),
+            exactly(MeasurementError, 'interp-prebuilt: closing Chromium failed: did not finish within 0.05 s'),
+        );
+        assert.equal(fake.log.contexts.length, 11);
+        assert.equal(fake.log.serverClosed, 1);
+    });
+});
+
+/**
+ * A publish folder whose `_framework/dotnet.js` stands for the runtime: `withRuntimeOptions(options)`
+ * refuses any option, `create()` gives a runtime with the contract's build info plus one field the report
+ * leaves out, the host's exports (the load calls return 0, `StepQueued(n)` commits `n`) and, unless
+ * `jiterpreterOptions` is undefined, `INTERNAL.jiterpreter_get_options()` returning it.
+ */
+function fakeDotnetBuild(dir, jiterpreterOptions) {
+    const framework = path.join(dir, 'app', '_framework');
+    fs.mkdirSync(framework, { recursive: true });
+    fs.writeFileSync(path.join(framework, 'package.json'), '{"type": "module"}\n');
+    const internal = jiterpreterOptions === undefined
+        ? ''
+        : `INTERNAL: { jiterpreter_get_options: () => (${JSON.stringify(jiterpreterOptions)}) },`;
+    fs.writeFileSync(path.join(framework, 'dotnet.js'), `
+const exports = {
+    LoadCollision: () => 0,
+    LoadConfig: () => 0,
+    Reset: () => 0,
+    CommandBuffer: () => ({ set() {}, dispose() {} }),
+    ReportBuffer: () => ({ slice: (start, end) => new Uint8Array(end - start), dispose() {} }),
+    StepQueued: (count) => count,
+};
+const runtime = {
+    runtimeBuildInfo: { ...${JSON.stringify(MEASURED_BUILD_INFO)}, wasmEnableSIMDOrigin: 'not recorded' },
+    ${internal}
+    getAssemblyExports: async (name) => (name === 'MmoEngine.SimCore.Wasm.dll'
+        ? { MmoEngine: { SimCore: { Wasm: { SimCoreExports: exports } } } }
+        : undefined),
+};
+export const dotnet = {
+    withRuntimeOptions(options) {
+        if (!Array.isArray(options) || options.length !== 0) {
+            throw new Error('booted with runtime options ' + JSON.stringify(options));
+        }
+        return { create: async () => runtime };
+    },
+};
+`);
+    return path.join(dir, 'app');
+}
+
+/** A prepared work directory with the three measured streams' batch inputs and collision files. */
+function fakeWorkDir(dir) {
+    const work = path.join(dir, 'work');
+    const streams = ['flat-run-30hz', 'rifle-burst', 'launcher-arc'].map((name, i) => {
+        const batch = path.join(work, 'batch', name);
+        fs.mkdirSync(batch, { recursive: true });
+        fs.writeFileSync(path.join(batch, 'config.bin'), Buffer.from(`config of ${name}`));
+        fs.writeFileSync(path.join(batch, 'initial-state.bin'), Buffer.from(`state of ${name}`));
+        fs.writeFileSync(path.join(batch, 'commands.bin'), Buffer.alloc(COMMAND_SIZE * 16, i + 1));
+        fs.writeFileSync(path.join(work, `${name}.collision`), Buffer.from(`collision of ${name}`));
+        return {
+            name,
+            collision: `${name}.collision`,
+            batch: {
+                config: `batch/${name}/config.bin`,
+                initialState: `batch/${name}/initial-state.bin`,
+                commands: `batch/${name}/commands.bin`,
+                matchSalt: '00000000000000ff',
+            },
+        };
+    });
+    fs.writeFileSync(path.join(work, 'manifest.json'), `${JSON.stringify({ streams })}\n`);
+    return work;
+}
+
+test('a Node cold start reports the jiterpreter state its runtime booted with', async (t) => {
+    // T322 (independent review): `measure-node.mjs cold-start` prints the jiterpreter state the booted
+    // runtime reported (jiterpreterState), which measure.mjs turns into the report's runtime.jiterpreter,
+    // and it boots with no runtime options, the report's runtimeOptions [].
+    const rows = [
+        {
+            name: 'all three options on',
+            options: { enableTraces: true, enableInterpEntry: true, enableJitCall: true },
+            expected: { traces: true, interpEntry: true, jitCall: true },
+        },
+        {
+            name: 'the interpreter entries off',
+            options: { enableTraces: true, enableInterpEntry: false, enableJitCall: true },
+            expected: { traces: true, interpEntry: false, jitCall: true },
+        },
+        { name: 'a runtime that cannot report it', options: undefined, expected: null },
+    ];
+    for (const row of rows) {
+        await t.test(row.name, (sub) => {
+            const dir = tempDir(sub, 'mmo-measure-node-cold-');
+            const app = fakeDotnetBuild(dir, row.options);
+            const work = fakeWorkDir(dir);
+
+            const result = spawnSync(process.execPath, [MEASURE_NODE_SCRIPT, 'cold-start', '--app', app, '--work', work], {
+                cwd: dir,
+                encoding: 'utf8',
+                timeout: 60_000,
+            });
+
+            assert.equal(result.error, undefined, `the script did not run: ${result.error?.message}`);
+            assert.equal(result.stderr, '');
+            assert.equal(result.status, 0);
+            const lines = result.stdout.trimEnd().split('\n');
+            assert.equal(lines.length, 1, result.stdout);
+            const coldStart = JSON.parse(lines[0]);
+            assert.deepEqual(Object.keys(coldStart), ['importMs', 'createMs', 'firstStepMs', 'totalMs', 'buildInfo', 'jiterpreter']);
+            assert.deepEqual(coldStart.jiterpreter, row.expected);
+            assert.deepEqual(coldStart.buildInfo, MEASURED_BUILD_INFO);
+            for (const interval of ['importMs', 'createMs', 'firstStepMs']) {
+                assert.ok(Number.isFinite(coldStart[interval]) && coldStart[interval] >= 0, `${interval} is ${coldStart[interval]}`);
+            }
+            assert.equal(coldStart.totalMs, coldStart.importMs + coldStart.createMs + coldStart.firstStepMs);
+        });
+    }
+});
+
+test('the .NET runtime recorded is the highest by SemVer precedence', async (t) => {
+    // T322 (independent review): dotnet.runtimeVersion is the highest Microsoft.NETCore.App 10. runtime of
+    // `dotnet --list-runtimes`; prerelease identifiers are ordered as SemVer 2.0 orders them, so rc.10 is
+    // above rc.2, where a comparison of the suffixes as text put it below.
+    const { compareVersions, highestRuntime } = await import('../lib/measure.mjs');
+
+    const below = [
+        ['10.0.0-rc.2', '10.0.0-rc.10'],
+        ['10.0.0-rc.2.25502.107', '10.0.0-rc.10.25502.107'],
+        ['10.0.0-rc.1.25451.107', '10.0.0-rc.1.25502.107'],
+        ['10.0.0-rc.10', '10.0.0'],
+        ['10.0.0-1', '10.0.0-alpha'],
+        ['10.0.0-alpha', '10.0.0-alpha.1'],
+        ['10.0.0-alpha.1', '10.0.0-alpha.beta'],
+        ['10.0.0-beta.2', '10.0.0-beta.11'],
+        ['10.0.0-beta.11', '10.0.0-rc.1'],
+        ['10.0.0-RC.1', '10.0.0-rc.1'],
+        ['10.0.9', '10.0.10'],
+        ['10.0.15', '10.1.0'],
+        ['9.99.99', '10.0.0-alpha'],
+        // Past Number's exact integers: both are 9007199254740992 as Numbers.
+        ['10.0.0-rc.9007199254740992', '10.0.0-rc.9007199254740993'],
+    ];
+    for (const [a, b] of below) {
+        await t.test(`${a} is below ${b}`, () => {
+            assert.equal(compareVersions(a, b), -1);
+            assert.equal(compareVersions(b, a), 1);
+        });
+    }
+
+    for (const [a, b] of [['10.0.3', '10.0.3'], ['10.0.3+build.5', '10.0.3'], ['10.0.0-rc.2+a', '10.0.0-rc.2+b']]) {
+        await t.test(`${a} has the precedence of ${b}`, () => {
+            assert.equal(compareVersions(a, b), 0);
+            assert.equal(compareVersions(b, a), 0);
+        });
+    }
+
+    await t.test('semver.org\'s example order', () => {
+        const ordered = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0'];
+        const shuffled = [ordered[5], ordered[7], ordered[2], ordered[0], ordered[6], ordered[3], ordered[1], ordered[4]];
+        assert.deepEqual(shuffled.sort(compareVersions), ordered);
+    });
+
+    for (const version of ['10.0', '10.0.3 ', '10.0.3-', '10.0.3-rc..1', 'v10.0.3']) {
+        await t.test(`${JSON.stringify(version)} is not a version`, () => {
+            assert.throws(
+                () => compareVersions(version, '10.0.3'),
+                exactly(RangeError, `compareVersions: ${JSON.stringify(version)} is not a <major>.<minor>.<patch>[-<prerelease>][+<build>] version`),
+            );
+        });
+    }
+
+    const listed = (...lines) => `${lines.map((line) => `${line} [/usr/share/dotnet/shared/${line.split(' ')[0]}]`).join('\n')}\n`;
+    const runtimes = [
+        {
+            name: 'rc.10 is above rc.2',
+            text: listed('Microsoft.NETCore.App 10.0.0-rc.10.25550.1', 'Microsoft.NETCore.App 10.0.0-rc.2.25502.107'),
+            expected: '10.0.0-rc.10.25550.1',
+        },
+        {
+            name: 'a release is above its prereleases',
+            text: listed('Microsoft.NETCore.App 10.0.0-rc.10.25550.1', 'Microsoft.NETCore.App 10.0.0', 'Microsoft.NETCore.App 10.0.0-rc.2.25502.107'),
+            expected: '10.0.0',
+        },
+        {
+            name: 'patches are numbers, and only Microsoft.NETCore.App 10. counts',
+            text: listed(
+                'Microsoft.AspNetCore.App 10.0.20',
+                'Microsoft.NETCore.App 9.0.11',
+                'Microsoft.NETCore.App 10.0.15',
+                'Microsoft.NETCore.App 10.0.3',
+                'Microsoft.NETCore.App 100.0.0',
+            ),
+            expected: '10.0.15',
+        },
+        {
+            name: 'a line whose version is not SemVer is not listed',
+            text: listed('Microsoft.NETCore.App 10.0.99x', 'Microsoft.NETCore.App 10.0.3'),
+            expected: '10.0.3',
+        },
+        { name: 'no .NET 10 runtime', text: listed('Microsoft.NETCore.App 9.0.11', 'Microsoft.AspNetCore.App 10.0.3'), expected: null },
+    ];
+    for (const row of runtimes) {
+        await t.test(`highestRuntime: ${row.name}`, () => {
+            assert.equal(highestRuntime(row.text), row.expected);
+        });
+    }
+
+    // The one use of the order: dotnetVersions gives the report's dotnet.sdkVersion and
+    // dotnet.runtimeVersion from what `dotnet --version` and `dotnet --list-runtimes` print.
+    const { MeasurementError, dotnetVersions } = await import('../lib/measure.mjs');
+    /** A `dotnet` that prints 10.0.115 for --version and `listing` for --list-runtimes, and records each call. */
+    const fakeRun = (listing, calls) => (args) => {
+        calls.push(args);
+        if (args.length === 1 && args[0] === '--version') {
+            return '10.0.115\n';
+        }
+
+        if (args.length === 1 && args[0] === '--list-runtimes') {
+            return listing;
+        }
+
+        throw new Error(`the fake dotnet was run with ${JSON.stringify(args)}`);
+    };
+    const reported = [
+        {
+            name: 'rc.10 is recorded above rc.2',
+            // Listed highest first, so neither the last line nor the text order gives it.
+            listing: listed('Microsoft.NETCore.App 10.0.0-rc.10.25550.1', 'Microsoft.NETCore.App 10.0.0-rc.2.25502.107'),
+            expected: { sdk: '10.0.115', runtime: '10.0.0-rc.10.25550.1' },
+        },
+        {
+            name: 'the release is recorded above its prereleases',
+            listing: listed(
+                'Microsoft.NETCore.App 10.0.0-rc.2.25502.107',
+                'Microsoft.NETCore.App 10.0.0',
+                'Microsoft.NETCore.App 10.0.0-rc.10.25550.1',
+            ),
+            expected: { sdk: '10.0.115', runtime: '10.0.0' },
+        },
+    ];
+    for (const row of reported) {
+        await t.test(`dotnetVersions: ${row.name}`, () => {
+            const calls = [];
+            assert.deepEqual(dotnetVersions(fakeRun(row.listing, calls)), row.expected);
+            assert.deepEqual(calls, [['--version'], ['--list-runtimes']]);
+        });
+    }
+
+    await t.test('dotnetVersions: a listing with no SemVer Microsoft.NETCore.App 10. runtime fails', () => {
+        const calls = [];
+        const listing = listed('Microsoft.NETCore.App 10.0.99x', 'Microsoft.NETCore.App 9.0.11', 'Microsoft.NETCore.App 9.0.0-rc.2.24473.5');
+        assert.throws(
+            () => dotnetVersions(fakeRun(listing, calls)),
+            exactly(MeasurementError, 'dotnet --list-runtimes lists no Microsoft.NETCore.App 10. runtime'),
+        );
+        assert.deepEqual(calls, [['--version'], ['--list-runtimes']]);
+    });
 });
 
 test('build flags match the mode', async () => {
@@ -1174,6 +1931,27 @@ test('assembled report has exactly the contract fields', async (t) => {
         assert.equal(report.wasm.modes['interp-prebuilt'].agreement, null);
         assert.deepEqual(report.wasm.modes['interp-relinked'].agreement, { build: 'node-interp-relinked', status: 'NotRun' });
     });
+
+    // T322 (independent review): runtime.jiterpreter is the cold starts' reported state, not a constant.
+    const jiterpreterRows = [
+        { name: 'all three options on', state: JITERPRETER_ON, expected: true },
+        { name: 'the traces off', state: { ...JITERPRETER_ON, traces: false }, expected: false },
+        { name: 'the interpreter entries off', state: { ...JITERPRETER_ON, interpEntry: false }, expected: false },
+        { name: 'the JIT calls off', state: { ...JITERPRETER_ON, jitCall: false }, expected: false },
+        { name: 'all three off', state: { traces: false, interpEntry: false, jitCall: false }, expected: false },
+    ];
+    for (const { name, state, expected } of jiterpreterRows) {
+        await t.test(`runtime.jiterpreter is ${expected} when the Node cold starts reported ${name}`, async (row) => {
+            const inputs = reportInputs({ work: workDir(row), aot: { produced: false, reason: AOT_REASON } });
+            inputs.modes['interp-relinked'].jiterpreter = { ...state };
+
+            const report = await assembleReport(inputs);
+
+            assert.equal(report.wasm.modes['interp-relinked'].runtime.jiterpreter, expected);
+            assert.deepEqual(report.wasm.modes['interp-relinked'].runtime.runtimeOptions, []);
+            assert.equal(report.wasm.modes['interp-prebuilt'].runtime.jiterpreter, true);
+        });
+    }
 });
 
 // ---------------------------------------------------------------------------------------------------
