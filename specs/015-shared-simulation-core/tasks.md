@@ -3029,7 +3029,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
 ### Implementation
 
-- [ ] T285 [P] [US2] Implement the WebAssembly host (contracts/wasm-api.md#host-exports, research R15):
+- [X] T285 [P] [US2] Implement the WebAssembly host (contracts/wasm-api.md#host-exports, research R15):
   - `src/MmoEngine.SimCore.Wasm/MmoEngine.SimCore.Wasm.csproj`: `Sdk="Microsoft.NET.Sdk.WebAssembly"`, `OutputType` `Exe`, `AllowUnsafeBlocks` `true` (CS0227 for the generated interop), and a `ProjectReference` to `..\MmoEngine.SimCore\MmoEngine.SimCore.csproj`. It has no analyzer reference: only the core attaches the analyzer, so Phase 5's `WiringTests.OnlyTheCoreAttachesTheAnalyzer` stays green. `InvariantGlobalization` comes from `Directory.Build.props`.
   - `src/MmoEngine.SimCore.Wasm/SimCoreExports.cs`, exactly the contract's code: a `[SupportedOSPlatform("browser")] public static partial class`, `CommandCapacity = 32`, one static `BatchStepper`, and the eight one-line `[JSExport]` delegations `LoadCollision`, `LoadConfig`, `Reset` (a `[JSMarshalAs<JSType.BigInt>] long` salt, `unchecked((ulong)…)`), `CommandBuffer` and `ReportBuffer` (`[return: JSMarshalAs<JSType.MemoryView>] ArraySegment<byte>`), `StepQueued`, `RunStream` and `EvaluateTables`, with `byte[]` parameters only.
   - `src/MmoEngine.SimCore.Wasm/Program.cs`: `public static class Program { public static int Main() => 0; }`.
