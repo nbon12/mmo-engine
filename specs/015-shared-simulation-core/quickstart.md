@@ -278,9 +278,10 @@ Expected: every test passes and the command exits 0. `tests/workflows/test_simco
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
 the `agreement` job's `timeout-minutes: 10` (SC-006), each step's own bound inside it and the
 optional browsers' shared deadline, its three browsers, the `measure` job's steps (which still run
-the measurement after its agreement gate failed, and validate and upload the report it writes; it
-writes none for a build whose first step of `flat-run-30hz` is not the server's) and their bounds inside its
-`timeout-minutes: 90`, the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list, that
-auto-merge's check filter lists a registered `agreement` check run that failed or is pending, and that
+the measurement after its agreement gate failed, and validate, show and upload the report it writes,
+with the diverged mode's agreement status `Diverged`, while the failed gate still fails the job; that
+includes a build whose first step of `flat-run-30hz` has another hash than the server's) and their
+bounds inside its `timeout-minutes: 90`, the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run`
+list, that auto-merge's check filter lists a registered `agreement` check run that failed or is pending, and that
 its decision step, run with a stand-in `gh`, does not merge while that check run has failed or is
 still queued or running.

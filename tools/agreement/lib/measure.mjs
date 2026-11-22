@@ -65,10 +65,15 @@
  *    cold start's first step must be the server's first record of `flat-run-30hz`
  *    (`<work>/server/flat-run-30hz.records`, read with `readRecords` once the ten have run): the
  *    `firstStep` `{step, hash}` it reports (`timeFirstStep`, `./passes.mjs`) has that record's step and
- *    hash, so a cold start that did not complete a real step fails the mode. Every cold start's runtime
- *    must also report its jiterpreter state (`jiterpreterState`, `./runtime.mjs`), and the same one as
- *    the first cold start's. Both checks fail the measurement before the steps process runs; the
- *    report's `runtime.jiterpreter` is true only when that state has all three options on.
+ *    hash, so a cold start that did not complete a real step fails the mode. The one exception is a mode
+ *    whose Node agreement build (`interp-relinked`: `node-interp-relinked`, `aot`: `node-aot`) is
+ *    `Diverged` in `<work>/report/agreement.json`: its cold starts may report the server's step number
+ *    with another hash, so a build that diverges on that very record (whose agreement run and compare
+ *    have already failed the job) is still measured and reported with that status; another step number
+ *    still fails. Every cold start's runtime must also report its jiterpreter state (`jiterpreterState`,
+ *    `./runtime.mjs`), and the same one as the first cold start's. Both checks fail the measurement
+ *    before the steps process runs; the report's `runtime.jiterpreter` is true only when that state has
+ *    all three options on.
  * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
  *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
  *    `/web/measure.html?run=cold-start` ten times with `runPage`, each in a fresh browser context, then
@@ -76,7 +81,8 @@
  *    or finish within its 2 minutes, the runtime's console warning that `.wasm` was not served as
  *    `application/wasm`) fails the measurement, and so does a page that does not post exactly one
  *    `booted`, with `inWorker` true, and one `coldStart` whose `firstStep` is the server's first record
- *    as in step 2, or `steps` messages that `checkStepKinds` refuses. `crossOriginIsolated` is true only
+ *    as in step 2 (with step 2's exception for a `Diverged` build), or `steps` messages that
+ *    `checkStepKinds` refuses. `crossOriginIsolated` is true only
  *    when every `booted` message says so. The pages'
  *    contexts, the browser and the server are closed however the run ends, the browser within 10
  *    seconds, and a close that fails never takes the place of the failure it followed.
@@ -878,9 +884,13 @@ async function main(argv, env) {
  * Once the ten Node cold starts have run, the server's first record of `COLD_START_SCENARIO` is read
  * from `<work>/server/flat-run-30hz.records` (`serverFirstStep`), and every cold start's `firstStep`, in
  * both runtimes, must be that record's step and hash (`checkFirstStep`): the Node ones before the steps
- * process runs, each Chromium page's as it finishes. The Node cold starts' runtimes must all report the
- * same jiterpreter state (`jiterpreterOfColdStarts`), which is also checked before the steps process
- * runs, and each Chromium page's `booted` message must come from a Worker. `startup` is
+ * process runs, each Chromium page's as it finishes. For `interp-relinked` and `aot`,
+ * `<work>/report/agreement.json` is read then too (`agreementDiverged`): when it lists the mode's build
+ * (`node-interp-relinked`, `node-aot`) as `Diverged`, a `firstStep` at the server's step number with
+ * another hash passes, so a build that diverges on that first record is still measured and its report
+ * written with that status; the step number must still be the server's. The Node cold starts' runtimes
+ * must all report the same jiterpreter state (`jiterpreterOfColdStarts`), which is also checked before
+ * the steps process runs, and each Chromium page's `booted` message must come from a Worker. `startup` is
  * `summarizeStartup` over the cold starts the two loops measured, so its `coldStarts` is their number
  * and a loop that measured another number than 10 fails the mode.
  *
@@ -896,8 +906,10 @@ async function main(argv, env) {
  *   version of the Chromium that measured it
  * @throws {MeasurementError} a measurement failed, naming the mode and the run; among them `<mode>: cannot
  *   read <work>/server/flat-run-30hz.records: <reason>`, and for a cold start whose first step is not
- *   the server's, `<mode>: <node|chromium> cold start <i>: the first step committed step <s> with hash
- *   <h>, but the server's first record of flat-run-30hz is step <s> with hash <h>`
+ *   the server's (and, for a mode whose build `agreement.json` lists as `Diverged`, whose step number is
+ *   not), `<mode>: <node|chromium> cold start <i>: the first step committed step <s> with hash <h>, but
+ *   the server's first record of flat-run-30hz is step <s> with hash <h>`; also `assembleReport`'s
+ *   message when `agreement.json` exists but cannot be read as JSON (`interp-relinked` and `aot` only)
  */
 export async function measureMode(mode, dir, work, {
     spawn = spawnSync,
@@ -916,8 +928,9 @@ export async function measureMode(mode, dir, work, {
     }
 
     const serverStep = await serverFirstStep(mode, work);
+    const diverged = await agreementDiverged(mode, work);
     for (const [i, coldStart] of nodeColdStarts.entries()) {
-        checkFirstStep(`${mode}: node cold start ${i + 1}`, coldStart?.firstStep, serverStep);
+        checkFirstStep(`${mode}: node cold start ${i + 1}`, coldStart?.firstStep, serverStep, diverged);
     }
 
     const jiterpreter = jiterpreterOfColdStarts(mode, nodeColdStarts);
@@ -928,6 +941,7 @@ export async function measureMode(mode, dir, work, {
         pageBoundMs,
         closeBoundMs,
         serverStep,
+        diverged,
     });
 
     return {
@@ -1011,17 +1025,43 @@ async function serverFirstStep(mode, work) {
 }
 
 /**
+ * Whether `<work>/report/agreement.json` lists the mode's Node agreement build (`AGREEMENT_BUILDS`:
+ * `interp-relinked` is `node-interp-relinked`, `aot` is `node-aot`) with status `Diverged`, as `simcore
+ * agreement compare` wrote it in this job. Always false for `interp-prebuilt`, whose agreement is the
+ * `agreement` job's, and for a mode whose build the file does not list or lists with another status, or
+ * when there is no file; the prebuilt mode never reads it.
+ *
+ * @param {string} mode the mode
+ * @param {string} work the prepared work directory
+ * @returns {Promise<boolean>}
+ * @throws {MeasurementError} `agreement.json` exists but cannot be read as JSON (`agreementBuilds`, the
+ *   message `assembleReport` would give)
+ */
+async function agreementDiverged(mode, work) {
+    if (!Object.hasOwn(AGREEMENT_BUILDS, mode)) {
+        return false;
+    }
+
+    return agreementOf(AGREEMENT_BUILDS[mode], await agreementBuilds(work)).status === 'Diverged';
+}
+
+/**
  * Throws unless a cold start's reported `firstStep` is the server's first record, so a cold start whose
- * `StepQueued(1)` did not commit the server's first step is never measured as one that did.
+ * `StepQueued(1)` did not commit the server's first step is never measured as one that did. When the
+ * mode's build `diverged` (`agreementDiverged`), a well-formed `firstStep` at the server's step number
+ * with another hash passes: that build's agreement run already failed the job, the cold start still
+ * completed that step, and the report records the mode with `agreement.status` `Diverged`. Another step
+ * number or a malformed `firstStep` fails whether or not the build diverged.
  *
  * @param {string} what the mode and the cold start, `<mode>: <node|chromium> cold start <i>`
  * @param {unknown} firstStep what the cold start reported
  * @param {{ step: number, hash: string }} server `serverFirstStep`'s record
+ * @param {boolean} diverged whether `report/agreement.json` lists the mode's build as `Diverged`
  * @throws {MeasurementError} `<what>: the cold start reported the first step <value>, not a step and a
  *   16-digit hash, so it does not show that a step completed`, or `<what>: the first step committed step
  *   <s> with hash <h>, but the server's first record of flat-run-30hz is step <s> with hash <h>`
  */
-function checkFirstStep(what, firstStep, server) {
+function checkFirstStep(what, firstStep, server, diverged) {
     if (firstStep === null
         || typeof firstStep !== 'object'
         || !Number.isInteger(firstStep.step)
@@ -1034,7 +1074,7 @@ function checkFirstStep(what, firstStep, server) {
         );
     }
 
-    if (firstStep.step !== server.step || firstStep.hash !== server.hash) {
+    if (firstStep.step !== server.step || (firstStep.hash !== server.hash && !diverged)) {
         throw new MeasurementError(
             `${what}: the first step committed step ${firstStep.step} with hash ${firstStep.hash}, `
             + `but the server's first record of ${COLD_START_SCENARIO} is step ${server.step} with hash ${server.hash}`,
@@ -1125,7 +1165,7 @@ function runNodeHalf(spawn, mode, run, app, work, what) {
  *   `runPage`) or did not post what its run posts, or closing the browser (within `closeBoundMs`) or the
  *   server failed (`closeAfter`)
  */
-async function measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs, serverStep }) {
+async function measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs, serverStep, diverged }) {
     let server;
     try {
         server = await serve({ app, work });
@@ -1143,7 +1183,7 @@ async function measureInChromium(mode, app, work, { serve, launchChromium, pageB
             }
 
             return closeAfter(
-                () => measurePages(mode, browser, server.url, pageBoundMs, closeBoundMs, serverStep),
+                () => measurePages(mode, browser, server.url, pageBoundMs, closeBoundMs, serverStep, diverged),
                 () => within(() => browser.close(), closeBoundMs),
                 mode,
                 'Chromium',
@@ -1163,9 +1203,9 @@ async function launchPlaywrightChromium() {
 
 /**
  * The ten cold-start pages and the steps page of one mode, checked as `measureInChromium` says, each
- * cold start's `firstStep` against `serverStep` (`checkFirstStep`).
+ * cold start's `firstStep` against `serverStep` (`checkFirstStep`, with the mode's `diverged`).
  */
-async function measurePages(mode, browser, origin, boundMs, closeBoundMs, serverStep) {
+async function measurePages(mode, browser, origin, boundMs, closeBoundMs, serverStep, diverged) {
     const booted = [];
     const coldStarts = [];
     for (let i = 1; i <= COLD_STARTS; i++) {
@@ -1173,7 +1213,7 @@ async function measurePages(mode, browser, origin, boundMs, closeBoundMs, server
         const events = await runPage(browser, `${origin}/web/measure.html?run=cold-start`, what, boundMs, closeBoundMs);
         booted.push(bootedInWorker(events, what));
         const coldStart = onlyEvent(events, 'coldStart', what);
-        checkFirstStep(what, coldStart.firstStep, serverStep);
+        checkFirstStep(what, coldStart.firstStep, serverStep, diverged);
         coldStarts.push(coldStart);
     }
 

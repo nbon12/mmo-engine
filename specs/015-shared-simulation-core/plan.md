@@ -2490,8 +2490,9 @@ The design documents settled these points, which the spec leaves open. They are 
   tools install on `prepare` (whose success means the benchmarks and the prebuilt publish passed),
   Chromium and the runner's tests on the tools, the measurement on the benchmarks, the prebuilt
   publish, `prepare`, Chromium and the runner's tests, validation on the measurement, and showing and
-  uploading the report on validation (except for a divergence in `flat-run-30hz`'s first record, which
-  fails the measurement: the later bullet "a diverged build's report is qualified"). The gate steps
+  uploading the report on validation (except, until the last bullet of this list, for a divergence in
+  `flat-run-30hz`'s first record, which failed the measurement: the later bullet "a diverged build's
+  report is qualified"). The gate steps
   keep no `continue-on-error`, so a divergence still fails the job.
   `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate` walks the job
   as GitHub decides it with a new `simulate_job` helper; putting the measurement, the upload or the
@@ -2594,9 +2595,10 @@ The design documents settled these points, which the spec leaves open. They are 
   `simcore-measure-agreement-report` name the divergence. Letting the check accept the server's step
   number with another hash for a mode that `agreement.json` lists as `Diverged` would make the claim
   hold for every divergence, but `measure.mjs` and its tests are the measurement runner's, outside
-  this workflow fix, so the exception is now stated in those places and in quickstart.md, and that
-  change stays a follow-up. `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate`
-  gains a row for it (the AOT run, compare and the measurement fail; validation, the report and its
+  this workflow fix, so the exception was stated in those places and in quickstart.md. That change
+  was then made, and the exception removed from them again, in the last bullet of this list.
+  `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate` gains a row for it (the
+  AOT run, compare and the measurement fail; validation, the report and its
   upload are skipped, the agreement report is uploaded and the job fails) and one for a measurement
   that fails while every build agrees, which fails the job on its own: `continue-on-error` on the
   measurement step fails that row, where it passed every row before. (B) The 580 s budget (30 s of
@@ -2615,6 +2617,45 @@ The design documents settled these points, which the spec leaves open. They are 
   runs that the `AutoMerge` tests cover, and the existing Assumptions bullet says the scenario does
   not state the unregistered case and no test claims it. The test docstrings that quoted the scenario,
   the US2.7 coverage row and T284's note match; `auto-merge.yml` is unchanged.
+- **T322 (second independent review), T309, T302, T310, T297: a build that diverges on
+  `flat-run-30hz`'s first record is measured and reported `Diverged`.** The bullet above left one
+  case where a diverged relinked or AOT build wrote no report: `checkFirstStep` threw on any hash
+  that differed from the server's first record, so `measure.mjs` exited 1 before the report was
+  assembled. `measureMode` now reads `<work>/report/agreement.json` for `interp-relinked` and `aot`
+  (`agreementDiverged`, through the same `agreementBuilds` and `agreementOf` that `assembleReport`
+  uses) once the ten Node cold starts and the server's first record are in, and when the file lists
+  the mode's build (`node-interp-relinked`, `node-aot`) with status `Diverged`, `checkFirstStep`
+  accepts a well-formed `firstStep` at the server's step number with another hash, in both runtimes.
+  The build's agreement run and compare have already failed the job, the cold start still completed
+  step 1, so its times are still the time to the first completed step, and the report says
+  `Diverged`. Everything else still throws exactly as before: another step number (a cold start that
+  did not step), a malformed `firstStep`, the hash difference without the file, with the build
+  `Match` or `NotRun` or unlisted, and `interp-prebuilt`, whose agreement is the `agreement` job's and
+  which never reads the file. Reading the file there means one that is not JSON now fails a relinked
+  or AOT mode after its ten Node cold starts, with `assembleReport`'s own message, instead of after
+  every mode was measured; prebuilt-only runs are unchanged. The test is `'a build that
+  agreement.json lists as Diverged is measured though its first step has another hash'`: with
+  `node-aot` (and, in a second row, `node-interp-relinked`) `Diverged` and every cold start reporting
+  `{step: 1, hash: '9d4f3a17c0b2e685'}`, `measureMode` resolves after the whole mode and the
+  assembled report's `agreement` is exactly `{build, status: 'Diverged'}`; the same hash with the
+  build `Match` (the other build `Diverged`), with no file or no entry, a `Diverged` build whose cold
+  start reports step 0, step 2 or the second record, or no or an uppercase `firstStep`, and
+  `interp-prebuilt` with both builds `Diverged` each reject with exactly the earlier line. Probes:
+  ignoring the file fails the two resolving rows (and the `Diverged` rows that fail at a later cold
+  start, which then fail at cold start 1); accepting any hash always fails the `Match`, no-file,
+  no-entry and prebuilt rows; accepting any well-formed first step for a `Diverged` build fails the
+  step 0, step 2 and second-record rows; counting any build's `Diverged` for every mode fails the two
+  rows where only the other build diverged; reading the file for `interp-prebuilt` (as `node-aot`)
+  fails the prebuilt rows. The qualification the bullet above added is gone: the `measure` job's
+  header and step comment, contract step 5 (and step 6's exit-1 list and "how each number is
+  measured", which now state the exception), T310's steps 8 to 13, T297's and T309's text,
+  quickstart.md's Workflow tests paragraph, the failed-gate test's docstring and the workflow test
+  module's docstring (its `measure` item, which the second verifier of this fix found still qualified)
+  say that a relinked or AOT divergence fails the job while its report is still written, validated,
+  shown and uploaded with that mode's status `Diverged`; the first workflow bullet's pointer to the
+  qualified case now says it held until this bullet. `MeasureJob`'s row for the AOT build that
+  diverged at `flat-run-30hz`'s first step now has the measurement succeed, runs validation, the
+  report and both uploads, and fails the job on its gate.
 
 ## Delivery
 

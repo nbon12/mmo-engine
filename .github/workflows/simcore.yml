@@ -41,11 +41,10 @@ name: SimCore
 #              the work directory is prepared and the steps each one reads from succeeded. A divergence
 #              therefore still fails the job (the gate steps have no continue-on-error), while the job
 #              summary and report/ name what disagreed, and so does the uploaded simcore-measurement
-#              report, with the diverged mode's agreement status Diverged, unless the diverged build's
-#              first committed step of flat-run-30hz differs from the server's first record: measure.mjs's
-#              cold-start check then fails the measurement (exit 1, no report), so validation, the report
-#              and its upload are skipped, and the job summary and simcore-measure-agreement-report alone
-#              name the divergence.
+#              report, with the diverged mode's agreement status Diverged. That holds when the build
+#              diverges on flat-run-30hz's first record too: measure.mjs's cold-start check accepts the
+#              server's step number with another hash for a mode whose build report/agreement.json lists
+#              as Diverged.
 # auto-merge.yml lists this workflow's name in its workflow_run trigger, so a pull request waits for it.
 # tests/workflows/test_simcore_workflow.py pins this file.
 on:
@@ -403,10 +402,10 @@ jobs:
       # From here to the measurement upload, each step runs after the agreement gate above failed too,
       # not only on the default success(), so a diverged relinked or AOT build is still measured and its
       # report written, validated, shown and uploaded with that mode's agreement status Diverged; the
-      # failed gate step still fails the job. The exception is a build whose first committed step of
-      # flat-run-30hz differs from the server's first record: measure.mjs's cold-start check fails the
-      # measurement then (exit 1, no report), so validation, the report and its upload are skipped and
-      # the agreement report upload at the end carries the divergence. None runs after a cancel. Each
+      # failed gate step still fails the job. A build whose first committed step of flat-run-30hz has
+      # another hash than the server's first record is measured too: measure.mjs's cold-start check
+      # accepts the server's step number with another hash when report/agreement.json lists that mode's
+      # build as Diverged, and still fails any other first step. None runs after a cancel. Each
       # needs the work directory prepared, so the benchmarks and the prebuilt publish passed (prepare
       # has no `if`), and each needs the steps whose output it reads to have succeeded.
       #

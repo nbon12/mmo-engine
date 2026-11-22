@@ -26,9 +26,10 @@ that job depends on:
   agreement gate, which fails the job when a runner or compare fails and still reports after a failed
   run, each step's own bound, which together fit in the job's 90 minutes, the exhaustive trig sweeps
   that run only there, and the measurement run, its report validated, shown in the job log and summary,
-  and then uploaded, after a failed agreement gate too, so a diverged build's report reaches the
-  artifact whenever the measurement writes one (not when the build's first step of flat-run-30hz is
-  not the server's: measure.mjs fails the measurement then, and only the agreement report is uploaded).
+  and then uploaded, after a failed agreement gate too, so a diverged relinked or AOT build fails the
+  job while its report still reaches the artifact with that mode's agreement status Diverged, also
+  when the build diverged on flat-run-30hz's first record (measure.mjs's cold-start check accepts the
+  server's step number with another hash for a build that report/agreement.json lists as Diverged).
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
 tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs. The measurement
@@ -1509,13 +1510,13 @@ class MeasureJob(unittest.TestCase):
         `agreement.status` is the `Diverged` that compare wrote to report/agreement.json
         (AgreementCommandTests.CompareExitsOneOnADivergedBuildAndWritesItsReport pins compare's file;
         measure.mjs's assembleReport copies the entry's status, as 'assembled report has exactly the
-        contract fields' pins). It writes none when the diverged build's first committed step of
-        flat-run-30hz is not the server's first record: measure.mjs's cold-start check fails the
-        measurement then, whatever report/agreement.json says (measure.test.mjs, 'every cold start's
-        first step is the server's first record of flat-run-30hz'), and the row for that case pins what
-        the job does: validation, the report and its upload are skipped, and the agreement report is
-        uploaded. They do not run after a cancel, nor when a step before the gate failed, and each waits
-        for the steps whose output it reads."""
+        contract fields' pins). That holds too for a build whose first committed step of flat-run-30hz
+        has another hash than the server's first record: measure.mjs's cold-start check accepts the
+        server's step number with another hash for a mode whose build report/agreement.json lists as
+        Diverged (measure.test.mjs, 'a build that agreement.json lists as Diverged is measured though
+        its first step has another hash'), so the row for that case runs the measurement, validation,
+        the report and both uploads, and the job fails on its gate. They do not run after a cancel, nor
+        when a step before the gate failed, and each waits for the steps whose output it reads."""
         produced = {"publish-relinked": {"produced": "true"}, "publish-aot": {"produced": "true"}}
         relinked, aot, compare = (NEW_MODES[0].agreement, NEW_MODES[1].agreement, "Compare the new builds with the server")
         sweeps, tools, chromium, runner_tests = ("Run the exhaustive math sweeps", "Install the agreement tools",
@@ -1551,11 +1552,12 @@ class MeasureJob(unittest.TestCase):
                  all_but(NEW_MODES[0].publish, NEW_MODES[1].publish, relinked, aot, compare, agreement_upload), "success"),
                 ("the relinked build diverged and the measurement failed", {**diverged, MEASURE_STEP: "failure"},
                  produced, None, all_but(validate, show, upload), "failure"),
-                # measure.mjs exits 1 when a cold start's first step is not the server's first record of
-                # flat-run-30hz, so a build that diverges there writes no report.
-                ("the AOT build diverged at flat-run-30hz's first step, which fails the measurement",
-                 {aot: "failure", compare: "failure", MEASURE_STEP: "failure"},
-                 produced, None, all_but(validate, show, upload), "failure"),
+                # measure.mjs accepts the server's first step number of flat-run-30hz with another hash
+                # for a build that compare's report/agreement.json lists as Diverged, so a build that
+                # diverges there is still measured, and its report validated, shown and uploaded; the
+                # failed gate still fails the job.
+                ("the AOT build diverged at flat-run-30hz's first step, which is still measured",
+                 {aot: "failure", compare: "failure"}, produced, None, every, "failure"),
                 # The measurement is not a step that may fail quietly: it fails the job on its own.
                 ("every build agrees and the measurement failed", {MEASURE_STEP: "failure"},
                  produced, None, all_but(validate, show, upload), "failure"),

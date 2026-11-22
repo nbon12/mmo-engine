@@ -41,8 +41,10 @@
  *   processes (`spawn`, spawnSync's arguments and result), the agreement server (`serve`) and Chromium
  *   (`launchChromium`): ten cold-start processes, the steps process, ten cold-start pages in fresh contexts
  *   and the steps page, the cold starts' jiterpreter state, each page's `booted` from a Worker, every cold
- *   start's `firstStep` against the first record of the work directory's `server/flat-run-30hz.records`,
- *   and the page and close bounds (`pageBoundMs`, `closeBoundMs`).
+ *   start's `firstStep` against the first record of the work directory's `server/flat-run-30hz.records`
+ *   (the server's step number with another hash passing only for an `interp-relinked` or `aot` mode whose
+ *   build `report/agreement.json` lists as `Diverged`), and the page and close bounds (`pageBoundMs`,
+ *   `closeBoundMs`).
  * - summarizeStartup(mode, {node, chromiumWorker, crossOriginIsolated}): the `startup` input over exactly
  *   ten cold starts in each runtime; a MeasurementError naming both counts otherwise.
  * - compareVersions(a, b) and highestRuntime(text): SemVer 2.0 precedence, and the highest
@@ -1333,14 +1335,22 @@ function fakeMeasurement({
 
 /**
  * A publish directory (T300's `writePublishDir`), its `wwwroot` and a work directory whose
- * `server/flat-run-30hz.records` holds `serverRecords` (SERVER_RECORDS by default; none when null).
+ * `server/flat-run-30hz.records` holds `serverRecords` (SERVER_RECORDS by default; none when null) and,
+ * with `agreement`, whose `report/agreement.json` holds it (an object as JSON, a string as it is; none
+ * by default).
  */
-function measuredMode(t, { serverRecords = SERVER_RECORDS } = {}) {
+function measuredMode(t, { serverRecords = SERVER_RECORDS, agreement = null } = {}) {
     const { publishDir } = writePublishDir(t);
     const work = tempDir(t, 'measure-mode-work-');
     if (serverRecords !== null) {
         fs.mkdirSync(path.join(work, 'server'));
         fs.writeFileSync(path.join(work, 'server', 'flat-run-30hz.records'), serverRecords);
+    }
+
+    if (agreement !== null) {
+        fs.mkdirSync(path.join(work, 'report'));
+        const text = typeof agreement === 'string' ? agreement : `${JSON.stringify(agreement, null, 2)}\n`;
+        fs.writeFileSync(path.join(work, 'report', 'agreement.json'), text);
     }
 
     return { dir: publishDir, app: path.join(publishDir, 'wwwroot'), work };
@@ -1725,6 +1735,270 @@ test('every cold start\'s first step is the server\'s first record of flat-run-3
             assert.equal(fake.log.launches, 0);
         });
     }
+});
+
+/**
+ * What a build that diverges on the server's first record of flat-run-30hz commits there: the server's
+ * step number with another hash.
+ */
+const DIVERGED_FIRST_STEP = Object.freeze({ step: SERVER_FIRST_STEP.step, hash: '9d4f3a17c0b2e685' });
+
+/**
+ * `<work>/report/agreement.json` as `simcore agreement compare --require node-interp-relinked,node-aot`
+ * writes it in the `measure` job (contracts/simcore-cli.md): the builds this job does not run are
+ * `NotRun`, and each of the two new builds has the status `statuses` gives it, a `Diverged` one at
+ * flat-run-30hz's first step, where it committed DIVERGED_FIRST_STEP.
+ */
+function agreementWith(statuses) {
+    const entry = (build) => (statuses[build] === 'Diverged'
+        ? {
+            build,
+            required: true,
+            status: 'Diverged',
+            streams: 69,
+            steps: 24300,
+            diverged: [
+                {
+                    stream: 'flat-run-30hz',
+                    step: SERVER_FIRST_STEP.step,
+                    serverHash: SERVER_FIRST_STEP.hash,
+                    buildHash: DIVERGED_FIRST_STEP.hash,
+                    differingFields: 1,
+                    error: null,
+                    report: `report/divergences/${build}/flat-run-30hz.txt`,
+                },
+            ],
+            tables: { status: 'Match', firstMismatch: null },
+        }
+        : {
+            build,
+            required: true,
+            status: 'Match',
+            streams: 69,
+            steps: 24300,
+            diverged: [],
+            tables: { status: 'Match', firstMismatch: null },
+        });
+    return {
+        formatVersion: 1,
+        outcome: Object.values(statuses).includes('Diverged') ? 'Diverged' : 'Match',
+        rulesRevision: 1,
+        streams: 69,
+        required: ['node-interp-relinked', 'node-aot'],
+        builds: [
+            ...['node-interp', 'node-interp-nojit', 'chromium-worker', 'firefox-worker', 'webkit-worker']
+                .map((build) => ({ build, required: false, status: 'NotRun' })),
+            entry('node-interp-relinked'),
+            entry('node-aot'),
+        ],
+    };
+}
+
+test('a build that agreement.json lists as Diverged is measured though its first step has another hash', async (t) => {
+    // T322 (second independent review): a relinked or AOT build that diverges on the server's first
+    // record of flat-run-30hz, the likeliest way a whole build diverges, already fails the measure job
+    // through its agreement run and compare, and its report must still be written with that mode's
+    // agreement.status Diverged. Given a work directory whose report/agreement.json lists the mode's
+    // build (interp-relinked: node-interp-relinked, aot: node-aot) as Diverged, when every cold start
+    // reports the server's step number with another hash, then measureMode measures the mode and the
+    // report records that status. Another step number, a malformed first step, a build agreement.json
+    // lists as Match or not at all, no agreement.json, and interp-prebuilt (whose agreement is the
+    // agreement job's) still fail exactly as before.
+    const { MeasurementError, assembleReport, measureMode } = await import('../lib/measure.mjs');
+    const divergedEverywhere = () => ({ firstStep: { ...DIVERGED_FIRST_STEP } });
+    const committed = (mode, what, { step, hash }) => `${mode}: ${what}: the first step committed step ${step} `
+        + `with hash ${hash}, but the server's first record of flat-run-30hz is step ${SERVER_FIRST_STEP.step} `
+        + `with hash ${SERVER_FIRST_STEP.hash}`;
+    const noStep = (mode, what, value) => `${mode}: ${what}: the cold start reported the first step ${value}, `
+        + 'not a step and a 16-digit hash, so it does not show that a step completed';
+
+    const measured = [
+        {
+            name: 'aot, with node-aot Diverged',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            expected: {
+                'interp-relinked': { build: 'node-interp-relinked', status: 'Match' },
+                aot: { build: 'node-aot', status: 'Diverged' },
+            },
+        },
+        {
+            name: 'interp-relinked, with node-interp-relinked Diverged',
+            mode: 'interp-relinked',
+            agreement: agreementWith({ 'node-interp-relinked': 'Diverged', 'node-aot': 'Match' }),
+            expected: {
+                'interp-relinked': { build: 'node-interp-relinked', status: 'Diverged' },
+            },
+        },
+    ];
+    for (const row of measured) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub, { agreement: row.agreement });
+            const fake = fakeMeasurement({ reported: divergedEverywhere });
+
+            const result = await measureMode(row.mode, dir, work, fake.runners);
+
+            // The whole mode was measured: the ten Node cold starts, the steps process and the eleven
+            // pages, each closed, and the startup summaries over those cold starts.
+            assert.deepEqual(processesOf(fake.log), [
+                ...Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)),
+                nodeProcess('steps', app, work),
+            ]);
+            assert.deepEqual(contextsOf(fake.log), [
+                ...Array.from({ length: 10 }, () => ({ urls: [COLD_START_PAGE], closed: 1 })),
+                { urls: [STEPS_PAGE], closed: 1 },
+            ]);
+            assert.deepEqual(result.input.startup, EXPECTED_STARTUP);
+
+            // The report assembled from the same work directory records the mode as Diverged.
+            const inputs = reportInputs({ work, aot: { produced: false, reason: AOT_REASON } });
+            inputs.modes[row.mode] = result.input;
+            const report = await assembleReport(inputs);
+            assert.deepEqual(report.wasm.modes[row.mode].agreement, row.expected[row.mode]);
+            assert.deepEqual(report.wasm.modes['interp-relinked'].agreement, row.expected['interp-relinked']);
+            assert.equal(report.wasm.modes['interp-prebuilt'].agreement, null);
+        });
+    }
+
+    const refused = [
+        {
+            name: 'aot with the same hash, node-aot Match and node-interp-relinked Diverged',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Diverged', 'node-aot': 'Match' }),
+            reported: divergedEverywhere,
+            message: committed('aot', 'node cold start 1', DIVERGED_FIRST_STEP),
+        },
+        {
+            name: 'aot with the same hash and no agreement.json',
+            mode: 'aot',
+            agreement: null,
+            reported: divergedEverywhere,
+            message: committed('aot', 'node cold start 1', DIVERGED_FIRST_STEP),
+        },
+        {
+            name: 'aot with the same hash and agreement.json without a node-aot entry',
+            mode: 'aot',
+            agreement: AGREEMENT,
+            reported: divergedEverywhere,
+            message: committed('aot', 'node cold start 1', DIVERGED_FIRST_STEP),
+        },
+        {
+            name: 'interp-relinked with the same hash, node-interp-relinked Match and node-aot Diverged',
+            mode: 'interp-relinked',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            reported: divergedEverywhere,
+            message: committed('interp-relinked', 'node cold start 1', DIVERGED_FIRST_STEP),
+        },
+        {
+            name: 'aot with node-aot Diverged, and node cold start 4 reports step 0',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 4 ? { ...DIVERGED_FIRST_STEP, step: 0 } : { ...DIVERGED_FIRST_STEP },
+            }),
+            message: committed('aot', 'node cold start 4', { ...DIVERGED_FIRST_STEP, step: 0 }),
+        },
+        {
+            name: 'aot with node-aot Diverged, and node cold start 9 reports the server\'s second record',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 9 ? { ...SERVER_SECOND_STEP } : { ...DIVERGED_FIRST_STEP },
+            }),
+            message: committed('aot', 'node cold start 9', SERVER_SECOND_STEP),
+        },
+        {
+            name: 'aot with node-aot Diverged, and node cold start 2 reports no first step',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            reported: (runtime, i) => (runtime === 'node' && i === 2 ? {} : divergedEverywhere()),
+            message: noStep('aot', 'node cold start 2', 'undefined'),
+        },
+        {
+            name: 'aot with node-aot Diverged, and node cold start 7 reports an uppercase hash',
+            mode: 'aot',
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 7 ? { step: 1, hash: '9D4F3A17C0B2E685' } : { ...DIVERGED_FIRST_STEP },
+            }),
+            message: noStep('aot', 'node cold start 7', '{"step":1,"hash":"9D4F3A17C0B2E685"}'),
+        },
+        {
+            name: 'interp-prebuilt with the same hash, though both new builds are Diverged',
+            mode: 'interp-prebuilt',
+            agreement: agreementWith({ 'node-interp-relinked': 'Diverged', 'node-aot': 'Diverged' }),
+            reported: divergedEverywhere,
+            message: committed('interp-prebuilt', 'node cold start 1', DIVERGED_FIRST_STEP),
+        },
+    ];
+    for (const row of refused) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub, { agreement: row.agreement });
+            const fake = fakeMeasurement({ reported: row.reported });
+
+            await assert.rejects(async () => measureMode(row.mode, dir, work, fake.runners), exactly(MeasurementError, row.message));
+            // The ten cold starts ran; the steps process and Chromium did not.
+            assert.deepEqual(processesOf(fake.log), Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)));
+            assert.equal(fake.log.served.length, 0);
+            assert.equal(fake.log.launches, 0);
+        });
+    }
+
+    await t.test('aot with node-aot Diverged, and chromium cold start 5 reports step 2', async (sub) => {
+        const { dir, app, work } = measuredMode(sub, {
+            agreement: agreementWith({ 'node-interp-relinked': 'Match', 'node-aot': 'Diverged' }),
+        });
+        const fake = fakeMeasurement({
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'chromium' && i === 5 ? { ...DIVERGED_FIRST_STEP, step: 2 } : { ...DIVERGED_FIRST_STEP },
+            }),
+        });
+
+        await assert.rejects(
+            async () => measureMode('aot', dir, work, fake.runners),
+            exactly(MeasurementError, committed('aot', 'chromium cold start 5', { ...DIVERGED_FIRST_STEP, step: 2 })),
+        );
+        assert.deepEqual(processesOf(fake.log), [
+            ...Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)),
+            nodeProcess('steps', app, work),
+        ]);
+        assert.deepEqual(
+            contextsOf(fake.log),
+            Array.from({ length: 5 }, () => ({ urls: [COLD_START_PAGE], closed: 1 })),
+            'no page runs after the one that failed, and every context is closed',
+        );
+        assert.equal(fake.log.browserClosed, 1);
+        assert.equal(fake.log.serverClosed, 1);
+    });
+
+    await t.test('aot with an agreement.json that is not JSON', async (sub) => {
+        const text = 'not json\n';
+        const { dir, app, work } = measuredMode(sub, { agreement: text });
+        const fake = fakeMeasurement();
+        let parseMessage;
+        try {
+            JSON.parse(text);
+        } catch (error) {
+            parseMessage = error.message;
+        }
+
+        await assert.rejects(
+            async () => measureMode('aot', dir, work, fake.runners),
+            exactly(MeasurementError, `${path.join(work, 'report', 'agreement.json')} is not valid JSON: ${parseMessage}`),
+        );
+        assert.deepEqual(processesOf(fake.log), Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)));
+        assert.equal(fake.log.launches, 0);
+    });
+
+    await t.test('interp-prebuilt never reads agreement.json', async (sub) => {
+        const { dir, work } = measuredMode(sub, { agreement: 'not json\n' });
+        const fake = fakeMeasurement();
+
+        const result = await measureMode('interp-prebuilt', dir, work, fake.runners);
+
+        assert.deepEqual(result.input.startup, EXPECTED_STARTUP);
+        assert.equal(fake.log.contexts.length, 11);
+    });
 });
 
 test('a wedged browser fails the mode within its bounds instead of hanging it', async (t) => {

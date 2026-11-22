@@ -758,7 +758,8 @@ wait share, then reads the events. A cold-start page must hold exactly one `boot
 `coldStart`, and the steps page exactly one `booted` and one `steps` per kind, with its stream, in
 `STEP_KINDS` order. Each `coldStart`'s `firstStep` must be the step and hash of the server's first
 record of `flat-run-30hz` (`<work>/server/flat-run-30hz.records`,
-[measurement-report.md](measurement-report.md#how-each-number-is-measured)), or the page is the failed
+[measurement-report.md](measurement-report.md#how-each-number-is-measured); for a relinked or AOT
+build that `report/agreement.json` lists as `Diverged`, the step only), or the page is the failed
 measurement `<what>: the first step committed step <s> with hash <h>, but the server's first record of
 flat-run-30hz is step <s> with hash <h>` (or, with no such `{step, hash}`, `<what>: the cold start
 reported the first step <value>, not a step and a 16-digit hash, so it does not show that a step
