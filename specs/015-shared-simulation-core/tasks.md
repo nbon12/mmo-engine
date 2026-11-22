@@ -3052,7 +3052,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - bits as uppercase `0x%08X`.
 
   It must produce the same lines as `src/MmoEngine.SimCore.Server/TablesComparison.cs`. Makes T273 (tables.test.mjs) pass.
-- [ ] T287 [P] [US2] Implement `startServer({ app, work })` in `tools/agreement/lib/server.mjs` (contracts/wasm-api.md#served-files). It returns `{ url, port, close }`.
+- [X] T287 [P] [US2] Implement `startServer({ app, work })` in `tools/agreement/lib/server.mjs` (contracts/wasm-api.md#served-files). It returns `{ url, port, close }`.
   - `node:http` on `127.0.0.1`, port 0.
   - Explicit GET routes:
     - `/web/page.html` and `/web/worker.mjs`, from `tools/agreement/web/`;
