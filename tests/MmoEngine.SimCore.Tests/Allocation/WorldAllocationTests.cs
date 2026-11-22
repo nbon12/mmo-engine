@@ -10,16 +10,17 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// FR-032, US7.3, SC-005: a warmed-up <c>SimWorld.Step</c> allocates nothing; every buffer it uses is
 /// owned by the world and sized from the configured maxima when the world is created
 /// (data-model.md#world-simworld). Each row warms the step up twice, then counts
-/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000 steps
-/// (<see cref="ZeroAllocation"/>), and requires the smallest batch to be exactly 0 bytes.
+/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of 1,000 steps
+/// (<see cref="ZeroAllocation"/>), and requires every window to be exactly 0 bytes (all ten of a single
+/// rerun when exactly one window of the first measurement is not).
 /// <para>
 /// <see cref="StepAllocatesNothing"/> runs no commands, so it covers the fixed per-step path of every
 /// stage: the neutral input, the movement of a character at rest, the weapon step with nothing held, the
 /// hitbox build, the <c>ProjectileTargets</c> over the stage-4 scratch with no projectile, and the commit
 /// and hash. <see cref="StepWithProjectilesAllocatesNothing"/> drives the live weapon and projectile path
 /// that Phases 6 and 7 built: shots, projectiles carried forward in flight, character hits, expiries and
-/// the event writers that record them, and it requires each counted batch to hold all of them, so the
-/// clean batch is one that ran them.
+/// the event writers that record them, and it requires every counted window, of the rerun too when it
+/// runs, to hold all of them, so every window that must be clean is one that ran them.
 /// </para>
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
@@ -42,7 +43,7 @@ public sealed class WorldAllocationTests
     /// <summary>
     /// The target's feet: 10 m along +Z. There the rifle's 1.5° spread cone is about 0.26 m in radius, so a
     /// fair share of every rate's shots strike the target. At 50 m it is about 1.3 m, and one counted 60 Hz
-    /// batch held no character hit at all.
+    /// window of 1,000 steps held no character hit at all.
     /// </summary>
     private static readonly Vec3 TargetFeet = new(0f, 0f, 10f);
 
@@ -59,7 +60,7 @@ public sealed class WorldAllocationTests
         world.Reset(TestStates.StandingOnFlat, Salt);
         var faults = 0;
 
-        var counts = ZeroAllocation.MeasureBatches(_ =>
+        var measurement = ZeroAllocation.Measure(_ =>
         {
             if (world.Step(ReadOnlySpan<CharacterCommand>.Empty).Fault.Code != StepFaultCode.None)
             {
@@ -67,11 +68,11 @@ public sealed class WorldAllocationTests
             }
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(counts, $"{hz} Hz: SimWorld.Step with no commands");
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(measurement, $"{hz} Hz: SimWorld.Step with no commands");
         Assert.True(
             faults == 0,
-            $"{hz} Hz: {faults} of {ZeroAllocation.TotalCalls} steps reported a fault instead of StepFaultCode.None");
-        Assert.Equal((uint)ZeroAllocation.TotalCalls, world.CurrentStep);
+            $"{hz} Hz: {faults} of {measurement.Calls} steps reported a fault instead of StepFaultCode.None");
+        Assert.Equal((uint)measurement.Calls, world.CurrentStep);
     }
 
     /// <summary>
@@ -79,18 +80,20 @@ public sealed class WorldAllocationTests
     /// Reset with salt 7 and a state at step 0 holding a shooter (ID 1) at the origin facing +Z and a standing
     /// target (ID 2) 10 m along +Z facing the shooter, both grounded at rest, the shooter's rifle Ready with a
     /// full magazine and a reserve of 65,535 rounds (a u16 the configuration does not bound,
-    /// contracts/state-serialization.md#weapon-record), so the rifle never runs dry across the 3,002 steps, and
-    /// a <see cref="CharacterCommand"/> array of one entry allocated before the count. When the warm-up and
-    /// three counted batches of 1,000 <c>SimWorld.Step(commands)</c> calls run, with the entry set in place
+    /// contracts/state-serialization.md#weapon-record), so the rifle never runs dry across the 10,002 steps, or
+    /// 20,002 with the rerun, and a <see cref="CharacterCommand"/> array of one entry allocated before the
+    /// count. When the warm-up and ten counted windows of 1,000 <c>SimWorld.Step(commands)</c> calls run
+    /// (and ten more when the rerun runs, <see cref="ZeroAllocation"/>), with the entry set in place
     /// before each step to <c>CharacterCommand(0, command)</c>, the command holding the next Sequence (1 for
     /// the first step), ClientStep equal to the step being computed, aim yaw 0 and pitch 0, slot 0, and
     /// buttons cycling every <c>4 * hz</c> steps as T172's do (Fire held for <c>3 * hz</c> steps, then Reload
-    /// for one step, then nothing), Then the smallest batch allocated exactly 0 bytes, no step reported a
-    /// fault, and every counted batch holds at least one shot event, at least one hit event on target 2 with
-    /// Kind Character, and at least one expiry event. The spread and the recoil carry some shots of each burst
-    /// past the target, and those that rise clear of the ground fly on for many steps and expire at their
-    /// range, so every batch runs the spawn, the flights carried forward, the capsule tests with the
-    /// character hit, the expiries and their writers.
+    /// for one step, then nothing), Then every window allocated exactly 0 bytes, no step reported a fault,
+    /// the world is at the step that counts every call made, and every counted window that ran holds at
+    /// least one shot event, at least one hit event on target 2 with Kind Character, and at least one expiry
+    /// event. The spread and the recoil carry some shots of each burst past the target, and those that rise
+    /// clear of the ground fly on for many steps and expire at their range, so every window runs the spawn,
+    /// the flights carried forward, the capsule tests with the character hit, the expiries and their
+    /// writers.
     /// </summary>
     [Theory]
     [MemberData(nameof(TestRates.All), MemberType = typeof(TestRates))]
@@ -101,15 +104,16 @@ public sealed class WorldAllocationTests
         var commands = new CharacterCommand[1];
         var cycle = 4 * hz;
         var fireSteps = 3 * hz;
-        var shots = new int[ZeroAllocation.Batches];
-        var characterHits = new int[ZeroAllocation.Batches];
-        var expiries = new int[ZeroAllocation.Batches];
+        var shots = new int[ZeroAllocation.MaxCountedWindows];
+        var characterHits = new int[ZeroAllocation.MaxCountedWindows];
+        var expiries = new int[ZeroAllocation.MaxCountedWindows];
         var calls = 0;
         var faults = 0;
 
-        // The batch index MeasureBatches passes is not used: calls numbers the calls across the warm-up and
-        // every batch. The StepReport is a ref struct, so it is read inside the call and never captured.
-        var counts = ZeroAllocation.MeasureBatches(batchCall =>
+        // The index Measure passes within a window is not used: calls numbers the calls across the warm-up
+        // and every window of both measurements. The StepReport is a ref struct, so it is read inside the
+        // call and never captured.
+        var measurement = ZeroAllocation.Measure(windowCall =>
         {
             var position = calls % cycle;
             var buttons = position < fireSteps ? Buttons.Fire : (position == fireSteps ? Buttons.Reload : 0);
@@ -122,15 +126,15 @@ public sealed class WorldAllocationTests
             }
             else if (calls >= ZeroAllocation.WarmUpCalls)
             {
-                var batch = (calls - ZeroAllocation.WarmUpCalls) / ZeroAllocation.CallsPerBatch;
+                var window = (calls - ZeroAllocation.WarmUpCalls) / ZeroAllocation.CallsPerWindow;
                 var events = report.Events;
-                shots[batch] += events.Shots.Length;
-                expiries[batch] += events.Expiries.Length;
+                shots[window] += events.Shots.Length;
+                expiries[window] += events.Expiries.Length;
                 foreach (var hit in events.Hits)
                 {
                     if (hit.Kind == HitKind.Character && hit.TargetId == TargetId)
                     {
-                        characterHits[batch]++;
+                        characterHits[window]++;
                     }
                 }
             }
@@ -138,18 +142,19 @@ public sealed class WorldAllocationTests
             calls++;
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(
-            counts,
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(
+            measurement,
             $"{hz} Hz: SimWorld.Step with a shooter firing rifle bursts at a target 10 m away");
         Assert.True(
             faults == 0,
-            $"{hz} Hz: {faults} of {ZeroAllocation.TotalCalls} steps reported a fault instead of StepFaultCode.None");
-        Assert.Equal((uint)ZeroAllocation.TotalCalls, world.CurrentStep);
-        for (var b = 0; b < ZeroAllocation.Batches; b++)
+            $"{hz} Hz: {faults} of {measurement.Calls} steps reported a fault instead of StepFaultCode.None");
+        Assert.Equal(measurement.Calls, calls);
+        Assert.Equal((uint)measurement.Calls, world.CurrentStep);
+        for (var w = 0; w < measurement.CountedWindows; w++)
         {
             Assert.True(
-                shots[b] >= 1 && characterHits[b] >= 1 && expiries[b] >= 1,
-                $"{hz} Hz: counted batch {b} held {shots[b]} shots, {characterHits[b]} hits on target {TargetId} (Kind Character) and {expiries[b]} expiries; every batch must hold at least one of each");
+                shots[w] >= 1 && characterHits[w] >= 1 && expiries[w] >= 1,
+                $"{hz} Hz: counted window {w} of {measurement.CountedWindows} held {shots[w]} shots, {characterHits[w]} hits on target {TargetId} (Kind Character) and {expiries[w]} expiries; every window must hold at least one of each");
         }
     }
 

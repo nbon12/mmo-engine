@@ -9,9 +9,9 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// FR-032, US7.3, SC-005: a warmed-up <c>MovementStep.Step</c>, which stage 2 of every world step runs per
 /// character, allocates nothing (data-model.md#movement-step: the candidate buffer is the caller's, and
 /// every loop is bounded). Every row warms its call up twice, then counts
-/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000 calls into a candidate
-/// buffer allocated before the count (<see cref="ZeroAllocation"/>), and requires the smallest batch to be
-/// exactly 0 bytes.
+/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of 1,000 calls into a candidate
+/// buffer allocated before the count (<see cref="ZeroAllocation"/>), and requires every window to be
+/// exactly 0 bytes (all ten of a single rerun when exactly one window of the first measurement is not).
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class MovementAllocationTests
@@ -48,7 +48,7 @@ public sealed class MovementAllocationTests
         var faults = 0;
         var lastFault = StepFaultCode.None;
 
-        var counts = ZeroAllocation.MeasureBatches(call =>
+        var measurement = ZeroAllocation.Measure(call =>
         {
             if (call % period == 0)
             {
@@ -63,12 +63,12 @@ public sealed class MovementAllocationTests
             }
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(
-            counts,
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(
+            measurement,
             $"{setup} at {hz} Hz: MovementStep.Step with Forward held into a {candidates.Length}-entry candidate span");
         Assert.True(
             faults == 0,
-            $"{setup} at {hz} Hz: {faults} of {ZeroAllocation.TotalCalls} calls returned a fault ({lastFault}) instead of StepFaultCode.None");
+            $"{setup} at {hz} Hz: {faults} of {measurement.Calls} calls returned a fault ({lastFault}) instead of StepFaultCode.None");
     }
 
     private static MovementWorld World(string setup) => setup switch

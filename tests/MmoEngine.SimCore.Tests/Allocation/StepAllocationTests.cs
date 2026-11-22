@@ -10,7 +10,8 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// <c>ProjectileStep.Step</c>, <c>standing</c> through <c>HitboxBuilder</c> and <c>fuzz-all-buttons</c>
 /// through <c>SimWorld.Step</c>. It is the regression test over the per-entry-point allocation tests
 /// (T036, T076, T115, T172 and T199), and it measures with their rule (<see cref="ZeroAllocation"/>):
-/// three counted windows of 1,000 calls, the smallest of which must be exactly 0 bytes.
+/// ten counted windows of 1,000 calls, every one of which must be exactly 0 bytes, with one rerun of all
+/// ten, every window of which must then be 0, when exactly one window of the first measurement is not.
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class StepAllocationTests
@@ -29,8 +30,9 @@ public sealed class StepAllocationTests
 
     /// <summary>
     /// Given <c>StepCase.Create(kind, caseName, hz)</c> warmed up by two full passes, with <c>Restart()</c>
-    /// between them, When three further windows of 1,000 <c>Step()</c> calls run, a pass that ends inside a
-    /// window (or before it) being restarted with <c>Restart()</c>, which is not counted, Then the smallest
+    /// between them, When ten further windows of 1,000 <c>Step()</c> calls run through
+    /// <see cref="ZeroAllocation.MeasureWindows"/> (and ten more when the rerun runs), a pass that ends inside
+    /// a window (or before it) being restarted with <c>Restart()</c>, which is not counted, Then every
     /// window's sum is exactly 0 bytes. Each window's count is the sum, over its runs of <c>Step()</c> calls
     /// between restarts, of <see cref="GC.GetAllocatedBytesForCurrentThread"/> after the run minus before it.
     /// </summary>
@@ -48,10 +50,9 @@ public sealed class StepAllocationTests
         stepCase.Restart();
         RunPass(stepCase);
 
-        var windows = new long[ZeroAllocation.Batches];
-        for (var w = 0; w < windows.Length; w++)
+        var measurement = ZeroAllocation.MeasureWindows(() =>
         {
-            var left = ZeroAllocation.CallsPerBatch;
+            var left = ZeroAllocation.CallsPerWindow;
             var bytes = 0L;
             while (left > 0)
             {
@@ -75,11 +76,11 @@ public sealed class StepAllocationTests
                 left -= run;
             }
 
-            windows[w] = bytes;
-        }
+            return bytes;
+        });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(
-            windows,
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(
+            measurement,
             $"{step} at {hz} Hz: StepCase.Step() through {EntryPoint(kind)} (Restart() not counted)");
     }
 

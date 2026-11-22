@@ -8,9 +8,9 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// path and allocate nothing, on success and on every refusal or rejection
 /// (contracts/input-command-format.md#api: a refusal's <c>FormatError</c> holds literals and formats its
 /// detail only when read, and the validator returns a code). Every row warms its call up twice, then
-/// counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000 calls into
-/// buffers allocated before the count (<see cref="ZeroAllocation"/>), and requires the smallest batch to
-/// be exactly 0 bytes.
+/// counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of 1,000 calls into
+/// buffers allocated before the count (<see cref="ZeroAllocation"/>), and requires every window to be
+/// exactly 0 bytes (all ten of a single rerun when exactly one window of the first measurement is not).
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class InputAllocationTests
@@ -43,7 +43,7 @@ public sealed class InputAllocationTests
         var error = default(FormatError);
 
         // The lambda's parameter is named, so `out _` below stays a discard.
-        var counts = ZeroAllocation.MeasureBatches(call =>
+        var measurement = ZeroAllocation.Measure(call =>
         {
             if (InputCodec.TryDecode(input, out _, out error) != expectAccepted)
             {
@@ -51,10 +51,10 @@ public sealed class InputAllocationTests
             }
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(counts, $"{inputCase}: InputCodec.TryDecode of {input.Length} bytes");
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(measurement, $"{inputCase}: InputCodec.TryDecode of {input.Length} bytes");
         Assert.True(
             unexpected == 0,
-            $"{inputCase}: TryDecode returned {!expectAccepted} on {unexpected} of {ZeroAllocation.TotalCalls} calls");
+            $"{inputCase}: TryDecode returned {!expectAccepted} on {unexpected} of {measurement.Calls} calls");
         Assert.Equal(expectedCode, error.Code);
     }
 
@@ -76,7 +76,7 @@ public sealed class InputAllocationTests
         var unexpected = 0;
         var last = InputRejection.None;
 
-        var counts = ZeroAllocation.MeasureBatches(_ =>
+        var measurement = ZeroAllocation.Measure(_ =>
         {
             last = InputValidator.Validate(in command, lastSequence, WeaponSlots);
             if (last != expected)
@@ -85,10 +85,10 @@ public sealed class InputAllocationTests
             }
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(counts, $"{expected}: InputValidator.Validate of {command} after sequence {lastSequence}");
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(measurement, $"{expected}: InputValidator.Validate of {command} after sequence {lastSequence}");
         Assert.True(
             unexpected == 0,
-            $"{expected}: Validate returned another code on {unexpected} of {ZeroAllocation.TotalCalls} calls, the last {last}");
+            $"{expected}: Validate returned another code on {unexpected} of {measurement.Calls} calls, the last {last}");
         Assert.Equal(expected, last);
     }
 

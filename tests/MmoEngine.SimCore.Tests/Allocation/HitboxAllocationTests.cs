@@ -8,16 +8,17 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// <summary>
 /// FR-032, US7.3, SC-005: <c>HitboxBuilder.Build</c>, which stage 4 of every world step runs per
 /// character, allocates nothing (data-model.md#hitbox-layout-and-hitboxes). Every row warms its call up
-/// twice, then counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000
+/// twice, then counts <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of 1,000
 /// calls into a three-element <see cref="Hitbox"/> buffer allocated before the count
-/// (<see cref="ZeroAllocation"/>), and requires the smallest batch to be exactly 0 bytes.
+/// (<see cref="ZeroAllocation"/>), and requires every window to be exactly 0 bytes (all ten of a single
+/// rerun when exactly one window of the first measurement is not).
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class HitboxAllocationTests
 {
     /// <summary>
     /// The stance's layout from the placeholders at 30 Hz, the feet at (0.5, 0, 0.5) and aim yaw
-    /// <c>(ushort)(64 * i)</c> for call i of a batch, so each batch sweeps yaws 0 to 63,936.
+    /// <c>(ushort)(64 * i)</c> for call i of a window, so each window sweeps yaws 0 to 63,936.
     /// </summary>
     [Theory]
     [InlineData(Stance.Standing)]
@@ -29,9 +30,9 @@ public sealed class HitboxAllocationTests
         var hitboxes = new Hitbox[3];
         var bounds = default(HitboxBounds);
 
-        var counts = ZeroAllocation.MeasureBatches(i => bounds = HitboxBuilder.Build(layout, position, (ushort)(64 * i), hitboxes));
+        var measurement = ZeroAllocation.Measure(i => bounds = HitboxBuilder.Build(layout, position, (ushort)(64 * i), hitboxes));
 
-        ZeroAllocation.AssertABatchAllocatedNothing(counts, $"{stance}: HitboxBuilder.Build into a 3-element span");
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(measurement, $"{stance}: HitboxBuilder.Build into a 3-element span");
 
         // The calls built the stance's three capsules and its bounding sphere.
         Assert.Equal(HitboxPart.Head, hitboxes[0].Part);

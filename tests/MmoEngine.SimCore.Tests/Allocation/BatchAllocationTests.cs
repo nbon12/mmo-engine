@@ -15,8 +15,9 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// buffer and its report buffer, and the report buffer is sized by <c>LoadConfig</c> from the configured
 /// maxima, so a committed batch only decodes commands, steps the world and copies records into buffers it
 /// already holds. Each row warms up with two batches, then counts
-/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three windows of at least 1,000 steps each
-/// (T036's rule, <see cref="ZeroAllocation"/>), and requires the smallest window to be exactly 0 bytes.
+/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of at least 1,000 steps each
+/// (T036's rule, <see cref="ZeroAllocation"/>), and requires every window to be exactly 0 bytes (all ten
+/// of a single rerun when exactly one window of the first measurement is not).
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class BatchAllocationTests
@@ -37,10 +38,11 @@ public sealed class BatchAllocationTests
     /// <paramref name="batchSize"/> at a time in order, and stepped with one
     /// <c>StepQueued(batchSize)</c> per batch, Reset to the definition's initial state (with the counter
     /// paused) whenever fewer than <paramref name="batchSize"/> of its commands remain; with two warm-up
-    /// batches, then three counted windows, each running <c>StepQueued(batchSize)</c> calls until at least
-    /// 1,000 steps have run (1,000 calls of 1, or 63 calls of 16); Then every call returns
-    /// <paramref name="batchSize"/>, every Reset returns <c>Ok</c>, and the smallest window allocated
-    /// exactly 0 bytes. The failure message names the batch size, the rate and every window's byte count.
+    /// batches, then ten counted windows through <see cref="ZeroAllocation.MeasureWindows"/> (and ten more
+    /// when the rerun runs), each running <c>StepQueued(batchSize)</c> calls until at least 1,000 steps have
+    /// run (1,000 calls of 1, or 63 calls of 16); Then every call returns <paramref name="batchSize"/>, every
+    /// Reset returns <c>Ok</c>, and every window allocated exactly 0 bytes. The failure message names the
+    /// batch size, the rate and every window's byte count of both measurements.
     /// </summary>
     [Theory]
     [MemberData(nameof(BatchSizesAndRates))]
@@ -78,17 +80,16 @@ public sealed class BatchAllocationTests
             driver.Step();
         }
 
-        // Three windows of at least 1,000 steps. Reset runs with the counter paused: it is a load call,
-        // which may allocate; only StepQueued and the encoding of its commands are counted.
-        var windows = new long[ZeroAllocation.Batches];
+        // Windows of at least 1,000 steps. Reset runs with the counter paused: it is a load call, which
+        // may allocate; only StepQueued and the encoding of its commands are counted.
         var callsPerWindow = 0;
-        for (var window = 0; window < windows.Length; window++)
+        var measurement = ZeroAllocation.MeasureWindows(() =>
         {
             long counted = 0;
             var steps = 0;
             var calls = 0;
             var mark = GC.GetAllocatedBytesForCurrentThread();
-            while (steps < ZeroAllocation.CallsPerBatch)
+            while (steps < ZeroAllocation.CallsPerWindow)
             {
                 if (driver.NeedsReset)
                 {
@@ -103,9 +104,9 @@ public sealed class BatchAllocationTests
             }
 
             counted += GC.GetAllocatedBytesForCurrentThread() - mark;
-            windows[window] = counted;
             callsPerWindow = calls;
-        }
+            return counted;
+        });
 
         Assert.True(
             driver.EncodeFailures == 0,
@@ -116,9 +117,10 @@ public sealed class BatchAllocationTests
         Assert.True(
             driver.WrongReturns == 0,
             $"{what}: {driver.WrongReturns} of {driver.Calls} StepQueued({batchSize}) calls did not return {batchSize}; the last such call returned {driver.LastWrongReturn}");
-        Assert.True(
-            windows.Min() == 0,
-            $"{what}: StepQueued({batchSize}) allocated [{string.Join(", ", windows)}] bytes in {windows.Length} windows of {callsPerWindow} calls ({callsPerWindow * batchSize} steps) each, Resets not counted; the smallest window must be 0");
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(
+            measurement,
+            $"{what}: StepQueued({batchSize}), Resets not counted,",
+            $"{callsPerWindow} calls ({callsPerWindow * batchSize} steps)");
     }
 
     private static void AssertOk(LoadResult result, string what) =>

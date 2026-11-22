@@ -12,9 +12,9 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// FR-032, US7.3, SC-005: a warmed-up <c>WeaponStep.Step</c>, which stage 3 of every world step runs per
 /// character, allocates nothing (data-model.md#weapon-step: the spawn and shot spans are the caller's, and
 /// the fire loop is bounded by <c>MaxShotsPerStep</c>). Every row warms its call up twice, then counts
-/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across three batches of 1,000 calls into spawn and shot
-/// buffers allocated before the count (<see cref="ZeroAllocation"/>), and requires the smallest batch to be
-/// exactly 0 bytes.
+/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> across ten windows of 1,000 calls into spawn and shot
+/// buffers allocated before the count (<see cref="ZeroAllocation"/>), and requires every window to be
+/// exactly 0 bytes (all ten of a single rerun when exactly one window of the first measurement is not).
 /// </summary>
 [Collection(ZeroAllocationCollection.Name)]
 public sealed class WeaponAllocationTests
@@ -26,13 +26,15 @@ public sealed class WeaponAllocationTests
     /// Given <see cref="TestConfigs.Compiled"/> at <paramref name="hz"/>, the salt <see cref="WeaponRuns.Salt"/>,
     /// a standing grounded character (ID 1, <c>ActiveSlot</c> = <paramref name="slot"/>), its two placeholder
     /// weapons Ready with full magazines and reserves, <c>nextProjectileId</c> 1, and spawn and shot spans of
-    /// that weapon's <c>maxShotsPerStep</c> entries. When the warm-up and three counted batches of 1,000 calls
-    /// of <c>WeaponStep.Step(config, salt, step, ref character, weapons, in input, 0, ref nextProjectileId,
-    /// spawned, shots, out block)</c> run, with <c>step</c> counting up from 1 across all of them and the input
-    /// cycling every <c>4 * hz</c> calls (Fire held for <c>3 * hz</c> calls, then Reload held for one call,
-    /// then nothing), and with the weapons and <c>nextProjectileId</c> set back to their start values (struct
-    /// copies) at the start of each cycle, Then the smallest batch allocated exactly 0 bytes, and at least one
-    /// counted call fired a shot, so the counted calls ran the fire loop and the spawn.
+    /// that weapon's <c>maxShotsPerStep</c> entries. When the warm-up and ten counted windows of 1,000 calls
+    /// (and ten more when the rerun runs, <see cref="ZeroAllocation"/>) of <c>WeaponStep.Step(config, salt,
+    /// step, ref character, weapons, in input, 0, ref nextProjectileId, spawned, shots, out block)</c> run,
+    /// with <c>step</c> counting up from 1 across all of them and the input cycling every <c>4 * hz</c> calls
+    /// (Fire held for <c>3 * hz</c> calls, then Reload held for one call, then nothing), and with the weapons
+    /// and <c>nextProjectileId</c> set back to their start values (struct copies) at the start of each cycle,
+    /// Then every window allocated exactly 0 bytes, the test made exactly the calls the measurement counts,
+    /// and at least one counted call of each measurement that ran fired a shot, so the counted calls ran the
+    /// fire loop and the spawn.
     /// </summary>
     [Theory]
     [MemberData(nameof(Slots))]
@@ -68,11 +70,11 @@ public sealed class WeaponAllocationTests
         var cycle = 4 * hz;
         var fireCalls = 3 * hz;
         var calls = 0;
-        var countedCallsThatFired = 0;
+        var countedCallsThatFired = new int[ZeroAllocation.MaxMeasurements];
 
-        // The batch index MeasureBatches passes is not used: calls numbers the calls across the warm-up
-        // and every batch. It is not named _, so out _ below stays a discard.
-        var counts = ZeroAllocation.MeasureBatches(batchCall =>
+        // The index Measure passes within a window is not used: calls numbers the calls across the warm-up
+        // and every window of both measurements. It is not named _, so out _ below stays a discard.
+        var measurement = ZeroAllocation.Measure(windowCall =>
         {
             var position = calls % cycle;
             if (position == 0)
@@ -98,18 +100,21 @@ public sealed class WeaponAllocationTests
                 out _);
             if (calls >= ZeroAllocation.WarmUpCalls && fired >= 1)
             {
-                countedCallsThatFired++;
+                countedCallsThatFired[(calls - ZeroAllocation.WarmUpCalls) / ZeroAllocation.CallsPerMeasurement]++;
             }
 
             calls++;
         });
 
-        ZeroAllocation.AssertABatchAllocatedNothing(
-            counts,
+        ZeroAllocation.AssertEveryWindowAllocatedNothing(
+            measurement,
             $"slot {slot} at {hz} Hz: WeaponStep.Step cycling Fire ({fireCalls} calls), Reload (1) and nothing ({cycle - fireCalls - 1}) into {maxShots}-entry spawn and shot spans");
-        Assert.Equal(ZeroAllocation.TotalCalls, calls);
-        Assert.True(
-            countedCallsThatFired >= 1,
-            $"slot {slot} at {hz} Hz: none of the {ZeroAllocation.Batches * ZeroAllocation.CallsPerBatch} counted calls fired a shot, so the fire loop was not measured");
+        Assert.Equal(measurement.Calls, calls);
+        for (var m = 0; m < measurement.Measurements; m++)
+        {
+            Assert.True(
+                countedCallsThatFired[m] >= 1,
+                $"slot {slot} at {hz} Hz: none of the {ZeroAllocation.CallsPerMeasurement} counted calls of measurement {m + 1} of {measurement.Measurements} fired a shot, so the fire loop was not measured");
+        }
     }
 }

@@ -6,8 +6,8 @@ namespace MmoEngine.SimCore.Tests.Allocation;
 /// pool with parallel tests could see their JIT, type loading or continuations land on its thread and be
 /// counted. Every allocation test class of this feature is <c>[Collection(ZeroAllocationCollection.Name)]</c>,
 /// so each entry point's allocation test can be written in the phase that builds the entry point. Each
-/// measures with <see cref="ZeroAllocation"/>: the smallest of three counted batches of 1,000 calls must
-/// be 0 bytes.
+/// measures with <see cref="ZeroAllocation"/>: every one of ten counted windows of 1,000 calls must be
+/// 0 bytes, with one rerun of all ten when exactly one window of the first measurement is not.
 /// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ZeroAllocationCollection

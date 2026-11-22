@@ -245,9 +245,10 @@ benchmark project replaces them with runner-class measurements (FR-030, SC-007).
 - **Allocations**: The world owns every buffer: the canonical-state buffer, the collision query
   span, the hitbox span and the event lists, all sized from the configured maxima. Steps write into
   caller-owned spans and fixed-capacity arrays. The core has no LINQ, lambdas, boxing or static
-  mutable state. Zero-allocation tests run three batches of 1,000 steps after warm-up, for each of
-  the movement, weapon, projectile and full-world steps, and assert that the smallest batch is 0 bytes
-  (US7.3, FR-032, SC-005).
+  mutable state. Zero-allocation tests run ten windows of 1,000 steps after warm-up, for each of the
+  movement, weapon, projectile and full-world steps, and assert that every window is 0 bytes; when
+  exactly one window of that first measurement is not, all ten run once more and every window of the
+  rerun must be 0 bytes (US7.3, FR-032, SC-005).
 - **Degradation**: The core has no Delivery work. The core runs at 20 Hz when configured for it (the
   20 Hz streams and tests). A live 30 to 20 Hz drop needs a state conversion between rates, which this
   feature does not provide; it is a follow-up for sub-spec 5 (spec Edge Cases and Assumptions).
@@ -569,20 +570,51 @@ The design documents settled these points, which the spec leaves open. They are 
   `Clamp` inside SimMath only" allowance stays, so research R4 and contracts/analyzer-rules.md are
   unchanged there. T183's pitch clamp is in `int`, so it now names the integer `System.Math.Clamp`,
   which the analyzer allows, rather than `SimMath.Clamp`, which has no `int` overload.
-- **Zero-allocation tests require the smallest of three 1,000-call batches to be 0 bytes (T013, T036,
-  Phase 2 review).** During review, `WorldAllocationTests.StepAllocatesNothing(20)` counted 4,952 bytes
-  over 1,000 steps in one of five full-suite runs, and every rerun counted 0; more than 70 full-suite
-  runs here, sequential, after a rebuild and four at a time, did not reproduce it, and a probe with
-  other threads allocating and collecting showed no stray count. With the cause unknown and outside the code under test, a single
-  counted window can fail a correct step. Each test now warms up twice as before and then counts three
-  separate batches through `ZeroAllocation.MeasureBatches`: a per-call allocation, or one that recurs
-  within 1,000 calls, shows in every batch, while a one-off stray count lands in one. What this gives
-  up is a single allocation made once, after the warm-up, which the batches would read as stray; the
-  world's buffers are sized at construction (data-model.md#world-simworld), so no step has such a
-  path. There is no byte tolerance, and the failure message lists every batch. More warm-up or turning
-  tiered compilation off was not chosen: the core runs unoptimised in the Debug test build, which the
-  JIT does not tier, and a review run reported a stray count with tiering off as well. T076, T115,
-  T172, T199 and T246 use the same rule.
+- **Zero-allocation tests require every one of ten 1,000-call windows to be 0 bytes, with one rerun
+  for a single stray window (T013, T036, Phase 2 review; Phase 10 spec-test review, US7-AS3).** During
+  the Phase 2 review, `WorldAllocationTests.StepAllocatesNothing(20)` counted 4,952 bytes over 1,000
+  steps in one of five full-suite runs, and every rerun counted 0; more than 70 full-suite runs here,
+  sequential, after a rebuild and four at a time, did not reproduce it, and a probe with other threads
+  allocating and collecting showed no stray count. With the cause unknown and outside the code under
+  test, a single counted window can fail a correct step. The Phase 2 answer counted three separate
+  batches and required the smallest to be 0 bytes. The Phase 10 spec-test review (`review-spec-tests`
+  on PR #70, finding F1 on US7-AS3, "a further 1,000 steps ... allocate zero bytes") showed that this
+  does not test the scenario's Then: a `MovementStep.Step` that allocated 64 bytes on every 9,000th
+  call passed all 36 allocation tests, because one of the three windows was always clean, and with a
+  1,500-call period only the `world/fuzz-all-buttons` rows failed. The rule is now:
+  - Each test warms up twice as before, then counts ten windows of 1,000 calls
+    (`ZeroAllocation.Measure`, or `ZeroAllocation.MeasureWindows` for `StepAllocationTests` and
+    `BatchAllocationTests`, whose windows pause the count around `Restart()` and `Reset`), and every
+    window must be exactly 0 bytes. There is no byte tolerance.
+  - The stray count is absorbed one way only. When exactly one window of the first measurement is not
+    0, the whole measurement (all ten windows, on the same state, with no new warm-up) runs once more,
+    and every window of that rerun must be 0. Two or more non-zero windows in the first measurement
+    fail at once. An allocation that recurs every 10,000 calls or fewer shows at least once in any
+    10,000 consecutive calls, so it shows in two windows or again in the rerun; a one-off stray count
+    does not come back. The failure message names the row and the call and lists every window's bytes
+    of both measurements.
+  - What this still gives up is a single allocation made once, after the warm-up, which reads as
+    stray; the world's buffers are sized at construction (data-model.md#world-simworld), so no step has
+    such a path.
+  - Assertions that count calls or events stay exact on both paths: `ZeroAllocationMeasurement` reports
+    the measurements that ran and the calls made (10,002, or 20,002 with the rerun), and the tests check
+    their own call counts and `world.CurrentStep` against it. `WorldAllocationTests` requires a shot, a
+    character hit and an expiry in every counted window that ran, and `WeaponAllocationTests` and
+    `ProjectileAllocationTests` require their fired calls, flights, hits and other ends in each
+    measurement that ran, so the measurement that must be clean is one that exercised them.
+    `ZeroAllocationRuleTests` pins the rule, with synthetic window counts and with real 64-byte
+    allocations once at call 2,502 (passes through the rerun) and on every 9,000th, 5,000th, 2,500th
+    and 1,500th call (fail).
+  - It costs run time: the 71 allocation rows took 18 to 19 s, and they and the 13
+    `ZeroAllocationRuleTests` rows now take 57 to 62 s in the Debug test build, run one at a time.
+    Most of it is the movement rows (`MovementAllocationTests` and the `movement/*` rows of
+    `StepAllocationTests`, 1 to 3 s each); each `world/fuzz-all-buttons` row takes 0.5 to 1 s. Every
+    row keeps ten windows, the slow ones included: with fewer, a recurring allocation with a longer
+    period could again fall between them.
+
+  More warm-up or turning tiered compilation off was not chosen: the core runs unoptimised in the
+  Debug test build, which the JIT does not tier, and a review run reported a stray count with tiering
+  off as well. T076, T115, T172, T199 and T246 use the same rule.
 - **`MovementWorlds.Stair`'s top runs 20 m deep, not 2 m (T063, T070).** T063 asked for a 2 m deep box
   step, but T070 holds Forward for 2 simulated seconds (about 13.65 m at the placeholder run speed and
   acceleration) and asserts that the climbing rows end Grounded on the stair top; a 2 m deep step
@@ -1515,7 +1547,10 @@ The design documents settled these points, which the spec leaves open. They are 
 
   With a one-byte allocation added to the expiry branch of `StepProjectiles`, all three new rows fail
   and the empty-command rows still pass. T036's bullet now says its row covers the fixed per-step path,
-  and T211 names the new row.
+  and T211 names the new row. Since the Phase 10 spec-test review every counted window must be 0 bytes
+  (the zero-allocation decision above), and the row requires the shot, the hit and the expiry in every
+  counted window that ran, ten or twenty with the rerun; at 600 rounds per minute and at most 30 rounds
+  a cycle, 65,535 reserve rounds still cover its 20,002 steps.
 - **The golden fixture support has two members T214 did not list, and the fixture tests read the JSON
   without `GoldenJson` (T214-T216).** T216's `InputCasesValidateAsRecorded`,
   `CollisionCasesHaveTheirDerivedData` and `StreamConfigEntriesNameTheirRuleTablePaths` take only a case
