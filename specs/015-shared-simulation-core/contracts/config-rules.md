@@ -44,6 +44,12 @@ Shape rules are checked first:
 | `projectileClasses` | 1 to 8 entries | `must have between 1 and 8 entries` |
 | `hitboxes.standing`, `hitboxes.crouched` | exactly 3 entries | `must have exactly 3 entries` |
 
+Every leaf field (each Int, Float and Enum row in the rule table, in every present section, list
+element and capsule point) must be present too. The server's JSON binder refuses an omitted leaf with
+`<path>: is required`, one error per omitted field, before the guard runs, so an omitted field never
+binds as 0 or `Auto` and passes a rule whose minimum is 0. The recorded-stream config block already
+refuses a missing field (`field 0x…: is missing`).
+
 ## Field kinds
 
 | Kind | JSON | Binary value (u32) | Checks, in order | Message |
@@ -364,7 +370,8 @@ reuse:
 
 - `SimConfigJson` binds a JSON file to `SimConfig`. JSON problems use the repo's wording, keyed by
   path: `is not valid JSON (…)`, `must be a JSON object`, `has an invalid value or is not a known
-  field (…)` (unknown fields are refused) and `is required`.
+  field (…)` (unknown fields are refused) and `is required` (an omitted leaf field, one error per
+  field).
 - `SimConfigValidator : AbstractValidator<SimConfig>` (FluentValidation) applies the guard, so there is
   one rule table:
 
