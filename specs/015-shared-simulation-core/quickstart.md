@@ -221,8 +221,8 @@ dotnet run --project src/MmoEngine.SimCore.Cli -- measure validate-report "$MWOR
 echo $?   # 0 valid, 1 invalid, 2 unreadable
 ```
 
-Expected: `measure.mjs` exits 0, and `validate-report` prints nothing and exits 0. Without
-`MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
+Expected: `measure.mjs` exits 0, and `validate-report` prints nothing on stdout (stderr holds only its
+log event naming the path) and exits 0. Without `MMO_RUNNER_CLASS`, `measure.mjs` exits 2.
 
 With the workload installed (`dotnet workload install wasm-tools`), the relinked and AOT builds come
 from the publishes below. The block then runs the Node agreement on each build against `$MWORK` and

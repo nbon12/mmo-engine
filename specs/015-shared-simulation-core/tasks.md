@@ -3439,7 +3439,7 @@ On the PR, these checks pass on the head commit: the `SimCore` workflow's `agree
   - Wasm host tests go in `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests.cs`, in its serial collection. Core, Server and Cli tests go in the matching folder of `tests/MmoEngine.SimCore.Tests/`.
   - Never add a test whose only assertion is "does not throw".
   - Rerun the coverage commands of T313 until the gate exits 0.
-- [ ] T315 Run the slice-2 quickstart sections exactly as `specs/015-shared-simulation-core/quickstart.md` writes them, in unique `mktemp -d` directories, and record each command's exit code and key output line for the PR description.
+- [X] T315 Run the slice-2 quickstart sections exactly as `specs/015-shared-simulation-core/quickstart.md` writes them, in unique `mktemp -d` directories, and record each command's exit code and key output line for the PR description.
   - **Run the agreement suite.** Steps, each expected to exit 0:
     1. `dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$APP_OUT"`.
     2. `agreement prepare --seeds 1-50 --work "$WORK"`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`.
