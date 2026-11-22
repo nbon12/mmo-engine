@@ -3,14 +3,14 @@
 # every commit on them is nbon12's or comes from an app nbon12 installed. Other authors' pull
 # requests are left alone (AUTHORS below).
 #
-# main's only CI is `Workflow tests` (workflow-tests.yml, for changes to .github/ or
-# tests/workflows/), and it isn't a required check, so REQUIRE_CHECKS is off: a pull request that
-# qualifies merges once the checks it has pass. The workflow_run trigger must list every pull
-# request workflow, or pull requests wait for a finish this never hears about: it names `Workflow
-# tests` and `SimCore` (simcore.yml, the shared simulation core's agreement suite, for changes to the
-# core, its streams, its runners or its build; spec 015). When the build and test CI arrives, add it
-# there, make its jobs required checks on main, and set REQUIRE_CHECKS to "true". The Claude
-# workflow's `claude` check is ignored (see the check-runs step).
+# No pull request workflow is a required check on main, so REQUIRE_CHECKS is off: a pull request
+# that qualifies merges once the checks it has pass. The workflow_run trigger must list every pull
+# request workflow, or pull requests wait for a finish this never hears about. It names `Workflow
+# tests` (workflow-tests.yml, for changes to .github/ or tests/workflows/) and `SimCore` (simcore.yml,
+# the shared simulation core's agreement suite, for changes to the core, its streams, its runners or
+# its build; spec 015). `.NET` (dotnet.yml) and `Harness` (harness.yml) run on pull requests too and
+# are not listed yet: add them there, make the build and test jobs required checks on main, and set
+# REQUIRE_CHECKS to "true". The Claude workflow's `claude` check is ignored (see the check-runs step).
 #
 # It decides on every pull request event:
 #   - Manual, so it leaves the pull request alone and turns off auto-merge it turned on: a draft;

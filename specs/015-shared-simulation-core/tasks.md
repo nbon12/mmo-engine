@@ -2881,11 +2881,11 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `LoadCallsReturnTheSteppersCodes`:
     - `LoadCollision(test-world bytes)` returns 0 and the report buffer's `u32` text length at offset 0 is 0.
     - `LoadCollision(the first 10 bytes)` returns 1, and the report text equals exactly the `Message` of the `CoreFormatException` that `CollisionFile.Decode` throws for the same bytes.
-    - `LoadConfig(a 3-byte block)` returns 1.
-    - `LoadConfig(flat-run-30hz's config block)` returns 0.
+    - `LoadConfig(a 3-byte block)` returns 1, and the report text equals exactly the `Message` that `ConfigBlock.Decode` throws for the same bytes.
+    - `LoadCollision(test-world bytes)` and `LoadConfig(flat-run-30hz's config block)` return 0 again (the failed `LoadCollision` unloaded the world), and `Reset(initial state, salt)` returns 0.
     - `LoadConfig` of the same block re-encoded with `movement.gravity` = NaN returns 2, with the text exactly `movement.gravity: must be finite`. The block is built as `BatchStepperTests.LoadCallsReturnTheirCodes` builds its ConfigInvalid row.
-    - After that failed `LoadConfig`, `Reset(initial state, salt)` returns 3 (fail closed).
-    - After both loads return 0, `Reset` returns 0, and `Reset(the initial state truncated by one byte)` returns 1.
+    - After that failed `LoadConfig`, `Reset(initial state, salt)` returns 3 with report text length 0 (fail closed), refused because of the failed configuration alone, since the world is loaded and the previous `Reset` succeeded.
+    - After both loads return 0 once more, `Reset` returns 0, and `Reset(the initial state truncated by one byte)` returns 1.
   - `BuffersAreTheSteppersSegments`:
     - `CommandBuffer().Count` is 544 (32 × 17), and two calls return the same underlying array.
     - After `LoadConfig(default block)` returns 0, `ReportBuffer().Count` is 2,935,060 (max(65,536, 8 + 32 × 91,688 + 12 + 1,024), per contracts/wasm-api.md#report-buffer-layouts).
@@ -2897,10 +2897,11 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `ResetReinterpretsTheSignedSaltAsUnsigned`:
     - `Reset(rifle-burst's initial state, unchecked((long)0x9E3779B97F4A7C15UL))`, then rifle-burst's commands queued 32 at a time, gives records byte-equal to a fresh `new BatchStepper(32)` reset with the `ulong` `0x9E3779B97F4A7C15`.
     - With the stream's own salt, the records equal `StreamRunner.Run(rifle-burst)`.
-    - With that salt + 1, they first differ at rifle-burst's first shot step.
-  - `RunStreamReturnsTheServerRecords`:
-    - For flat-run-30hz and fuzz-all-buttons, `RunStream(stream, collision, -1)` equals `StreamRunner.Run(stream, collision)`, and `RunStream(flat-run-30hz, collision, 15)` equals `StreamRunner.Run(…, perturbStep: 15)`.
-    - A copy of flat-run-30hz with its version byte set to 2 throws a `CoreFormatException` whose `Message` contains `unsupported version 2; this reader supports version 1`.
+    - With that salt + 1, they first differ at rifle-burst's first shot step, the first server record whose `events.shots.count` is non-zero.
+  - `RunStreamReturnsTheServerRecords`, a Theory with one row per case, so the class has seven test methods:
+    - `flat-run-30hz` and `fuzz-all-buttons`: `RunStream(stream, collision, -1)` equals `StreamRunner.Run(stream, collision)`.
+    - `flat-run-30hz-perturbed`: `RunStream(flat-run-30hz, collision, 15)` equals `StreamRunner.Run(…, perturbStep: 15)` and first differs from the unperturbed records at step 15.
+    - `flat-run-30hz-version-2`: a copy of flat-run-30hz with its version byte set to 2 throws a `CoreFormatException` whose `Message` contains `unsupported version 2; this reader supports version 1`.
   - `EvaluateTablesReturnsTheServerResults`:
     - `EvaluateTables(CrossBuildTables.BuildInputs(), default block)` equals `CrossBuildTables.Evaluate` of the same arguments byte for byte. Its length is 16 + 8·M + 100·P, with M and P read from the result header and P = 6,192.
     - Inputs with the magic changed to `MMXX` throw a `CoreFormatException` whose message starts `tables magic at offset 0:`.
@@ -2924,6 +2925,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - `GET /_framework/%2e%2e/%2e%2e/etc/passwd` and `GET /work/..%2fmanifest.json` return 403.
   - `PUT /work/chromium-worker/flat-run-30hz.records`, `PUT /work/firefox-worker/x.error.txt`, `PUT /work/webkit-worker/tables.bin` and `PUT /work/chromium-worker/tables.error.txt` each return 204. The file holds exactly the body, and no temporary file is left in the folder.
   - These PUTs return 403 and write nothing: build `node-interp`, stream name `Bad_Name`, stream `tables` with `.records`, an extension other than the four, and a body of 64 MiB + 1 byte.
+  - (Added in the Phase 11 review.) A PUT of one form replaces its other form: in `chromium-worker/`, beside a neighbour `x-2.error.txt`, `PUT x.error.txt` then `x.records`, `x.records` then `x.error.txt`, `tables.error.txt` then `tables.bin`, and `tables.bin` then `tables.error.txt` each return 204 and leave only the neighbour, untouched, and the second file, holding exactly its body. A refused `PUT x.records` of 64 MiB + 1 byte leaves an earlier `x.error.txt` as it was.
   - `GET /nothing` returns 404.
 
   Run `node --test tools/agreement/node/server.test.mjs` and confirm it fails, because `lib/server.mjs` does not exist.
@@ -2988,7 +2990,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - `ROOT`, with `WORKFLOW = yaml.safe_load(.github/workflows/simcore.yml)` and `TRIGGERS = WORKFLOW.get("on", WORKFLOW.get(True))`;
     - `AUTO_MERGE` from `.github/workflows/auto-merge.yml`;
     - `steps(job)` and `runs(job)` helpers.
-  - `test_runs_on_pull_requests_and_main_for_simcore_paths`: for `pull_request` and `push`, `paths` contains every one of `src/MmoEngine.SimCore*/**`, `tests/MmoEngine.SimCore*/**`, `benchmarks/MmoEngine.SimCore*/**`, `tools/agreement/**`, `tools/simcore/**`, `simcore/**`, `Directory.Build.props`, `Directory.Packages.props`, `global.json`, `MmoEngine.sln` and `.github/workflows/simcore.yml`, and `push.branches == ["main"]`.
+  - `test_runs_on_pull_requests_and_main_for_simcore_paths`: for `pull_request` and `push`, `paths` contains every one of `src/MmoEngine.SimCore*/**`, `tests/MmoEngine.SimCore*/**`, `benchmarks/MmoEngine.SimCore*/**`, `tools/agreement/**`, `tools/simcore/**`, `simcore/**`, `Directory.Build.props`, `Directory.Packages.props`, `global.json`, `MmoEngine.sln` and `.github/workflows/simcore.yml`, and `push.branches == ["main"]`. `pull_request`'s only key is `paths`, and `push`'s are `branches` and `paths`, so no `branches`, `branches-ignore`, `types` or `paths-ignore` filter can stop a pull request that changes the core from running the suite (added in the Phase 11 review).
   - `test_workflow_is_named_simcore`: `WORKFLOW["name"] == "SimCore"`, the name `auto-merge.yml` listens for.
   - `test_token_is_read_only`: `WORKFLOW["permissions"] == {"contents": "read"}`.
 
@@ -3067,14 +3069,14 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - The MIME table, plus COOP `same-origin`, COEP `require-corp` and `Cache-Control: no-store` on every response.
   - Files are streamed unmodified, without `Content-Encoding`.
   - A decoded path that resolves outside its root returns 403.
-  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. The server answers 204, or 403 for anything else, and 404 for unknown paths.
+  - The PUT rule: the build is one of `chromium-worker`, `firefox-worker` or `webkit-worker`; the name matches `^[a-z0-9-]+$` and is never `tables` for `.records` (`tables.error.txt` is the fourth form, the tables error file, as T274 and the contract's route table have it); the body is at most 64 MiB. The body is written to a temporary file in the same folder, then renamed. Once it is in place, the file's other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner's `writeOutput` does, so a rerun on the same work directory never leaves an error file beside the output it stands in place of (added in the Phase 11 review); a refused PUT writes and removes nothing. The server answers 204, or 403 for anything else, and 404 for unknown paths.
 
-  Makes T274 (server.test.mjs) pass: 19 of its 23 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
+  Makes T274 (server.test.mjs) pass: 24 of its 28 tests on its own, and the four content-type rows for `/web/worker.mjs`, `/web/page.html`, `/lib/runtime.mjs` and `/lib/tables.mjs`, which compare the body with those files, once T286, T288 and T289 have added them.
 - [X] T288 [US2] Implement `tools/agreement/lib/runtime.mjs` (contracts/wasm-api.md#boot), after T285:
   - `JITERPRETER_OFF`, the three `--no-jiterpreter-*` flags;
   - `bootRuntime(dotnetJsUrl, { jiterpreter = true })`, which uses `dotnet.withRuntimeOptions(...)`, gets `getAssemblyExports('MmoEngine.SimCore.Wasm.dll')` and returns `{ runtime, exports, buildInfo, jiterpreter, timings }`, where `jiterpreter` is `jiterpreterState(runtime)` read right after `create()`;
   - `jiterpreterState(runtime)` (added in the Phase 11 review): `{ traces, interpEntry, jitCall }` as booleans from the runtime's internal `INTERNAL.jiterpreter_get_options()` (`enableTraces`, `enableInterpEntry`, `enableJitCall`), or `null` when the runtime has no such accessor;
-  - the record helpers `readRecords(bytes)` (u32 step, u32 stateLength, state, u64 hash, little-endian, next at `o + 16 + s`) and `firstDifferingStep(server, build)`. The latter returns the first step whose record is missing, has another step number, or differs in state bytes or hash, or `null` when both are equal.
+  - the record helpers `readRecords(bytes)` (u32 step, u32 stateLength, state, u64 hash, little-endian, next at `o + 16 + s`) and `firstDifferingStep(server, build)`. `readRecords` returns each record's `step`, `offset`, `length`, `state` and `hash`, and throws `RangeError` on a cut-off record. `firstDifferingStep` walks the server's records in order, as `DivergenceReport.CompareBuild` does: it returns the first server step whose build record is missing or cut off, has another step number, or differs in state bytes or hash; past the server's last record, the step of the build's first extra record, or the server's last step + 1 when that record is cut off; and `null` when both are equal.
   - Their unit tests, `tools/agreement/node/runtime.test.mjs` (`node:test`, added in the Phase 11 review), with records built in memory: `firstDifferingStep` table rows for equal records and both empty (null), a state byte or a state length differing at step n (n), only the hash differing (n), another step number (the server step), a missing middle or last record and no records at all (the server step), a record cut off inside its state or hash (its server step), an extra record past the last (its step, whatever its number), a cut-off extra record or header (the server's last step + 1), and against no server records (the extra's step, or 0 when cut off); a view's own range honoured; a cut-off server record throwing `RangeError`. `readRecords` rows read each record's step, offset, length, state and hash, records of different state lengths and no bytes, and throw a `RangeError` naming the offset of a cut-off header, state or hash, or a `TypeError` for something that is not bytes. `jiterpreterState` rows read the default and the `JITERPRETER_OFF` reports as all on and all off, each option on its own, a missing option as off, and give `null` without `INTERNAL`, without the accessor, or for an empty report. The workflow's unit-test step runs it (T290 step 8).
 
   Then run locally against the T285 host:
@@ -3084,14 +3086,14 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
   Makes T275 (per-stream tests, US2.1, US4.2b, US4-ITb and US5-ITb), T276 (US2.3), T277 (perturbation, US2-IT), T278 (tables, US3.8b and US5.5b) and T279 (batch and refusals) pass. A divergence found here is fixed in the core, never by special-casing a build. It is re-recorded with `streams record --scenario <name> --reason "…"` only when the server's rule itself was wrong, and `SimCoreVersion.RulesRevision` stays 1.
 - [X] T289 [US2] Implement the Worker runner (contracts/wasm-api.md#worker-playwright), after T288:
-  - `tools/agreement/playwright.config.mjs`: `testDir: 'specs'`, projects `chromium`, `firefox` and `webkit` (headless), `retries: 0`, `workers: 1`, a 2-minute test timeout (shorter than each Worker step's 3-minute bound, T290, so Playwright reports a stalled run itself) and the `list` reporter.
-  - `tools/agreement/web/page.html`: a module script creates `new Worker('./worker.mjs', { type: 'module' })` and posts `start` with `build` from the query and `runtimeOptions: []`. It appends every message to `window.__agreement.events` and sets `window.__agreement.done` on `done` or `fatal`.
+  - `tools/agreement/playwright.config.mjs`: `testDir: 'specs'`, projects `chromium`, `firefox` and `webkit` (headless), `retries: 0`, `workers: 1`, a 2-minute test timeout (shorter than each Worker step's 3-minute bound, T290, so Playwright reports a stalled run itself), `forbidOnly: true` (a committed `.only` fails the run) and the `list` reporter.
+  - `tools/agreement/web/page.html`: a module script creates `new Worker('./worker.mjs', { type: 'module' })` and posts `start` with `build` from the query and `runtimeOptions: []`. It appends every message to `window.__agreement.events` and sets `window.__agreement.done` on `done` or `fatal`. A Worker `error` event (the module did not load, or threw outside its checks) or `messageerror` is appended as a `fatal` naming it, so a broken Worker ends the run at once.
   - `tools/agreement/web/worker.mjs`, which posts the contract's message types (`booted`, `stream`, `error`, `batch`, `tables`, `done` and `fatal`) with their fields:
     - It boots with `bootRuntime(new URL('/_framework/dotnet.js', self.location.origin).href)` and posts `booted` (`inWorker: self instanceof WorkerGlobalScope`, `crossOriginIsolated`, `buildInfo` and `userAgent`).
-    - It fetches `/work/manifest.json`, then runs each stream through `RunStream(…, -1)`. Records go by `PUT` to `/work/<build>/<stream>.records` and are compared with `/work/server/<stream>.records` using `firstDifferingStep`; a thrown error goes by `PUT` to `<stream>.error.txt`, as an `error` message.
-    - It runs the batch check exactly as the Node runner does (batches of 1, 3 and 16, cycling).
+    - It fetches `/work/manifest.json`, then runs each stream through `RunStream(…, -1)`. Records go by `PUT` to `/work/<build>/<stream>.records` and are compared with `/work/server/<stream>.records` using `firstDifferingStep`; a thrown error goes by `PUT` to `<stream>.error.txt`, as an `error` message. `stream.steps` is the manifest's step count.
+    - It runs the batch check exactly as the Node runner does (batches of 1, 3 and 16, cycling). A batch check that cannot finish (an export throws, or a load call or `StepQueued` returns another code) posts an `error` whose message starts `batch: `.
     - It runs the tables check with `EvaluateTables` and `compareTables`, sending the result by `PUT` to `/work/<build>/tables.bin`, or the error to `tables.error.txt`.
-    - It ends with `done`, or `fatal` on a boot or manifest failure.
+    - It ends with `done`: `streams`, `mismatches` (the stream, batch and tables comparisons that did not match) and `errors` (the `error` messages posted). It posts `fatal` instead on a boot or manifest failure, on a `start` with no build or with non-empty `runtimeOptions` (the agreement Worker boots with the default options only; the jiterpreter-off build is a Node run), or on a failure outside these checks.
 
   Then run `cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium`. It passes, and `dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK"` prints `chromium-worker: match, 69 streams, <steps> steps, tables match`. Makes T280 (worker.spec.mjs, US2.2) pass.
 - [X] T290 [P] [US2] Implement `.github/workflows/simcore.yml` with the `agreement` job only (the `measure` job is Phase 12's).
@@ -3118,7 +3120,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     13. `actions/upload-artifact` (the SHA `.github/workflows/harness.yml` pins) with `if: failure()`, `name: simcore-agreement-report` and `path: ${{ runner.temp }}/agreement-work/report/` (2 minutes).
 
   Makes T281 (TriggersAndPaths), T282 (Pins) and T283 (AgreementJob) pass.
-- [X] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. Change nothing else, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
+- [X] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. In the Phase 11 review the comment's opening, which called `Workflow tests` main's only CI, was reworded to say no pull request workflow is a required check, and that `.NET` (dotnet.yml) and `Harness` (harness.yml) also run on pull requests and are not listed yet. Change nothing else, the list's other entries, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
 - [X] T292 [US2] Run the `agreement` job's commands end to end locally, in the workflow's order, on fresh `mktemp -d` app and work directories (US2-IT, SC-001):
   - publish;
   - `agreement prepare --seeds 1-50`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`;
@@ -3431,7 +3433,7 @@ On the PR, these checks pass on the head commit: the `SimCore` workflow's `agree
   - each command of the local-gates and quickstart tasks (above), with its exit code and result line;
   - the judgment calls made in Phases 11 to 13;
   - the new dependency `@playwright/test` 1.63.0 (Apache-2.0, a dev dependency of `tools/agreement/` only, as research.md R16 records), and that nothing else is new;
-  - the guarded paths touched: `.github/workflows/simcore.yml` and `.github/workflows/auto-merge.yml`;
+  - the guarded paths touched: `.github/workflows/simcore.yml` and `.github/workflows/auto-merge.yml`, and that `auto-merge.yml`'s `workflow_run` list still lacks `.NET` and `Harness` (an older gap, T318's open follow-ups);
   - that open decisions 3, 4, 5 and 9 stay open;
   - gate 9's build-mode choice as the follow-up, made from the recorded numbers.
 
@@ -3450,7 +3452,7 @@ On the PR, these checks pass on the head commit: the `SimCore` workflow's `agree
     - the `measure` job and its `simcore-measurement` artifact, whose numbers never gate;
     - `auto-merge.yml` now waits for `SimCore`.
   - **Shared pieces to reuse**: the exports and the one-frame JavaScript pattern for sub-spec 8; `tools/agreement/lib/runtime.mjs`, `lib/server.mjs`, `lib/tables.mjs` and `lib/passes.mjs`; `simcore agreement prepare` and `compare`.
-  - **Open follow-ups**: gate 9's WebAssembly build-mode choice from the recorded measurements; Firefox and WebKit stay optional while Playwright cannot always install them; `.routines/merge-policy.md` still says Workflow tests is the only CI; while `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for an `agreement` check run that has not registered on the head commit yet (plan.md, the T284 Phase 11 review decision), and making it a required check first needs the check to report on every pull request, then the admin-only branch-protection setting.
+  - **Open follow-ups**: gate 9's WebAssembly build-mode choice from the recorded measurements; Firefox and WebKit stay optional while Playwright cannot always install them; `.routines/merge-policy.md` still says Workflow tests is the only CI; `auto-merge.yml`'s `workflow_run` list does not name `.NET` or `Harness`, which also run on pull requests (older than this slice, and outside T291's one-entry change), so a pull request whose last check to finish is one of theirs waits for its next pull request event; while `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for an `agreement` check run that has not registered on the head commit yet (plan.md, the T284 Phase 11 review decision), and making it a required check first needs the check to report on every pull request, then the admin-only branch-protection setting.
 
   Commit and push the entry.
 - [ ] T319 Watch the PR's checks on the pushed head commit, since this slice changes application and workflow code. Run `mcp__claude-code-remote__subscribe_pr_activity` for the PR, or `gh pr checks <n> --watch`. Every check run must complete with none failed or cancelled: `SimCore / agreement`, `SimCore / measure`, `.NET / dotnet` and `Workflow tests`.

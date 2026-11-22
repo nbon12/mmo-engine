@@ -1918,7 +1918,8 @@ The design documents settled these points, which the spec leaves open. They are 
   the first whose `events.shots.count` is non-zero. Checked against a contract-exact host in a scratch
   worktree (not committed; T285 adds it): all ten cases pass, each method also passes alone in its own
   process, and a host that truncates the salt to 32 bits, ignores `perturbStep`, or returns a 64 KiB
-  report segment each fails the matching test.
+  report segment each fails the matching test. T272 now lists the reload, the Theory and its rows
+  (Phase 11 review).
 - **T274 and T287: `tables.error.txt` is accepted, and four server rows wait for the served files.**
   T287 said a PUT name is "never `tables` for `.records` or `.error.txt`", which would refuse
   `PUT /work/<build>/tables.error.txt`, the fourth form that T274 and contracts/wasm-api.md#served-files
@@ -1956,8 +1957,12 @@ The design documents settled these points, which the spec leaves open. They are 
   Worker `error` or `messageerror` event as a `fatal`, because without it a Worker module that fails to
   load leaves the page waiting until the 5-minute test timeout, with no message; with it, a run against
   an app root with no `_framework/` failed in under 2 s, naming the import that failed. The
-  configuration also sets `forbidOnly`, so a committed `.only` fails the run. contracts/wasm-api.md#boot
-  and #worker-playwright now describe the record helpers, the message fields and the page's `fatal`.
+  configuration also sets `forbidOnly`, so a committed `.only` fails the run. The Worker also posts
+  `fatal` for a `start` with no build or with runtime options, because the agreement Worker boots with
+  the defaults only (the jiterpreter on) and the jiterpreter-off build is a Node run, so a page that
+  asked for other options would get a run that silently ignored them. contracts/wasm-api.md#boot
+  and #worker-playwright now describe the record helpers, the message fields and the page's `fatal`,
+  and T288 and T289 now say so (Phase 11 review).
 - **T280 and T288 (Phase 11 review): the Worker spec checks the bytes the Worker wrote, and the record
   helpers have their own tests.** T280 asserted US2.2's Then through the Worker's own `match`, which
   `firstDifferingStep` decides, and checked only that the output files existed, so a helper that
@@ -2003,6 +2008,35 @@ The design documents settled these points, which the spec leaves open. They are 
   a required check is an admin-only branch-protection setting, and it first needs the check to report
   on every pull request, since SimCore's path filter would leave other pull requests waiting on it.
   T318's open follow-ups carry it.
+- **T287 (Phase 11 review): a Worker PUT replaces the output's other form.** The work directory's
+  error files stand *instead of* the output (contracts/simcore-cli.md#agreement-work-directory), and
+  `agreement compare` reads `<stream>.error.txt` and `tables.error.txt` first. The Node runner's
+  `writeOutput` removes the other form before it writes, but the server only wrote, so a Worker rerun
+  on the same work directory left an earlier error file beside new matching records. Reproduced in
+  scratch: a `chromium-worker/flat-run-30hz.error.txt` left before a Chromium rerun made compare print
+  `chromium-worker: diverged in 1 of 69 streams; first: flat-run-30hz at step 1` and exit 1 while the
+  spec passed. CI always starts from a fresh work directory, so only local reruns were affected. Now,
+  once a PUT's file is renamed into place, the server removes its other form (`<stream>.records` and
+  `<stream>.error.txt`, `tables.bin` and `tables.error.txt`); a write that fails, or a refused PUT,
+  leaves the earlier pair as it was. The same rerun over stale `flat-run-30hz.error.txt` and
+  `tables.error.txt` now leaves neither, and compare prints `chromium-worker: match, 69 streams, 17192
+  steps, tables match`. Clearing `<build>/` in the spec's `beforeAll` was not chosen: the server would
+  still not hold the rule itself, and it would differ from the Node runner's per-file rule. Five
+  server.test.mjs rows pin it (four fail against the old server), and T274, T287 and
+  contracts/wasm-api.md#served-files now say so.
+- **T281 (Phase 11 review): only the path filter narrows the triggers.** The test checked the `paths`
+  lists, but a `branches`, `branches-ignore`, `types` or `paths-ignore` key added to `pull_request`
+  would have stopped pull requests to main that change the core from running the suite while it stayed
+  green. It now asserts `pull_request`'s keys are exactly `paths` and `push`'s exactly `branches` and
+  `paths` (each such key, added to a copy of the triggers, fails it), and T281 says so. The set of
+  events is not pinned, so a later `workflow_dispatch`, which narrows nothing, stays possible.
+- **T291 (Phase 11 review): the auto-merge header no longer calls `Workflow tests` the only CI.** That
+  sentence predates this slice, was already untrue (`.NET` and `Harness` run on pull requests), and
+  read as a contradiction once the same paragraph named SimCore. The opening now says no pull request
+  workflow is a required check, which is why `REQUIRE_CHECKS` is off, and that `.NET` and `Harness` are
+  not in the `workflow_run` list yet. Adding them would change the list beyond T291's one entry, so the
+  list, `GUARDED_PATHS` and `REQUIRE_CHECKS` are unchanged, and the gap is an open follow-up in T317's
+  description and T318's patch notes.
 
 ## Delivery
 

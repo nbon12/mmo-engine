@@ -263,6 +263,13 @@ class TriggersAndPaths(unittest.TestCase):
                 with self.subTest(event=event, part=part):
                     self.assertTrue(triggers_on(paths, changed), f"{event}: a change to {part} ({changed}) must run the suite")
         self.assertEqual(["main"], TRIGGERS["push"]["branches"])
+        # Only the path filter narrows them: a `branches`, `branches-ignore`, `types` or `paths-ignore`
+        # key would let a pull request that changes the core, on any base and with the default opened,
+        # synchronize and reopened events, skip the suite while every assertion above still held.
+        self.assertEqual({"paths"}, set(TRIGGERS["pull_request"]),
+                         "pull_request must have no filter but paths, so every pull request that touches them runs the suite")
+        self.assertEqual({"branches", "paths"}, set(TRIGGERS["push"]),
+                         "push must have no filter but branches and paths")
 
     def test_workflow_is_named_simcore(self):
         # The name auto-merge.yml's workflow_run trigger listens for (AutoMerge below).

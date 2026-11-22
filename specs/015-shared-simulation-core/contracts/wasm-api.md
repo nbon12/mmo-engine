@@ -583,7 +583,7 @@ Routes:
 | `GET /web/page.html`, `GET /web/worker.mjs`, `GET /web/measure.html`, `GET /web/measure-worker.mjs`, `GET /lib/runtime.mjs`, `GET /lib/tables.mjs`, `GET /lib/passes.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
 | `GET /_framework/*` | `AGREEMENT_APP/_framework/` |
 | `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs, the table inputs and the server's table results) |
-| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; 204 on success, 403 otherwise |
+| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; once it is in place, its other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner does, so an error file never sits beside the output it stands in place of; 204 on success, 403 otherwise, and a refused PUT writes and removes nothing |
 | anything else | 404 |
 
 ## Agreement runners

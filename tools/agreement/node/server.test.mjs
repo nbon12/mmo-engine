@@ -9,7 +9,8 @@
  * - send COOP, COEP and `Cache-Control: no-store` on every response, and never a Content-Encoding;
  * - refuse with 403 any decoded path that resolves outside its root;
  * - accept only the four PUT forms, for the three Worker builds, up to 64 MiB, written to a
- *   temporary file and renamed;
+ *   temporary file and renamed, each removing its other form (`<stream>.records` and
+ *   `<stream>.error.txt`, `tables.bin` and `tables.error.txt`) once it is in place;
  * - answer 404 for anything else.
  *
  * Each test starts the server on a fresh `fs.mkdtemp` case directory and closes it afterwards:
@@ -283,6 +284,49 @@ describe('a Worker build PUT is written to the work root and answered 204', () =
             assert.deepEqual(await filesUnder(work), [`${build}/${file}`, 'manifest.json'].sort(), 'the work root');
         });
     }
+});
+
+describe('a PUT of one form replaces its other form, so an error file never sits beside its output', () => {
+    // `simcore agreement compare` reads `<stream>.error.txt` (or `tables.error.txt`) first, so an error
+    // file left by an earlier run beside new records would report a divergence the run never had. Each
+    // row PUTs the first form, then the second, with a neighbour stream's error file already there.
+    const rows = [
+        { first: 'x.error.txt', second: 'x.records' },
+        { first: 'x.records', second: 'x.error.txt' },
+        { first: 'tables.error.txt', second: 'tables.bin' },
+        { first: 'tables.bin', second: 'tables.error.txt' },
+    ];
+    const build = 'chromium-worker';
+    const neighbour = 'x-2.error.txt';
+
+    for (const [index, { first, second }] of rows.entries()) {
+        test(`PUT ${first}, then ${second}, leaves only ${second}`, async (t) => {
+            const { work, put } = await startFixtureServer(t);
+            const neighbourBody = Buffer.from('Error: the neighbour stream threw\n');
+            const secondBody = patternBytes(4_096, 20 + index);
+            assert.equal((await put(`/work/${build}/${neighbour}`, neighbourBody)).status, 204, `PUT ${neighbour}`);
+            assert.equal((await put(`/work/${build}/${first}`, patternBytes(1_024, 10 + index))).status, 204, `PUT ${first}`);
+
+            const res = await put(`/work/${build}/${second}`, secondBody);
+
+            assert.equal(res.status, 204, `PUT ${second}: status`);
+            assert.deepEqual((await readdir(join(work, build))).sort(), [neighbour, second].sort(), `${build}/ after PUT ${first}, then ${second}`);
+            assert.ok((await readFile(join(work, build, second))).equals(secondBody), `${build}/${second} holds exactly the second body`);
+            assert.ok((await readFile(join(work, build, neighbour))).equals(neighbourBody), `${build}/${neighbour} is untouched`);
+        });
+    }
+
+    test('a refused PUT removes nothing: the earlier error file stays', async (t) => {
+        const { work, put } = await startFixtureServer(t);
+        const errorBody = Buffer.from('Error: unsupported version 2; this reader supports version 1\n');
+        assert.equal((await put(`/work/${build}/x.error.txt`, errorBody)).status, 204, 'PUT x.error.txt');
+
+        const res = await put(`/work/${build}/x.records`, Buffer.alloc(PUT_LIMIT_BYTES + 1, 0x5a), { chunked: true });
+
+        assert.equal(res.status, 403, 'PUT x.records of 64 MiB + 1 byte: status');
+        assert.deepEqual(await readdir(join(work, build)), ['x.error.txt'], `${build}/ after the refused PUT`);
+        assert.ok((await readFile(join(work, build, 'x.error.txt'))).equals(errorBody), 'x.error.txt still holds its body');
+    });
 });
 
 describe('any other PUT is refused with 403 and writes nothing', () => {

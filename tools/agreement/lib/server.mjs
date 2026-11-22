@@ -31,8 +31,12 @@
  *   (`tables.error.txt` is the tables error file, the fourth form). The body is at most 64 MiB, counted as
  *   it arrives, so a chunked body without a `Content-Length` is held to it too. The body is written to a
  *   temporary file in the same folder, then renamed over the target, so a reader never sees a partial
- *   file. The answer is 204, or 403 for any other PUT under `/work/`; a refused body is read to its end
- *   and dropped before the answer, so the client always gets the 403, and nothing is written.
+ *   file. Each output then replaces its other form: once `<stream>.records` is in place,
+ *   `<stream>.error.txt` is removed, and the reverse, and likewise `tables.bin` and `tables.error.txt`,
+ *   as the Node runner does. So a rerun on the same work directory never leaves an error file beside the
+ *   output it stands in place of, which `simcore agreement compare` would read first. The answer is 204,
+ *   or 403 for any other PUT under `/work/`; a refused body is read to its end and dropped before the
+ *   answer, so the client always gets the 403, and nothing is written or removed.
  * - **Anything else** is 404. A failure of the server itself (a file it cannot read or write) is 500.
  */
 
@@ -274,10 +278,16 @@ async function put(request, response, path, workRoot) {
         throw error;
     }
 
+    // Removed only once the new output is in place, so a failed write leaves the earlier pair as it was.
+    await rm(join(folder, target.replaces), { force: true });
     answer(response, 204);
 }
 
-/** The build and file a PUT path names, or null when the path is not one of the four PUT forms. */
+/**
+ * The build and file a PUT path names, and `replaces`, the file's other form (the output an error file
+ * stands in place of, or the error file an output replaces); null when the path is not one of the four
+ * PUT forms.
+ */
 function putTarget(path) {
     const match = /^\/work\/([^/]+)\/([^/]+)$/.exec(path);
     if (match === null || !WORKER_BUILDS.has(match[1])) {
@@ -286,7 +296,7 @@ function putTarget(path) {
 
     const [, build, file] = match;
     if (file === 'tables.bin' || file === 'tables.error.txt') {
-        return { build, file };
+        return { build, file, replaces: file === 'tables.bin' ? 'tables.error.txt' : 'tables.bin' };
     }
 
     const output = /^(.+)\.(records|error\.txt)$/.exec(file);
@@ -294,7 +304,8 @@ function putTarget(path) {
         return null;
     }
 
-    return { build, file };
+    const [, stream, form] = output;
+    return { build, file, replaces: form === 'records' ? `${stream}.error.txt` : `${stream}.records` };
 }
 
 /**
