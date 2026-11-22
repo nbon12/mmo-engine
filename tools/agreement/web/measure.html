@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  The measurement page (spec 015, US7.2; contracts/measurement-report.md#how-each-number-is-measured).
+
+  Opened as /web/measure.html?run=<cold-start|steps> by lib/measure.mjs, through the agreement server,
+  which makes it cross-origin isolated. Each cold start is a fresh browser context and page, so this
+  page starts one dedicated module Worker, web/measure-worker.mjs, and posts `start` with the run from
+  its `?run=` query. The Worker takes every time itself; this page only collects what it posts.
+
+  It appends every message the Worker posts to window.__measure.events and sets window.__measure.done
+  on `done` or `fatal`. A Worker that fails to load or throws outside its own handling (an `error`
+  event), or a message that cannot be read (`messageerror`), is appended as a `fatal` event naming it,
+  and ends the run too, so measure.mjs reports it at once instead of at its wait's bound.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SimCore measurement</title>
+  </head>
+  <body>
+    <script type="module">
+      const measure = { events: [], done: false };
+      window.__measure = measure;
+
+      const run = new URLSearchParams(window.location.search).get('run');
+      const worker = new Worker('./measure-worker.mjs', { type: 'module' });
+
+      function record(event) {
+        measure.events.push(event);
+        if (event.type === 'done' || event.type === 'fatal') {
+          measure.done = true;
+        }
+      }
+
+      worker.addEventListener('message', (message) => record(message.data));
+      worker.addEventListener('error', (error) => {
+        error.preventDefault();
+        record({ type: 'fatal', message: `the measurement Worker failed: ${error.message || 'it did not load'}` });
+      });
+      worker.addEventListener('messageerror', () => {
+        record({ type: 'fatal', message: 'the measurement Worker posted a message that could not be read' });
+      });
+
+      worker.postMessage({ type: 'start', run });
+    </script>
+  </body>
+</html>

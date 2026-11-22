@@ -1,15 +1,17 @@
 /**
  * The agreement server (spec 015, US2.2; contracts/wasm-api.md#served-files).
  *
- * `startServer({ app, work })` serves the Worker agreement page and the published WebAssembly build to a
- * browser, and takes back what the Worker writes, so that `simcore agreement compare` reads every build's
- * output from one work directory. It returns `{ url, port, close }`: `http://127.0.0.1:<port>`, the bound
+ * `startServer({ app, work })` serves the Worker agreement page, the measurement page (spec 015, US7.2)
+ * and the published WebAssembly build to a browser, and takes back what the agreement Worker writes, so
+ * that `simcore agreement compare` reads every build's output from one work directory. It returns `{ url, port, close }`: `http://127.0.0.1:<port>`, the bound
  * port, and a `close()` that resolves once the server and its connections are closed.
  *
  * - **Listening**: `node:http` on 127.0.0.1 only, port 0, so each test file gets its own dynamic port.
  * - **GET routes**:
- *   - `/web/page.html` and `/web/worker.mjs`, from this package's `web/`;
- *   - `/lib/runtime.mjs` and `/lib/tables.mjs`, from this package's `lib/` (`worker.mjs` imports both);
+ *   - `/web/page.html` and `/web/worker.mjs`, the agreement page and its Worker, and `/web/measure.html`
+ *     and `/web/measure-worker.mjs`, the measurement page and its Worker, from this package's `web/`;
+ *   - `/lib/runtime.mjs` and `/lib/tables.mjs`, from this package's `lib/` (`worker.mjs` imports both),
+ *     and `/lib/passes.mjs` (`measure-worker.mjs` imports it and `runtime.mjs`);
  *   - `/_framework/*`, from `<app>/_framework/` (`app` is the publish output's served root, `wwwroot`);
  *   - `/work/*`, from `<work>/` (the manifest, streams, collision files, server records, batch inputs,
  *     the table inputs and the server's table results).
@@ -60,8 +62,11 @@ const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PACKAGE_FILES = new Map([
     ['/web/page.html', join(PACKAGE_ROOT, 'web', 'page.html')],
     ['/web/worker.mjs', join(PACKAGE_ROOT, 'web', 'worker.mjs')],
+    ['/web/measure.html', join(PACKAGE_ROOT, 'web', 'measure.html')],
+    ['/web/measure-worker.mjs', join(PACKAGE_ROOT, 'web', 'measure-worker.mjs')],
     ['/lib/runtime.mjs', join(PACKAGE_ROOT, 'lib', 'runtime.mjs')],
     ['/lib/tables.mjs', join(PACKAGE_ROOT, 'lib', 'tables.mjs')],
+    ['/lib/passes.mjs', join(PACKAGE_ROOT, 'lib', 'passes.mjs')],
 ]);
 
 const FRAMEWORK_PREFIX = '/_framework/';

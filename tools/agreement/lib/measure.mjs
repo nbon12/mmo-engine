@@ -10,7 +10,7 @@
  *     --unproduced aot="dotnet publish -p:RunAOTCompilation=true exited 1; see the publish-aot step log" \
  *     --out "$RUNNER_TEMP/simcore-measurement.json"
  *
- * This part of the module is pure: it reads the files it is pointed at and nothing of the process.
+ * Its exports are pure: they read the files they are pointed at and nothing of the process.
  *
  * - `parseArgs(argv, env)`: argv is `process.argv.slice(2)` and env the environment. Each of
  *   `interp-prebuilt`, `interp-relinked` and `aot` is given exactly once, with `--mode <mode>=<publish
@@ -32,12 +32,40 @@
  * - `assembleReport(inputs)`: the whole report from what the entry point gathered (below).
  * - `UsageError`, and `MeasurementError` re-exported from `./passes.mjs`, so a caller catches the
  *   measurement failures of both modules as one class.
+ *
+ * Run as a script (the entry point at the end of this file), it measures each produced mode, in the
+ * report's order:
+ *
+ * 1. `measureDownload(<dir>)`.
+ * 2. Ten Node cold starts, each a fresh `node lib/measure-node.mjs cold-start` process, then one
+ *    `measure-node.mjs steps` process for the step costs.
+ * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
+ *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
+ *    `/web/measure.html?run=cold-start` ten times, each in a fresh browser context, then
+ *    `?run=steps` once. A `fatal` event, a page that does not finish, or the runtime's console warning
+ *    that `.wasm` was not served as `application/wasm` fails the measurement. `crossOriginIsolated` is
+ *    true only when every `booted` message says so.
+ * 4. Each startup interval summarized with `summarize` (`./passes.mjs`).
+ *
+ * It then gathers the machine (`os`), the versions (`dotnet --version`, the highest
+ * `Microsoft.NETCore.App 10.` runtime of `dotnet --list-runtimes`, `process.version` and Playwright's
+ * `browser.version()`), `GITHUB_SHA` and the two `DOTNET_` variables, and the `--server-benchmarks`
+ * object, calls `assembleReport` and writes `--out` atomically (a temporary file in the same directory,
+ * then a rename). It prints `measure: wrote <out>, <p> modes produced, <u> unproduced` and exits 0; a
+ * usage error prints `measure: <message>` and exits 2, and a MeasurementError prints `measure: <message>`
+ * and exits 1.
  */
 
-import { readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { MeasurementError } from './passes.mjs';
+import { MeasurementError, STEP_KINDS, summarize } from './passes.mjs';
+import { startServer } from './server.mjs';
 
 export { MeasurementError };
 
@@ -502,4 +530,398 @@ function exactSum(files, field) {
     }
 
     return total;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The entry point (T309): `node tools/agreement/lib/measure.mjs ...` measures the produced modes and
+// writes the report. Nothing below runs when the module is imported.
+// ---------------------------------------------------------------------------------------------------
+
+/** The Node half, run once per cold start and once for the step costs. */
+const MEASURE_NODE = fileURLToPath(new URL('./measure-node.mjs', import.meta.url));
+
+/** The runtime's console warning when `.wasm` is served with another content type (contracts/wasm-api.md#served-files). */
+const CONTENT_TYPE_WARNING = 'does not have the expected content type "application/wasm"';
+
+/** How long one `measure-node.mjs` process or one measurement page may take before it fails the run. */
+const RUN_BOUND_MS = 2 * 60 * 1000;
+
+/** The most output one `measure-node.mjs` process may print. */
+const NODE_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
+
+/** The .NET runtime line the report records: `Microsoft.NETCore.App 10.<minor>.<patch> [<path>]`. */
+const RUNTIME_LINE = /^Microsoft\.NETCore\.App (10\.\d+\.\d+\S*) \[/gm;
+
+/**
+ * Measures every produced mode and writes the report.
+ *
+ * @param {string[]} argv the arguments after the script
+ * @param {Record<string, string | undefined>} env the process environment
+ * @returns {Promise<{ exitCode: 0 | 2, message: string }>} the line to print and the exit code
+ * @throws {MeasurementError} a measurement could not be taken or the report could not be written
+ */
+async function main(argv, env) {
+    const parsed = parseArgs(argv, env);
+    if (parsed.exitCode !== undefined) {
+        return parsed;
+    }
+
+    const { work, serverBenchmarks, out, runnerClass } = parsed;
+    const modes = {};
+    let chromiumVersion;
+    for (const mode of MODES) {
+        const given = parsed.modes[mode];
+        if (!given.produced) {
+            modes[mode] = given;
+            continue;
+        }
+
+        const measured = await measureMode(mode, given.dir, work);
+        chromiumVersion ??= measured.chromiumVersion;
+        modes[mode] = measured.input;
+    }
+
+    const dotnet = dotnetVersions();
+    const report = await assembleReport({
+        runnerClass,
+        env: recordedEnvironment(env),
+        work,
+        machine: machine(),
+        versions: { dotnetSdk: dotnet.sdk, dotnetRuntime: dotnet.runtime, node: process.version, chromium: chromiumVersion },
+        server: await readServerBenchmarks(serverBenchmarks),
+        modes,
+    });
+    await writeAtomically(out, `${JSON.stringify(report, null, 2)}\n`);
+
+    const produced = MODES.filter((mode) => modes[mode].produced).length;
+    return {
+        exitCode: 0,
+        message: `wrote ${out}, ${produced} modes produced, ${MODES.length - produced} unproduced`,
+    };
+}
+
+/**
+ * One produced mode, measured: its download, ten Node cold starts and the Node step costs, then ten
+ * Chromium Worker cold starts and the Worker step costs.
+ *
+ * @returns {Promise<{ input: object, chromiumVersion: string }>} the mode's `assembleReport` input and the
+ *   version of the Chromium that measured it
+ */
+async function measureMode(mode, dir, work) {
+    const download = await measureDownload(dir);
+    const manifest = parseBootManifest(await readFile(join(dir, 'wwwroot', '_framework', 'dotnet.js'), 'utf8'));
+    const app = join(dir, 'wwwroot');
+
+    const nodeColdStarts = [];
+    for (let i = 1; i <= COLD_STARTS; i++) {
+        nodeColdStarts.push(runNodeHalf(mode, 'cold-start', app, work, `node cold start ${i}`));
+    }
+
+    const nodeSteps = runNodeHalf(mode, 'steps', app, work, 'node steps');
+    const worker = await measureInChromium(mode, app, work);
+
+    return {
+        chromiumVersion: worker.version,
+        input: {
+            produced: true,
+            dir,
+            manifest,
+            buildInfo: nodeColdStarts[0].buildInfo,
+            download,
+            startup: {
+                node: summarizeIntervals(nodeColdStarts),
+                chromiumWorker: { crossOriginIsolated: worker.crossOriginIsolated, ...summarizeIntervals(worker.coldStarts) },
+            },
+            steps: { node: nodeSteps, chromiumWorker: worker.steps },
+        },
+    };
+}
+
+/**
+ * One `node measure-node.mjs <run>` process: a fresh Node, so a cold start is a cold start.
+ *
+ * @returns {object} the JSON line it printed
+ * @throws {MeasurementError} `<mode>: <what> exited <code>: <stderr>`, or it did not start, finish or
+ *   print JSON
+ */
+function runNodeHalf(mode, run, app, work, what) {
+    const result = spawnSync(process.execPath, [MEASURE_NODE, run, '--app', app, '--work', work], {
+        encoding: 'utf8',
+        maxBuffer: NODE_OUTPUT_LIMIT_BYTES,
+        timeout: RUN_BOUND_MS,
+    });
+    if (result.error?.code === 'ETIMEDOUT') {
+        throw new MeasurementError(`${mode}: ${what} did not finish within ${RUN_BOUND_MS / 1000} s`);
+    }
+
+    if (result.error !== undefined) {
+        throw new MeasurementError(`${mode}: ${what} did not run: ${result.error.message}`, { cause: result.error });
+    }
+
+    if (result.status !== 0) {
+        throw new MeasurementError(`${mode}: ${what} exited ${result.status ?? result.signal}: ${result.stderr.trim()}`);
+    }
+
+    const line = result.stdout.trim().split('\n').at(-1);
+    try {
+        return JSON.parse(line);
+    } catch (error) {
+        throw new MeasurementError(`${mode}: ${what} printed ${JSON.stringify(line)}, not a JSON line`, { cause: error });
+    }
+}
+
+/**
+ * The Chromium Worker half: ten cold starts, each in a fresh browser context and page, then the step
+ * costs in one more, all served by the agreement server.
+ *
+ * @returns {Promise<{ version: string, crossOriginIsolated: boolean, coldStarts: object[], steps: object[] }>}
+ * @throws {MeasurementError} a page failed (see `runPage`), or did not post what its run posts
+ */
+async function measureInChromium(mode, app, work) {
+    const { chromium } = await import('@playwright/test');
+    const server = await startServer({ app, work });
+    let browser;
+    try {
+        try {
+            browser = await chromium.launch();
+        } catch (error) {
+            throw new MeasurementError(`${mode}: Chromium did not launch: ${error?.message ?? String(error)}`, { cause: error });
+        }
+
+        const booted = [];
+        const coldStarts = [];
+        for (let i = 1; i <= COLD_STARTS; i++) {
+            const what = `${mode}: chromium cold start ${i}`;
+            const events = await runPage(browser, server, 'cold-start', what);
+            booted.push(onlyEvent(events, 'booted', what));
+            coldStarts.push(onlyEvent(events, 'coldStart', what));
+        }
+
+        const what = `${mode}: chromium steps`;
+        const events = await runPage(browser, server, 'steps', what);
+        booted.push(onlyEvent(events, 'booted', what));
+        const steps = events.filter((event) => event.type === 'steps').map(stepEntry);
+        if (steps.length !== STEP_KINDS.length) {
+            throw new MeasurementError(`${what}: the Worker posted ${steps.length} steps messages, not ${STEP_KINDS.length}`);
+        }
+
+        return {
+            version: browser.version(),
+            crossOriginIsolated: booted.every((event) => event.crossOriginIsolated === true),
+            coldStarts,
+            steps,
+        };
+    } finally {
+        try {
+            await browser?.close();
+        } finally {
+            await server.close();
+        }
+    }
+}
+
+/**
+ * One measurement page in a fresh browser context: `/web/measure.html?run=<run>`, waited on until the page
+ * sets `window.__measure.done`.
+ *
+ * @returns {Promise<object[]>} the events the Worker posted
+ * @throws {MeasurementError} the page did not load or finish, the Worker posted `fatal`, or the runtime
+ *   warned that `.wasm` was not served as `application/wasm`
+ */
+async function runPage(browser, server, run, what) {
+    const context = await browser.newContext();
+    try {
+        const page = await context.newPage();
+        const warnings = [];
+        const onConsole = (message) => {
+            if (message.text().includes(CONTENT_TYPE_WARNING)) {
+                warnings.push(message.text());
+            }
+        };
+        page.on('console', onConsole);
+        page.on('worker', (worker) => worker.on('console', onConsole));
+
+        const url = `${server.url}/web/measure.html?run=${run}`;
+        const response = await page.goto(url);
+        if (response?.status() !== 200) {
+            throw new MeasurementError(`${what}: GET ${url} answered ${response?.status() ?? 'nothing'}`);
+        }
+
+        try {
+            await page.waitForFunction(() => window.__measure?.done === true, undefined, { timeout: RUN_BOUND_MS });
+        } catch (error) {
+            throw new MeasurementError(`${what}: the page did not finish within ${RUN_BOUND_MS / 1000} s`, { cause: error });
+        }
+
+        const events = await page.evaluate(() => window.__measure.events);
+        const fatal = events.find((event) => event?.type === 'fatal');
+        if (fatal !== undefined) {
+            throw new MeasurementError(`${what}: ${fatal.message}`);
+        }
+
+        if (warnings.length > 0) {
+            throw new MeasurementError(`${what}: ${warnings[0]}`);
+        }
+
+        return events;
+    } finally {
+        await context.close();
+    }
+}
+
+/** The one event of a type that a page run posts; a MeasurementError when there is not exactly one. */
+function onlyEvent(events, type, what) {
+    const found = events.filter((event) => event?.type === type);
+    if (found.length !== 1) {
+        throw new MeasurementError(`${what}: the Worker posted ${found.length} ${type} messages, not 1`);
+    }
+
+    return found[0];
+}
+
+/** Each startup interval's `{median, p90}` over the cold starts. */
+function summarizeIntervals(coldStarts) {
+    return Object.fromEntries(
+        STARTUP_INTERVALS.map((interval) => [interval, summarize(coldStarts.map((coldStart) => coldStart[interval]))]),
+    );
+}
+
+/** The `--server-benchmarks` export, which the report's `server` copies as is. */
+async function readServerBenchmarks(file) {
+    let text;
+    try {
+        text = await readFile(file, 'utf8');
+    } catch (error) {
+        throw new MeasurementError(`cannot read --server-benchmarks ${file}: ${error.message}`, { cause: error });
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        throw new MeasurementError(`--server-benchmarks ${file} is not valid JSON: ${error.message}`, { cause: error });
+    }
+}
+
+/**
+ * The .NET SDK version (`dotnet --version`) and the highest `Microsoft.NETCore.App 10.` runtime of
+ * `dotnet --list-runtimes`, in the job that ran the benchmarks.
+ *
+ * @returns {{ sdk: string, runtime: string }}
+ * @throws {MeasurementError} `dotnet` did not run, or lists no .NET 10 runtime
+ */
+function dotnetVersions() {
+    const sdk = runDotnet(['--version']).trim();
+    const runtimes = [...runDotnet(['--list-runtimes']).matchAll(RUNTIME_LINE)].map((match) => match[1]);
+    if (runtimes.length === 0) {
+        throw new MeasurementError('dotnet --list-runtimes lists no Microsoft.NETCore.App 10. runtime');
+    }
+
+    return { sdk, runtime: runtimes.sort(compareVersions).at(-1) };
+}
+
+/** The standard output of one `dotnet` command. */
+function runDotnet(args) {
+    const result = spawnSync('dotnet', args, { encoding: 'utf8', timeout: RUN_BOUND_MS });
+    if (result.error !== undefined) {
+        throw new MeasurementError(`dotnet ${args.join(' ')} did not run: ${result.error.message}`, { cause: result.error });
+    }
+
+    if (result.status !== 0) {
+        throw new MeasurementError(`dotnet ${args.join(' ')} exited ${result.status ?? result.signal}: ${result.stderr.trim()}`);
+    }
+
+    return result.stdout;
+}
+
+/** Orders `<major>.<minor>.<patch>[<suffix>]` versions by their numbers, a release after its prereleases. */
+function compareVersions(a, b) {
+    const parse = (version) => {
+        const [, major, minor, patch, suffix] = /^(\d+)\.(\d+)\.(\d+)(.*)$/.exec(version);
+        return { numbers: [Number(major), Number(minor), Number(patch)], suffix };
+    };
+    const left = parse(a);
+    const right = parse(b);
+    for (let i = 0; i < 3; i++) {
+        if (left.numbers[i] !== right.numbers[i]) {
+            return left.numbers[i] - right.numbers[i];
+        }
+    }
+
+    if (left.suffix === right.suffix) {
+        return 0;
+    }
+
+    if (left.suffix === '' || right.suffix === '') {
+        return left.suffix === '' ? 1 : -1;
+    }
+
+    return left.suffix < right.suffix ? -1 : 1;
+}
+
+/** The machine the measurements ran on, as Node reports it. */
+function machine() {
+    const cpus = os.cpus();
+    if (cpus.length === 0) {
+        throw new MeasurementError('os.cpus() lists no CPU, so the report cannot name the machine');
+    }
+
+    return {
+        cpuModel: cpus[0].model,
+        logicalCores: cpus.length,
+        architecture: os.arch(),
+        os: `${os.type()} ${os.release()}`,
+    };
+}
+
+/** The variables `assembleReport` records: `GITHUB_SHA` and the two `DOTNET_` ones, each absent when unset. */
+function recordedEnvironment(env) {
+    return Object.fromEntries(
+        ['GITHUB_SHA', ...RECORDED_ENVIRONMENT].filter((name) => env[name] !== undefined).map((name) => [name, env[name]]),
+    );
+}
+
+/** Writes `text` to `out` through a temporary file in the same directory, so a reader never sees a partial report. */
+async function writeAtomically(out, text) {
+    const target = resolve(out);
+    const temporary = join(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`);
+    try {
+        await writeFile(temporary, text, { flag: 'wx' });
+        await rename(temporary, target);
+    } catch (error) {
+        await rm(temporary, { force: true });
+        throw new MeasurementError(`cannot write --out ${out}: ${error.message}`, { cause: error });
+    }
+}
+
+/**
+ * Whether this module is the script `node` was started with: `import.meta.url` is the main module's real
+ * path, so `process.argv[1]` is compared through its real path too, and a symlink to the script runs it.
+ */
+function isMain() {
+    const script = process.argv[1];
+    if (script === undefined) {
+        return false;
+    }
+
+    try {
+        return import.meta.url === pathToFileURL(realpathSync(script)).href;
+    } catch {
+        return false;
+    }
+}
+
+/** Writes `text` and a newline to `stream`, then exits with `code` once the write has flushed. */
+function writeAndExit(stream, text, code) {
+    stream.write(`${text}\n`, () => process.exit(code));
+}
+
+if (isMain()) {
+    main(process.argv.slice(2), process.env).then(
+        ({ exitCode, message }) => writeAndExit(exitCode === 0 ? process.stdout : process.stderr, `measure: ${message}`, exitCode),
+        (error) => writeAndExit(
+            process.stderr,
+            `measure: ${error instanceof MeasurementError ? error.message : (error?.stack ?? String(error))}`,
+            1,
+        ),
+    );
 }

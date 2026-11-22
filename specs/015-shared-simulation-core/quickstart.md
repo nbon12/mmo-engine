@@ -237,6 +237,7 @@ compares them with the two builds required. After that, pass the builds to `meas
 ```bash
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$PUBLISH/relinked"
 dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$PUBLISH/aot"
+dotnet clean src/MmoEngine.SimCore.Wasm -c Release
 AGREEMENT_APP="$PUBLISH/relinked/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-interp-relinked \
   node --test tools/agreement/node/agreement.test.mjs
 AGREEMENT_APP="$PUBLISH/aot/wwwroot" AGREEMENT_WORK="$MWORK" AGREEMENT_BUILD=node-aot \
@@ -247,6 +248,12 @@ dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare -
 Expected: every command exits 0, and `compare` prints `match` with `tables match` for
 `node-interp-relinked` and `node-aot`, `not run` for the builds that did not run, then
 `agreement: match`.
+
+The `dotnet clean` line matters for the next publish. The AOT publish leaves the assemblies it
+compiled, stripped of their IL, in the project's `obj` folder, and an interpreted publish from the
+same checkout afterwards copies them, so that build stops at boot with
+`MONO interpreter: NIY encountered in method …` [measured]. After the clean, the publishes in this
+section and in the agreement section give working builds again.
 
 The report's schema and what `validate-report` checks are in
 [contracts/measurement-report.md](contracts/measurement-report.md).

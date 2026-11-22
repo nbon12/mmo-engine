@@ -2108,6 +2108,32 @@ The design documents settled these points, which the spec leaves open. They are 
   `StepQueued` that stops early names the stop entry's text. `measure-node.mjs` counts the
   `CommandBuffer()` fetch and the write of the first command inside `firstStepMs`, because the first
   step cannot run without them, and reports a boot failure as a MeasurementError naming `dotnet.js`.
+- **T307, T309 and T310: where the measurement tasks left a detail open, the runner fails loudly.**
+  T309 ran the entry point only when `import.meta.url === pathToFileURL(process.argv[1]).href`, but Node
+  gives the main module's `import.meta.url` its real path, so started through a symlinked path the script
+  would do nothing and exit 0. It compares through `realpathSync(process.argv[1])`, as
+  `lib/measure-node.mjs` already does. T309 gave no bound on a `measure-node.mjs` process or a Chromium
+  page, so a boot that hangs would run into the job's 30 minutes and leave no line naming it; each now
+  has 2 minutes and then fails as a MeasurementError naming the mode and the run. A page must post
+  exactly one `booted` and one `coldStart`, or one `steps` per kind, so a Worker that stopped early
+  cannot hand `summarize` a short list. T307 said the Worker records `performance.now()` on its first
+  line without saying where the reading goes; `booted` carries it as `moduleStartMs`, which the report
+  does not read. T310's sweeps step wrote the job summary only after `dotnet test` passed; it writes the
+  heading and the `SIMMATH ` lines, as an indented code block, whatever the tests' outcome, then exits
+  with their status, so a failing sweep still shows its numbers. T307, T309 and T310 now say so.
+- **T309 and T310: the AOT publish comes last, and the quickstart cleans after it.** T309's local check
+  ran the quickstart's measurement section twice in one checkout, and the second run's prebuilt build
+  failed its first Node cold start with `MONO interpreter: NIY encountered in method
+  System.OutOfMemoryException:.ctor (string)`. Its `System.Private.CoreLib` was byte for byte the AOT
+  build's: the AOT publish leaves the assemblies it compiled, stripped of their IL, in
+  `src/MmoEngine.SimCore.Wasm/obj/`, and the next interpreted publish copies them. `dotnet clean
+  src/MmoEngine.SimCore.Wasm -c Release` removes them, after which the prebuilt publish gives the original
+  build again. The `measure` job starts from a fresh checkout and publishes prebuilt, relinked and AOT in
+  that order, which `test_measure_job_measures_every_mode_and_validates_the_report` pins, so its
+  interpreted builds never see the AOT outputs; the workflow, contracts/measurement-report.md step 4 and
+  T310 now say why the order matters. quickstart.md's second measurement block runs `dotnet clean` after
+  the AOT publish, so the section and the agreement section can be run again. That line is no
+  `dotnet run` or `dotnet publish` line, so T311's exact line counts do not change.
 
 ## Delivery
 

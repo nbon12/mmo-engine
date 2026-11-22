@@ -1,6 +1,7 @@
 name: SimCore
 
-# The shared simulation core's agreement suite (spec 015-shared-simulation-core, US2.7, FR-027).
+# The shared simulation core's agreement suite and measurements (spec 015-shared-simulation-core, US2.7,
+# FR-027, US7).
 #   agreement: publishes the prebuilt WebAssembly build (src/MmoEngine.SimCore.Wasm, no workload),
 #              prepares a work directory with the 19 committed streams and 50 generated seeds
 #              (`simcore agreement prepare`), runs the build in Node with the jiterpreter on and off
@@ -12,6 +13,15 @@ name: SimCore
 #              fails on its own (a failure, not a cancel) and compare still reports inside the job's
 #              10 minutes; the optional browsers install after the required runs, so they cannot use up
 #              the required runs' time.
+#   measure:   the measurement job (US7, FR-030, FR-031; contracts/measurement-report.md). It runs the
+#              server benchmarks on the runner class, publishes the prebuilt interpreted build, installs
+#              the wasm-tools workload and publishes the relinked and AOT builds, or records why it could
+#              not produce each one. The relinked and AOT builds' Node agreement with the server gates
+#              the job; the exhaustive trig sweeps write their ulp errors to the job summary without
+#              gating. tools/agreement/lib/measure.mjs then measures each produced build's download,
+#              cold starts and step costs in Node and in a Chromium Worker, `simcore measure
+#              validate-report` checks the report's structure, and the report is uploaded as the
+#              simcore-measurement artifact. No measured number is compared with a threshold.
 # auto-merge.yml lists this workflow's name in its workflow_run trigger, so a pull request waits for it.
 # tests/workflows/test_simcore_workflow.py pins this file.
 on:
@@ -180,3 +190,190 @@ jobs:
         with:
           name: simcore-agreement-report
           path: ${{ runner.temp }}/agreement-work/report/
+
+  measure:
+    name: measure
+    runs-on: ubuntu-latest
+    # The server benchmarks, three publishes, two agreement runs, the trig sweeps and the measurements.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      # The full run (FR-030). Main exits 2 without the runner class and 1 unless this run exported every
+      # benchmark it ran, so the export the measure step reads is always this run's.
+      - name: Run the server benchmarks
+        run: dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'
+
+      # Before the workload, and with the flag the agreement job publishes with, so this mode is the
+      # build the agreement job tested as node-interp on any runner image.
+      - name: Publish the prebuilt interpreted build
+        run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"
+
+      # A failed install skips the relinked and AOT publishes, and the report records both as not
+      # produced, with this step named as the reason (FR-031).
+      - name: Install the wasm-tools workload
+        id: install-workload
+        continue-on-error: true
+        run: dotnet workload install wasm-tools
+
+      # Each publish records whether it produced its mode, and why not, and exits 0: a mode that cannot
+      # be built is a report entry, not a failed job.
+      - name: Publish the relinked interpreted build
+        id: publish-relinked
+        if: steps.install-workload.outcome == 'success'
+        run: |
+          set +e
+          dotnet publish src/MmoEngine.SimCore.Wasm -c Release -o "$RUNNER_TEMP/publish/relinked"
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            echo "reason=dotnet publish exited ${code}; see the publish-relinked step log" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      # Last of the three publishes: AOT leaves the assemblies it compiled, stripped of their IL, in the
+      # project's obj folder, and an interpreted publish after it would copy them and fail at boot.
+      - name: Publish the AOT build
+        id: publish-aot
+        if: steps.install-workload.outcome == 'success'
+        run: |
+          set +e
+          dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:RunAOTCompilation=true -o "$RUNNER_TEMP/publish/aot"
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            echo "reason=dotnet publish -p:RunAOTCompilation=true exited ${code}; see the publish-aot step log" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      # One fresh work directory for the agreement runs, compare and the measurements. AGREEMENT_WORK is
+      # what agreement.test.mjs requires at load time.
+      - name: Prepare the agreement work directory
+        run: |
+          WORK="$(mktemp -d "$RUNNER_TEMP/simcore-work.XXXXXX")"
+          dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement prepare --seeds 1-50 --work "$WORK"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          echo "AGREEMENT_WORK=$WORK" >> "$GITHUB_ENV"
+
+      - name: Agreement on the relinked build
+        if: steps.publish-relinked.outputs.produced == 'true'
+        env:
+          AGREEMENT_BUILD: node-interp-relinked
+          AGREEMENT_APP: ${{ runner.temp }}/publish/relinked/wwwroot
+        run: node --test tools/agreement/node/agreement.test.mjs
+
+      - name: Agreement on the AOT build
+        if: steps.publish-aot.outputs.produced == 'true'
+        env:
+          AGREEMENT_BUILD: node-aot
+          AGREEMENT_APP: ${{ runner.temp }}/publish/aot/wwwroot
+        run: node --test tools/agreement/node/agreement.test.mjs
+
+      # The gate for the builds this job produced (research.md R17): any divergence in the relinked or
+      # AOT build fails the job. The prebuilt build's gate is the agreement job's.
+      - name: Compare the new builds with the server
+        if: steps.publish-relinked.outputs.produced == 'true' || steps.publish-aot.outputs.produced == 'true'
+        env:
+          RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}
+          AOT_PRODUCED: ${{ steps.publish-aot.outputs.produced }}
+        run: |
+          REQUIRE=""
+          if [ "$RELINKED_PRODUCED" = "true" ]; then
+            REQUIRE="node-interp-relinked"
+          fi
+          if [ "$AOT_PRODUCED" = "true" ]; then
+            REQUIRE="${REQUIRE:+$REQUIRE,}node-aot"
+          fi
+          dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK" --require "$REQUIRE" --summary "$GITHUB_STEP_SUMMARY"
+
+      # A measurement, not a gate: each function's maximum error in ulp goes to the job summary, and the
+      # fixed trig table in the pull-request tests gates the error bounds (research.md R3).
+      - name: Run the exhaustive math sweeps
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          status=0
+          MMO_EXHAUSTIVE_MATH=1 dotnet test tests/MmoEngine.SimCore.Tests -c Release --filter "FullyQualifiedName~MmoEngine.SimCore.Tests.Math" --logger "console;verbosity=detailed" | tee "$RUNNER_TEMP/sweeps.log" || status=$?
+          {
+            echo "## SimCore exhaustive math sweeps"
+            echo
+            grep -F 'SIMMATH ' "$RUNNER_TEMP/sweeps.log" | sed -e 's/^[[:space:]]*//' -e 's/^/    /' || echo "No SIMMATH line was printed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Install the agreement tools
+        working-directory: tools/agreement
+        run: npm ci
+
+      # In tools/agreement, so npx runs the lockfile's Playwright and installs the Chromium it launches.
+      - name: Install Chromium
+        working-directory: tools/agreement
+        run: npx playwright install --with-deps chromium
+
+      - name: Test the measurement runner
+        run: node --test tools/agreement/node/measure.test.mjs tools/agreement/node/server.test.mjs
+
+      # Each mode is passed exactly once: --mode with its publish folder when it was produced, else
+      # --unproduced with its publish step's reason, or the workload's when the publish was skipped.
+      - name: Measure the WebAssembly builds
+        env:
+          RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}
+          RELINKED_REASON: ${{ steps.publish-relinked.outputs.reason }}
+          AOT_PRODUCED: ${{ steps.publish-aot.outputs.produced }}
+          AOT_REASON: ${{ steps.publish-aot.outputs.reason }}
+        run: |
+          WORKLOAD_REASON="dotnet workload install wasm-tools failed; see the install-workload step log"
+          args=(--mode interp-prebuilt="$RUNNER_TEMP/publish/prebuilt")
+          if [ "$RELINKED_PRODUCED" = "true" ]; then
+            args+=(--mode interp-relinked="$RUNNER_TEMP/publish/relinked")
+          else
+            args+=(--unproduced interp-relinked="${RELINKED_REASON:-$WORKLOAD_REASON}")
+          fi
+          if [ "$AOT_PRODUCED" = "true" ]; then
+            args+=(--mode aot="$RUNNER_TEMP/publish/aot")
+          else
+            args+=(--unproduced aot="${AOT_REASON:-$WORKLOAD_REASON}")
+          fi
+          node tools/agreement/lib/measure.mjs \
+            --work "$WORK" \
+            --server-benchmarks BenchmarkDotNet.Artifacts/results/simcore-server-benchmarks.json \
+            "${args[@]}" \
+            --out "$RUNNER_TEMP/simcore-measurement.json"
+
+      # The measurement gate is structural only: every listed measurement with its unit, the runner
+      # class and the build mode (US7 Independent Test, SC-007). No number is compared with a threshold.
+      - name: Validate the measurement report
+        run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- measure validate-report "$RUNNER_TEMP/simcore-measurement.json"
+
+      - name: Upload the measurement report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: simcore-measurement
+          path: ${{ runner.temp }}/simcore-measurement.json
+          if-no-files-found: error
+
+      - name: Upload the agreement report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: simcore-measure-agreement-report
+          path: ${{ env.WORK }}/report/

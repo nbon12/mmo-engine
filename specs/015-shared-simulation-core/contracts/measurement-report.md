@@ -39,7 +39,10 @@ jobs sets `MMO_RUNNER_CLASS: gha-ubuntu-latest-x64`, `DOTNET_EnableAVX512F: "0"`
    build has to come first.
 4. **The relinked interpreted build** (the same publish command) and **the AOT build** (with
    `-p:RunAOTCompilation=true`), each only when the workload installed. A mode that cannot be
-   produced is recorded as `{"produced": false, "reason": "…"}`.
+   produced is recorded as `{"produced": false, "reason": "…"}`. The AOT build is published last:
+   it leaves the assemblies it compiled, stripped of their IL, in the project's `obj` folder, and an
+   interpreted publish after it from the same checkout copies them and stops at boot with
+   `MONO interpreter: NIY encountered in method …` [measured].
 5. **Agreement on the new modes.** `simcore agreement prepare`, the Node agreement run with
    `AGREEMENT_BUILD=node-interp-relinked` and `node-aot` for the modes produced (each with
    `AGREEMENT_APP` set to that build's `wwwroot` and `AGREEMENT_WORK` to the prepared work directory), then
