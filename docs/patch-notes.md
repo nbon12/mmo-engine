@@ -22,7 +22,7 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 ## 2026-11-22 — Config JSON refuses an omitted leaf field
 
-Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #PR · Issue: #71
+Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #73 · Issue: #71
 
 ### Behavior and contract changes
 
