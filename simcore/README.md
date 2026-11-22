@@ -12,7 +12,8 @@ the repository root.
 
 `default.json` is the configuration example of
 [contracts/config-rules.md](../specs/015-shared-simulation-core/contracts/config-rules.md), and the
-base configuration `streams record` and `agreement prepare` build every stream from. It is edited by
+base configuration `streams record` builds every committed stream from, and `agreement prepare` builds
+its generated streams and cross-build tables from. It is edited by
 hand and checked by `simcore config check`:
 
 ```bash

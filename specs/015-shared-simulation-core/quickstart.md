@@ -246,13 +246,13 @@ The report's schema and what `validate-report` checks are in
 
 ## Workflow tests
 
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
+The command runs on main today and checks the workflows that exist. `tests/workflows/test_simcore_workflow.py` is planned for slice 2, not on main yet: it needs the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
 ```bash
 python3 -m unittest discover -s tests/workflows -v
 ```
 
-Expected: every test passes and the command exits 0. `tests/workflows/test_simcore_workflow.py` pins the
+Expected: every test passes and the command exits 0. In slice 2, `tests/workflows/test_simcore_workflow.py` will pin the
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
 the `agreement` job's `timeout-minutes: 10` (SC-006), its three browsers, the `measure` job's steps,
 and the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list.

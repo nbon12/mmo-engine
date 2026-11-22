@@ -366,6 +366,8 @@ missing or refused file by its work-directory path. After the comparison, the re
 build that did not run, or the report that cannot be written, which wins when both hold.
 
 Output, one line per known build, the first divergence report of each diverged build, then the outcome.
+A build whose streams all match but whose tables diverged or are missing prints
+`<b>: streams match, <n> streams, <steps> steps; tables diverged` (or `tables missing`).
 A build's first report is its first diverged stream's divergence report or, when only its tables
 diverged, its tables line: the first mismatch, or `tables: build <b>, results missing: <message>`. A
 required build that did not run makes the last line
