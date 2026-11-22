@@ -557,7 +557,8 @@ validate-report`). Check that the zero-allocation tests pass for every step func
 - **Observability**: N/A for the library: it does no I/O and logs nothing on the tick path. Step
   reports carry rejection reason codes for the caller to log. The `simcore` CLI logs Serilog compact
   JSON on stderr and writes its results on stdout; the server benchmarks write their export as a file.
-  The measurement job writes its report as a file, uploaded as the `simcore-measurement` artifact, and
+  The measurement job writes its report as a file, shows it in the job log and the job summary once
+  `validate-report` passes, and uploads it as the `simcore-measurement` artifact, and
   the agreement job's `agreement compare` writes its summary to the job summary and, on a failure, its
   divergence reports as an artifact.
 - **Licensing and design sources**: No new code dependency beyond MIT or Apache-2.0 packages

@@ -276,5 +276,6 @@ Expected: every test passes and the command exits 0. `tests/workflows/test_simco
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
 the `agreement` job's `timeout-minutes: 10` (SC-006), each step's own bound inside it and the
 optional browsers' shared deadline, its three browsers, the `measure` job's steps, the `"SimCore"`
-entry in `auto-merge.yml`'s `workflow_run` list, and that auto-merge's check filter holds a merge on a
-failed or pending `agreement` check.
+entry in `auto-merge.yml`'s `workflow_run` list, that auto-merge's check filter lists a failed or
+pending `agreement` check, and that its decision step, run with a stand-in `gh`, does not merge while
+that check has failed or is still running.
