@@ -3087,7 +3087,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     - It ends with `done`, or `fatal` on a boot or manifest failure.
 
   Then run `cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium`. It passes, and `dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK"` prints `chromium-worker: match, 69 streams, <steps> steps, tables match`. Makes T280 (worker.spec.mjs, US2.2) pass.
-- [ ] T290 [P] [US2] Implement `.github/workflows/simcore.yml` with the `agreement` job only (the `measure` job is Phase 12's).
+- [X] T290 [P] [US2] Implement `.github/workflows/simcore.yml` with the `agreement` job only (the `measure` job is Phase 12's).
   - **Workflow level.**
     - `name: SimCore`.
     - `on.pull_request.paths` and `on.push` (`branches: [main]`) with the eleven paths of T281 (TriggersAndPaths).
@@ -3111,7 +3111,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
     13. `actions/upload-artifact` (the SHA `.github/workflows/harness.yml` pins) with `if: failure()`, `name: simcore-agreement-report` and `path: ${{ runner.temp }}/agreement-work/report/`.
 
   Makes T281 (TriggersAndPaths), T282 (Pins) and T283 (AgreementJob) pass.
-- [ ] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. Change nothing else, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
+- [X] T291 [P] [US2] Add `"SimCore"` to `on.workflow_run.workflows` in `.github/workflows/auto-merge.yml`, so the list reads `["Workflow tests", "SimCore"]`. Extend the file's header comment, which says the list must name every pull request workflow, to name SimCore. Change nothing else, `GUARDED_PATHS` and `REQUIRE_CHECKS` included. Makes T284 (AutoMerge) pass.
 - [ ] T292 [US2] Run the `agreement` job's commands end to end locally, in the workflow's order, on fresh `mktemp -d` app and work directories (US2-IT, SC-001):
   - publish;
   - `agreement prepare --seeds 1-50`, which prints `prepared <work>: 69 streams (19 named, 50 generated), <steps> steps, rules revision 1`;
