@@ -1535,22 +1535,26 @@ The design documents settled these points, which the spec leaves open. They are 
   `ProjectileAllocationTests` covers only the direct `ProjectileStep.Step` call. The new
   `StepWithProjectilesAllocatesNothing` row has a shooter fire rifle bursts at a standing target on
   `ProjectileWorlds.FlatWorld`, using T172's Fire-then-Reload cycle and a preallocated one-entry command
-  array updated in place. It requires every counted batch to hold a shot, a character hit on the target
-  and an expiry, so the clean batch is one that ran them. Two choices in its arrangement need a reason:
+  array updated in place. It requires every counted window of 1,000 steps that ran (ten, or twenty with
+  the rerun) to hold a shot, a character hit on the target and an expiry, so every window that must be
+  0 bytes is one that ran them (the zero-allocation decision above). When this row was added in Phase 7,
+  the rule required only the smallest of three counted batches to be 0 bytes, and the row required all
+  three to hold the events, so that the clean batch was one that ran them; the Phase 10 spec-test review
+  (US7-AS3) replaced that rule. Two choices in its arrangement need a reason:
   - The target is 10 m away, not 50 m. At 50 m the rifle's 1.5° spread cone is about 1.3 m in radius,
-    and one counted 60 Hz batch held 84 shots and no character hit. At 10 m every batch at every rate
-    holds at least 22 character hits and 37 expiries.
+    and one counted 60 Hz window held 84 shots and no character hit. At 10 m every one of the ten
+    windows at every rate holds at least 22 character hits and 29 expiries (in Phase 7's three batches,
+    which are the first three of these windows, at least 22 and 37).
   - The rifle's reserve is 65,535 rounds, not the placeholder's 210. The 240 placeholder rounds run out
-    within the first counted batch at 20 Hz, which would leave the later batches, one of which must be
-    the clean one, with nothing to fire. The state's `reserve` is a u16 that the configuration does not
-    bound (contracts/state-serialization.md#weapon-record), so `Reset` accepts it.
+    within the first counted window at 20 Hz, which would leave the later windows, each of which must be
+    0 bytes and hold a shot, with nothing to fire. At 600 rounds per minute and at most 30 rounds a
+    cycle, 65,535 reserve rounds cover the 20,002 steps the rerun can take. The state's `reserve` is a
+    u16 that the configuration does not bound (contracts/state-serialization.md#weapon-record), so
+    `Reset` accepts it.
 
   With a one-byte allocation added to the expiry branch of `StepProjectiles`, all three new rows fail
   and the empty-command rows still pass. T036's bullet now says its row covers the fixed per-step path,
-  and T211 names the new row. Since the Phase 10 spec-test review every counted window must be 0 bytes
-  (the zero-allocation decision above), and the row requires the shot, the hit and the expiry in every
-  counted window that ran, ten or twenty with the rerun; at 600 rounds per minute and at most 30 rounds
-  a cycle, 65,535 reserve rounds still cover its 20,002 steps.
+  and T211 names the new row.
 - **The golden fixture support has two members T214 did not list, and the fixture tests read the JSON
   without `GoldenJson` (T214-T216).** T216's `InputCasesValidateAsRecorded`,
   `CollisionCasesHaveTheirDerivedData` and `StreamConfigEntriesNameTheirRuleTablePaths` take only a case
