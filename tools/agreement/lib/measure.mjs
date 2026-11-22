@@ -39,8 +39,11 @@
  * - `UsageError`, and `MeasurementError` re-exported from `./passes.mjs`, so a caller catches the
  *   measurement failures of both modules as one class.
  *
- * Run as a script (the entry point at the end of this file), it measures each produced mode, in the
- * report's order:
+ * Run as a script (the entry point at the end of this file), it first reads the `--server-benchmarks`
+ * object, the versions `dotnet --version` and `dotnet --list-runtimes` give (the highest
+ * `Microsoft.NETCore.App 10.` runtime) and the machine (`os`), so a missing or malformed export or a
+ * toolchain without a .NET 10 runtime fails before anything is measured. It then measures each produced
+ * mode, in the report's order:
  *
  * 1. `measureDownload(<dir>)`.
  * 2. Ten Node cold starts, each a fresh `node lib/measure-node.mjs cold-start` process, then one
@@ -57,11 +60,9 @@
  *    place of the failure it followed.
  * 4. Each startup interval summarized with `summarize` (`./passes.mjs`).
  *
- * It then gathers the machine (`os`), the versions (`dotnet --version`, the highest
- * `Microsoft.NETCore.App 10.` runtime of `dotnet --list-runtimes`, `process.version` and Playwright's
- * `browser.version()`), `GITHUB_SHA` and the two `DOTNET_` variables, and the `--server-benchmarks`
- * object, calls `assembleReport` and writes `--out` atomically (a temporary file in the same directory,
- * then a rename). It prints `measure: wrote <out>, <p> modes produced, <u> unproduced` and exits 0; a
+ * It then adds `process.version`, Playwright's `browser.version()`, `GITHUB_SHA` and the two `DOTNET_`
+ * variables, calls `assembleReport` and writes `--out` atomically (a temporary file in the same
+ * directory, then a rename). It prints `measure: wrote <out>, <p> modes produced, <u> unproduced` and exits 0; a
  * usage error prints `measure: <message>` and exits 2, and a MeasurementError prints `measure: <message>`
  * and exits 1.
  */
@@ -748,6 +749,12 @@ async function main(argv, env) {
     }
 
     const { work, serverBenchmarks, out, runnerClass } = parsed;
+    // What needs no measurement is gathered first, so a missing or malformed export, or a toolchain
+    // without a .NET 10 runtime, fails the run in a second rather than after every mode was measured.
+    const server = await readServerBenchmarks(serverBenchmarks);
+    const dotnet = dotnetVersions();
+    const host = machine();
+
     const modes = {};
     let chromiumVersion;
     for (const mode of MODES) {
@@ -762,14 +769,13 @@ async function main(argv, env) {
         modes[mode] = measured.input;
     }
 
-    const dotnet = dotnetVersions();
     const report = await assembleReport({
         runnerClass,
         env: recordedEnvironment(env),
         work,
-        machine: machine(),
+        machine: host,
         versions: { dotnetSdk: dotnet.sdk, dotnetRuntime: dotnet.runtime, node: process.version, chromium: chromiumVersion },
-        server: await readServerBenchmarks(serverBenchmarks),
+        server,
         modes,
     });
     await writeAtomically(out, `${JSON.stringify(report, null, 2)}\n`);

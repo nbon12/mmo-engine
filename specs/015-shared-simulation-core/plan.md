@@ -2223,6 +2223,24 @@ The design documents settled these points, which the spec leaves open. They are 
   net::ERR_UNSAFE_PORT at …` at once and `the page did not finish within 3 s` after 3 s. T309, T302
   and contracts/measurement-report.md step 6 say so, and contracts/wasm-api.md#measurement-worker now
   gives the measurement Worker's messages, which only T307 and T309 listed.
+- **T309 and T306 (third Phase 12 review): the runner checks its inputs before it measures, and
+  both scripts' exit codes have a test.** T309 step 3 read the `--server-benchmarks` export and ran
+  `dotnet --version` and `dotnet --list-runtimes` after every mode was measured, so a missing or
+  malformed export, or a toolchain without a .NET 10 runtime, failed only after ten Node cold starts,
+  a steps process and eleven Chromium pages per mode (41 s for three modes here, far longer on a slow
+  runner). The entry point now reads them, and the machine, right after `parseArgs`; only the Chromium
+  version, known once a browser has run, is still gathered at the end. The report does not change.
+  `'the entry point reads the server export and the dotnet versions before it measures'` gives each
+  of those failures an empty mode folder, so a run that measured first would name its missing
+  `dotnet.js` instead, and puts a `dotnet` stand-in (a shell script) first on PATH rather than
+  depending on the toolchain the test runs on. T306's script entry had no test at all, although
+  `runNodeHalf` relies on its exit 1 and one `measure-node:` line. `'the Node half exits 1 with its
+  usage or measurement error and prints nothing on stdout'` runs it as a child process for each usage
+  error and for an unprepared work directory, and the entry point's test gains a row where the real
+  `measure-node.mjs` cold start fails and `measure.mjs` names it, and a row started through a symlink,
+  which pins T309's `realpathSync` check. The review's further rows for `runPasses` (a `Reset` that
+  does not return `Ok`, a negative `StepQueued` return) were already in T302's tables from the first
+  Phase 12 review, so nothing was added there.
 
 ## Delivery
 

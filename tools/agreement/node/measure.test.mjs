@@ -49,7 +49,12 @@
  *
  * The entry point is run as the `measure` job runs it, `node ../lib/measure.mjs <argv>` in a child process:
  * a usage error (no `MMO_RUNNER_CLASS`) prints `measure: <message>` on stderr and exits 2, and a
- * MeasurementError prints `measure: <message>` and exits 1, neither writing `--out`.
+ * MeasurementError prints `measure: <message>` and exits 1, neither writing `--out`. It reads the
+ * `--server-benchmarks` export and runs `dotnet --version` and `dotnet --list-runtimes` before it measures
+ * anything, so those rows put a `dotnet` stand-in (a shell script) first on PATH. The Node half,
+ * `node ../lib/measure-node.mjs <cold-start|steps> --app <wwwroot> --work <dir>`, is run the same way: a
+ * usage or measurement error prints `measure-node: <message>` on stderr and exits 1. Both scripts also run
+ * when started through a symlink.
  *
  * Each module is imported inside the tests that need it, so a test fails on its own while its module is
  * missing. Every file a test writes goes into its own `fs.mkdtempSync` directory, removed afterwards; the
@@ -513,31 +518,137 @@ test('arguments need each mode exactly once and the runner class', async (t) => 
 /** The runner as the `measure` job runs it: `node tools/agreement/lib/measure.mjs <argv>`. */
 const MEASURE_SCRIPT = fileURLToPath(new URL('../lib/measure.mjs', import.meta.url));
 
+/** The Node half as the runner starts it: `node tools/agreement/lib/measure-node.mjs <run> --app <wwwroot> --work <dir>`. */
+const MEASURE_NODE_SCRIPT = fileURLToPath(new URL('../lib/measure-node.mjs', import.meta.url));
+
+const NODE_USAGE = 'usage: node measure-node.mjs <cold-start|steps> --app <wwwroot> --work <dir>';
+
+/** The process environment without `MMO_RUNNER_CLASS`, so each row sets it or leaves it out. */
+function environmentWithoutClass() {
+    const { MMO_RUNNER_CLASS: _ignored, ...rest } = process.env;
+    return rest;
+}
+
+/** A `dotnet` with the SDK and a .NET 10 runtime, as the `measure` job's toolchain lists them. */
+const DOTNET_10 = [
+    '  --version) echo 10.0.115 ;;',
+    "  --list-runtimes) echo 'Microsoft.NETCore.App 10.0.3 [/fake/dotnet/shared/Microsoft.NETCore.App]' ;;",
+];
+
+/**
+ * A `dotnet` stand-in, `<dir>/bin/dotnet`: a shell script whose `case "$1"` runs `branches` and exits 9
+ * for any other argument. Returns the PATH that finds it before any real `dotnet`.
+ */
+function fakeDotnet(dir, branches) {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const script = path.join(bin, 'dotnet');
+    fs.writeFileSync(script, ['#!/bin/sh', 'case "$1" in', ...branches, '  *) exit 9 ;;', 'esac', ''].join('\n'));
+    fs.chmodSync(script, 0o755);
+    return `${bin}${path.delimiter}${process.env.PATH ?? ''}`;
+}
+
+/**
+ * The `measure` job's argv in `dir`: `interp-prebuilt` produced from `mode`, the other two modes
+ * unproduced, and `--work`, `--server-benchmarks` and `--out` at `<dir>/work`, `<dir>/server.json` and
+ * `<dir>/report.json`.
+ */
+function measureArgv(dir, mode) {
+    return [
+        '--work', path.join(dir, 'work'),
+        '--server-benchmarks', path.join(dir, 'server.json'),
+        '--mode', `interp-prebuilt=${mode}`,
+        '--unproduced', 'interp-relinked=not built here',
+        '--unproduced', 'aot=not built here',
+        '--out', path.join(dir, 'report.json'),
+    ];
+}
+
+/**
+ * Runs `node <script> <args>` from `cwd`, as the job runs it, and asserts that it exited `status` with
+ * exactly `stderr`, printed nothing on stdout, and left `cwd` as it found it: no `--out` and no temporary
+ * file beside it.
+ */
+function assertScriptFails({ script, args, env, cwd, status, stderr }) {
+    const before = fs.readdirSync(cwd).sort();
+
+    const result = spawnSync(process.execPath, [script, ...args], { cwd, env, encoding: 'utf8', timeout: 60_000 });
+
+    assert.equal(result.error, undefined, `the script did not run: ${result.error?.message}`);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, status, result.stderr);
+    assert.equal(result.stderr, stderr);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(fs.readdirSync(cwd).sort(), before);
+}
+
+/** The message `JSON.parse` gives for `text` in this Node, which also runs the script. */
+function jsonParseMessage(text) {
+    try {
+        JSON.parse(text);
+    } catch (error) {
+        return error.message;
+    }
+
+    throw new Error(`${JSON.stringify(text)} parses as JSON`);
+}
+
 test('the entry point exits 2 on a usage error and 1 on a failed measurement, writing no report', async (t) => {
-    // The process environment without the runner class, so each row sets it or leaves it out.
-    const { MMO_RUNNER_CLASS: _ignored, ...withoutClass } = process.env;
+    const withoutClass = environmentWithoutClass();
+    const withClass = { ...withoutClass, MMO_RUNNER_CLASS: RUNNER_CLASS };
+    // Each row gets its own directory holding an empty `mode/` folder, and returns how the run fails.
     const rows = [
         {
             name: 'MMO_RUNNER_CLASS is unset',
-            env: withoutClass,
-            status: 2,
-            stderr: () => `measure: ${RUNNER_CLASS_MESSAGE}\n`,
+            arrange: () => ({ env: withoutClass, status: 2, stderr: `measure: ${RUNNER_CLASS_MESSAGE}\n` }),
         },
         {
             name: 'MMO_RUNNER_CLASS is empty',
-            env: { ...withoutClass, MMO_RUNNER_CLASS: '' },
-            status: 2,
-            stderr: () => `measure: ${RUNNER_CLASS_MESSAGE}\n`,
+            arrange: () => ({
+                env: { ...withoutClass, MMO_RUNNER_CLASS: '' },
+                status: 2,
+                stderr: `measure: ${RUNNER_CLASS_MESSAGE}\n`,
+            }),
         },
         {
-            // The first produced mode's download is measured first, so an empty publish folder fails the
-            // run before any Node or Chromium measurement starts.
+            // Node gives the main module's import.meta.url its real path, so the script compares argv[1]
+            // through its real path; were it not, it would do nothing and exit 0 here.
+            name: 'the script is started through a symlink',
+            arrange: (dir) => {
+                const link = path.join(dir, 'measure.mjs');
+                fs.symlinkSync(MEASURE_SCRIPT, link);
+                return { script: link, env: withoutClass, status: 2, stderr: `measure: ${RUNNER_CLASS_MESSAGE}\n` };
+            },
+        },
+        {
+            // The first produced mode's download is read first, so an empty publish folder fails the run
+            // before any Node or Chromium measurement starts.
             name: 'a produced mode has no dotnet.js',
-            env: { ...withoutClass, MMO_RUNNER_CLASS: RUNNER_CLASS },
-            status: 1,
-            stderr: (mode) => {
+            arrange: (dir, mode) => {
+                fs.writeFileSync(path.join(dir, 'server.json'), '{}\n');
                 const loader = path.join(mode, 'wwwroot', '_framework', 'dotnet.js');
-                return `measure: cannot read _framework/dotnet.js of ${mode}: ENOENT: no such file or directory, open '${loader}'\n`;
+                return {
+                    env: { ...withClass, PATH: fakeDotnet(dir, DOTNET_10) },
+                    status: 1,
+                    stderr: `measure: cannot read _framework/dotnet.js of ${mode}: `
+                        + `ENOENT: no such file or directory, open '${loader}'\n`,
+                };
+            },
+        },
+        {
+            // The download and the boot manifest are read, then the first `measure-node.mjs cold-start`
+            // process fails on the work directory, which was never prepared, before it boots anything.
+            name: 'a Node cold start that fails names its mode and run',
+            arrange: (dir, _mode, sub) => {
+                fs.writeFileSync(path.join(dir, 'server.json'), '{}\n');
+                const manifest = path.join(dir, 'work', 'manifest.json');
+                return {
+                    mode: writePublishDir(sub).publishDir,
+                    env: { ...withClass, PATH: fakeDotnet(dir, DOTNET_10) },
+                    status: 1,
+                    stderr: `measure: interp-prebuilt: node cold start 1 exited 1: measure-node: cannot read ${manifest}: `
+                        + `ENOENT: no such file or directory, open '${manifest}'\n`,
+                };
             },
         },
     ];
@@ -545,32 +656,157 @@ test('the entry point exits 2 on a usage error and 1 on a failed measurement, wr
     for (const row of rows) {
         await t.test(row.name, (sub) => {
             const dir = tempDir(sub, 'mmo-measure-entry-');
+            const emptyMode = path.join(dir, 'mode');
+            fs.mkdirSync(emptyMode);
+            const { script = MEASURE_SCRIPT, mode = emptyMode, env, status, stderr } = row.arrange(dir, emptyMode, sub);
+
+            assertScriptFails({ script, args: measureArgv(dir, mode), env, cwd: dir, status, stderr });
+            assert.deepEqual(fs.readdirSync(emptyMode), []);
+        });
+    }
+});
+
+test('the entry point reads the server export and the dotnet versions before it measures', async (t) => {
+    // Every row's produced mode is an empty folder, so a run that measured first would fail on its
+    // missing dotnet.js instead; each row's own line shows the input was checked before any measurement.
+    const withClass = { ...environmentWithoutClass(), MMO_RUNNER_CLASS: RUNNER_CLASS };
+    const rows = [
+        {
+            name: 'the server export is missing',
+            arrange: (dir, file) => ({
+                PATH: fakeDotnet(dir, DOTNET_10),
+                stderr: `measure: cannot read --server-benchmarks ${file}: ENOENT: no such file or directory, open '${file}'\n`,
+            }),
+        },
+        {
+            name: 'the server export is not JSON',
+            arrange: (dir, file) => {
+                const text = 'BenchmarkDotNet did not finish\n';
+                fs.writeFileSync(file, text);
+                return {
+                    PATH: fakeDotnet(dir, DOTNET_10),
+                    stderr: `measure: --server-benchmarks ${file} is not valid JSON: ${jsonParseMessage(text)}\n`,
+                };
+            },
+        },
+        {
+            name: 'dotnet is not on the PATH',
+            arrange: (dir, file) => {
+                fs.writeFileSync(file, '{}\n');
+                const empty = path.join(dir, 'no-dotnet');
+                fs.mkdirSync(empty);
+                return { PATH: empty, stderr: 'measure: dotnet --version did not run: spawnSync dotnet ENOENT\n' };
+            },
+        },
+        {
+            name: 'dotnet --version fails',
+            arrange: (dir, file) => {
+                fs.writeFileSync(file, '{}\n');
+                return {
+                    PATH: fakeDotnet(dir, ["  --version) echo 'No .NET SDKs were found.' >&2; exit 1 ;;"]),
+                    stderr: 'measure: dotnet --version exited 1: No .NET SDKs were found.\n',
+                };
+            },
+        },
+        {
+            name: 'dotnet lists no .NET 10 runtime',
+            arrange: (dir, file) => {
+                fs.writeFileSync(file, '{}\n');
+                return {
+                    PATH: fakeDotnet(dir, [
+                        DOTNET_10[0],
+                        "  --list-runtimes) echo 'Microsoft.AspNetCore.App 10.0.3 [/fake/a]';"
+                            + " echo 'Microsoft.NETCore.App 9.0.11 [/fake/n]' ;;",
+                    ]),
+                    stderr: 'measure: dotnet --list-runtimes lists no Microsoft.NETCore.App 10. runtime\n',
+                };
+            },
+        },
+    ];
+
+    for (const row of rows) {
+        await t.test(row.name, (sub) => {
+            const dir = tempDir(sub, 'mmo-measure-inputs-');
             const mode = path.join(dir, 'mode');
             fs.mkdirSync(mode);
-            const argv = [
-                '--work', path.join(dir, 'work'),
-                '--server-benchmarks', path.join(dir, 'server.json'),
-                '--mode', `interp-prebuilt=${mode}`,
-                '--unproduced', 'interp-relinked=not built here',
-                '--unproduced', 'aot=not built here',
-                '--out', path.join(dir, 'report.json'),
-            ];
+            const { PATH, stderr } = row.arrange(dir, path.join(dir, 'server.json'));
 
-            const result = spawnSync(process.execPath, [MEASURE_SCRIPT, ...argv], {
+            assertScriptFails({
+                script: MEASURE_SCRIPT,
+                args: measureArgv(dir, mode),
+                env: { ...withClass, PATH },
                 cwd: dir,
-                env: row.env,
-                encoding: 'utf8',
-                timeout: 60_000,
+                status: 1,
+                stderr,
             });
-
-            assert.equal(result.error, undefined, `the runner did not run: ${result.error?.message}`);
-            assert.equal(result.signal, null);
-            assert.equal(result.status, row.status, result.stderr);
-            assert.equal(result.stderr, row.stderr(mode));
-            assert.equal(result.stdout, '');
-            // Neither --out nor its temporary file was written, and nothing else was.
-            assert.deepEqual(fs.readdirSync(dir).sort(), ['mode']);
             assert.deepEqual(fs.readdirSync(mode), []);
+        });
+    }
+});
+
+test('the Node half exits 1 with its usage or measurement error and prints nothing on stdout', async (t) => {
+    // runNodeHalf turns a non-zero exit into `<mode>: <run> exited <code>: <stderr>`, so each failure must
+    // be one `measure-node: <message>` line on stderr and exit 1.
+    const rows = [
+        { name: 'no run is given', args: () => [], message: () => `no run given; ${NODE_USAGE}` },
+        {
+            name: 'the run is unknown',
+            args: (dir) => ['warm-up', '--app', path.join(dir, 'app'), '--work', path.join(dir, 'work')],
+            message: () => `unknown run warm-up; ${NODE_USAGE}`,
+        },
+        { name: '--app has no value', args: () => ['cold-start', '--app'], message: () => `--app needs a value; ${NODE_USAGE}` },
+        {
+            name: '--work is missing',
+            args: (dir) => ['steps', '--app', path.join(dir, 'app')],
+            message: () => `--work is required; ${NODE_USAGE}`,
+        },
+        {
+            name: '--app is given twice',
+            args: (dir) => {
+                const app = path.join(dir, 'app');
+                return ['cold-start', '--app', app, '--app', app, '--work', path.join(dir, 'work')];
+            },
+            message: () => `--app is given more than once; ${NODE_USAGE}`,
+        },
+        {
+            name: 'an unknown argument',
+            args: () => ['steps', '--batch', '16'],
+            message: () => `unknown argument --batch; ${NODE_USAGE}`,
+        },
+        {
+            name: 'the script is started through a symlink',
+            script: (dir) => {
+                const link = path.join(dir, 'measure-node.mjs');
+                fs.symlinkSync(MEASURE_NODE_SCRIPT, link);
+                return link;
+            },
+            args: () => [],
+            message: () => `no run given; ${NODE_USAGE}`,
+        },
+        ...['cold-start', 'steps'].map((run) => ({
+            // Both runs read the prepared inputs before they boot the build, so no build is needed.
+            name: `${run} without a prepared work directory`,
+            args: (dir) => [run, '--app', path.join(dir, 'app'), '--work', path.join(dir, 'work')],
+            message: (dir) => {
+                const manifest = path.join(dir, 'work', 'manifest.json');
+                return `cannot read ${manifest}: ENOENT: no such file or directory, open '${manifest}'`;
+            },
+        })),
+    ];
+
+    for (const row of rows) {
+        await t.test(row.name, (sub) => {
+            const dir = tempDir(sub, 'mmo-measure-node-');
+            const script = row.script === undefined ? MEASURE_NODE_SCRIPT : row.script(dir);
+
+            assertScriptFails({
+                script,
+                args: row.args(dir),
+                env: process.env,
+                cwd: dir,
+                status: 1,
+                stderr: `measure-node: ${row.message(dir)}\n`,
+            });
         });
     }
 });
