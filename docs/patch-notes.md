@@ -46,10 +46,14 @@ Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-
     `node-interp`, `node-interp-nojit` and `chromium-worker`, with Firefox and WebKit optional, then
     `simcore agreement compare`. It has `timeout-minutes: 10`, a bound on every step, and one shared
     deadline for the optional browsers so compare always reports.
-  - `measure` uploads the `simcore-measurement` artifact: server benchmarks, plus download size,
-    cold start and per-step cost for the prebuilt, relinked and AOT builds. It fails when the
-    relinked or AOT build disagrees with the server or the report does not validate; its numbers
-    never gate.
+  - `measure` (`timeout-minutes: 90`, every step bounded) uploads the `simcore-measurement`
+    artifact: server benchmarks, plus download size, cold start over 10 runs and per-step cost, in
+    Node and in a Chromium Worker, for the prebuilt, relinked and AOT builds. Each cold start's first
+    step must be the server's first record of `flat-run-30hz`. The job fails when the relinked or
+    AOT build disagrees with the server or the report does not validate, but it still writes,
+    validates and uploads the report, with that mode's agreement status `Diverged`. The validated
+    report is also printed to the job log and the job summary, so it can be read without
+    downloading the artifact. Its numbers never gate.
 - **`auto-merge.yml`** now also waits for `SimCore` (`on.workflow_run.workflows` is
   `["Workflow tests", "SimCore"]`).
 
@@ -57,8 +61,10 @@ Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-
 
 - The `[JSExport]` exports and the one-frame JavaScript pattern of `tools/agreement/web/worker.mjs`,
   for sub-spec 8's browser client.
-- `tools/agreement/lib/runtime.mjs` (boot, record helpers, `firstDifferingStep`),
-  `lib/server.mjs`, `lib/tables.mjs` and `lib/passes.mjs`.
+- `tools/agreement/lib/runtime.mjs` (boot, record helpers, `firstDifferingStep`, and
+  `writeOutputFile`, which writes a temporary file and renames it over the target), `lib/server.mjs`,
+  `lib/tables.mjs` and `lib/passes.mjs` (`loadWorld`, `expectLoad` and `timeFirstStep`, the one
+  cold-start sequence both runtimes use).
 - `simcore agreement prepare` and `simcore agreement compare` for any new build to compare with the server.
 
 ### Open follow-ups
@@ -71,9 +77,10 @@ Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-
   requests. This is older than this slice and outside its one-entry change, so a pull request whose
   last check to finish is one of theirs waits for its next pull request event.
 - While `REQUIRE_CHECKS` is `"false"`, auto-merge does not wait for an `agreement` check run that has
-  not registered on the head commit yet (plan.md, the T284 Phase 11 review decision). Making it a
-  required check first needs the check to report on every pull request, then the admin-only
-  branch-protection setting.
+  not registered on the head commit yet. The window holds for every check, not only `agreement`, and
+  US2 scenario 7 now claims only registered check runs (spec.md Assumptions). Closing it needs the
+  check to report on every pull request, then the admin-only branch-protection setting, then
+  `REQUIRE_CHECKS` set to `"true"`.
 
 ## 2026-11-22 — Config JSON refuses an omitted leaf field
 
