@@ -11,7 +11,7 @@ Three layers:
 | --- | --- | --- | --- |
 | `BatchStepper`, `StreamRunner` and `CrossBuildTables` | `src/MmoEngine.SimCore/Batch/` | yes ([analyzer-rules.md](analyzer-rules.md)) | `tests/MmoEngine.SimCore.Tests/` on the server build |
 | `SimCoreExports`, one-line `[JSExport]` delegations | `src/MmoEngine.SimCore.Wasm/` | no | `tests/MmoEngine.SimCore.Wasm.Tests/`, which calls the exports as plain methods |
-| JavaScript boot, server and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `lib/server.mjs`, `node/agreement.test.mjs`, `web/page.html`, `web/worker.mjs`, `specs/worker.spec.mjs`, `lib/measure.mjs`, `lib/measure-node.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs; `node/runtime.test.mjs`, `node/tables.test.mjs` and `node/server.test.mjs` for the record helpers, `compareTables` and the server ([Tests](#tests)); `node/measure.test.mjs` for the measurement runner's pure parts, its handling of a page that fails (with a fake browser), the step passes and the exit codes of `lib/measure.mjs` and `lib/measure-node.mjs` |
+| JavaScript boot, server and runners | `tools/agreement/lib/runtime.mjs`, `lib/tables.mjs`, `lib/server.mjs`, `node/agreement.test.mjs`, `web/page.html`, `web/worker.mjs`, `specs/worker.spec.mjs`, `lib/measure.mjs`, `lib/measure-node.mjs`, `lib/passes.mjs`, `web/measure.html`, `web/measure-worker.mjs` | no | the agreement and measurement runs; `node/runtime.test.mjs`, `node/tables.test.mjs` and `node/server.test.mjs` for the record helpers, `compareTables` and the server ([Tests](#tests)); `node/measure.test.mjs` for the measurement runner's pure parts, its handling of a page that fails (with a fake browser), the step passes and the exit codes of `lib/measure.mjs` and `lib/measure-node.mjs`; `specs/worker-load-refusal.spec.mjs` for the agreement Worker's load refusals against a stand-in runtime |
 
 All logic lives in the core, so the server tests cover everything the browser runs. Only bytes cross
 the JavaScript boundary. Byte layouts of the step record, the canonical state, the collision file, the
@@ -561,6 +561,16 @@ export function jiterpreterState(runtime) {
   is cut off); `null` when both are equal. The module uses no Node API, so the Worker imports it too.
   `tools/agreement/node/runtime.test.mjs` pins the helpers and `jiterpreterState` with table rows
   ([Tests](#tests)).
+- **Output writes.** `runtime.mjs` also exports `writeOutputFile({ fs, directory, file, data,
+  replaces })`, the one write of a build output that the [Node](#node) runner and the
+  [server](#served-files)'s PUT share. It writes `data` to `.<file>.<random UUID>.tmp` in `directory`
+  (flag `wx`), renames that over `<directory>/<file>`, and only then removes `<directory>/<replaces>`,
+  the output's other form. When the write or the rename fails, it removes the temporary file and throws
+  that error, leaving the target and the other form as they were, so a failed write, or a process that
+  dies partway, never leaves a cut-off `<stream>.records` that `agreement compare` would report as a
+  divergence at the cut-off step instead of the write's error. `fs` is `node:fs/promises` (its
+  `writeFile`, `rename` and `rm`), passed in so the module itself still uses no Node API; the Worker
+  never calls it. `replaces` equal to `file` is a `TypeError` before anything is written.
 
 ## Served files
 
@@ -583,7 +593,7 @@ Routes:
 | `GET /web/page.html`, `GET /web/worker.mjs`, `GET /web/measure.html`, `GET /web/measure-worker.mjs`, `GET /lib/runtime.mjs`, `GET /lib/tables.mjs`, `GET /lib/passes.mjs` | `tools/agreement/web/` and `tools/agreement/lib/` |
 | `GET /_framework/*` | `AGREEMENT_APP/_framework/` |
 | `GET /work/*` | `AGREEMENT_WORK/` (manifest, streams, collision files, server records, batch inputs, the table inputs and the server's table results) |
-| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`, and the build folder (created when missing) must have its real path inside the work root's, so a build folder that is a symlink out of the work directory is refused; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written to a temporary file, then renamed; once it is in place, its other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), as the Node runner does, so an error file never sits beside the output it stands in place of; 204 on success; 403 for a PUT under `/work/` that breaks these rules, and a refused PUT writes and removes nothing |
+| `PUT /work/<build>/<stream>.records`, `PUT /work/<build>/<stream>.error.txt`, `PUT /work/<build>/tables.bin`, `PUT /work/<build>/tables.error.txt` | written to `AGREEMENT_WORK/<build>/`; `<build>` must be `chromium-worker`, `firefox-worker` or `webkit-worker`, and the build folder (created when missing) must have its real path inside the work root's, so a build folder that is a symlink out of the work directory is refused; `<stream>` must match `^[a-z0-9-]+$` and is never `tables`; body at most 64 MiB; written by `writeOutputFile` ([Boot](#boot)), the Node runner's own write: to a temporary file, then renamed; once it is in place, its other form is removed (`<stream>.error.txt` for `<stream>.records` and the reverse, `tables.error.txt` for `tables.bin` and the reverse), so an error file never sits beside the output it stands in place of; a write or rename that fails answers 500 and leaves the earlier target and its other form as they were, with no temporary file; 204 on success; 403 for a PUT under `/work/` that breaks these rules, and a refused PUT writes and removes nothing |
 | a request the server fails on: a file it cannot read or write for a reason other than a missing file (for example, `<build>` is a regular file, so the build folder cannot be created) | 500 |
 | anything else | 404 |
 
@@ -612,7 +622,10 @@ A missing or unknown variable fails the run before any test. For each manifest s
 per stream), the runner calls `RunStream(stream, collision, -1)`, writes
 `AGREEMENT_WORK/<build>/<stream>.records`, and asserts the bytes equal
 `AGREEMENT_WORK/server/<stream>.records`, naming the first step whose record differs (US2 scenarios 1
-and 3). A thrown error is written to `<stream>.error.txt` and fails that test. It also runs:
+and 3). A thrown error is written to `<stream>.error.txt` and fails that test. Every output is written
+with `writeOutputFile` ([Boot](#boot)), through a temporary file renamed into place, which then removes
+its other form, so a failed write fails the test with its own error and leaves no cut-off records. It
+also runs:
 
 - **the batch check** for every stream with a `batch` entry: `LoadCollision`, `LoadConfig`,
   `Reset(initialState, salt)`, then the stream's commands through `StepQueued` in batches of 1, 3 and
@@ -630,7 +643,15 @@ and 3). A thrown error is written to `<stream>.error.txt` and fails that test. I
 - **the jiterpreter check** (`'the jiterpreter is on or off as the build says'`): `bootRuntime`'s
   `jiterpreter`, the runtime's own report ([Boot](#boot)), is not `null` and is all `true` for a build
   without `-nojit` and all `false` for `node-interp-nojit`, so the jiterpreter-off run cannot silently
-  run with the jiterpreter.
+  run with the jiterpreter;
+- **the in-place check** (`'each output is renamed into place, never written over in place'`, the last
+  test): once the runtime has booted, `before` plants an earlier copy of the first stream's
+  `<stream>.records` and of `tables.bin`, each a fresh file hard-linked to `.<file>.in-place-check` in
+  the build folder. After their writes, each link must still hold exactly the planted bytes and the
+  output must be another file than the link, so the runner really renamed its outputs into place
+  through `writeOutputFile`; a write over an output in place changes the bytes the link reads. `after`
+  removes the links, and a planted copy no test replaced, so `agreement compare` reports that output
+  missing rather than diverging.
 
 It writes `AGREEMENT_WORK/<build>/run.json` with the build name, runtime options, the reported
 jiterpreter state (`jiterpreter`), `runtimeBuildInfo`, Node's version and the start and end times.
@@ -639,7 +660,9 @@ jiterpreter state (`jiterpreter`), `runtimeBuildInfo`, Node's version and the st
 
 `npx playwright test` from `tools/agreement/` runs `specs/worker.spec.mjs` in the projects
 `chromium`, `firefox` and `webkit`, with `AGREEMENT_APP` and `AGREEMENT_WORK` set. The build name is
-`<project>-worker`. Each test file starts its own server.
+`<project>-worker`. Each test file starts its own server. The same command also runs
+`specs/worker-load-refusal.spec.mjs` ([Tests](#tests)), which needs neither variable: it runs the
+same page and Worker against a stand-in runtime and starts a server per test.
 
 1. The spec opens `http://127.0.0.1:<port>/web/page.html?build=<build>` and collects console
    messages from the page and the Worker.
@@ -651,7 +674,14 @@ jiterpreter state (`jiterpreter`), `runtimeBuildInfo`, Node's version and the st
    collision file, calls `RunStream(stream, collision, -1)`, `PUT`s the records to
    `/work/<build>/<stream>.records`, fetches `/work/server/<stream>.records`, compares the bytes and
    posts the result. A thrown error is `PUT` to `/work/<build>/<stream>.error.txt` and posted.
-4. It runs the batch check for every stream with a `batch` entry, as in Node.
+4. It runs the batch check for every stream with a `batch` entry, as in Node. Its `LoadCollision`,
+   `LoadConfig` and `Reset` go through `loadWorld` from `/lib/passes.mjs`, the cold starts' own load
+   ([Measurement Worker](#measurement-worker)), which reads a refusal's text through a fresh
+   `ReportBuffer()` view: a `LoadConfig` that returns `Ok` may grow the buffer, so a view held from
+   before it does not show a later `Reset`'s refusal ([Buffer lifetimes](#buffer-lifetimes)), and the
+   fresh view holds as well for a host that reallocates on a refusal. The view the batches read is
+   fetched again once the world has loaded. A refused call posts `error` with the message
+   `batch: <call> returned <code>[: <text>]`.
 5. It runs the tables check: it fetches the table inputs, the config block and the server's results,
    calls `EvaluateTables`, `PUT`s the result to `/work/<build>/tables.bin` (or the error to
    `tables.error.txt`), compares it with `compareTables` and posts the result.
@@ -703,7 +733,14 @@ agreement Worker's above.
    `/_framework/dotnet.js` with `bootRuntime` and no runtime options (the jiterpreter on) and posts
    `booted`.
 3. For `cold-start` it times the first step and posts `coldStart`; for `steps` it times each step
-   kind and posts one `steps` per kind, in the report's order. It then posts `done`.
+   kind and posts one `steps` per kind, in the report's order. It then posts `done`. The cold start is
+   `timeFirstStep` from `/lib/passes.mjs`, the one sequence the Node half (`lib/measure-node.mjs`) runs
+   too: `loadWorld` (`LoadCollision`, `LoadConfig` and `Reset`, each of which must return `Ok`),
+   `CommandBuffer()`, `flat-run-30hz`'s first 17 command bytes written at its start and
+   `StepQueued(1)`, which must return 1, with the clock read just before the first call and just after
+   the last. It then reads the record that step committed from a fresh `ReportBuffer()` view: the
+   header must hold exactly one whole record, else the cold start fails with `StepQueued(1) returned 1,
+   but the report buffer holds <n> records in <L> bytes, not one whole step record`.
 
 Messages:
 
@@ -711,15 +748,21 @@ Messages:
 | --- | --- | --- |
 | page → Worker | `start` | `run`: `cold-start` or `steps` |
 | Worker → page | `booted` | `inWorker`, `crossOriginIsolated`, `buildInfo` (`runtimeBuildInfo`), `moduleStartMs` (the clock reading on the module's first line, which the report does not read); no `userAgent`, unlike the agreement Worker's |
-| Worker → page | `coldStart` | `importMs`, `createMs`, `firstStepMs`, `totalMs` (`cold-start` only) |
+| Worker → page | `coldStart` | `importMs`, `createMs`, `firstStepMs`, `totalMs`, and `firstStep`, the `{step, hash}` of the record its `StepQueued(1)` committed, the hash as 16 lowercase hex digits ([One frame from JavaScript](#one-frame-from-javascript)) (`cold-start` only) |
 | Worker → page | `steps` | `kind`, `scenario`, `batch` (16), `steps`, `meanNs`, `p99Ns`: one per kind (`steps` only) |
 | Worker → page | `done` | none |
-| Worker → page | `fatal` | `message`: an input that did not fetch or is malformed, a boot failure, a load call, `Reset` or `StepQueued` that returned another code than it must, or a `start` whose `run` is neither `cold-start` nor `steps`; it takes the place of everything after it |
+| Worker → page | `fatal` | `message`: an input that did not fetch or is malformed, a boot failure, a load call, `Reset` or `StepQueued` that returned another code than it must, a cold start's `StepQueued(1)` that returned 1 with no whole record in the report buffer, or a `start` whose `run` is neither `cold-start` nor `steps`; it takes the place of everything after it |
 
 The runner waits for `window.__measure.done` within the page's 2 minutes, which the navigation and the
 wait share, then reads the events. A cold-start page must hold exactly one `booted` and one
 `coldStart`, and the steps page exactly one `booted` and one `steps` per kind, with its stream, in
-`STEP_KINDS` order. A `fatal`, any other set of messages, a console message from the page or the Worker
+`STEP_KINDS` order. Each `coldStart`'s `firstStep` must be the step and hash of the server's first
+record of `flat-run-30hz` (`<work>/server/flat-run-30hz.records`,
+[measurement-report.md](measurement-report.md#how-each-number-is-measured)), or the page is the failed
+measurement `<what>: the first step committed step <s> with hash <h>, but the server's first record of
+flat-run-30hz is step <s> with hash <h>` (or, with no such `{step, hash}`, `<what>: the cold start
+reported the first step <value>, not a step and a 16-digit hash, so it does not show that a step
+completed`). A `fatal`, any other set of messages, a console message from the page or the Worker
 about the `.wasm` content type, or a page that fails to load or finish is a failed measurement, named
 `<mode>: chromium cold start <i>: <message>` or `<mode>: chromium steps: <message>`. The report's
 `crossOriginIsolated` is true only when every `booted` message says so.
@@ -753,9 +796,10 @@ a Worker's`, so numbers from code that did not run in a `WorkerGlobalScope` are 
 | `tests/MmoEngine.SimCore.Tests/Math/FixedTableBoundsTests.EveryInDomainRowIsWithinItsBound` | the first half of US3.8 and SC-004 on the server build: every in-domain math row of `BuildInputs()` is within its function's bound (research R3), and every out-of-domain row gives NaN, counted explicitly. It is the only definition of an out-of-domain row: a or b NaN; a = ±∞ for functions 1–4; \|a\| > 1 for 5 and 6; a < 0 and not −0 for 10 |
 | `tests/MmoEngine.SimCore.Tests/Agreement/TablesComparisonTests.ReportsTheFirstDifferingRow` (Theory: one bit flipped in a math row, in a pose row, a NaN against a finite value) and `TablesComparisonTests.AnyNaNMatchesANaNRow` | the comparison rule and its report |
 | `tests/MmoEngine.SimCore.Wasm.Tests/SimCoreExportsTests` (every export called as a plain method on x64) and `EntryPointReturnsZero` | the host, and its coverage gate |
-| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5; its jiterpreter check shows the `-nojit` run ran without the jiterpreter |
+| `tools/agreement/node/agreement.test.mjs` | US2.1, US2.3, US2.5, US2.6 and SC-002 in the WebAssembly build; its tables check is the cross-build half of US3.8, SC-004 and US5.5; its jiterpreter check shows the `-nojit` run ran without the jiterpreter; its in-place check (`'each output is renamed into place, never written over in place'`) shows the run writes its outputs through `writeOutputFile`: a hard link to a planted earlier first-stream `.records` and `tables.bin` keeps the planted bytes, and each output is a new file |
 | `tools/agreement/specs/worker.spec.mjs` | US2.2 and US2.6 in a dedicated Worker, checked on the records the Worker wrote too; FR-024; its `tables` assertion and its own `compareTables` on the Worker's `tables.bin` are the cross-build half of US3.8, SC-004 and US5.5 in a Worker |
-| `tools/agreement/node/runtime.test.mjs` (`node --test`) | `firstDifferingStep` (equal, a state byte, a state length or only the hash differing, another step number, missing, cut-off and extra records), `readRecords` (each record's fields; a `RangeError` on a cut-off record) and `jiterpreterState` (on, off, each option, no accessor), on records built in memory |
+| `tools/agreement/specs/worker-load-refusal.spec.mjs` | the agreement Worker's batch check reads each load refusal's text through a fresh `ReportBuffer()` view (step 4 of [Worker (Playwright)](#worker-playwright)), in each project, against a stand-in `_framework/dotnet.js` whose `LoadConfig` leaves `stale text of the old report buffer` in the buffer it replaces on every call (a stricter stand-in than BatchStepper, which grows it only on `Ok`): `'a LoadConfig refusal after the report buffer was replaced is posted with its own text'` (`batch: LoadConfig returned 2: world.maxCharacters: must be at least 1\ninput.weaponSlots: must be at most 4`) and `'a Reset refusal after a LoadConfig that grew the report buffer is posted with its own text'` (`batch: Reset returned 1: canonical state characters at offset 12: …`), each asserting the Worker's exact events: `booted` from a Worker, the matching `stream`, that `error`, the matching `tables` and `done` with one error |
+| `tools/agreement/node/runtime.test.mjs` (`node --test`) | `firstDifferingStep` (equal, a state byte, a state length or only the hash differing, another step number, missing, cut-off and extra records), `readRecords` (each record's fields; a `RangeError` on a cut-off record) and `jiterpreterState` (on, off, each option, no accessor), on records built in memory; and `writeOutputFile` on a fresh `fs.mkdtemp` folder: a temporary file in the folder renamed over the target, then the other form removed, leaving only the target with the exact bytes; a write that fails, a write interrupted after half the bytes and a rename that fails each throw and leave the target and the other form as they were with no temporary file; an interrupted write with no earlier target leaves none; a child process that exits partway through the write leaves the earlier target whole; a failure to remove the other form throws with the new target in place; `replaces` equal to `file` is a `TypeError` |
 | `tools/agreement/node/tables.test.mjs` (`node --test`) | `compareTables` on fixture results: an identical pair matches, a flipped bit in a math or pose row reports that row, a NaN row matches any NaN and not a finite value |
-| `tools/agreement/node/server.test.mjs` (`node --test`) | [Served files](#served-files): 127.0.0.1 with a dynamic port; each content type with the file's bytes; COOP, COEP and `no-store` on every response (the 403, 404 and 204 included) and no `Content-Encoding`; the path-traversal 403; the four PUT forms answered 204 with no body and written exactly, each replacing its other form; the refused PUTs (build name, stream pattern, a `tables` stream, another extension, a 64 MiB + 1 byte chunked body, a build folder symlinked out of the work root) answered 403 with nothing written; the one-line `text/plain` body of a 403, a 404 and a 500 (a build folder that is a regular file); the 404; and `'serves the measurement page, its worker and the shared passes module'`: `/web/measure.html`, `/web/measure-worker.mjs` and `/lib/passes.mjs` with their content types, the file's bytes, COOP, COEP and `no-store`, and a `node-aot` PUT still refused with 403 and nothing written |
+| `tools/agreement/node/server.test.mjs` (`node --test`) | [Served files](#served-files): 127.0.0.1 with a dynamic port; each content type with the file's bytes; COOP, COEP and `no-store` on every response (the 403, 404 and 204 included) and no `Content-Encoding`; the path-traversal 403; the four PUT forms answered 204 with no body and written exactly, each replacing its other form; the refused PUTs (build name, stream pattern, a `tables` stream, another extension, a 64 MiB + 1 byte chunked body, a build folder symlinked out of the work root) answered 403 with nothing written; the one-line `text/plain` body of a 403, a 404 and a 500 (a build folder that is a regular file); the PUT renamed into place, its other form removed only after (`'a PUT renames its body into place: a hard link to the earlier x.records keeps its bytes'`, and `'a PUT whose rename fails answers 500 and leaves the other form, with no temporary file'`, with a non-empty directory where the body would be renamed to); the 404; and `'serves the measurement page, its worker and the shared passes module'`: `/web/measure.html`, `/web/measure-worker.mjs` and `/lib/passes.mjs` with their content types, the file's bytes, COOP, COEP and `no-store`, and a `node-aot` PUT still refused with 403 and nothing written |
 | `tools/agreement/node/measure.test.mjs` (`node --test`) | the measurement runner's parts that need no browser: see [measurement-report.md](measurement-report.md#tests) |

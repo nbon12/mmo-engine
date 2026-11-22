@@ -17,12 +17,23 @@
 //   runner's 'the jiterpreter is on or off as the build says' asserts it against a real runtime; these
 //   rows pin how a report is read.
 //
+// - writeOutputFile({ fs, directory, file, data, replaces }): the Node runner's and the agreement
+//   server's write of one build output. It writes a temporary file in the build folder, renames it over
+//   the target and only then removes the other form, so a failed write, or a process that dies partway,
+//   leaves the earlier target and other form as they were and never a cut-off target that `simcore
+//   agreement compare` would report as a divergence at the cut-off step. These rows run on a fresh
+//   `fs.mkdtemp` folder, through the real `node:fs/promises` or through it with one call made to fail.
+//
 // Every record here is built in memory by `record` below, independently of the module under test.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { firstDifferingStep, jiterpreterState, readRecords } from '../lib/runtime.mjs';
+import { firstDifferingStep, jiterpreterState, readRecords, writeOutputFile } from '../lib/runtime.mjs';
 
 /** One packed step record: `u32 step | u32 stateLength | state | u64 hash`, little-endian. */
 function record(step, state, hash) {
@@ -276,4 +287,210 @@ describe('jiterpreterState', () => {
             assert.deepEqual(jiterpreterState(row.runtime), row.expected);
         });
     }
+});
+
+describe('writeOutputFile', () => {
+    /** The real file system, with any of its three calls replaced and every call recorded by name. */
+    function fileSystem(overrides = {}) {
+        const calls = [];
+        const real = { writeFile, rename, rm };
+        const fs = {};
+        for (const name of Object.keys(real)) {
+            fs[name] = async (...args) => {
+                calls.push({ name, args });
+                return (overrides[name] ?? real[name])(...args);
+            };
+        }
+        return { fs, calls };
+    }
+
+    /** A fresh build folder holding `files` (name to contents), removed when the test ends. */
+    async function buildFolder(t, files = {}) {
+        const directory = await mkdtemp(join(tmpdir(), 'agreement-output-'));
+        t.after(() => rm(directory, { recursive: true, force: true }));
+        for (const [name, contents] of Object.entries(files)) {
+            await writeFile(join(directory, name), contents);
+        }
+        return directory;
+    }
+
+    /** Every file in `directory`, name to contents, in name order. */
+    async function contentsOf(directory) {
+        const names = (await readdir(directory)).sort();
+        return Object.fromEntries(await Promise.all(names.map(async (name) => [name, await readFile(join(directory, name))])));
+    }
+
+    /** The temporary file name `writeOutputFile` uses for `file`. */
+    const temporaryName = (file) => new RegExp(`^\\.${file.replaceAll('.', '\\.')}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.tmp$`);
+
+    const NEW_RECORDS = Buffer.from(concat(record(0, stateOf(0), hashOf(0)), record(1, stateOf(1), hashOf(1))));
+    const OLD_RECORDS = Buffer.from(concat(...serverParts()));
+    const OLD_ERROR = Buffer.from('Error: unsupported version 2; this reader supports version 1\n');
+    const NEIGHBOUR = Buffer.from('Error: the neighbour stream threw\n');
+
+    test('writes a temporary file in the folder, renames it over the target, then removes the other form', async (t) => {
+        const directory = await buildFolder(t, { 'x.error.txt': OLD_ERROR, 'x-2.error.txt': NEIGHBOUR });
+        const { fs, calls } = fileSystem();
+
+        await writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' });
+
+        assert.deepEqual(await contentsOf(directory), { 'x-2.error.txt': NEIGHBOUR, 'x.records': NEW_RECORDS });
+        assert.deepEqual(calls.map(({ name }) => name), ['writeFile', 'rename', 'rm']);
+        const [written, renamed, removed] = calls;
+        const temporary = written.args[0];
+        assert.equal(temporary.slice(0, directory.length + 1), `${directory}/`, 'the temporary file is in the build folder');
+        assert.match(temporary.slice(directory.length + 1), temporaryName('x.records'));
+        assert.equal(written.args[1], NEW_RECORDS);
+        assert.deepEqual(written.args[2], { flag: 'wx' }, 'the temporary file is created, never overwritten');
+        assert.deepEqual(renamed.args, [temporary, `${directory}/x.records`]);
+        assert.deepEqual(removed.args, [`${directory}/x.error.txt`, { force: true }]);
+    });
+
+    test('replaces a longer earlier target with exactly the new bytes', async (t) => {
+        const directory = await buildFolder(t, { 'x.records': OLD_RECORDS });
+
+        await writeOutputFile({ fs: { writeFile, rename, rm }, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' });
+
+        assert.ok(OLD_RECORDS.length > NEW_RECORDS.length);
+        assert.deepEqual(await contentsOf(directory), { 'x.records': NEW_RECORDS });
+    });
+
+    test('writes an error file in place of the output, removing the output', async (t) => {
+        const directory = await buildFolder(t, { 'tables.bin': OLD_RECORDS });
+
+        await writeOutputFile({ fs: { writeFile, rename, rm }, directory, file: 'tables.error.txt', data: 'boom\n', replaces: 'tables.bin' });
+
+        assert.deepEqual(await contentsOf(directory), { 'tables.error.txt': Buffer.from('boom\n') });
+    });
+
+    const failures = [
+        {
+            name: 'a write that fails before writing anything',
+            overrides: { writeFile: async () => { throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); } },
+            message: 'ENOSPC: no space left on device',
+            calls: ['writeFile', 'rm'],
+        },
+        {
+            name: 'a write interrupted after half the bytes',
+            overrides: {
+                writeFile: async (path, data, options) => {
+                    await writeFile(path, data.subarray(0, data.length >> 1), options);
+                    throw new Error('EIO: i/o error, write');
+                },
+            },
+            message: 'EIO: i/o error, write',
+            calls: ['writeFile', 'rm'],
+        },
+        {
+            name: 'a rename that fails',
+            overrides: { rename: async () => { throw new Error('EXDEV: cross-device link not permitted, rename'); } },
+            message: 'EXDEV: cross-device link not permitted, rename',
+            calls: ['writeFile', 'rename', 'rm'],
+        },
+    ];
+
+    for (const failure of failures) {
+        test(`${failure.name} throws and leaves the target and the other form as they were`, async (t) => {
+            const directory = await buildFolder(t, { 'x.records': OLD_RECORDS, 'x.error.txt': OLD_ERROR });
+            const { fs, calls } = fileSystem(failure.overrides);
+
+            await assert.rejects(
+                writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' }),
+                (error) => {
+                    assert.equal(error.message, failure.message);
+                    return true;
+                },
+            );
+
+            assert.deepEqual(await contentsOf(directory), { 'x.error.txt': OLD_ERROR, 'x.records': OLD_RECORDS }, 'no temporary file is left');
+            assert.deepEqual(calls.map(({ name }) => name), failure.calls);
+            assert.deepEqual(calls.at(-1).args, [calls[0].args[0], { force: true }], 'the one removal is of the temporary file');
+        });
+    }
+
+    test('an interrupted write with no earlier target leaves no target', async (t) => {
+        const directory = await buildFolder(t, { 'x.error.txt': OLD_ERROR });
+        const { fs } = fileSystem(failures[1].overrides);
+
+        await assert.rejects(
+            writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' }),
+            { message: 'EIO: i/o error, write' },
+        );
+
+        assert.deepEqual(await contentsOf(directory), { 'x.error.txt': OLD_ERROR });
+    });
+
+    test('a failure to remove the temporary file does not hide the write\'s error', async (t) => {
+        const directory = await buildFolder(t, { 'x.records': OLD_RECORDS });
+        const { fs } = fileSystem({
+            ...failures[1].overrides,
+            rm: async () => { throw new Error('EBUSY: resource busy or locked, rm'); },
+        });
+
+        await assert.rejects(
+            writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' }),
+            { message: 'EIO: i/o error, write' },
+        );
+
+        const names = (await readdir(directory)).sort();
+        assert.equal(names.length, 2, `the folder holds ${names.join(', ')}`);
+        assert.equal(names[1], 'x.records');
+        assert.match(names[0], temporaryName('x.records'), 'only the half-written temporary file is beside the target');
+        assert.deepEqual(await readFile(join(directory, 'x.records')), OLD_RECORDS);
+    });
+
+    test('a process that dies partway through the write leaves the target whole', async (t) => {
+        const directory = await buildFolder(t, { 'x.records': OLD_RECORDS, 'x.error.txt': OLD_ERROR });
+        // A child process writes half the new records to the temporary file, then exits with 7, as a
+        // runner killed mid-write would.
+        const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+            import { writeFile, rename, rm } from 'node:fs/promises';
+            import { writeOutputFile } from ${JSON.stringify(new URL('../lib/runtime.mjs', import.meta.url).href)};
+            const data = Buffer.from(${JSON.stringify(NEW_RECORDS.toString('base64'))}, 'base64');
+            const dying = async (path, bytes, options) => {
+                await writeFile(path, bytes.subarray(0, bytes.length >> 1), options);
+                process.exit(7);
+            };
+            await writeOutputFile({ fs: { writeFile: dying, rename, rm }, directory: ${JSON.stringify(directory)},
+                file: 'x.records', data, replaces: 'x.error.txt' });
+        `], { encoding: 'utf8' });
+
+        assert.equal(child.status, 7, `the child exits with 7 (stderr: ${child.stderr})`);
+        const names = (await readdir(directory)).sort();
+        assert.equal(names.length, 3, `the folder holds ${names.join(', ')}`);
+        assert.match(names[0], temporaryName('x.records'));
+        assert.deepEqual(names.slice(1), ['x.error.txt', 'x.records']);
+        assert.equal((await readFile(join(directory, names[0]))).length, NEW_RECORDS.length >> 1, 'the cut-off bytes are in the temporary file');
+        assert.deepEqual(await readFile(join(directory, 'x.records')), OLD_RECORDS, 'the target is the earlier one, whole');
+        assert.deepEqual(await readFile(join(directory, 'x.error.txt')), OLD_ERROR, 'the other form is untouched');
+    });
+
+    test('a failure to remove the other form throws with the new target in place', async (t) => {
+        const directory = await buildFolder(t, { 'x.error.txt': OLD_ERROR });
+        const { fs } = fileSystem({ rm: async () => { throw new Error('EACCES: permission denied, rm'); } });
+
+        await assert.rejects(
+            writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.error.txt' }),
+            { message: 'EACCES: permission denied, rm' },
+        );
+
+        assert.deepEqual(await contentsOf(directory), { 'x.error.txt': OLD_ERROR, 'x.records': NEW_RECORDS });
+    });
+
+    test('a target that would replace itself is refused before anything is written', async (t) => {
+        const directory = await buildFolder(t, { 'x.records': OLD_RECORDS });
+        const { fs, calls } = fileSystem();
+
+        await assert.rejects(
+            writeOutputFile({ fs, directory, file: 'x.records', data: NEW_RECORDS, replaces: 'x.records' }),
+            (error) => {
+                assert.ok(error instanceof TypeError, `${String(error)} is a TypeError`);
+                assert.equal(error.message, 'writeOutputFile: x.records cannot replace itself');
+                return true;
+            },
+        );
+
+        assert.deepEqual(calls, []);
+        assert.deepEqual(await contentsOf(directory), { 'x.records': OLD_RECORDS });
+    });
 });

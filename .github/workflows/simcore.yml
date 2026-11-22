@@ -12,10 +12,13 @@ name: SimCore
 #              Every step after the toolchain setup has its own timeout-minutes, so a step that hangs
 #              fails on its own (a failure, not a cancel), and a failed required step skips the steps
 #              after it up to compare. The optional Firefox and WebKit steps come after the required runs
-#              and share one deadline, 7 minutes after the toolchain setup: an install or run that cannot
-#              finish by then does not start, and one that would run past it is stopped. They therefore
-#              end by the deadline whatever they do, and compare, which takes seconds, keeps the rest of
-#              the job's 10 minutes (about 1 minute 50 seconds when the toolchain setup took a minute).
+#              and share one deadline, 7 minutes after the job's first step, which runs before checkout so
+#              that however long checkout and the toolchain setup take, the deadline does not move: an
+#              install or run that cannot finish by then does not start, and one that would run past it
+#              is stopped. They therefore end by the deadline whatever they do, and compare and the failure
+#              upload after it keep the rest of the job's 10 minutes: after `timeout`'s 10-second kill,
+#              compare's own 1-minute bound and the upload's 1 minute, with up to 30 seconds left for
+#              GitHub's job set-up before the first step (580 of the 600 seconds).
 #   measure:   the measurement job (US7, FR-030, FR-031; contracts/measurement-report.md). It runs the
 #              server benchmarks on the runner class, publishes the prebuilt interpreted build, installs
 #              the wasm-tools workload and publishes the relinked and AOT builds, or records why it could
@@ -28,10 +31,21 @@ name: SimCore
 #              threshold.
 #              Every step after the toolchain setup has its own timeout-minutes, and the relinked and AOT
 #              publishes bound `dotnet publish` with `timeout`, so a hang in an optional step (the
-#              workload, a publish, the sweeps) is recorded inside the job's 30 minutes instead of
+#              workload, a publish, the sweeps) is recorded inside the job's 90 minutes instead of
 #              cancelling the job: an unproduced mode with its reason, or a sweep without its summary.
-#              The agreement runs and compare run after an agreement run failed (not after a cancel), so
-#              the job summary and the uploaded report name what disagreed.
+#              The 90 minutes hold every step's own bound together (82 minutes) and 5 minutes for GitHub's
+#              job set-up, checkout and the two toolchain setups, which have none, so no mix of slow or
+#              hung steps reaches it; a normal run takes about 23.
+#              The agreement runs and compare run after an agreement run failed (not after a cancel), and
+#              so do the sweeps and the steps that measure, validate, show and upload the report, once
+#              the work directory is prepared and the steps each one reads from succeeded. A divergence
+#              therefore still fails the job (the gate steps have no continue-on-error), while the job
+#              summary and report/ name what disagreed, and so does the uploaded simcore-measurement
+#              report, with the diverged mode's agreement status Diverged, unless the diverged build's
+#              first committed step of flat-run-30hz differs from the server's first record: measure.mjs's
+#              cold-start check then fails the measurement (exit 1, no report), so validation, the report
+#              and its upload are skipped, and the job summary and simcore-measure-agreement-report alone
+#              name the divergence.
 # auto-merge.yml lists this workflow's name in its workflow_run trigger, so a pull request waits for it.
 # tests/workflows/test_simcore_workflow.py pins this file.
 on:
@@ -87,6 +101,18 @@ jobs:
     # SC-006: the whole suite, the browser Worker run included, finishes in under 10 minutes.
     timeout-minutes: 10
     steps:
+      # The job's first step, so the deadline is anchored to the job's start: checkout and the toolchain
+      # setup, which have no bound of their own, come after it and cannot move it later. It writes the
+      # publish output's served root and a work directory that does not exist yet, which
+      # `agreement prepare` requires, and the optional browsers' deadline in epoch seconds, 7 minutes
+      # from here. Every later step reads them from the environment; none of them needs the checkout.
+      - name: Name the app and work directories and the optional browsers' deadline
+        timeout-minutes: 1
+        run: |
+          echo "AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot" >> "$GITHUB_ENV"
+          echo "AGREEMENT_WORK=$RUNNER_TEMP/agreement-work" >> "$GITHUB_ENV"
+          echo "AGREEMENT_OPTIONAL_DEADLINE=$(( $(date +%s) + 7 * 60 ))" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,16 +127,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-
-      # The publish output's served root and a work directory that does not exist yet, which
-      # `agreement prepare` requires, and the optional browsers' deadline in epoch seconds, 7 minutes
-      # from here. Every later step reads them from the environment.
-      - name: Name the app and work directories and the optional browsers' deadline
-        timeout-minutes: 1
-        run: |
-          echo "AGREEMENT_APP=$RUNNER_TEMP/simcore-app/wwwroot" >> "$GITHUB_ENV"
-          echo "AGREEMENT_WORK=$RUNNER_TEMP/agreement-work" >> "$GITHUB_ENV"
-          echo "AGREEMENT_OPTIONAL_DEADLINE=$(( $(date +%s) + 7 * 60 ))" >> "$GITHUB_ENV"
 
       # Against the prebuilt runtime pack: no workload is installed in this job. The flag is what a
       # runner without the workload computes anyway; on an image that has wasm-tools it stops
@@ -160,12 +176,13 @@ jobs:
 
       # Firefox and WebKit are optional and come after the required runs. They share the deadline the
       # directories step set, so all four steps end by it (and `timeout`'s 10-second kill) and compare
-      # keeps the rest of the job's 10 minutes. An install must end 160 s before the deadline, so its run
-      # still has 150 s after the step change: it starts only with 30 s of that to spare and is stopped
-      # when it runs out. One that fails, is stopped or does not start skips its run, and compare reports
-      # that build as not run. A run starts only with 150 s left, more than Playwright's 2-minute test
-      # timeout, so Playwright still reports a stalled run first; one that starts and then disagrees,
-      # fails or is stopped at the deadline fails the job. Each step's own 3 minutes is a backstop.
+      # and the failure upload keep the rest of the job's 10 minutes. An install must end 160 s before
+      # the deadline, so its run still has 150 s after the step change: it starts only with 30 s of that
+      # to spare and is stopped when it runs out. One that fails, is stopped or does not start skips its
+      # run, and compare reports that build as not run. A run starts only with 150 s left, more than
+      # Playwright's 2-minute test timeout, so Playwright still reports a stalled run first; one that
+      # starts and then disagrees, fails or is stopped at the deadline fails the job. Each step's own
+      # 3 minutes is a backstop.
       - name: Install Firefox
         id: firefox
         timeout-minutes: 3
@@ -228,15 +245,17 @@ jobs:
 
       # The gate. It runs after a runner step failed too (not after a cancel), so the job summary and
       # the divergence reports name what disagreed. The default --require is node-interp,
-      # node-interp-nojit and chromium-worker.
+      # node-interp-nojit and chromium-worker. It takes seconds (about 2 after prepare built the CLI);
+      # its 1-minute bound and the failure upload's 1 minute are what the optional browsers' deadline
+      # leaves inside the job's 10 minutes.
       - name: Compare every build with the server
         if: ${{ !cancelled() }}
-        timeout-minutes: 3
+        timeout-minutes: 1
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$AGREEMENT_WORK" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the agreement report
         if: failure()
-        timeout-minutes: 2
+        timeout-minutes: 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simcore-agreement-report
@@ -245,8 +264,9 @@ jobs:
   measure:
     name: measure
     runs-on: ubuntu-latest
-    # The server benchmarks, three publishes, two agreement runs, the trig sweeps and the measurements.
-    timeout-minutes: 30
+    # The server benchmarks, three publishes, two agreement runs, the trig sweeps and the measurements:
+    # the sum of every step's bound and 5 minutes for the steps without one (the header above).
+    timeout-minutes: 90
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -266,12 +286,14 @@ jobs:
       # The full run (FR-030). Main exits 2 without the runner class and 1 unless this run exported every
       # benchmark it ran, so the export the measure step reads is always this run's.
       - name: Run the server benchmarks
+        id: benchmarks
         timeout-minutes: 15
         run: dotnet run -c Release --project benchmarks/MmoEngine.SimCore.Benchmarks -- --filter '*'
 
       # Before the workload, and with the flag the agreement job publishes with, so this mode is the
       # build the agreement job tested as node-interp on any runner image.
       - name: Publish the prebuilt interpreted build
+        id: publish-prebuilt
         timeout-minutes: 5
         run: dotnet publish src/MmoEngine.SimCore.Wasm -c Release -p:UsingBrowserRuntimeWorkload=false -o "$RUNNER_TEMP/publish/prebuilt"
 
@@ -378,9 +400,20 @@ jobs:
           fi
           dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK" --require "$REQUIRE" --summary "$GITHUB_STEP_SUMMARY"
 
+      # From here to the measurement upload, each step runs after the agreement gate above failed too,
+      # not only on the default success(), so a diverged relinked or AOT build is still measured and its
+      # report written, validated, shown and uploaded with that mode's agreement status Diverged; the
+      # failed gate step still fails the job. The exception is a build whose first committed step of
+      # flat-run-30hz differs from the server's first record: measure.mjs's cold-start check fails the
+      # measurement then (exit 1, no report), so validation, the report and its upload are skipped and
+      # the agreement report upload at the end carries the divergence. None runs after a cancel. Each
+      # needs the work directory prepared, so the benchmarks and the prebuilt publish passed (prepare
+      # has no `if`), and each needs the steps whose output it reads to have succeeded.
+      #
       # A measurement, not a gate: each function's maximum error in ulp goes to the job summary, and the
       # fixed trig table in the pull-request tests gates the error bounds (research.md R3).
       - name: Run the exhaustive math sweeps
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
         timeout-minutes: 10
         continue-on-error: true
         run: |
@@ -395,23 +428,35 @@ jobs:
           exit "$status"
 
       - name: Install the agreement tools
+        id: agreement-tools
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
         timeout-minutes: 2
         working-directory: tools/agreement
         run: npm ci
 
       # In tools/agreement, so npx runs the lockfile's Playwright and installs the Chromium it launches.
       - name: Install Chromium
+        id: chromium
+        if: ${{ !cancelled() && steps.agreement-tools.outcome == 'success' }}
         timeout-minutes: 4
         working-directory: tools/agreement
         run: npx playwright install --with-deps chromium
 
+      # Its tests use fakes for the browser, so they need the installed tools but not Chromium.
       - name: Test the measurement runner
+        id: runner-tests
+        if: ${{ !cancelled() && steps.agreement-tools.outcome == 'success' }}
         timeout-minutes: 2
         run: node --test tools/agreement/node/measure.test.mjs tools/agreement/node/server.test.mjs
 
       # Each mode is passed exactly once: --mode with its publish folder when it was produced, else
       # --unproduced with its publish step's reason, or the workload's when the publish was skipped.
+      # It reads the benchmarks' export, the prebuilt publish, the prepared work directory (and the
+      # report/agreement.json compare wrote there, when it ran) and Chromium, and it runs only once the
+      # runner's own tests passed.
       - name: Measure the WebAssembly builds
+        id: measure
+        if: ${{ !cancelled() && steps.benchmarks.outcome == 'success' && steps.publish-prebuilt.outcome == 'success' && steps.prepare.outcome == 'success' && steps.chromium.outcome == 'success' && steps.runner-tests.outcome == 'success' }}
         timeout-minutes: 8
         env:
           RELINKED_PRODUCED: ${{ steps.publish-relinked.outputs.produced }}
@@ -440,6 +485,8 @@ jobs:
       # The measurement gate is structural only: every listed measurement with its unit, the runner
       # class and the build mode (US7 Independent Test, SC-007). No number is compared with a threshold.
       - name: Validate the measurement report
+        id: validate
+        if: ${{ !cancelled() && steps.measure.outcome == 'success' }}
         timeout-minutes: 2
         run: dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- measure validate-report "$RUNNER_TEMP/simcore-measurement.json"
 
@@ -447,6 +494,7 @@ jobs:
       # artifact. It runs only after validation passed; valid JSON has no line that starts with `::`,
       # so the log reads no workflow command from it.
       - name: Show the measurement report
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
         timeout-minutes: 1
         run: |
           cat "$RUNNER_TEMP/simcore-measurement.json"
@@ -462,7 +510,9 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Only a report that passed validation is uploaded.
       - name: Upload the measurement report
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
         timeout-minutes: 2
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -27,9 +27,17 @@
  *   whose step number differs, or whose state bytes or hash differ; then, past the server's last
  *   record, the build's first extra record (its step, or the server's last step + 1 when it is cut
  *   off). It is `null` when both hold the same records.
+ * - `writeOutputFile({ fs, directory, file, data, replaces })` writes one build output (a
+ *   `<stream>.records`, `<stream>.error.txt`, `tables.bin` or `tables.error.txt`) into its build folder,
+ *   never in place: to a temporary file in that folder, which is then renamed over `file`, and only then
+ *   removes `replaces`, the output's other form. A write that fails, or a process that dies partway, so
+ *   never leaves `file` cut off (which `simcore agreement compare` would report as a divergence at the
+ *   cut-off step instead of the write's error), and leaves the earlier pair as it was. The Node runner
+ *   writes its outputs with it, and the agreement server writes each Worker PUT with it.
  *
- * This module runs in Node (`node/agreement.test.mjs`, `lib/measure.mjs`) and in a browser Worker
- * (`web/worker.mjs` imports it through the agreement server), so it uses no Node API. Byte arguments
+ * This module runs in Node (`node/agreement.test.mjs`, `lib/measure.mjs`, `lib/server.mjs`) and in a
+ * browser Worker (`web/worker.mjs` imports it through the agreement server), so it uses no Node API:
+ * `writeOutputFile` takes its file system as an argument, and the Worker never calls it. Byte arguments
  * are an `ArrayBuffer` or a view of one (a `Uint8Array`, a Node `Buffer`); a view's `byteOffset` and
  * `byteLength` are honoured.
  */
@@ -163,6 +171,47 @@ export function firstDifferingStep(server, build) {
     }
 
     return null;
+}
+
+/**
+ * Writes one build output to `<directory>/<file>` through a temporary file in `directory`, renames it over
+ * the target, and then removes `<directory>/<replaces>`, the output's other form.
+ *
+ * The temporary file is `.<file>.<random UUID>.tmp`, created with the `wx` flag so that nothing already
+ * there is overwritten. When the write or the rename fails, the temporary file is removed (a failure to
+ * remove it is not reported over the write's own error) and the error is thrown, so the target and the
+ * other form are left as they were. The other form is removed only once the target is in place; a failure
+ * to remove it is thrown too, with the new target in place.
+ *
+ * @param {{ fs: { writeFile: Function, rename: Function, rm: Function }, directory: string, file: string,
+ *   data: string | ArrayBufferView, replaces: string }} output `fs` is `node:fs/promises` or a stand-in
+ *   with its `writeFile`, `rename` and `rm`; `directory` is the build folder, which must exist; `file` and
+ *   `replaces` are names in it
+ * @returns {Promise<void>} once the target holds `data` and the other form is gone
+ * @throws {TypeError} `replaces` names the target itself, before anything is written
+ */
+export async function writeOutputFile({ fs, directory, file, data, replaces }) {
+    if (replaces === file) {
+        throw new TypeError(`writeOutputFile: ${file} cannot replace itself`);
+    }
+
+    const target = `${directory}/${file}`;
+    const temporary = `${directory}/.${file}.${globalThis.crypto.randomUUID()}.tmp`;
+    try {
+        await fs.writeFile(temporary, data, { flag: 'wx' });
+        await fs.rename(temporary, target);
+    } catch (error) {
+        try {
+            await fs.rm(temporary, { force: true });
+        } catch {
+            // The write's or the rename's error is the one the caller needs; a left temporary file is
+            // never read, since its name is no output's.
+        }
+
+        throw error;
+    }
+
+    await fs.rm(`${directory}/${replaces}`, { force: true });
 }
 
 /** The whole record at `offset`, or null when none starts there or it is cut off. */

@@ -10,18 +10,25 @@ that job depends on:
   build runs the suite (US2.7, FR-027), and the read-only token;
 - the SHA-pinned actions, the exact Playwright pin and the toolchains;
 - the agreement steps, their order and the compare gate (US2.7, SC-001), the 10-minute timeout
-  (SC-006), each step's own bound inside it, the optional browsers' shared deadline that leaves compare
-  the rest of the 10 minutes, and the three browser projects;
+  (SC-006), each step's own bound inside it, the optional browsers' shared deadline, set by the job's
+  first step so the toolchain setup cannot move it, that leaves compare and the failure upload after it
+  their own bounds inside the 10 minutes, and the three browser projects;
 - the `"SimCore"` entry in auto-merge.yml's workflow_run list, so the pull request waits for the gate,
-  that auto-merge's own check filter holds the merge on a failed or pending `agreement` check, and that
-  its decision step, run under bash with a stand-in gh, leaves the pull request alone or keeps it waiting
-  then and merges it only once the check passed;
+  that auto-merge's own check filter holds the merge on a registered `agreement` check run that failed
+  or is pending, and that its decision step, run under bash with a stand-in gh, leaves the pull request
+  alone or keeps it waiting then and merges it only once the check run passed (an `agreement` check run
+  that has not registered on the head commit yet is not waited for while auto-merge's REQUIRE_CHECKS
+  is "false", the open follow-up of the spec's Assumptions, which US2.7 does not state and nothing here
+  claims);
 - the `measure` job (US7.2, US7-IT, SC-007, FR-030, FR-031): the server benchmarks on the runner class,
   the prebuilt, relinked and AOT publishes in the contract's order, each mode recorded as produced or
   with its reason (a publish that does not finish within its `timeout` included), the relinked and AOT
   agreement gate, which fails the job when a runner or compare fails and still reports after a failed
-  run, each step's own bound inside the job's 30 minutes, the exhaustive trig sweeps that run only
-  there, and the measurement report validated, shown in the job log and summary, and then uploaded.
+  run, each step's own bound, which together fit in the job's 90 minutes, the exhaustive trig sweeps
+  that run only there, and the measurement run, its report validated, shown in the job log and summary,
+  and then uploaded, after a failed agreement gate too, so a diverged build's report reaches the
+  artifact whenever the measurement writes one (not when the build's first step of flat-run-30hz is
+  not the server's: measure.mjs fails the measurement then, and only the agreement report is uploaded).
 
 The suite itself (the per-stream, batch, perturbation, refusal and tables checks) is
 tools/agreement/node/agreement.test.mjs and tools/agreement/specs/worker.spec.mjs. The measurement
@@ -87,22 +94,28 @@ TOOLCHAIN_ACTIONS = ("actions/checkout@", "actions/setup-dotnet@", "actions/setu
 
 REQUIRED_BUILDS = "node-interp,node-interp-nojit,chromium-worker"
 
-# The optional browsers' shared deadline (SC-006): the agreement job's directories step sets
-# AGREEMENT_OPTIONAL_DEADLINE this many seconds after it runs, right after the toolchain setup. An
-# install must end OPTIONAL_INSTALL_RESERVE seconds before it and starts only with OPTIONAL_INSTALL_MINIMUM
-# seconds to spare; a run starts only with OPTIONAL_RUN_MINIMUM seconds left, more than Playwright's test
-# timeout, and stops at the deadline. `timeout` kills a stopped step OPTIONAL_KILL_GRACE seconds after it
-# asks it to end.
+# The optional browsers' shared deadline (SC-006): the agreement job's directories step, the job's first
+# step, sets AGREEMENT_OPTIONAL_DEADLINE this many seconds after it runs, before checkout and the
+# toolchain setup. An install must end OPTIONAL_INSTALL_RESERVE seconds before it and starts only with
+# OPTIONAL_INSTALL_MINIMUM seconds to spare; a run starts only with OPTIONAL_RUN_MINIMUM seconds left, more
+# than Playwright's test timeout, and stops at the deadline. `timeout` kills a stopped step
+# OPTIONAL_KILL_GRACE seconds after it asks it to end.
 OPTIONAL_DEADLINE = 7 * 60
 OPTIONAL_INSTALL_RESERVE = 160
 OPTIONAL_INSTALL_MINIMUM = 30
 OPTIONAL_RUN_MINIMUM = 150
 OPTIONAL_KILL_GRACE = 10
-# The budget the deadline is checked against [estimate]: GitHub's checkout, setup-dotnet and setup-node
-# before the directories step, and compare (2.5 s on a prepared work directory here) and the failure
-# upload after the optional steps.
-TOOLCHAIN_ALLOWANCE = 60
-COMPARE_RESERVE = 90
+# The budget the deadline is checked against [estimate]: GitHub's own "Set up job", which downloads the
+# job's actions before its first step and is the only time the job's 10 minutes count before the
+# directories step (seconds on a hosted runner). Checkout, setup-dotnet and setup-node come after the
+# directories step, so they need no allowance. Compare's budget and the failure upload's after it are
+# their own step bounds.
+SETUP_JOB_ALLOWANCE = 30
+
+# The measure job's steps without a bound of their own, GitHub's "Set up job", checkout, setup-dotnet and
+# setup-node, are given this many minutes together [estimate: well under a minute on a hosted runner, the
+# SDK download included] when every step's bound is summed against the job's timeout.
+MEASURE_SETUP_ALLOWANCE_MINUTES = 5
 OPTIONAL_BROWSERS = (("firefox", "Firefox"), ("webkit", "WebKit"))
 SHA_PINNED = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$"
 
@@ -330,6 +343,41 @@ def would_run(step, steps_context, failed=False, cancelled=False):
     status = {"success": not failed and not cancelled, "failure": failed, "cancelled": cancelled, "always": True}
     text = STATUS_FUNCTIONS.sub(lambda m: "true" if status[m.group(1)] else "false", text)
     return evaluate(text, {"steps": steps_context})
+
+
+def simulate_job(job, outcomes=None, outputs=None, cancel_after=None):
+    """Steps through the job as GitHub's runner does, deciding each step's `if` with would_run after the
+    steps before it. A step that runs ends with `outcomes[name]` (default "success") and, when it has an
+    id, leaves `outputs[id]` (default none); a step that does not run is "skipped" and leaves no outputs.
+    A failed step without continue-on-error makes failure() true and fails the job; one with
+    continue-on-error fails only itself (its conclusion is still "success"). The run is cancelled once
+    the step named `cancel_after` has ended.
+
+    Returns the names of the steps that ran, in order, the `steps` context they left and the job's
+    conclusion: "cancelled", "failure" or "success"."""
+    outcomes, outputs = outcomes or {}, outputs or {}
+    names = [step.get("name") for step in steps(job)]
+    for name in [*outcomes, *([cancel_after] if cancel_after else [])]:
+        if name not in names:
+            raise AssertionError(f"the {job} job has no step named {name!r}")
+    context, ran, failed, cancelled = {}, [], False, False
+    for step in steps(job):
+        name = step.get("name")
+        if would_run(step, context, failed=failed, cancelled=cancelled):
+            ran.append(name)
+            outcome, left = outcomes.get(name, "success"), outputs.get(step.get("id"), {})
+        else:
+            outcome, left = "skipped", {}
+        tolerated = outcome == "failure" and step.get("continue-on-error") is True
+        if outcome == "failure" and not tolerated:
+            failed = True
+        if "id" in step:
+            context[step["id"]] = {"outcome": outcome, "conclusion": "success" if tolerated else outcome,
+                                   "outputs": dict(left)}
+        if name == cancel_after:
+            cancelled = True
+    return SimpleNamespace(ran=ran, steps=context,
+                           conclusion="cancelled" if cancelled else "failure" if failed else "success")
 
 
 def render(template, context):
@@ -698,11 +746,12 @@ class TriggersAndPaths(unittest.TestCase):
     """US2.7: "**Given** a pull request that changes the shared core, its analyzer, its recorded streams,
     its runners or its build, **When** CI runs, **Then** the `SimCore` workflow's `agreement` job runs
     the agreement suite and fails on any divergent step, and its result gates the pull request:
-    auto-merge waits for the workflow and does not merge while the `agreement` check has failed or is
-    still running." FR-027: "The agreement suite MUST run in CI on every pull request that changes the
-    core, its analyzer, its recorded streams or its build (the `SimCore` workflow,
-    `.github/workflows/simcore.yml`), and its result MUST gate the pull request." This class is the
-    "runs" half; AgreementJob.test_compare_gates_the_job and AutoMerge are the gate."""
+    auto-merge waits for the workflow and does not merge while an `agreement` check run on the head
+    commit has failed or is still queued or running." FR-027: "The agreement suite MUST run in CI on
+    every pull request that changes the core, its analyzer, its recorded streams or its build (the
+    `SimCore` workflow, `.github/workflows/simcore.yml`), and its result MUST gate the pull request."
+    This class is the "runs" half; AgreementJob.test_compare_gates_the_job and AutoMerge are the gate.
+    A check run that has not registered on the head commit yet is the spec's Assumptions, not US2.7."""
 
     def test_runs_on_pull_requests_and_main_for_simcore_paths(self):
         for event in ("pull_request", "push"):
@@ -860,12 +909,15 @@ class AgreementJob(unittest.TestCase):
 
     def test_every_step_after_the_toolchain_setup_has_its_own_bound(self):
         # A step that hangs then fails on its own instead of the job being cancelled at 10 minutes, so
-        # compare (`!cancelled()`) still runs and the report is still uploaded (`failure()`).
+        # compare (`!cancelled()`) still runs and the report is still uploaded (`failure()`). The
+        # directories step, which sets the optional browsers' deadline, is the job's first step, before
+        # checkout and the two toolchain setups (test_optional_browsers_share_a_deadline_that_leaves_compare_its_time).
         job_bound = WORKFLOW["jobs"]["agreement"]["timeout-minutes"]
         all_job_steps = steps("agreement")
         toolchain = [i for i, step in enumerate(all_job_steps) if step.get("uses", "").startswith(TOOLCHAIN_ACTIONS)]
-        self.assertEqual(list(range(3)), toolchain, "checkout and the two toolchain setups come first")
-        for step in all_job_steps[3:]:
+        self.assertEqual([1, 2, 3], toolchain, "checkout and the two toolchain setups come right after the directories step")
+        self.assertEqual(0, run_env_step().index, "the directories step is the job's first step")
+        for step in all_job_steps[:1] + all_job_steps[4:]:
             with self.subTest(step=step.get("name")):
                 bound = step.get("timeout-minutes")
                 self.assertIsInstance(bound, int, "timeout-minutes is a whole number of minutes")
@@ -897,16 +949,39 @@ class AgreementJob(unittest.TestCase):
         # Whatever Firefox and WebKit do, their four steps end by one deadline: an install must end
         # OPTIONAL_INSTALL_RESERVE seconds before it, a run starts only with OPTIONAL_RUN_MINIMUM seconds
         # left and is stopped at it. So the job is not cancelled by optional steps that are slow or hang,
-        # and compare (`!cancelled()`) still reports inside the 10 minutes (SC-006).
+        # and compare (`!cancelled()`) still reports inside the 10 minutes (SC-006), and so does the
+        # failure upload after it.
         job_seconds = WORKFLOW["jobs"]["agreement"]["timeout-minutes"] * 60
         env = run_env_step()
         deadline = env.values.get("AGREEMENT_OPTIONAL_DEADLINE", "")
         self.assertRegex(deadline, r"^[0-9]+$", "AGREEMENT_OPTIONAL_DEADLINE is a whole number of epoch seconds")
         self.assertGreaterEqual(int(deadline), env.started + OPTIONAL_DEADLINE)
         self.assertLessEqual(int(deadline), env.ended + OPTIONAL_DEADLINE)
-        # The budget: the toolchain setup before the deadline's step, the deadline, `timeout`'s kill, and
-        # compare and the failure upload after it fit in the job's bound.
-        self.assertLessEqual(TOOLCHAIN_ALLOWANCE + OPTIONAL_DEADLINE + OPTIONAL_KILL_GRACE + COMPARE_RESERVE, job_seconds)
+        # Anchored to the job's start: the step that sets the deadline is the job's first, so checkout,
+        # setup-dotnet and setup-node, which have no bound of their own, run after it and however long
+        # they take cannot move the deadline later. Only GitHub's "Set up job" comes before it.
+        self.assertEqual(0, env.index, "the deadline is set by the job's first step")
+        self.assertNotIn("uses", steps("agreement")[0], "the first step is the directories step, not an action")
+        compare_index, compare = only_step("agreement", "agreement compare --work")
+        # The worst case before compare: GitHub's job set-up, then the deadline, by which every step
+        # between the directories step and compare that can still be running has ended (the four optional
+        # steps are cut off by it; a required step that is still running then has kept the optional ones
+        # from starting and is the run SC-006 fails), then `timeout`'s kill. Compare's own bound after that,
+        # and then the bound of the failure upload, which runs when compare fails or reaches its bound,
+        # fit in the job's 10 minutes, so each can use all of its bound and the job is still not cancelled.
+        compare_seconds = compare["timeout-minutes"] * 60
+        upload_index, upload = step_named("agreement", "Upload the agreement report")
+        self.assertEqual("failure()", condition(upload))
+        self.assertEqual(compare_index + 1, upload_index, "the failure upload comes right after compare")
+        self.assertEqual(upload_index, len(steps("agreement")) - 1, "the failure upload is the job's last step")
+        upload_seconds = upload["timeout-minutes"] * 60
+        after_deadline = SETUP_JOB_ALLOWANCE + OPTIONAL_DEADLINE + OPTIONAL_KILL_GRACE + compare_seconds + upload_seconds
+        self.assertLessEqual(after_deadline, job_seconds)
+        self.assertEqual(580, after_deadline,
+                         "30 s of job set-up, the 420 s deadline, the 10 s kill, compare's 60 s and the upload's 60 s")
+        optional = [step_named("agreement", name)[0] for _, title in OPTIONAL_BROWSERS
+                    for name in (f"Install {title}", f"Agreement in a {title} Worker")]
+        self.assertEqual(compare_index - 1, max(optional), "compare comes right after the last optional step")
         # A run that starts has more time than Playwright's own test timeout, so Playwright reports a
         # stalled run before the deadline stops it, and an install that ends in time leaves its run that much.
         self.assertGreater(OPTIONAL_RUN_MINIMUM * 1000, playwright_test_timeout_ms())
@@ -1145,21 +1220,29 @@ class MeasureJob(unittest.TestCase):
                           "aot": ("--mode", f"{run.runner_temp}/{NEW_MODES[1].out}")},
                          {mode: (option, value) for mode, option, value in modes})
 
-        # The report is validated, and nothing turns a failed validation into a pass.
+        # The report is validated whenever the measure step wrote it, after a failed agreement gate too
+        # (test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate), and nothing turns a
+        # failed validation into a pass.
         _, validate = step_named("measure", "Validate the measurement report")
         self.assertIn(f'measure validate-report "{MEASUREMENT_REPORT}"', command(validate))
         self.assertNotIn("continue-on-error", validate)
         self.assertNotIn("|| true", command(validate))
-        self.assertNotIn("if", validate)
+        self.assertEqual("validate", validate.get("id"))
+        self.assertEqual("!cancelled()&&steps.measure.outcome=='success'", condition(validate))
+        self.assertEqual("measure", measure.get("id"))
         self.assertNotIn("continue-on-error", WORKFLOW["jobs"]["measure"])
 
-        # Then uploaded: no `if`, so it runs only when validation passed, and a missing report fails it.
+        # Then uploaded only when validation passed, and a missing report fails it.
         _, upload = step_named("measure", "Upload the measurement report")
         self.assertRegex(upload.get("uses", ""), r"^actions/upload-artifact@[0-9a-f]{40}$")
         self.assertEqual("simcore-measurement", upload["with"]["name"])
         self.assertEqual("${{ runner.temp }}/simcore-measurement.json", upload["with"]["path"])
         self.assertEqual("error", upload["with"]["if-no-files-found"])
-        self.assertNotIn("if", upload)
+        self.assertEqual("!cancelled()&&steps.validate.outcome=='success'", condition(upload))
+        for outcome in ("success", "failure", "skipped"):
+            with self.subTest(upload_after_validation=outcome):
+                self.assertIs(outcome == "success", would_run(upload, {"validate": {"outcome": outcome}}))
+                self.assertIs(outcome == "success", would_run(upload, {"validate": {"outcome": outcome}}, failed=True))
         self.assertEqual(expand(MEASUREMENT_REPORT, run.runner_temp), expand(upload["with"]["path"], run.runner_temp))
 
     def test_runner_class_and_pinned_intrinsics_are_set(self):
@@ -1418,6 +1501,111 @@ class MeasureJob(unittest.TestCase):
         self.assertNotIn("node-interp-relinked", json.dumps(agreement_compare))
         self.assertNotIn("node-aot", json.dumps(agreement_compare))
 
+    def test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate(self):
+        """A relinked or AOT build that disagrees with the server fails the job, and is still measured: the
+        sweeps and the steps that write, validate, show and upload the report run after the failed gate
+        step (`!cancelled()` and their own inputs, not the default success()), so when the measurement
+        writes its report the simcore-measurement artifact exists on that run and its mode's
+        `agreement.status` is the `Diverged` that compare wrote to report/agreement.json
+        (AgreementCommandTests.CompareExitsOneOnADivergedBuildAndWritesItsReport pins compare's file;
+        measure.mjs's assembleReport copies the entry's status, as 'assembled report has exactly the
+        contract fields' pins). It writes none when the diverged build's first committed step of
+        flat-run-30hz is not the server's first record: measure.mjs's cold-start check fails the
+        measurement then, whatever report/agreement.json says (measure.test.mjs, 'every cold start's
+        first step is the server's first record of flat-run-30hz'), and the row for that case pins what
+        the job does: validation, the report and its upload are skipped, and the agreement report is
+        uploaded. They do not run after a cancel, nor when a step before the gate failed, and each waits
+        for the steps whose output it reads."""
+        produced = {"publish-relinked": {"produced": "true"}, "publish-aot": {"produced": "true"}}
+        relinked, aot, compare = (NEW_MODES[0].agreement, NEW_MODES[1].agreement, "Compare the new builds with the server")
+        sweeps, tools, chromium, runner_tests = ("Run the exhaustive math sweeps", "Install the agreement tools",
+                                                 "Install Chromium", "Test the measurement runner")
+        validate, show, upload = ("Validate the measurement report", "Show the measurement report",
+                                  "Upload the measurement report")
+        agreement_upload = "Upload the agreement report"
+        report_steps = (sweeps, tools, chromium, runner_tests, MEASURE_STEP, validate, show, upload)
+        every = [step.get("name") for step in steps("measure")]
+
+        def all_but(*names):
+            for name in names:
+                self.assertIn(name, every)
+            return [name for name in every if name not in names]
+
+        def through(name):
+            return every[:every.index(name) + 1]
+
+        # The gate steps fail the job: neither they nor the job continue on error.
+        for name in (relinked, aot, compare):
+            self.assertNotIn("continue-on-error", step_named("measure", name)[1], name)
+        self.assertNotIn("continue-on-error", WORKFLOW["jobs"]["measure"])
+        diverged = {relinked: "failure", compare: "failure"}
+        for label, outcomes, outputs, cancel_after, ran, conclusion in (
+                ("every build agrees", {}, produced, None, all_but(agreement_upload), "success"),
+                ("the relinked build diverged", diverged, produced, None, every, "failure"),
+                ("the AOT build diverged", {aot: "failure", compare: "failure"}, produced, None, every, "failure"),
+                ("only compare failed (a tables mismatch)", {compare: "failure"}, produced, None, every, "failure"),
+                ("the AOT build diverged and the relinked one was not produced", {aot: "failure", compare: "failure"},
+                 {"publish-relinked": {"produced": "false", "reason": "dotnet publish exited 1; see the publish-relinked step log"},
+                  "publish-aot": {"produced": "true"}}, None, all_but(relinked), "failure"),
+                ("the workload did not install", {"Install the wasm-tools workload": "failure"}, {}, None,
+                 all_but(NEW_MODES[0].publish, NEW_MODES[1].publish, relinked, aot, compare, agreement_upload), "success"),
+                ("the relinked build diverged and the measurement failed", {**diverged, MEASURE_STEP: "failure"},
+                 produced, None, all_but(validate, show, upload), "failure"),
+                # measure.mjs exits 1 when a cold start's first step is not the server's first record of
+                # flat-run-30hz, so a build that diverges there writes no report.
+                ("the AOT build diverged at flat-run-30hz's first step, which fails the measurement",
+                 {aot: "failure", compare: "failure", MEASURE_STEP: "failure"},
+                 produced, None, all_but(validate, show, upload), "failure"),
+                # The measurement is not a step that may fail quietly: it fails the job on its own.
+                ("every build agrees and the measurement failed", {MEASURE_STEP: "failure"},
+                 produced, None, all_but(validate, show, upload), "failure"),
+                ("the relinked build diverged and its report is invalid", {**diverged, validate: "failure"},
+                 produced, None, all_but(show, upload), "failure"),
+                ("the relinked build diverged and the agreement tools did not install", {**diverged, tools: "failure"},
+                 produced, None, all_but(chromium, runner_tests, MEASURE_STEP, validate, show, upload), "failure"),
+                ("the relinked build diverged and Chromium did not install", {**diverged, chromium: "failure"},
+                 produced, None, all_but(MEASURE_STEP, validate, show, upload), "failure"),
+                ("the relinked build diverged and the runner's tests failed", {**diverged, runner_tests: "failure"},
+                 produced, None, all_but(MEASURE_STEP, validate, show, upload), "failure"),
+                ("cancelled during the relinked agreement run", {relinked: "cancelled"}, produced, relinked,
+                 through(relinked), "cancelled"),
+                ("the benchmarks failed", {"Run the server benchmarks": "failure"}, produced, None,
+                 through("Run the server benchmarks"), "failure"),
+                ("the prebuilt publish failed", {"Publish the prebuilt interpreted build": "failure"}, produced, None,
+                 through("Publish the prebuilt interpreted build"), "failure"),
+                ("prepare failed", {"Prepare the agreement work directory": "failure"}, produced, None,
+                 through("Prepare the agreement work directory"), "failure")):
+            with self.subTest(label):
+                job = simulate_job("measure", outcomes, outputs, cancel_after)
+                self.assertEqual(ran, job.ran)
+                self.assertEqual(conclusion, job.conclusion)
+
+        # Each step's own condition, for the states the rows above pass through. After a failed gate every
+        # one of them runs once its inputs succeeded; after a cancel none does.
+        _, measure = step_named("measure", MEASURE_STEP)
+        inputs = ("benchmarks", "publish-prebuilt", "prepare", "chromium", "runner-tests")
+        ready = {step_id: {"outcome": "success"} for step_id in inputs}
+        self.assertEqual("!cancelled()&&" + "&&".join(f"steps.{step_id}.outcome=='success'" for step_id in inputs),
+                         condition(measure))
+        self.assertIs(True, would_run(measure, ready))
+        self.assertIs(True, would_run(measure, ready, failed=True), "after a failed agreement gate")
+        self.assertIs(False, would_run(measure, ready, failed=True, cancelled=True))
+        for step_id in inputs:
+            for outcome in ("failure", "skipped"):
+                with self.subTest(measure_input=step_id, outcome=outcome):
+                    self.assertIs(False, would_run(measure, {**ready, step_id: {"outcome": outcome}}, failed=True))
+        gated = {sweeps: "prepare", tools: "prepare", chromium: "agreement-tools", runner_tests: "agreement-tools",
+                 validate: "measure", show: "validate", upload: "validate"}
+        for name, needs in gated.items():
+            _, step = step_named("measure", name)
+            with self.subTest(step=name):
+                self.assertEqual(f"!cancelled()&&steps.{needs}.outcome=='success'", condition(step))
+                self.assertTrue(str(step["if"]).strip().startswith("${{"), step["if"])
+                for outcome in ("success", "failure", "skipped"):
+                    self.assertIs(outcome == "success", would_run(step, {needs: {"outcome": outcome}}, failed=True), outcome)
+                self.assertIs(False, would_run(step, {needs: {"outcome": "success"}}, failed=True, cancelled=True))
+        self.assertEqual(set(report_steps), set(gated) | {MEASURE_STEP})
+
     def test_prebuilt_build_is_published_before_the_workload(self):
         index, step = step_named("measure", "Publish the prebuilt interpreted build")
         text = command(step)
@@ -1457,14 +1645,46 @@ class MeasureJob(unittest.TestCase):
         self.assertLess(compare_index, index)
         self.assertLess(index, measure_index)
 
-    def test_job_times_out_after_thirty_minutes(self):
-        self.assertEqual(30, WORKFLOW["jobs"]["measure"]["timeout-minutes"])
+    def test_job_times_out_after_ninety_minutes(self):
+        # The sum of every step's own bound and the allowance for the steps without one
+        # (test_every_step_bound_fits_in_the_job_timeout), not a target for the run: a normal run takes
+        # about 23 minutes.
+        self.assertEqual(90, WORKFLOW["jobs"]["measure"]["timeout-minutes"])
+
+    def test_every_step_bound_fits_in_the_job_timeout(self):
+        # The job is never cancelled by its own steps: even if every step ran to its own bound in one run,
+        # the bounds together, with MEASURE_SETUP_ALLOWANCE_MINUTES for GitHub's job set-up, checkout,
+        # setup-dotnet and setup-node (the only steps without a bound), end inside the job's
+        # timeout-minutes. So a hung optional step is recorded (an unproduced mode with its reason, a sweep
+        # without its summary), and compare, the measurement and both uploads still run, however many
+        # steps are slow.
+        job_bound = WORKFLOW["jobs"]["measure"]["timeout-minutes"]
+        all_job_steps = steps("measure")
+        unbounded = [step.get("name") for step in all_job_steps if "timeout-minutes" not in step]
+        self.assertEqual(["Checkout repository", "Set up .NET", "Set up Node"], unbounded,
+                         "only checkout and the two toolchain setups have no bound of their own")
+        for step in all_job_steps:
+            if step.get("uses", "").startswith(TOOLCHAIN_ACTIONS):
+                continue
+            with self.subTest(step=step.get("name")):
+                self.assertIsInstance(step["timeout-minutes"], int)
+                self.assertNotIsInstance(step["timeout-minutes"], bool)
+        bounds = sum(step.get("timeout-minutes", 0) for step in all_job_steps)
+        self.assertEqual(82, bounds, "the benchmarks 15, the three publishes 5, 5 and 6, the workload 5, prepare 4, "
+                                     "the agreement runs and compare 3 each, the sweeps 10, the tools 2, Chromium 4, "
+                                     "the runner tests 2, the measurement 8, validation 2, the report 1 and the uploads 2 each")
+        self.assertLessEqual(bounds + MEASURE_SETUP_ALLOWANCE_MINUTES, job_bound)
+        # The header comment states the same budget.
+        header = re.sub(r"\s*#\s*", " ", WORKFLOW_PATH.read_text().split("\non:", 1)[0])
+        self.assertIn(f"inside the job's {job_bound} minutes", header)
+        self.assertIn(f"every step's own bound together ({bounds} minutes) and {MEASURE_SETUP_ALLOWANCE_MINUTES} minutes",
+                      header)
 
     def test_every_step_after_the_toolchain_setup_has_its_own_bound(self):
         # A step that hangs fails on its own, or for an optional step is recorded, instead of the job being
-        # cancelled at 30 minutes: an unproduced mode keeps its reason (FR-031), compare still reports and
-        # the failure upload still runs. The optional bounds are a budget (plan.md): the job's normal run
-        # plus the most one hung optional step can add still fits in the 30 minutes.
+        # cancelled: an unproduced mode keeps its reason (FR-031), compare still reports and the failure
+        # upload still runs. All the bounds together fit in the job's timeout
+        # (test_every_step_bound_fits_in_the_job_timeout), so no number of hung steps cancels it.
         job_bound = WORKFLOW["jobs"]["measure"]["timeout-minutes"]
         all_job_steps = steps("measure")
         toolchain = [i for i, step in enumerate(all_job_steps) if step.get("uses", "").startswith(TOOLCHAIN_ACTIONS)]
@@ -1545,13 +1765,16 @@ class MeasureJob(unittest.TestCase):
         self.assertEqual(validate_index + 1, index, "it comes right after validation")
         self.assertLess(index, upload_index)
         self.assertEqual(1, step.get("timeout-minutes"))
-        # Only after validation passed: no `if`, so the implicit success() skips it after a failed
-        # validation, and nothing turns its own failure into a pass.
-        self.assertNotIn("if", step)
+        # Only after validation passed, also when the agreement gate failed before it, never after a
+        # cancel, and nothing turns its own failure into a pass.
+        self.assertEqual("!cancelled()&&steps.validate.outcome=='success'", condition(step))
         self.assertNotIn("continue-on-error", step)
-        self.assertIs(True, would_run(step, {}))
-        self.assertIs(False, would_run(step, {}, failed=True))
-        self.assertIs(False, would_run(step, {}, cancelled=True))
+        validated, invalid = {"validate": {"outcome": "success"}}, {"validate": {"outcome": "failure"}}
+        self.assertIs(True, would_run(step, validated))
+        self.assertIs(True, would_run(step, validated, failed=True), "after a failed agreement gate")
+        self.assertIs(False, would_run(step, invalid, failed=True), "after a failed validation")
+        self.assertIs(False, would_run(step, {"validate": {"outcome": "skipped"}}, failed=True), "without a report")
+        self.assertIs(False, would_run(step, validated, cancelled=True))
         # No expression is interpolated into the script; it reads the report through $RUNNER_TEMP.
         self.assertNotIn("${{", step["run"])
         self.assertNotIn("env", step)
@@ -1573,17 +1796,25 @@ class MeasureJob(unittest.TestCase):
                 self.assertEqual(written, run.stdout)
                 self.assertEqual(f"### simcore-measurement\n\n```json\n{report}\n```\n", run.summary)
                 self.assertEqual([], run.calls)
-        # A missing report fails the step, so the upload after it does not run either.
+        # A missing report fails the step (validation, which the upload also waits for, fails on it first).
         run = run_step("measure", "Show the measurement report")
         self.assertNotEqual(0, run.returncode)
 
 
 class AutoMerge(unittest.TestCase):
-    """US2.7's gate on the pull request: auto-merge.yml merges once every check on the pull request has
-    passed, and hears about a finished workflow only through its workflow_run list. Without "SimCore"
-    there, a pull request could merge before the agreement job reports.
+    """US2.7's gate on the pull request: auto-merge.yml merges once every check run registered on the
+    head commit has passed, and hears about a finished workflow only through its workflow_run list.
+    Without "SimCore" there, a pull request whose last check to finish is the agreement job's would not
+    be decided again when it reports.
     test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs runs the step that
-    decides, so what is pinned is the script's handling of the check, not only its filter."""
+    decides, so what is pinned is the script's handling of the check run, not only its filter.
+
+    These tests cover `agreement` check runs that have registered on the head commit: one that has
+    failed or was cancelled, is queued or is in progress, or has passed. They do not cover, and US2.7
+    no longer claims, a check run that has not registered yet: while auto-merge's REQUIRE_CHECKS is
+    "false" no check counts as missing, so auto-merge does not wait for it (the spec's Assumptions:
+    the window predates this feature, auto-merge.yml is not changed here, and it closes once the check
+    reports on every pull request, is made required and REQUIRE_CHECKS is "true")."""
 
     def test_auto_merge_waits_for_simcore(self):
         run = AUTO_MERGE.get("on", AUTO_MERGE.get(True))["workflow_run"]
@@ -1593,11 +1824,12 @@ class AutoMerge(unittest.TestCase):
         self.assertEqual(["completed"], run["types"])
 
     def test_a_failed_or_pending_agreement_check_holds_the_merge(self):
-        # The agreement job's check run, under the name GitHub gives it (the job's `name`), goes through
-        # auto-merge.yml's own CHECK_RUNS_JQ filter and its `failed=` and `pending=` awk lines: a failed
-        # run is a reason to leave the pull request alone, and a queued or in-progress one keeps it
-        # waiting. A job named `auto-merge` or `claude` would be filtered out, and the gate would never
-        # hold a merge.
+        """The agreement job's registered check run, under the name GitHub gives it (the job's `name`),
+        goes through auto-merge.yml's own CHECK_RUNS_JQ filter and its `failed=` and `pending=` awk lines:
+        a failed run is a reason to leave the pull request alone, and a queued or in-progress one keeps it
+        waiting. A job named `auto-merge` or `claude` would be filtered out, and the gate would never
+        hold a merge. Every row is a check run that the head commit's check-runs list holds; one that
+        has not registered is not in that list, and nothing here waits for it."""
         check = WORKFLOW["jobs"]["agreement"].get("name", "agreement")
         merge_steps = [step for step in AUTO_MERGE["jobs"]["auto-merge"]["steps"]
                        if "CHECK_RUNS_JQ" in step.get("env", {})]
@@ -1624,11 +1856,13 @@ class AutoMerge(unittest.TestCase):
                 self.assertEqual(pending, run_awk(programs["pending"], checks).strip())
 
     def test_the_merge_step_does_not_merge_while_the_agreement_check_failed_or_runs(self):
-        # auto-merge.yml's "Merge, wait, or leave it" step itself, run under bash with a stand-in gh, on a
-        # pull request that qualifies in every other way: the head commit's `agreement` check run decides.
-        # A failed or cancelled run is a reason to leave it alone, a queued or in-progress one keeps it
-        # waiting, and where this workflow had turned auto-merge on, it turns it off, since GitHub's
-        # auto-merge waits only for required checks. Only a passed run merges.
+        """auto-merge.yml's "Merge, wait, or leave it" step itself, run under bash with a stand-in gh, on a
+        pull request that qualifies in every other way: the `agreement` check run registered on the head
+        commit decides. A failed or cancelled run is a reason to leave it alone, a queued or in-progress
+        one keeps it waiting, and where this workflow had turned auto-merge on, it turns it off, since
+        GitHub's auto-merge waits only for required checks. Only a passed run merges. Each row's check
+        run is in the head commit's check-runs answer; a check run that has not registered yet is the
+        open follow-up of the class docstring, which no row claims to cover."""
         check = WORKFLOW["jobs"]["agreement"].get("name", "agreement")
         pr, repo, head = AUTO_MERGE_PR, AUTO_MERGE_REPO, AUTO_MERGE_HEAD
         check_runs_jq = auto_merge_step(AUTO_MERGE_STEP)["env"]["CHECK_RUNS_JQ"]

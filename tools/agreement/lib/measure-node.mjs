@@ -8,12 +8,15 @@
  *
  * It prints one JSON line on stdout and exits 0, or prints the error on stderr and exits 1.
  *
- * - `coldStart({app, work})`: `{importMs, createMs, firstStepMs, totalMs, buildInfo, jiterpreter}`.
- *   `importMs` and `createMs` are `bootRuntime`'s (`lib/runtime.mjs`), which it calls with its defaults,
- *   no runtime options. `firstStepMs` runs from the exports being ready until `LoadCollision`,
+ * - `coldStart({app, work})`: `{importMs, createMs, firstStepMs, totalMs, firstStep, buildInfo,
+ *   jiterpreter}`. `importMs` and `createMs` are `bootRuntime`'s (`lib/runtime.mjs`), which it calls with
+ *   its defaults, no runtime options. The first five fields are `timeFirstStep`'s (`lib/passes.mjs`, the
+ *   sequence the Worker times): `firstStepMs` runs from the exports being ready until `LoadCollision`,
  *   `LoadConfig`, `Reset` and `StepQueued(1)` on `flat-run-30hz`'s first command have returned 0, 0, 0
- *   and 1. `totalMs` is the three added: the time to the first completed step. `buildInfo` is the
- *   runtime's six `runtimeBuildInfo` fields the report records, and `jiterpreter` the jiterpreter state
+ *   and 1, `totalMs` is the three intervals added (the time to the first completed step), and
+ *   `firstStep` is the `{step, hash}` of the record that step committed, which `lib/measure.mjs` checks
+ *   against the server's first record. `buildInfo` is the runtime's six `runtimeBuildInfo` fields the
+ *   report records, and `jiterpreter` the jiterpreter state
  *   the booted runtime reported (`jiterpreterState`: `{traces, interpEntry, jitCall}`, or null when the
  *   runtime cannot report it), from which `lib/measure.mjs` writes the report's `runtime.jiterpreter`.
  * - `stepCosts({app, work})`: one entry per step kind, `{kind, scenario, batch: 1, steps, meanNs, p99Ns}`,
@@ -32,15 +35,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-    COLD_START_SCENARIO,
-    COMMAND_SIZE,
-    MeasurementError,
-    STEP_KINDS,
-    expectLoad,
-    readStopText,
-    stepKindCosts,
-} from './passes.mjs';
+import { COMMAND_SIZE, MeasurementError, STEP_KINDS, stepKindCosts, timeFirstStep } from './passes.mjs';
 import { bootRuntime } from './runtime.mjs';
 
 /** The `runtimeBuildInfo` fields the report records (contracts/wasm-api.md#boot). */
@@ -64,40 +59,21 @@ class UsageError extends Error {
 }
 
 /**
- * One cold start of the build: boot it, then load the world and step `flat-run-30hz`'s first command.
+ * One cold start of the build: boot it, then load the world and step `flat-run-30hz`'s first command
+ * with `timeFirstStep`.
  *
  * @param {{ app: string, work: string }} options the publish output's `wwwroot` and the work directory
  * @returns {Promise<{ importMs: number, createMs: number, firstStepMs: number, totalMs: number,
- *   buildInfo: object, jiterpreter: { traces: boolean, interpEntry: boolean, jitCall: boolean } | null }>}
+ *   firstStep: { step: number, hash: string }, buildInfo: object,
+ *   jiterpreter: { traces: boolean, interpEntry: boolean, jitCall: boolean } | null }>}
  * @throws {MeasurementError} an input is missing, or a call returned another code than it must
  */
 export async function coldStart({ app, work }) {
     const inputs = await readInputs(work);
-    const first = inputs.get(COLD_START_SCENARIO);
-    const firstCommand = first.commands.slice(0, COMMAND_SIZE);
 
     const booted = await boot(app);
-    const E = booted.exports;
-    const start = performance.now();
-    expectLoad(E, 'LoadCollision', E.LoadCollision(first.collision));
-    expectLoad(E, 'LoadConfig', E.LoadConfig(first.config));
-    expectLoad(E, 'Reset', E.Reset(first.initialState, first.salt));
-    const commandView = E.CommandBuffer();
-    commandView.set(firstCommand, 0);
-    const committed = E.StepQueued(1);
-    const firstStepMs = performance.now() - start;
-
-    commandView.dispose();
-    if (committed !== 1) {
-        throw new MeasurementError(stepFailure(E, committed));
-    }
-
-    const { importMs, createMs } = booted.timings;
     return {
-        importMs,
-        createMs,
-        firstStepMs,
-        totalMs: importMs + createMs + firstStepMs,
+        ...timeFirstStep(booted.exports, inputs, () => performance.now(), booted.timings),
         buildInfo: pickBuildInfo(booted.buildInfo),
         jiterpreter: booted.jiterpreter ?? null,
     };
@@ -202,24 +178,6 @@ async function boot(app) {
         return await bootRuntime(url);
     } catch (error) {
         throw new MeasurementError(`cannot boot ${url}: ${error?.message ?? String(error)}`, { cause: error });
-    }
-}
-
-/** Why the cold start's `StepQueued(1)` did not commit its step. */
-function stepFailure(E, committed) {
-    if (committed < 0) {
-        return `StepQueued(1) refused the call: ${committed}`;
-    }
-
-    if (committed > 1) {
-        return `StepQueued(1) committed ${committed} steps, more than it was asked to`;
-    }
-
-    const view = E.ReportBuffer();
-    try {
-        return `StepQueued(1) committed ${committed} steps: ${readStopText(view)}`;
-    } finally {
-        view.dispose();
     }
 }
 

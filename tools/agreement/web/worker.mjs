@@ -14,9 +14,11 @@
  *   `firstDifferingStep`: `name`, `steps` (the manifest's step count), `match` and `firstMismatchStep`
  *   (null on a match). When `RunStream` throws, its message is `PUT` to `<stream>.error.txt`, which
  *   `simcore agreement compare` reports in place of the records, and posted as `error`.
- * - `batch`, once per stream with a `batch` entry, in manifest order: `LoadCollision`, `LoadConfig` (then
- *   a fresh `ReportBuffer()` view, the old one disposed) and `Reset(initialState, salt)` each return 0;
- *   the stream's commands are queued through `StepQueued` in batches of 1, 3 and 16, cycling and clamped
+ * - `batch`, once per stream with a `batch` entry, in manifest order: `LoadCollision`, `LoadConfig` and
+ *   `Reset(initialState, salt)` each return 0, checked by `loadWorld` (`lib/passes.mjs`), which reads a
+ *   refusal's text through its own fresh `ReportBuffer()` view; a fresh `ReportBuffer()` view then
+ *   replaces the old one, which is disposed; the stream's commands are queued through `StepQueued` in
+ *   batches of 1, 3 and 16, cycling and clamped
  *   to what remains, each returning its count; the concatenated records must equal `RunStream`'s byte
  *   for byte, as the Node runner checks: `name`, `match` and `firstMismatchStep`.
  * - `tables`, once: `EvaluateTables(tables/inputs.bin, tables/config.bin)`, the result `PUT` to
@@ -36,6 +38,7 @@
  * run's; the jiterpreter-off build is a Node run.
  */
 
+import { loadWorld } from '../lib/passes.mjs';
 import { bootRuntime, firstDifferingStep } from '../lib/runtime.mjs';
 import { compareTables } from '../lib/tables.mjs';
 
@@ -172,8 +175,11 @@ async function runStream(exports, entry, output, fail) {
 /**
  * One batchable stream through `StepQueued`, compared with `RunStream`: the first step where the batched
  * records differ, or null when they are equal. `report.view` is the current `ReportBuffer()` view, replaced
- * (and the old one disposed) after `LoadConfig` returns 0. A load call or `StepQueued` that returns
- * another code throws.
+ * (and the old one disposed) once the world has loaded. A load call or `StepQueued` that returns another
+ * code throws; a load call's or `Reset`'s refusal is `loadWorld`'s `<call> returned <code>[: <text>]`, its
+ * text read through a fresh `ReportBuffer()` view, since a `LoadConfig` that returned `Ok` may have grown
+ * the buffer `report.view` was fetched from, and a `Reset` refusal is then written to the new one
+ * (`specs/worker-load-refusal.spec.mjs` pins both refusals).
  */
 async function runBatch(exports, entry, commands, report) {
     const [stream, collision, config, initialState, encoded] = await Promise.all([
@@ -188,12 +194,11 @@ async function runBatch(exports, entry, commands, report) {
     }
 
     const salt = BigInt.asIntN(64, BigInt(`0x${entry.batch.matchSalt}`));
-    expectLoaded('LoadCollision', exports.LoadCollision(collision), report.view);
-    expectLoaded('LoadConfig', exports.LoadConfig(config), report.view);
+    loadWorld(exports, { collision, config, initialState, salt });
+    // LoadConfig may have reallocated the report buffer, so the view the batches read is fetched after it.
     const fresh = exports.ReportBuffer();
     report.view.dispose();
     report.view = fresh;
-    expectLoaded('Reset', exports.Reset(initialState, salt), report.view);
 
     const commandCount = encoded.length / COMMAND_SIZE;
     const chunks = [];
@@ -243,16 +248,6 @@ async function runTables(exports, tables, build, output, fail) {
         fail('tables', messageOf(error));
         return null;
     }
-}
-
-/** Throws when a load call did not return 0, with the report buffer's text. */
-function expectLoaded(call, code, view) {
-    if (code === 0) {
-        return;
-    }
-
-    const text = new TextDecoder().decode(view.slice(4, 4 + u32(view.slice(0, 4), 0)));
-    throw new Error(`${call} returned ${code}${text === '' ? '' : `: ${text}`}`);
 }
 
 /**

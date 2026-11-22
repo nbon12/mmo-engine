@@ -12,11 +12,13 @@
  *
  * - `booted`: `inWorker` (`self` is a `WorkerGlobalScope`), `crossOriginIsolated`, `buildInfo` (the
  *   runtime's `runtimeBuildInfo`) and `moduleStartMs`, the clock reading on the module's first line.
- * - For `cold-start`, `coldStart`: `importMs` and `createMs` from `bootRuntime`, `firstStepMs` from the
- *   exports being ready until `LoadCollision`, `LoadConfig`, `Reset` and `StepQueued(1)` on
- *   `flat-run-30hz`'s first command have returned 0, 0, 0 and 1 (with the `CommandBuffer()` fetch and the
- *   write of that command between the last two, as the Node half times it), and `totalMs`, the three
- *   added: the time to the first completed step.
+ * - For `cold-start`, `coldStart`: `timeFirstStep`'s fields (`lib/passes.mjs`, the sequence the Node
+ *   half times), with `bootRuntime`'s timings: `importMs` and `createMs`; `firstStepMs`, from the exports
+ *   being ready until `LoadCollision`, `LoadConfig`, `Reset` and `StepQueued(1)` on `flat-run-30hz`'s
+ *   first command have returned 0, 0, 0 and 1 (with the `CommandBuffer()` fetch and the write of that
+ *   command between the last two); `totalMs`, the three added: the time to the first completed step;
+ *   and `firstStep`, the `{step, hash}` of the record that step committed, which `lib/measure.mjs` checks
+ *   against the server's first record.
  * - For `steps`, one `steps` message per step kind, in the report's order: `{kind, scenario, batch: 16,
  *   steps, meanNs, p99Ns}` from `stepKindCosts` (`lib/passes.mjs`, the loop the Node half runs) with
  *   `StepQueued(16)` per batch, timed with `performance.now()` (`unitNs: 1e6`), because the browser's
@@ -30,14 +32,12 @@
 
 import { bootRuntime } from '../lib/runtime.mjs';
 import {
-    COLD_START_SCENARIO,
     COMMAND_SIZE,
     MeasurementError,
     STEP_KINDS,
     WORKER_BATCH,
-    expectLoad,
-    readStopText,
     stepKindCosts,
+    timeFirstStep,
 } from '../lib/passes.mjs';
 
 /**
@@ -81,41 +81,13 @@ async function run(which) {
     });
 
     if (which === 'cold-start') {
-        post({ type: 'coldStart', ...firstStep(booted, inputs) });
+        post({ type: 'coldStart', ...timeFirstStep(booted.exports, inputs, () => performance.now(), booted.timings) });
     } else {
         const timing = { batch: WORKER_BATCH, now: () => performance.now(), unitNs: 1e6 };
         for (const entry of stepKindCosts(booted.exports, inputs, timing)) {
             post({ type: 'steps', ...entry });
         }
     }
-}
-
-/**
- * The cold start's first step, timed from the exports being ready, with the boot's own timings.
- *
- * @returns {{ importMs: number, createMs: number, firstStepMs: number, totalMs: number }}
- */
-function firstStep(booted, inputs) {
-    const first = inputs.get(COLD_START_SCENARIO);
-    const firstCommand = first.commands.slice(0, COMMAND_SIZE);
-    const E = booted.exports;
-
-    const start = performance.now();
-    expectLoad(E, 'LoadCollision', E.LoadCollision(first.collision));
-    expectLoad(E, 'LoadConfig', E.LoadConfig(first.config));
-    expectLoad(E, 'Reset', E.Reset(first.initialState, first.salt));
-    const commandView = E.CommandBuffer();
-    commandView.set(firstCommand, 0);
-    const committed = E.StepQueued(1);
-    const firstStepMs = performance.now() - start;
-
-    commandView.dispose();
-    if (committed !== 1) {
-        throw new MeasurementError(stepFailure(E, committed));
-    }
-
-    const { importMs, createMs } = booted.timings;
-    return { importMs, createMs, firstStepMs, totalMs: importMs + createMs + firstStepMs };
 }
 
 /**
@@ -178,24 +150,6 @@ async function boot() {
         return await bootRuntime(url);
     } catch (error) {
         throw new MeasurementError(`cannot boot ${url}: ${messageOf(error)}`, { cause: error });
-    }
-}
-
-/** Why the cold start's `StepQueued(1)` did not commit its step. */
-function stepFailure(E, committed) {
-    if (committed < 0) {
-        return `StepQueued(1) refused the call: ${committed}`;
-    }
-
-    if (committed > 1) {
-        return `StepQueued(1) committed ${committed} steps, more than it was asked to`;
-    }
-
-    const view = E.ReportBuffer();
-    try {
-        return `StepQueued(1) committed ${committed} steps: ${readStopText(view)}`;
-    } finally {
-        view.dispose();
     }
 }
 

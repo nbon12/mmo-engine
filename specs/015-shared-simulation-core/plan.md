@@ -2413,6 +2413,208 @@ The design documents settled these points, which the spec leaves open. They are 
   four-column tab stop); and a closing run followed by a tab still closes. Each new row fails when its
   rule is broken. The section check's message and T311's and T312's text now say "bash block", not
   ```` ```bash ```` block, since a `~~~bash` block counts too.
+- **T322 (second independent review), T275, T287 and T288: the Node runner writes its outputs
+  through a temporary file, with the server's PUT.** The runner's `writeOutput` removed the output's
+  other form and then wrote the output in place, so a write that failed, or a run that died partway,
+  left `<build>/<stream>.records` cut off, and `agreement compare` reported a divergence at the
+  cut-off step instead of the write's error; `lib/server.mjs` also said its write-temp, rename,
+  remove order was "as the Node runner does", which it was not. The order now lives in one exported
+  helper, `writeOutputFile({ fs, directory, file, data, replaces })` in `lib/runtime.mjs`: a
+  `.<file>.<uuid>.tmp` in the build folder (flag `wx`), renamed over the target, then the other form
+  removed; a failed write or rename removes the temporary file and throws its own error. The runner
+  and the server's PUT both call it, and the server's comment now names it. It is in `runtime.mjs`,
+  which the runner already imports, and the file system is passed in (`node:fs/promises`'s
+  `writeFile`, `rename`, `rm`) so the module still uses no Node API and the Worker can keep
+  importing it. New `writeOutputFile` rows of `node/runtime.test.mjs` pin the calls
+  and the result, each failure (a failing, an interrupted and a renaming failure, no earlier target,
+  a failing clean-up), a child process that exits mid-write, and a self-replace; the old in-place
+  write fails eight of them, removing the other form first fails the same eight, and skipping the
+  clean-up fails four. A real node-interp run still passes 90 of 90, removes stale
+  `flat-run-30hz.error.txt` and `tables.error.txt` on a rerun, and compare prints
+  `node-interp: match, 69 streams, 17192 steps, tables match`.
+- **T320 (second spec-test review) and T322 (second independent review), T289, T302, T304, T306,
+  T307 and T309: a cold start must show the step it timed, both halves time it with one function, and
+  a refused load's text is read through a fresh report buffer.** Nothing tested that a cold start
+  completed a step or that `firstStepMs` covered it: replacing `E.StepQueued(1)` with `1` in
+  `measure-node.mjs` or in `measure-worker.mjs`, which each held a copy of the sequence, left every
+  test green, and `validate-report` only checks `median > 0` and `p90 >= median`. The sequence
+  (`LoadCollision`, `LoadConfig`, `Reset`, the first command written, `StepQueued(1)`, the clock read
+  before and after) and the totals now live once, in `timeFirstStep(E, inputs, now, timings)` in
+  `lib/passes.mjs`, which both halves call. After the clock it reads the record `StepQueued(1)`
+  committed from a fresh `ReportBuffer()` view (the header must hold exactly one whole record) and
+  returns it as `firstStep`, `{step, hash}`, which both halves report. `measure.mjs` reads the
+  server's first record of `flat-run-30hz` from `<work>/server/flat-run-30hz.records` once the ten
+  Node cold starts have run, and fails the mode, naming the runtime and the cold start, unless every
+  cold start's `firstStep` has its step and hash, so the `measure` job proves a real step happened in
+  Node and in the Chromium Worker. The record is read after the ten Node cold starts, not before them,
+  so an unprepared work directory still fails as the first Node cold start's own error. The hash is a
+  host-free check: `StepQueued`'s report buffer already holds the record, so the host is unchanged
+  and no Playwright spec was needed. New tests pin it: `'a cold start times its load calls, first
+  command and StepQueued(1) as one interval'` (fake exports that log every call and a clock that moves
+  7 ms only inside `StepQueued`: the exact call order, the first command written before the step,
+  `firstStepMs` 7, `totalMs` exact, each failure's exact error) and `'every cold start's first step is
+  the server's first record of flat-run-30hz'` (`measureMode` with fakes: another hash, another step,
+  the second record, no or a malformed `firstStep`, in either runtime, and a missing, empty or cut-off
+  records file each fail with their line). `'a Node cold start reports the jiterpreter state its
+  runtime booted with'` now also checks the `firstStep` the script prints. Replacing the step with `1`
+  in `timeFirstStep` fails two tests (eight of their subtests); making only the Node half skip it
+  fails the child-process test; on the real prebuilt publish, making only the Worker skip it fails
+  the measurement with `interp-prebuilt: chromium cold start 1: StepQueued(1) returned 1, but the
+  report buffer holds 0 records in 0 bytes, not one whole step record`, and making it step another
+  stream's first command fails it with the hash line. Unchanged, the real `interp-prebuilt`
+  measurement exits 0 and its report validates. Second, the agreement Worker's batch check (T289)
+  read a failing `LoadCollision`'s or `LoadConfig`'s text through the `ReportBuffer()` view it fetched
+  before the calls. BatchStepper reallocates the report buffer only on a `LoadConfig` that returns
+  `Ok` (`GrowReport`) and writes a refusal into the buffer it has, so that read of a `LoadConfig`
+  refusal was right against the host. Every refusal is now read through a fresh view, as
+  `BatchStepper.ReportSegment`'s doc asks ("a caller reads it again after each load call"): this keeps
+  a `Reset` refusal right after a `LoadConfig` that grew the buffer, and holds even if a future host
+  reallocates on a refusal. Its `LoadCollision`, `LoadConfig` and `Reset` now go through `loadWorld`
+  in `lib/passes.mjs`, which the cold starts' `timeFirstStep` uses too: each call through
+  `expectLoad`, which reads the text through a fresh view and disposes it. `'a refused load call's
+  text is read through a fresh report buffer'` pins it with a `LoadConfig` that reallocates the buffer
+  on every call, a stricter stand-in than BatchStepper; making `loadWorld` read through a view held
+  from before `LoadConfig` fails it. The Worker's own call is pinned in a browser by
+  `specs/worker-load-refusal.spec.mjs` (the T320 repair bullet at the end of this list).
+- **T322 (second independent review), T290, T283, T310, T293 and T297, with T284 and T291 from the
+  T320 second spec-test review: the measure job reports a divergence, its bounds add up, the
+  agreement job's optional-browser deadline is anchored to the job's start, and US2 scenario 7 states
+  the registered-check gate that is built.** (A) In the `measure` job every step after the relinked
+  and AOT agreement gate ran on the default `success()`, so when the relinked or AOT build disagreed
+  with the server the sweeps, the tools and Chromium installs, the runner's tests, the measurement,
+  validation, showing and uploading the report were all skipped: `agreement.status` `Diverged`, which
+  the contract lists and `assembleReport` copies from `report/agreement.json` (compare writes it before
+  it exits 1; a probe of `assembleReport` on that file gives `{"build":"node-interp-relinked","status":"Diverged"}`),
+  could never reach an uploaded report, and `simcore-measurement` was missing on exactly the run where
+  it matters. Those steps now run on `!cancelled()` with the steps they read from: the sweeps and the
+  tools install on `prepare` (whose success means the benchmarks and the prebuilt publish passed),
+  Chromium and the runner's tests on the tools, the measurement on the benchmarks, the prebuilt
+  publish, `prepare`, Chromium and the runner's tests, validation on the measurement, and showing and
+  uploading the report on validation (except for a divergence in `flat-run-30hz`'s first record, which
+  fails the measurement: the later bullet "a diverged build's report is qualified"). The gate steps
+  keep no `continue-on-error`, so a divergence still fails the job.
+  `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate` walks the job
+  as GitHub decides it with a new `simulate_job` helper; putting the measurement, the upload or the
+  sweeps back on `success()`, validation on `always()`, dropping the prebuilt publish from the
+  measurement's condition, `continue-on-error` on the relinked run, or the tools' `prepare` anchor
+  each fails it. (B) The agreement job's deadline was set by a step after checkout, `setup-dotnet` and
+  `setup-node`, which have no bound, so a slow setup moved it later and could leave compare too little
+  of the 10 minutes, and a cancelled check reads as failed. The directories step is now the job's
+  first step (it needs no checkout), so only GitHub's job set-up precedes it, and compare's bound drops
+  from 3 minutes to 2 (it takes seconds): 30 s of set-up, the 420 s deadline, the 10 s kill and the 120 s
+  bound are 580 s of the 600. With compare at 3 minutes the sum is 640 s, which the test rejects, and
+  with the step after the toolchain the test fails too. Choosing a shorter deadline instead would have
+  kept compare's 3 minutes at the cost of a minute of Firefox and WebKit time. (D) The `measure`
+  job's header said a hang in an optional step was recorded inside its 30 minutes, but the steps'
+  own bounds sum to 82 minutes (the benchmarks 15, the publishes 5, 5 and 6, the sweeps 10, the
+  measurement 8 and the rest), so several slow steps could cancel the job before the upload. The
+  bounds were sized from measured runs (the T310 and T297 Phase 12 review bullet above), and
+  tightening them cannot bring 82 near 30: the steps every run needs (the benchmarks, the prebuilt
+  publish, prepare, the tools, Chromium, the runner's tests, the measurement, validation, the report
+  and its upload) have 45 minutes of bounds on their own. So the job's `timeout-minutes` is
+  now 90: the 82 and 5 minutes for GitHub's job set-up, checkout and the two toolchain setups. A normal
+  run still takes about 23 minutes; the 90 only means no mix of hung steps is a cancel.
+  `test_every_step_bound_fits_in_the_job_timeout` sums the bounds and checks the header; the timeout
+  test is renamed `test_job_times_out_after_ninety_minutes`. (C) After a push to a ready pull request,
+  auto-merge can read the head commit's check runs before the `agreement` check run has registered,
+  and with `REQUIRE_CHECKS` `"false"` nothing counts as missing. That window is older than this slice
+  and holds for every check, and T291 limits this slice to the one `workflow_run` entry, so
+  `auto-merge.yml` is unchanged: US2 scenario 7 now says auto-merge holds the pull request while a
+  registered `agreement` check run has failed or is queued or running, and that an unregistered one is
+  not waited for while `REQUIRE_CHECKS` is `"false"`. A new Assumptions bullet records why and what
+  closes it (the check reporting on every pull request, then required, then `REQUIRE_CHECKS` `"true"`);
+  the AutoMerge docstrings and the US2.7 coverage row say the tests cover registered check runs, and
+  the test names are unchanged.
+- **T320 (second spec-test review) and T322 (second independent review), T289, T302 and T304: the
+  cold start's one-record rule and the agreement Worker's own load call are pinned.** The verifiers of
+  the bullet above found two stated behaviours that no test held. (A) `timeFirstStep` requires the
+  report header after `StepQueued(1)` to hold exactly one whole record (contracts/wasm-api.md,
+  Measurement Worker step 3; measurement-report.md, Startup), but its only row for a 1 held no record:
+  loosening the check to accept two records, or letting a cut-off record escape as `readRecords`'
+  `RangeError`, left every test green. Two rows of `'a cold start times its load calls, first command
+  and StepQueued(1) as one interval'` now pin it: a 1 with two records (`... holds 2 records in 40
+  bytes, not one whole step record`) and a 1 whose header counts one record in 19 bytes (`... holds 1
+  records in 19 bytes, ...`, a `MeasurementError`), through a new `recordsLength` option of the test's
+  `fakeColdStart`; each loosening fails exactly one of them. (B) Restoring the Worker's old reads (its
+  pre-fix `runBatch`, or one that reads every load call's text through the view held from before the
+  calls) left the Node suites and `worker.spec.mjs` green, since the real host never reallocates on a
+  refusal and `worker.spec.mjs` exercises only the happy path. A new Playwright spec,
+  `tools/agreement/specs/worker-load-refusal.spec.mjs`, runs `web/page.html` and `web/worker.mjs` in
+  each project against a stand-in `_framework/dotnet.js` (the `fakeDotnetBuild` shape of
+  `node/measure.test.mjs`) over a one-stream work directory, both written to a temporary folder, so it
+  needs neither `AGREEMENT_APP` nor `AGREEMENT_WORK` and `worker.spec.mjs` is unchanged. Its
+  `LoadConfig` leaves `stale text of the old report buffer` in the buffer it replaces on every call.
+  It asserts the Worker's exact events for a `LoadConfig` refusal (`batch: LoadConfig returned 2:
+  ...`) and for a `Reset` refusal after a `LoadConfig` that grew the buffer (`batch: Reset returned 1:
+  ...`), the case the real host can produce. The pre-fix `runBatch` fails the first, and the
+  read-everything-through-the-old-view variant fails both. A browser spec was chosen over moving
+  `runBatch` into a `lib/` module, which would have added a served file and changed the Worker's
+  shape for a test. `npx playwright test --project <browser>` now runs three tests per project, which
+  quickstart.md and the Playwright configuration's comment say; the stand-in spec takes about a
+  second, inside the optional browsers' 150 s run window. `loadWorld` also gains a row
+  for a `Reset` refused with text after a `LoadConfig` that grew the buffer, and the comments of
+  `lib/passes.mjs`, `web/worker.mjs`, `lib/server.mjs` (which modules import `/lib/passes.mjs`) and
+  the test no longer say a refused `LoadConfig` may reallocate.
+- **T322 (second independent review), T275 and T287: the runner's and the server's use of
+  `writeOutputFile` is pinned where each lives.** The helper's rows in `node/runtime.test.mjs` call it
+  directly, so restoring the old in-place write in the runner's `writeOutput`, or in the server's
+  `put`, or removing the other form before the server's write, kept every test green. The Node runner
+  now ends with `'each output is renamed into place, never written over in place'`: once the runtime
+  has booted, `before` plants an earlier copy of the first stream's `.records` and of `tables.bin`,
+  each hard-linked to `.<file>.in-place-check` in the build folder, and the test asserts that each link
+  still holds exactly the planted bytes and that the output is another file. A rename leaves the link
+  the old file; an in-place write changes what it reads. `after` removes the links, and any planted
+  copy no test replaced, so compare reports a missing output rather than a divergence; the links' dot
+  names are no output's, so compare never reads them. `tables.bin` is planted as well as the first
+  stream because it is the second write a passing run makes, from another test. The bytes are compared
+  with `Buffer.equals`: a failing `deepEqual` on the 1.4 MB `tables.bin` made the test runner run out
+  of memory and die by `SIGKILL` instead of failing the test. `node/server.test.mjs` gains `'a PUT
+  renames its body into place: a hard link to the earlier x.records keeps its bytes'` and `'a PUT
+  whose rename fails answers 500 and leaves the other form, with no temporary file'` (a non-empty
+  directory stands where the body would be renamed to), and the contract's PUT row now says a failed
+  write or rename is a 500 that leaves the earlier pair. With the in-place write restored in
+  `writeOutput`, with it written inline only in the per-stream tests or only in the tables check, or
+  with the per-stream write dropped, the runner fails only the new test (90 pass, 1 fail); the
+  server's in-place `put` fails both new rows and removing the other form first fails the second. As
+  fixed, a real node-interp run passes 91 of 91 over planted stale `flat-run-30hz.error.txt` and
+  `tables.error.txt`, leaves no dot-file or temporary file, and `agreement compare --require
+  node-interp` prints `node-interp: match, 69 streams, 17192 steps, tables match` and
+  `agreement: match`.
+- **T322 (second independent review) and T320 (second spec-test review), T290, T283, T310, T297,
+  T284 and T291: a diverged build's report is qualified, the agreement job's failure upload is
+  budgeted too, and US2 scenario 7 no longer states the unregistered check run.** The verifiers of
+  the workflow bullet above (T290, T283, T310, ...) found three gaps in it. (A) It, the `measure`
+  job's header and step comment, contract step 5, T310 and the failed-gate test's docstring said a
+  diverged relinked or AOT build's report is always written, validated, shown and uploaded with
+  `agreement.status` `Diverged`. That fails when the build's first committed step of `flat-run-30hz`
+  differs from the server's first record, the likeliest way a whole build diverges (a float
+  difference on step 1): `measure.mjs`'s cold-start check, new in the same round (contract step 6),
+  then exits 1 before any report is assembled, whatever `report/agreement.json` says, so validation,
+  showing the report and the `simcore-measurement` upload are skipped, and only the job summary and
+  `simcore-measure-agreement-report` name the divergence. Letting the check accept the server's step
+  number with another hash for a mode that `agreement.json` lists as `Diverged` would make the claim
+  hold for every divergence, but `measure.mjs` and its tests are the measurement runner's, outside
+  this workflow fix, so the exception is now stated in those places and in quickstart.md, and that
+  change stays a follow-up. `test_the_report_is_written_and_uploaded_after_a_failed_agreement_gate`
+  gains a row for it (the AOT run, compare and the measurement fail; validation, the report and its
+  upload are skipped, the agreement report is uploaded and the job fails) and one for a measurement
+  that fails while every build agrees, which fails the job on its own: `continue-on-error` on the
+  measurement step fails that row, where it passed every row before. (B) The 580 s budget (30 s of
+  set-up, the 420 s deadline, the 10 s kill and compare's 120 s) covered compare but not the
+  `if: failure()` agreement upload after it, whose own 2 minutes were left 20 s when compare ran to its
+  bound. Compare's bound is now 1 minute and the upload's 1 minute: 30 + 420 + 10 + 60 + 60 = 580 of
+  the 600 s. A real compare after a node-interp run took about 2 s here, `dotnet run` included, so the
+  minute is a wide margin; keeping compare's 2 minutes would have cost a minute of the Firefox and
+  WebKit deadline. `test_optional_browsers_share_a_deadline_that_leaves_compare_its_time` asserts that
+  the upload is `failure()`, comes right after compare and is the job's last step, and sums both
+  bounds; compare or the upload back at 2 minutes, the upload before compare or on `always()`, or a
+  step after it each fail the test. (C) US2 scenario 7's sentence that an `agreement` check run that
+  has not registered is not waited for while `REQUIRE_CHECKS` is `"false"` put, inside an acceptance
+  scenario, a behaviour no test asserts. Pinning it would have made a known gap an acceptance
+  outcome, so the sentence is gone from the scenario, whose Then now names only the registered check
+  runs that the `AutoMerge` tests cover, and the existing Assumptions bullet says the scenario does
+  not state the unregistered case and no test claims it. The test docstrings that quoted the scenario,
+  the US2.7 coverage row and T284's note match; `auto-merge.yml` is unchanged.
 
 ## Delivery
 

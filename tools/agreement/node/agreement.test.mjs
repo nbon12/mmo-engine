@@ -11,7 +11,8 @@
  *   US4-IT's agreement half, and with `launcher-arc` they compare every shot direction, which is
  *   hashed state (US4.2b). `shots-at-known-distances` is US5-IT's agreement half. Each build's records
  *   go to `<build>/<stream>.records` (or the error to `<stream>.error.txt`) so that
- *   `simcore agreement compare` gates the job on them;
+ *   `simcore agreement compare` gates the job on them. They are written with `writeOutputFile` from
+ *   `lib/runtime.mjs`, through a temporary file renamed into place, which then removes the other form;
  * - `'the jiterpreter is on or off as the build says'`: the runtime's own report of its jiterpreter
  *   options (`jiterpreterState`) is all on for `node-interp` and all off for `node-interp-nojit`, so the
  *   two Node runs really are two code generators (the runtime ignores an unknown runtime option);
@@ -22,7 +23,15 @@
  *   (US3.8b, US5.5b, the bit half of SC-004);
  * - `'batch inputs through StepQueued equal RunStream'`: the browser's batched entry point (US2.6);
  * - `'refusals throw their expected message'`: refused before step 0, with a message naming the cause
- *   (US2.5, US6.5).
+ *   (US2.5, US6.5);
+ * - `'each output is renamed into place, never written over in place'`: the run really writes its
+ *   outputs through `writeOutputFile`. Before the first test, `before` plants an earlier copy of the
+ *   first stream's `.records` and of `tables.bin` and hard-links each to `.<file>.in-place-check` in the
+ *   build folder. A rename gives the output a new file, so the link keeps the planted bytes; a write
+ *   over the output in place changes them. `after` removes the links, and a planted copy that no test
+ *   replaced, so `simcore agreement compare` reports that output missing rather than diverging (a
+ *   process killed before that test leaves the copy, which compare reports as this build's divergence;
+ *   the runner's own failure is the cause).
  *
  * Environment, read at module top level before any test; a missing or unknown value fails the run:
  *
@@ -46,11 +55,11 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { JITERPRETER_OFF, bootRuntime, firstDifferingStep } from '../lib/runtime.mjs';
+import { JITERPRETER_OFF, bootRuntime, firstDifferingStep, writeOutputFile } from '../lib/runtime.mjs';
 import { compareTables } from '../lib/tables.mjs';
 
 /** The builds this runner can be (contracts/simcore-cli.md#build-names); the Worker builds are Playwright's. */
@@ -154,12 +163,45 @@ function messageOf(error) {
 }
 
 /**
- * Writes one of this build's outputs, and removes the file that would take its place, so a rerun on
- * the same work directory never leaves both a `.records` and an `.error.txt` for one stream.
+ * The outputs the in-place check plants an earlier copy of: the first stream's records, which its
+ * per-stream test writes, and `tables.bin`, which the tables check writes. Those are the two writes a
+ * passing run makes; an error file is written only when a call throws.
+ */
+const IN_PLACE_OUTPUTS = [...manifest.streams.slice(0, 1).map((stream) => `${stream.name}.records`), 'tables.bin'];
+
+/** The bytes planted in each of `IN_PLACE_OUTPUTS` before the first test. */
+const IN_PLACE_PLANTED = Buffer.from('planted before the run; an in-place write would change these bytes\n');
+
+/** The hard link to the planted copy of `file`; its dot name is no output's, so `agreement compare` never reads it. */
+function inPlaceLink(file) {
+    return join(BUILD_DIR, `.${file}.in-place-check`);
+}
+
+/** The file's bytes, or null when there is no file at `path`. */
+async function readIfPresent(path) {
+    try {
+        return await readFile(path);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+/** The file system `writeOutputFile` writes the outputs through. */
+const FILE_SYSTEM = { writeFile, rename, rm };
+
+/**
+ * Writes one of this build's outputs with `writeOutputFile`: to a temporary file in the build folder,
+ * renamed over the output, and only then removes the file that would take its place. So a rerun on the
+ * same work directory never leaves both a `.records` and an `.error.txt` for one stream, and a write that
+ * fails, or a run that dies partway, never leaves a cut-off `.records` that `simcore agreement compare`
+ * would report as a divergence at the cut-off step: the write's error fails the test instead.
  */
 async function writeOutput(fileName, data, replaces) {
-    await rm(join(BUILD_DIR, replaces), { force: true });
-    await writeFile(join(BUILD_DIR, fileName), data);
+    await writeOutputFile({ fs: FILE_SYSTEM, directory: BUILD_DIR, file: fileName, data, replaces });
 }
 
 /**
@@ -214,10 +256,27 @@ before(async () => {
     startedAt = new Date().toISOString();
     await mkdir(BUILD_DIR, { recursive: true });
     booted = await bootRuntime(pathToFileURL(join(APP, '_framework', 'dotnet.js')).href, { jiterpreter: JITERPRETER });
+
+    // The in-place check's arrange, once the runtime has booted: an earlier copy of each output, as a
+    // fresh file, with a hard link to it that no output write touches.
+    for (const file of IN_PLACE_OUTPUTS) {
+        await rm(inPlaceLink(file), { force: true });
+        await rm(join(BUILD_DIR, file), { force: true });
+        await writeFile(join(BUILD_DIR, file), IN_PLACE_PLANTED, { flag: 'wx' });
+        await link(join(BUILD_DIR, file), inPlaceLink(file));
+    }
 });
 
 after(async () => {
     await mkdir(BUILD_DIR, { recursive: true });
+    for (const file of IN_PLACE_OUTPUTS) {
+        await rm(inPlaceLink(file), { force: true });
+        const left = await readIfPresent(join(BUILD_DIR, file));
+        if (left !== null && left.equals(IN_PLACE_PLANTED)) {
+            await rm(join(BUILD_DIR, file), { force: true });
+        }
+    }
+
     const run = {
         build: BUILD,
         runtimeOptions: RUNTIME_OPTIONS,
@@ -455,6 +514,32 @@ test('refusals throw their expected message', async () => {
                 return true;
             },
             `${refusal.name}: RunStream must refuse the stream`,
+        );
+    }
+});
+
+// The runner writes its outputs through `writeOutputFile`, so each is renamed into place: the output is
+// a new file, and the link to the copy planted in `before` still holds the planted bytes. A write over
+// the output in place would leave the output the planted file, with the new bytes seen through the link.
+test('each output is renamed into place, never written over in place', async () => {
+    for (const file of IN_PLACE_OUTPUTS) {
+        const linked = await readIfPresent(inPlaceLink(file));
+        assert.ok(linked !== null, `${BUILD}: the link to the planted ${file} is gone`);
+        // Compared with `equals`, not `deepEqual`: a failing `deepEqual` on a whole `tables.bin` makes the
+        // test runner run out of memory reporting it.
+        if (!linked.equals(IN_PLACE_PLANTED)) {
+            assert.fail(
+                `${BUILD}: the planted ${file} was written over in place (the link now holds ${linked.length} bytes, `
+                    + `not the ${IN_PLACE_PLANTED.length} planted); the output must be renamed into place`,
+            );
+        }
+
+        const output = join(BUILD_DIR, file);
+        assert.ok(existsSync(output), `${BUILD}: ${file} is missing after the run`);
+        assert.notEqual(
+            statSync(output).ino,
+            statSync(inPlaceLink(file)).ino,
+            `${BUILD}: ${file} is still the planted file; the run never renamed an output into place`,
         );
     }
 });

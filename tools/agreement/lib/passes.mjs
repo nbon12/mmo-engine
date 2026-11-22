@@ -2,7 +2,8 @@
  * The step passes and percentiles of the WebAssembly measurement (spec 015, US7.2;
  * contracts/measurement-report.md#how-each-number-is-measured). The Node half (`lib/measure-node.mjs`)
  * and the Chromium Worker (`web/measure-worker.mjs`, through the agreement server's `GET /lib/passes.mjs`)
- * both import this module, so it uses no Node API.
+ * both import this module, and so does the agreement Worker (`web/worker.mjs`, for `loadWorld`), so it
+ * uses no Node API.
  *
  * - `nearestRank(samples, p)`: the p-th percentile by the nearest-rank method, the ⌈p / 100 · n⌉-th
  *   smallest of n samples, read from a sorted copy.
@@ -18,18 +19,34 @@
  * - `WORKER_BATCH`: 16, the commands per timed call in the Worker; `passLength(commandCount)`: the
  *   commands each pass plays in both halves, the stream's whole `WORKER_BATCH` batches.
  * - `expectLoad(E, call, code, scenario)`: throws naming a load call or `Reset` that did not return `Ok`,
- *   with the text it left in the report buffer.
+ *   with the text it left in the report buffer, read through a fresh `ReportBuffer()` view because an
+ *   earlier `LoadConfig` that returned `Ok` may have grown the buffer, so a view held from before it
+ *   does not show a later refusal; `loadWorld(E, input)`: a stream's `LoadCollision`,
+ *   `LoadConfig` and `Reset`, each through `expectLoad`, which the cold starts and the agreement
+ *   Worker's batch check both call.
  * - `readStopText(reportBuffer)`: the stop entry's text after a `StepQueued` call that committed fewer
  *   steps than it was asked to, as contracts/wasm-api.md#one-frame-from-javascript reads it, and
  *   `readLoadText(reportBuffer)`, the text a load call or `Reset` that did not return `Ok` left there.
  *   `runPasses` uses both, and the cold starts use them to name a call that failed.
  * - `COMMAND_SIZE`: 17, the bytes of one input command, which the callers use to count a stream's
- *   commands and cut its first one; `STEP_KINDS`, each step kind with the stream that drives it; and
- *   `COLD_START_SCENARIO`, the stream whose first command a cold start steps.
+ *   commands; `STEP_KINDS`, each step kind with the stream that drives it; and `COLD_START_SCENARIO`,
+ *   the stream whose first command a cold start steps.
+ * - `timeFirstStep(E, inputs, now, {importMs, createMs})`: a cold start's first step, the one timed
+ *   sequence of both halves (`LoadCollision`, `LoadConfig`, `Reset`, the first command written,
+ *   `StepQueued(1)`), giving the cold start's `{importMs, createMs, firstStepMs, totalMs, firstStep}`:
+ *   the boot's two intervals as given, the timed one, their sum, and the step record it committed as
+ *   `{step, hash}` (`recordStep`), which `lib/measure.mjs` compares with the server's first record of
+ *   `COLD_START_SCENARIO`.
+ * - `recordStep(record)`: a `readRecords` record (`./runtime.mjs`) as `{step, hash}`, the hash as 16
+ *   lowercase hex digits, the form contracts/wasm-api.md#one-frame-from-javascript prints.
  *
  * `runPasses` and the cold starts read the report buffer through an `IMemoryView`
  * (contracts/wasm-api.md#buffer-lifetimes): only its `slice(start, end)`, which returns a copy.
+ * `./runtime.mjs`, which it imports for `readRecords`, uses no Node API either, and the agreement server
+ * serves it beside this module.
  */
+
+import { readRecords } from './runtime.mjs';
 
 /** `InputCodec.EncodedSize` (contracts/input-command-format.md). */
 export const COMMAND_SIZE = 17;
@@ -279,6 +296,98 @@ export function stepKindCosts(E, inputs, { batch, now, unitNs }) {
 }
 
 /**
+ * One cold start's first step, timed, and the cold start's startup intervals
+ * (contracts/measurement-report.md#how-each-number-is-measured, "Startup"). Both halves call it on a
+ * freshly booted runtime with `bootRuntime`'s timings: Node with `performance.now()`, the Worker with its
+ * own.
+ *
+ * Before the clock starts it cuts `COLD_START_SCENARIO`'s first `COMMAND_SIZE` command bytes. The
+ * interval then runs from `now()` just before `LoadCollision` until `now()` just after `StepQueued(1)`
+ * returns: `loadWorld` (`LoadCollision(collision)`, `LoadConfig(config)` and `Reset(initialState, salt)`,
+ * each through `expectLoad`), then `CommandBuffer()`, the command written at its start, and
+ * `StepQueued(1)`. After the
+ * clock, the view is disposed and the step that committed is read from a fresh `ReportBuffer()` view
+ * (`LoadConfig` may have reallocated the buffer): the header's one record, which must be whole.
+ *
+ * @param {object} E the booted runtime's exports (contracts/wasm-api.md#host-exports)
+ * @param {Map<string, { collision: Uint8Array, config: Uint8Array, initialState: Uint8Array,
+ *   commands: Uint8Array, salt: bigint }>} inputs the measured streams' inputs, by stream name; it steps
+ *   `COLD_START_SCENARIO`'s
+ * @param {() => number} now a clock reading in milliseconds
+ * @param {{ importMs: number, createMs: number }} timings the boot's intervals (`bootRuntime`'s `timings`)
+ * @returns {{ importMs: number, createMs: number, firstStepMs: number, totalMs: number,
+ *   firstStep: { step: number, hash: string } }} the boot's intervals, the timed one, `totalMs` the three
+ *   added (the time to the first completed step), and the step and hash of the record `StepQueued(1)`
+ *   committed
+ * @throws {MeasurementError} `<call> returned <code>[: <text>]` for a load call or `Reset` that did not
+ *   return `Ok`; for `StepQueued(1)`, `StepQueued(1) refused the call: <code>`, `StepQueued(1) committed
+ *   <n> steps, more than it was asked to` or `StepQueued(1) committed 0 steps: <stop text>`; or
+ *   `StepQueued(1) returned 1, but the report buffer holds <n> records in <L> bytes, not one whole step
+ *   record`
+ */
+export function timeFirstStep(E, inputs, now, { importMs, createMs }) {
+    const input = inputs.get(COLD_START_SCENARIO);
+    const firstCommand = input.commands.slice(0, COMMAND_SIZE);
+
+    const start = now();
+    loadWorld(E, input);
+    const commandView = E.CommandBuffer();
+    let committed;
+    let firstStepMs;
+    try {
+        commandView.set(firstCommand, 0);
+        committed = E.StepQueued(1);
+        firstStepMs = now() - start;
+    } finally {
+        commandView.dispose();
+    }
+
+    const reportBuffer = E.ReportBuffer();
+    try {
+        if (committed !== 1) {
+            throw new MeasurementError(callFailure(1, committed, reportBuffer));
+        }
+
+        const firstStep = committedStep(reportBuffer);
+        return { importMs, createMs, firstStepMs, totalMs: importMs + createMs + firstStepMs, firstStep };
+    } finally {
+        reportBuffer.dispose();
+    }
+}
+
+/**
+ * A step record as `{step, hash}`, the hash as 16 lowercase hex digits
+ * (contracts/wasm-api.md#one-frame-from-javascript).
+ *
+ * @param {{ step: number, hash: bigint }} record a record `readRecords` read
+ * @returns {{ step: number, hash: string }}
+ */
+export function recordStep(record) {
+    return { step: record.step, hash: record.hash.toString(16).padStart(16, '0') };
+}
+
+/**
+ * Loads one stream's world: `LoadCollision(collision)`, `LoadConfig(config)` and
+ * `Reset(initialState, salt)`, in that order, each through `expectLoad`, so a refusal's text is read
+ * through a fresh `ReportBuffer()` view: a `LoadConfig` that returns `Ok` may grow the buffer, and the
+ * `Reset` after it writes a refusal into the new one (contracts/wasm-api.md#buffer-lifetimes). The
+ * fresh view also holds for a host that reallocates on a refusal. `timeFirstStep` and the agreement
+ * Worker's batch check (`web/worker.mjs`) call it; a caller that keeps a `ReportBuffer()` view fetches it
+ * again afterwards.
+ *
+ * @param {object} E the runtime's exports
+ * @param {{ collision: Uint8Array, config: Uint8Array, initialState: Uint8Array, salt: bigint }} input
+ *   the stream's collision file, config block, initial state and match salt
+ * @throws {MeasurementError} `<call> returned <code>[: <text>]` for the first call that did not return
+ *   `Ok`; the calls after it are not made
+ */
+export function loadWorld(E, { collision, config, initialState, salt }) {
+    expectLoad(E, 'LoadCollision', E.LoadCollision(collision));
+    expectLoad(E, 'LoadConfig', E.LoadConfig(config));
+    expectLoad(E, 'Reset', E.Reset(initialState, salt));
+}
+
+/**
  * Throws `[<scenario>: ]<call> returned <code>[: <text>]` when a load call or `Reset` did not return `Ok`,
  * with the text it left in the report buffer, read through a fresh `ReportBuffer()` view; the text and
  * its colon are left out when it is empty, as for `NotReady`.
@@ -331,6 +440,33 @@ export function readStopText(reportBuffer) {
 export function readLoadText(reportBuffer) {
     const textLength = u32At(reportBuffer.slice(0, 4), 0);
     return new TextDecoder().decode(reportBuffer.slice(4, 4 + textLength));
+}
+
+/**
+ * The one step record in the report buffer after a `StepQueued(1)` that returned 1
+ * (contracts/wasm-api.md#report-buffer-layouts), as `recordStep` gives it.
+ */
+function committedStep(reportBuffer) {
+    const header = reportBuffer.slice(0, REPORT_HEADER_LENGTH);
+    const count = u32At(header, 0);
+    const recordsLength = u32At(header, 4);
+    let records = [];
+    try {
+        records = readRecords(reportBuffer.slice(REPORT_HEADER_LENGTH, REPORT_HEADER_LENGTH + recordsLength));
+    } catch (error) {
+        if (!(error instanceof RangeError)) {
+            throw error;
+        }
+    }
+
+    if (count !== 1 || records.length !== 1) {
+        throw new MeasurementError(
+            `StepQueued(1) returned 1, but the report buffer holds ${count} records in ${recordsLength} bytes, `
+            + 'not one whole step record',
+        );
+    }
+
+    return recordStep(records[0]);
 }
 
 /** Why a `StepQueued(count)` call that returned `committed` failed the measurement. */

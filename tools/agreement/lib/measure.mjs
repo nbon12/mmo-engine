@@ -62,17 +62,22 @@
  * 1. `measureDownload(<dir>)`.
  * 2. Ten Node cold starts, each a fresh `node lib/measure-node.mjs cold-start` process, then one
  *    `measure-node.mjs steps` process for the step costs, whose line `checkStepKinds` checks. Every
- *    cold start's runtime must report its jiterpreter state (`jiterpreterState`, `./runtime.mjs`), and
- *    the same one as the first cold start's, or the measurement fails before the steps process runs;
- *    the report's `runtime.jiterpreter` is true only when that state has all three options on.
+ *    cold start's first step must be the server's first record of `flat-run-30hz`
+ *    (`<work>/server/flat-run-30hz.records`, read with `readRecords` once the ten have run): the
+ *    `firstStep` `{step, hash}` it reports (`timeFirstStep`, `./passes.mjs`) has that record's step and
+ *    hash, so a cold start that did not complete a real step fails the mode. Every cold start's runtime
+ *    must also report its jiterpreter state (`jiterpreterState`, `./runtime.mjs`), and the same one as
+ *    the first cold start's. Both checks fail the measurement before the steps process runs; the
+ *    report's `runtime.jiterpreter` is true only when that state has all three options on.
  * 3. The Chromium Worker: `lib/server.mjs` serves `<dir>/wwwroot` and the work directory, and
  *    `chromium.launch()` from `@playwright/test` (imported only here, so the tests need no browser) opens
  *    `/web/measure.html?run=cold-start` ten times with `runPage`, each in a fresh browser context, then
  *    `?run=steps` once. A page that fails as `runPage` says (a `fatal` event, a page that does not load
  *    or finish within its 2 minutes, the runtime's console warning that `.wasm` was not served as
  *    `application/wasm`) fails the measurement, and so does a page that does not post exactly one
- *    `booted`, with `inWorker` true, and one `coldStart`, or `steps` messages that `checkStepKinds`
- *    refuses. `crossOriginIsolated` is true only when every `booted` message says so. The pages'
+ *    `booted`, with `inWorker` true, and one `coldStart` whose `firstStep` is the server's first record
+ *    as in step 2, or `steps` messages that `checkStepKinds` refuses. `crossOriginIsolated` is true only
+ *    when every `booted` message says so. The pages'
  *    contexts, the browser and the server are closed however the run ends, the browser within 10
  *    seconds, and a close that fails never takes the place of the failure it followed.
  * 4. Each startup interval summarized with `summarize` (`./passes.mjs`) by `summarizeStartup`, over the
@@ -93,7 +98,8 @@ import os from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { MeasurementError, STEP_KINDS, summarize } from './passes.mjs';
+import { COLD_START_SCENARIO, MeasurementError, STEP_KINDS, recordStep, summarize } from './passes.mjs';
+import { readRecords } from './runtime.mjs';
 import { startServer } from './server.mjs';
 
 export { MeasurementError };
@@ -869,10 +875,14 @@ async function main(argv, env) {
  * One produced mode, measured: its download, ten Node cold starts and the Node step costs, then ten
  * Chromium Worker cold starts and the Worker step costs.
  *
- * The Node cold starts' runtimes must all report the same jiterpreter state (`jiterpreterOfColdStarts`),
- * which is checked before the steps process runs, and each Chromium page's `booted` message must come
- * from a Worker. `startup` is `summarizeStartup` over the cold starts the two loops measured, so its
- * `coldStarts` is their number and a loop that measured another number than 10 fails the mode.
+ * Once the ten Node cold starts have run, the server's first record of `COLD_START_SCENARIO` is read
+ * from `<work>/server/flat-run-30hz.records` (`serverFirstStep`), and every cold start's `firstStep`, in
+ * both runtimes, must be that record's step and hash (`checkFirstStep`): the Node ones before the steps
+ * process runs, each Chromium page's as it finishes. The Node cold starts' runtimes must all report the
+ * same jiterpreter state (`jiterpreterOfColdStarts`), which is also checked before the steps process
+ * runs, and each Chromium page's `booted` message must come from a Worker. `startup` is
+ * `summarizeStartup` over the cold starts the two loops measured, so its `coldStarts` is their number
+ * and a loop that measured another number than 10 fails the mode.
  *
  * @param {string} mode the mode, which names it in a failure
  * @param {string} dir the mode's publish directory, which holds `wwwroot/_framework/`
@@ -884,7 +894,10 @@ async function main(argv, env) {
  *   and `closeBoundMs` each close of a page's context or of the browser (10 seconds)
  * @returns {Promise<{ input: object, chromiumVersion: string }>} the mode's `assembleReport` input and the
  *   version of the Chromium that measured it
- * @throws {MeasurementError} a measurement failed, naming the mode and the run
+ * @throws {MeasurementError} a measurement failed, naming the mode and the run; among them `<mode>: cannot
+ *   read <work>/server/flat-run-30hz.records: <reason>`, and for a cold start whose first step is not
+ *   the server's, `<mode>: <node|chromium> cold start <i>: the first step committed step <s> with hash
+ *   <h>, but the server's first record of flat-run-30hz is step <s> with hash <h>`
  */
 export async function measureMode(mode, dir, work, {
     spawn = spawnSync,
@@ -902,9 +915,20 @@ export async function measureMode(mode, dir, work, {
         nodeColdStarts.push(runNodeHalf(spawn, mode, 'cold-start', app, work, `node cold start ${i}`));
     }
 
+    const serverStep = await serverFirstStep(mode, work);
+    for (const [i, coldStart] of nodeColdStarts.entries()) {
+        checkFirstStep(`${mode}: node cold start ${i + 1}`, coldStart?.firstStep, serverStep);
+    }
+
     const jiterpreter = jiterpreterOfColdStarts(mode, nodeColdStarts);
     const nodeSteps = checkStepKinds(runNodeHalf(spawn, mode, 'steps', app, work, 'node steps'), `${mode}: node steps`);
-    const worker = await measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs });
+    const worker = await measureInChromium(mode, app, work, {
+        serve,
+        launchChromium,
+        pageBoundMs,
+        closeBoundMs,
+        serverStep,
+    });
 
     return {
         chromiumVersion: worker.version,
@@ -950,6 +974,72 @@ export function summarizeStartup(mode, { node, chromiumWorker, crossOriginIsolat
         node: summarizeIntervals(node),
         chromiumWorker: { crossOriginIsolated, ...summarizeIntervals(chromiumWorker) },
     };
+}
+
+/**
+ * The server's first record of `COLD_START_SCENARIO`, the step every cold start's `StepQueued(1)` must
+ * commit, as `recordStep` gives it: read from `<work>/server/flat-run-30hz.records`, which
+ * `simcore agreement prepare` writes (contracts/simcore-cli.md#agreement-work-directory).
+ *
+ * @param {string} mode names the mode in a failure
+ * @param {string} work the prepared work directory
+ * @returns {Promise<{ step: number, hash: string }>}
+ * @throws {MeasurementError} `<mode>: cannot read <file>: <reason>`, `<mode>: <file>: <readRecords'
+ *   message>` when its records are cut off, or `<mode>: <file> holds no step record`
+ */
+async function serverFirstStep(mode, work) {
+    const file = join(work, 'server', `${COLD_START_SCENARIO}.records`);
+    let bytes;
+    try {
+        bytes = await readFile(file);
+    } catch (error) {
+        throw new MeasurementError(`${mode}: cannot read ${file}: ${error.message}`, { cause: error });
+    }
+
+    let records;
+    try {
+        records = readRecords(bytes);
+    } catch (error) {
+        throw new MeasurementError(`${mode}: ${file}: ${error.message}`, { cause: error });
+    }
+
+    if (records.length === 0) {
+        throw new MeasurementError(`${mode}: ${file} holds no step record`);
+    }
+
+    return recordStep(records[0]);
+}
+
+/**
+ * Throws unless a cold start's reported `firstStep` is the server's first record, so a cold start whose
+ * `StepQueued(1)` did not commit the server's first step is never measured as one that did.
+ *
+ * @param {string} what the mode and the cold start, `<mode>: <node|chromium> cold start <i>`
+ * @param {unknown} firstStep what the cold start reported
+ * @param {{ step: number, hash: string }} server `serverFirstStep`'s record
+ * @throws {MeasurementError} `<what>: the cold start reported the first step <value>, not a step and a
+ *   16-digit hash, so it does not show that a step completed`, or `<what>: the first step committed step
+ *   <s> with hash <h>, but the server's first record of flat-run-30hz is step <s> with hash <h>`
+ */
+function checkFirstStep(what, firstStep, server) {
+    if (firstStep === null
+        || typeof firstStep !== 'object'
+        || !Number.isInteger(firstStep.step)
+        || firstStep.step < 0
+        || typeof firstStep.hash !== 'string'
+        || !/^[0-9a-f]{16}$/.test(firstStep.hash)) {
+        throw new MeasurementError(
+            `${what}: the cold start reported the first step ${String(JSON.stringify(firstStep))}, `
+            + 'not a step and a 16-digit hash, so it does not show that a step completed',
+        );
+    }
+
+    if (firstStep.step !== server.step || firstStep.hash !== server.hash) {
+        throw new MeasurementError(
+            `${what}: the first step committed step ${firstStep.step} with hash ${firstStep.hash}, `
+            + `but the server's first record of ${COLD_START_SCENARIO} is step ${server.step} with hash ${server.hash}`,
+        );
+    }
 }
 
 /**
@@ -1035,7 +1125,7 @@ function runNodeHalf(spawn, mode, run, app, work, what) {
  *   `runPage`) or did not post what its run posts, or closing the browser (within `closeBoundMs`) or the
  *   server failed (`closeAfter`)
  */
-async function measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs }) {
+async function measureInChromium(mode, app, work, { serve, launchChromium, pageBoundMs, closeBoundMs, serverStep }) {
     let server;
     try {
         server = await serve({ app, work });
@@ -1053,7 +1143,7 @@ async function measureInChromium(mode, app, work, { serve, launchChromium, pageB
             }
 
             return closeAfter(
-                () => measurePages(mode, browser, server.url, pageBoundMs, closeBoundMs),
+                () => measurePages(mode, browser, server.url, pageBoundMs, closeBoundMs, serverStep),
                 () => within(() => browser.close(), closeBoundMs),
                 mode,
                 'Chromium',
@@ -1071,15 +1161,20 @@ async function launchPlaywrightChromium() {
     return chromium.launch();
 }
 
-/** The ten cold-start pages and the steps page of one mode, checked as `measureInChromium` says. */
-async function measurePages(mode, browser, origin, boundMs, closeBoundMs) {
+/**
+ * The ten cold-start pages and the steps page of one mode, checked as `measureInChromium` says, each
+ * cold start's `firstStep` against `serverStep` (`checkFirstStep`).
+ */
+async function measurePages(mode, browser, origin, boundMs, closeBoundMs, serverStep) {
     const booted = [];
     const coldStarts = [];
     for (let i = 1; i <= COLD_STARTS; i++) {
         const what = `${mode}: chromium cold start ${i}`;
         const events = await runPage(browser, `${origin}/web/measure.html?run=cold-start`, what, boundMs, closeBoundMs);
         booted.push(bootedInWorker(events, what));
-        coldStarts.push(onlyEvent(events, 'coldStart', what));
+        const coldStart = onlyEvent(events, 'coldStart', what);
+        checkFirstStep(what, coldStart.firstStep, serverStep);
+        coldStarts.push(coldStart);
     }
 
     const what = `${mode}: chromium steps`;

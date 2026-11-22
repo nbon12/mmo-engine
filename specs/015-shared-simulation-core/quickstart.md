@@ -159,8 +159,10 @@ jiterpreter check shows the runtime reports it off.
 ```
 
 This runs every project `tools/agreement/playwright.config.mjs` declares, so it needs all three
-browsers. Expected, once Chromium, Firefox and WebKit are installed: exit 0, with one passing Worker
-test per browser project. A project whose browser is not installed fails, and the command exits
+browsers. Expected, once Chromium, Firefox and WebKit are installed: exit 0, with three passing tests
+per browser project: the Worker agreement test (`specs/worker.spec.mjs`) and the two load-refusal tests
+(`specs/worker-load-refusal.spec.mjs`, which run the Worker against a stand-in runtime and need neither
+variable). A project whose browser is not installed fails, and the command exits
 non-zero. Without Firefox and WebKit, run Chromium only, the browser CI requires, as below; to add a
 browser that did install, run the same command with `--project firefox` or `--project webkit`.
 
@@ -168,7 +170,7 @@ browser that did install, run the same command with `--project firefox` or `--pr
 (cd tools/agreement && AGREEMENT_APP="$APP_OUT/wwwroot" AGREEMENT_WORK="$WORK" npx playwright test --project chromium)
 ```
 
-Expected: exit 0, with one passing Worker test.
+Expected: exit 0, with three passing tests: the Worker agreement test and the two load-refusal tests.
 
 ```bash
 dotnet run --project src/MmoEngine.SimCore.Cli -c Release -- agreement compare --work "$WORK"
@@ -275,7 +277,10 @@ python3 -m unittest discover -s tests/workflows -v
 Expected: every test passes and the command exits 0. `tests/workflows/test_simcore_workflow.py` pins the
 `SimCore` workflow: its triggers and path filters (FR-027, US2 scenario 7), its SHA-pinned actions,
 the `agreement` job's `timeout-minutes: 10` (SC-006), each step's own bound inside it and the
-optional browsers' shared deadline, its three browsers, the `measure` job's steps, the `"SimCore"`
-entry in `auto-merge.yml`'s `workflow_run` list, that auto-merge's check filter lists a failed or
-pending `agreement` check, and that its decision step, run with a stand-in `gh`, does not merge while
-that check has failed or is still running.
+optional browsers' shared deadline, its three browsers, the `measure` job's steps (which still run
+the measurement after its agreement gate failed, and validate and upload the report it writes; it
+writes none for a build whose first step of `flat-run-30hz` is not the server's) and their bounds inside its
+`timeout-minutes: 90`, the `"SimCore"` entry in `auto-merge.yml`'s `workflow_run` list, that
+auto-merge's check filter lists a registered `agreement` check run that failed or is pending, and that
+its decision step, run with a stand-in `gh`, does not merge while that check run has failed or is
+still queued or running.

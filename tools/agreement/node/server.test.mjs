@@ -11,7 +11,8 @@
  * - accept only the four PUT forms, for the three Worker builds, up to 64 MiB, into a build folder whose
  *   real path is inside the work root, written to a temporary file and renamed, each removing its other
  *   form (`<stream>.records` and `<stream>.error.txt`, `tables.bin` and `tables.error.txt`) once it is
- *   in place;
+ *   in place: a hard link to the earlier target keeps its bytes, and a rename that fails answers 500
+ *   and leaves the other form;
  * - answer 404 for anything else, and 500 when it cannot write a file;
  * - give each 403, 404 and 500 a one-line `text/plain; charset=utf-8` body.
  *
@@ -37,7 +38,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -368,6 +369,47 @@ describe('a PUT of one form replaces its other form, so an error file never sits
         assert.equal(res.status, 403, 'PUT x.records of 64 MiB + 1 byte: status');
         assert.deepEqual(await readdir(join(work, build)), ['x.error.txt'], `${build}/ after the refused PUT`);
         assert.ok((await readFile(join(work, build, 'x.error.txt'))).equals(errorBody), 'x.error.txt still holds its body');
+    });
+});
+
+describe('a PUT is renamed into place, and its other form is removed only once it is', () => {
+    // The server writes a PUT with `writeOutputFile`: to a temporary file renamed over the target, then
+    // the other form removed. A write over the target in place would change what a hard link to the
+    // earlier target reads; removing the other form before the write would lose it when the write fails.
+    const build = 'chromium-worker';
+
+    test('a PUT renames its body into place: a hard link to the earlier x.records keeps its bytes', async (t) => {
+        const { root, work, put } = await startFixtureServer(t);
+        await mkdir(join(work, build));
+        await writeFile(join(work, build, 'x.records'), 'earlier records');
+        await link(join(work, build, 'x.records'), join(root, 'earlier-link'));
+
+        const res = await put(`/work/${build}/x.records`, Buffer.from('new records'));
+
+        assert.equal(res.status, 204, 'PUT x.records: status');
+        assert.equal(await readFile(join(work, build, 'x.records'), 'utf8'), 'new records', 'x.records holds the new body');
+        assert.equal(
+            await readFile(join(root, 'earlier-link'), 'utf8'),
+            'earlier records',
+            'the link to the earlier x.records still reads its bytes: the PUT was not written over it in place',
+        );
+        assert.deepEqual(await readdir(join(work, build)), ['x.records'], `no temporary file is left in ${build}/`);
+    });
+
+    test('a PUT whose rename fails answers 500 and leaves the other form, with no temporary file', async (t) => {
+        // A non-empty directory named x.records stands where the body would be renamed to, so the rename
+        // fails after the temporary file is written.
+        const { work, put } = await startFixtureServer(t);
+        await mkdir(join(work, build, 'x.records', 'inside'), { recursive: true });
+        await writeFile(join(work, build, 'x.error.txt'), 'Error: earlier\n');
+
+        const res = await put(`/work/${build}/x.records`, Buffer.from('new records'));
+
+        assert.equal(res.status, 500, 'PUT x.records over a directory: status');
+        assert.equal(res.body.toString('utf8'), '500 Internal Server Error\n', 'PUT x.records over a directory: body');
+        assert.deepEqual((await readdir(join(work, build))).sort(), ['x.error.txt', 'x.records'], `${build}/ after the failed PUT`);
+        assert.equal(await readFile(join(work, build, 'x.error.txt'), 'utf8'), 'Error: earlier\n', 'x.error.txt still holds its body');
+        assert.deepEqual(await readdir(join(work, build, 'x.records')), ['inside'], 'the directory in the way is left as it was');
     });
 });
 

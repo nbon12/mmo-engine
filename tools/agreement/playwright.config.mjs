@@ -2,9 +2,11 @@
  * The Worker agreement runner's Playwright configuration (spec 015, US2.2;
  * contracts/wasm-api.md#worker-playwright).
  *
- * `npx playwright test --project <browser>` from `tools/agreement/` runs `specs/worker.spec.mjs` in a
- * headless Chromium, Firefox or WebKit, where the build is `<project>-worker`. The spec starts its own
- * agreement server (`lib/server.mjs`) and reads `AGREEMENT_APP` and `AGREEMENT_WORK`.
+ * `npx playwright test --project <browser>` from `tools/agreement/` runs every spec in `specs/` in a
+ * headless Chromium, Firefox or WebKit, where the build is `<project>-worker`: `specs/worker.spec.mjs`,
+ * which starts its own agreement server (`lib/server.mjs`) and reads `AGREEMENT_APP` and
+ * `AGREEMENT_WORK`, and `specs/worker-load-refusal.spec.mjs`, the Worker's load refusals against a
+ * stand-in runtime, which writes its own publish folder and work directory and needs neither.
  *
  * - `retries: 0`: a disagreement fails the run the first time; a rerun never hides it.
  * - `workers: 1`: one browser at a time, so a run's timings and its Worker are its own.

@@ -11,7 +11,8 @@
  *   - `/web/page.html` and `/web/worker.mjs`, the agreement page and its Worker, and `/web/measure.html`
  *     and `/web/measure-worker.mjs`, the measurement page and its Worker, from this package's `web/`;
  *   - `/lib/runtime.mjs` and `/lib/tables.mjs`, from this package's `lib/` (`worker.mjs` imports both),
- *     and `/lib/passes.mjs` (`measure-worker.mjs` imports it and `runtime.mjs`);
+ *     and `/lib/passes.mjs` (`worker.mjs` imports it for `loadWorld`, and `measure-worker.mjs` imports
+ *     it and `runtime.mjs`; `passes.mjs` itself imports `runtime.mjs`);
  *   - `/_framework/*`, from `<app>/_framework/` (`app` is the publish output's served root, `wwwroot`);
  *   - `/work/*`, from `<work>/` (the manifest, streams, collision files, server records, batch inputs,
  *     the table inputs and the server's table results).
@@ -34,11 +35,12 @@
  *   it arrives, so a chunked body without a `Content-Length` is held to it too. The build folder is
  *   created when missing, and its real path must be inside the work root's real path, so a build folder
  *   that is a symlink out of the work directory is refused like any other traversal. The body is written
- *   to a temporary file in that folder, then renamed over the target, so a reader never sees a partial
- *   file. Each output then replaces its other form: once `<stream>.records` is in place,
- *   `<stream>.error.txt` is removed, and the reverse, and likewise `tables.bin` and `tables.error.txt`,
- *   as the Node runner does. So a rerun on the same work directory never leaves an error file beside the
- *   output it stands in place of, which `simcore agreement compare` would read first. The answer is 204,
+ *   by `writeOutputFile` from `lib/runtime.mjs`, the helper the Node runner writes its outputs with: to a
+ *   temporary file in that folder, then renamed over the target, so a reader never sees a partial file,
+ *   and only then is the output's other form removed: once `<stream>.records` is in place,
+ *   `<stream>.error.txt` is removed, and the reverse, and likewise `tables.bin` and `tables.error.txt`.
+ *   So a rerun on the same work directory never leaves an error file beside the output it stands in
+ *   place of, which `simcore agreement compare` would read first. The answer is 204,
  *   or 403 for any other PUT under `/work/`; a refused body is read to its end and dropped before the
  *   answer, so the client always gets the 403, and nothing is written or removed.
  * - **Anything else** is 404. A failure of the server itself (a file it cannot read or write for a reason
@@ -48,12 +50,13 @@
  *   `text/plain; charset=utf-8` (the content-type table is for served files only); a 204 has no body.
  */
 
-import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, open, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+
+import { writeOutputFile } from './runtime.mjs';
 
 /** `tools/agreement/`, which holds the `web/` and `lib/` folders. */
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -91,6 +94,9 @@ const EVERY_RESPONSE = [
 
 /** The builds whose output may be PUT: the Worker runs (contracts/simcore-cli.md#build-names). */
 const WORKER_BUILDS = new Set(['chromium-worker', 'firefox-worker', 'webkit-worker']);
+
+/** The file system a PUT is written through, by `writeOutputFile`. */
+const FILE_SYSTEM = { writeFile, rename, rm };
 
 /** The largest PUT body, in bytes. */
 const PUT_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -260,7 +266,8 @@ async function serveFile(response, target, root) {
 }
 
 /**
- * Writes a PUT body to `<work>/<build>/<file>` through a temporary file in the same folder, or refuses it
+ * Writes a PUT body to `<work>/<build>/<file>` with `writeOutputFile`, through a temporary file in the
+ * same folder that is renamed over the target, then removes the file's other form; or refuses it
  * with 403 after reading it to its end. A body over the limit, a request that ends early, or a build
  * folder whose real path is outside the work root writes nothing.
  */
@@ -285,17 +292,9 @@ async function put(request, response, path, workRoot) {
         return;
     }
 
-    const temporary = join(folder, `.${target.file}.${process.pid}.${randomUUID()}.tmp`);
-    try {
-        await writeFile(temporary, body, { flag: 'wx' });
-        await rename(temporary, join(folder, target.file));
-    } catch (error) {
-        await rm(temporary, { force: true });
-        throw error;
-    }
-
-    // Removed only once the new output is in place, so a failed write leaves the earlier pair as it was.
-    await rm(join(folder, target.replaces), { force: true });
+    // The other form is removed only once the new output is in place, so a failed write leaves the
+    // earlier pair as it was.
+    await writeOutputFile({ fs: FILE_SYSTEM, directory: folder, file: target.file, data: body, replaces: target.replaces });
     answer(response, 204);
 }
 

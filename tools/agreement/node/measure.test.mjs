@@ -40,8 +40,9 @@
  * - measureMode(mode, dir, work, runners): one produced mode measured with fakes for the `measure-node.mjs`
  *   processes (`spawn`, spawnSync's arguments and result), the agreement server (`serve`) and Chromium
  *   (`launchChromium`): ten cold-start processes, the steps process, ten cold-start pages in fresh contexts
- *   and the steps page, the cold starts' jiterpreter state, each page's `booted` from a Worker, and the
- *   page and close bounds (`pageBoundMs`, `closeBoundMs`).
+ *   and the steps page, the cold starts' jiterpreter state, each page's `booted` from a Worker, every cold
+ *   start's `firstStep` against the first record of the work directory's `server/flat-run-30hz.records`,
+ *   and the page and close bounds (`pageBoundMs`, `closeBoundMs`).
  * - summarizeStartup(mode, {node, chromiumWorker, crossOriginIsolated}): the `startup` input over exactly
  *   ten cold starts in each runtime; a MeasurementError naming both counts otherwise.
  * - compareVersions(a, b) and highestRuntime(text): SemVer 2.0 precedence, and the highest
@@ -51,7 +52,8 @@
  *   no SemVer `Microsoft.NETCore.App 10.` runtime is listed.
  *
  * From `../lib/measure-node.mjs`, run as a child process: the `cold-start` line carries the jiterpreter
- * state its runtime reported, here a `dotnet.js` stand-in in a temporary publish folder.
+ * state its runtime reported and the step its `StepQueued(1)` committed, here a `dotnet.js` stand-in in a
+ * temporary publish folder.
  *
  * From `../lib/passes.mjs` (no `node:` imports, so the Worker loads it too):
  * - nearestRank(samples, p) and summarize(samples), the nearest-rank percentiles
@@ -65,6 +67,13 @@
  *   (contracts/wasm-api.md#one-frame-from-javascript), and a reset() that does not return 0 (`Ok`) its
  *   load text. The result is `{steps, meanNs, p99Ns, samples}`, one sample per timed call: that call's
  *   time per step.
+ * - timeFirstStep(E, inputs, now, {importMs, createMs}): a cold start's one timed sequence, with fake
+ *   exports that log every call and a clock that moves only inside `StepQueued`: the call order, the first
+ *   command written before `StepQueued(1)`, `firstStepMs`, `totalMs` and the committed record's
+ *   `{step, hash}`, and each failure's exact MeasurementError.
+ * - expectLoad(E, call, code, scenario) and loadWorld(E, input): a refusal's text read through a fresh
+ *   `ReportBuffer()` view after a `LoadConfig` that reallocated the buffer, whether `LoadConfig` itself
+ *   refused or a later `Reset` did.
  *
  * The entry point is run as the `measure` job runs it, `node ../lib/measure.mjs <argv>` in a child process:
  * a usage error (no `MMO_RUNNER_CLASS`) prints `measure: <message>` on stderr and exits 2, and a
@@ -1160,6 +1169,33 @@ const FAKE_CHROMIUM_VERSION = '153.0.6943.16';
 const COLD_START_PAGE = `${FAKE_ORIGIN}/web/measure.html?run=cold-start`;
 const STEPS_PAGE = `${FAKE_ORIGIN}/web/measure.html?run=steps`;
 
+/**
+ * The first two records of `server/flat-run-30hz.records` in the fakes' work directory, as `recordStep`
+ * gives them: every cold start must report the first, the step its `StepQueued(1)` committed.
+ */
+const SERVER_FIRST_STEP = Object.freeze({ step: 1, hash: '5be1c0d2a4f39e70' });
+const SERVER_SECOND_STEP = Object.freeze({ step: 2, hash: '0c6e1f93a2d7b548' });
+
+/** Step records packed as a `.records` file holds them: `u32 step | u32 stateLength | state | u64 hash`. */
+function packRecords(records) {
+    const parts = records.map(({ step, state, hash }) => {
+        const bytes = new Uint8Array(16 + state.length);
+        const view = new DataView(bytes.buffer);
+        view.setUint32(0, step, true);
+        view.setUint32(4, state.length, true);
+        bytes.set(state, 8);
+        view.setBigUint64(8 + state.length, BigInt(`0x${hash}`), true);
+        return bytes;
+    });
+    return Buffer.concat(parts);
+}
+
+/** The server's records of flat-run-30hz in the fakes' work directory: SERVER_FIRST_STEP, then the second. */
+const SERVER_RECORDS = packRecords([
+    { ...SERVER_FIRST_STEP, state: Uint8Array.of(3, 1, 4, 1, 5, 9) },
+    { ...SERVER_SECOND_STEP, state: Uint8Array.of(2, 6, 5, 3, 5, 8) },
+]);
+
 /** The three step entries of a half, as `checkStepKinds` takes them. */
 function measuredSteps(batch) {
     return [
@@ -1173,17 +1209,25 @@ function measuredSteps(batch) {
  * Fakes for `measureMode`'s runners, and the log of what it did with them.
  *
  * - `spawn` stands for `spawnSync`: it logs the command and arguments and answers as a `measure-node.mjs`
- *   process that exits 0. The i-th `cold-start` process prints `nodeSample(NODE_RANKS[i - 1])`, the build
- *   info and `jiterpreter(i)` (all on by default); a `steps` process prints the batch-1 entries.
+ *   process that exits 0. The i-th `cold-start` process prints `nodeSample(NODE_RANKS[i - 1])`,
+ *   `reported('node', i)` (by default `firstStep: SERVER_FIRST_STEP`), the build info and
+ *   `jiterpreter(i)` (all on by default); a `steps` process prints the batch-1 entries.
  * - `serve` logs its options and returns a server at FAKE_ORIGIN whose closes are counted.
  * - `launchChromium` counts its launches and returns a browser whose contexts are logged, each with the
  *   URL of every page it opened and its closes. The i-th cold-start page posts `booted` (with
  *   `booted('cold-start', i)` spread over `inWorker: true, crossOriginIsolated: true`), `coldStart` with
- *   `workerSample(WORKER_RANKS[i - 1])` and `done`; the steps page posts `booted` (with `booted('steps')`),
+ *   `workerSample(WORKER_RANKS[i - 1])` and `reported('chromium', i)` and `done`; the steps page posts
+ *   `booted` (with `booted('steps')`),
  *   the batch-16 entries and `done`. With `wedgedContext` n, the n-th context's `newPage()` never returns;
  *   with `browserClose`, the browser's close is that function.
  */
-function fakeMeasurement({ jiterpreter = () => ({ ...JITERPRETER_ON }), booted = () => ({}), wedgedContext, browserClose } = {}) {
+function fakeMeasurement({
+    jiterpreter = () => ({ ...JITERPRETER_ON }),
+    booted = () => ({}),
+    reported = () => ({ firstStep: { ...SERVER_FIRST_STEP } }),
+    wedgedContext,
+    browserClose,
+} = {}) {
     const log = { spawns: [], served: [], serverClosed: 0, launches: 0, browserClosed: 0, contexts: [] };
     let nodeColdStarts = 0;
     let coldStartPages = 0;
@@ -1195,6 +1239,7 @@ function fakeMeasurement({ jiterpreter = () => ({ ...JITERPRETER_ON }), booted =
             nodeColdStarts += 1;
             line = {
                 ...nodeSample(NODE_RANKS[(nodeColdStarts - 1) % NODE_RANKS.length]),
+                ...reported('node', nodeColdStarts),
                 buildInfo: { ...MEASURED_BUILD_INFO },
                 jiterpreter: jiterpreter(nodeColdStarts),
             };
@@ -1211,7 +1256,11 @@ function fakeMeasurement({ jiterpreter = () => ({ ...JITERPRETER_ON }), booted =
             coldStartPages += 1;
             return [
                 { ...base, ...booted('cold-start', coldStartPages) },
-                { type: 'coldStart', ...workerSample(WORKER_RANKS[(coldStartPages - 1) % WORKER_RANKS.length]) },
+                {
+                    type: 'coldStart',
+                    ...workerSample(WORKER_RANKS[(coldStartPages - 1) % WORKER_RANKS.length]),
+                    ...reported('chromium', coldStartPages),
+                },
                 { type: 'done' },
             ];
         }
@@ -1282,10 +1331,19 @@ function fakeMeasurement({ jiterpreter = () => ({ ...JITERPRETER_ON }), booted =
     return { runners, log };
 }
 
-/** A publish directory (T300's `writePublishDir`), its `wwwroot` and a work directory path. */
-function measuredMode(t) {
+/**
+ * A publish directory (T300's `writePublishDir`), its `wwwroot` and a work directory whose
+ * `server/flat-run-30hz.records` holds `serverRecords` (SERVER_RECORDS by default; none when null).
+ */
+function measuredMode(t, { serverRecords = SERVER_RECORDS } = {}) {
     const { publishDir } = writePublishDir(t);
-    return { dir: publishDir, app: path.join(publishDir, 'wwwroot'), work: tempDir(t, 'measure-mode-work-') };
+    const work = tempDir(t, 'measure-mode-work-');
+    if (serverRecords !== null) {
+        fs.mkdirSync(path.join(work, 'server'));
+        fs.writeFileSync(path.join(work, 'server', 'flat-run-30hz.records'), serverRecords);
+    }
+
+    return { dir: publishDir, app: path.join(publishDir, 'wwwroot'), work };
 }
 
 /** The `measure-node.mjs <run>` process `measureMode` starts. */
@@ -1515,6 +1573,160 @@ test('a Chromium page whose booted message is not from a Worker fails the measur
     }
 });
 
+test('every cold start\'s first step is the server\'s first record of flat-run-30hz', async (t) => {
+    // T320 (second spec-test review), US7 scenario 2: "the time to the first completed step over 10 cold
+    // starts ... each in Node and in a Chromium Worker". Given a work directory whose
+    // server/flat-run-30hz.records holds the server's records, when measureMode measures a mode, then
+    // every Node and Chromium Worker cold start must report, as its firstStep, the step and hash of the
+    // server's first record, the step its StepQueued(1) committed; one that reports another step, another
+    // hash or none fails the mode, naming the mode, the runtime and the cold start.
+    const { MeasurementError, measureMode } = await import('../lib/measure.mjs');
+    const server = `step ${SERVER_FIRST_STEP.step} with hash ${SERVER_FIRST_STEP.hash}`;
+    const noStep = (value) => `the cold start reported the first step ${value}, not a step and a 16-digit hash, `
+        + 'so it does not show that a step completed';
+
+    await t.test('every cold start reports the server\'s first record', async (sub) => {
+        const { dir, app, work } = measuredMode(sub);
+        const fake = fakeMeasurement();
+
+        const measured = await measureMode('interp-prebuilt', dir, work, fake.runners);
+
+        assert.deepEqual(measured.input.startup, EXPECTED_STARTUP);
+        assert.deepEqual(processesOf(fake.log), [
+            ...Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)),
+            nodeProcess('steps', app, work),
+        ]);
+        assert.equal(fake.log.contexts.length, 11);
+    });
+
+    const nodeRows = [
+        {
+            name: 'node cold start 6 reports another hash',
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 6 ? { step: 1, hash: '5be1c0d2a4f39e71' } : { ...SERVER_FIRST_STEP },
+            }),
+            message: 'interp-prebuilt: node cold start 6: the first step committed step 1 with hash 5be1c0d2a4f39e71, '
+                + `but the server's first record of flat-run-30hz is ${server}`,
+        },
+        {
+            name: 'node cold start 1 reports the server\'s second record',
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 1 ? { ...SERVER_SECOND_STEP } : { ...SERVER_FIRST_STEP },
+            }),
+            message: 'interp-prebuilt: node cold start 1: the first step committed step 2 with hash 0c6e1f93a2d7b548, '
+                + `but the server's first record of flat-run-30hz is ${server}`,
+        },
+        {
+            name: 'node cold start 10 reports the right hash for another step',
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 10 ? { ...SERVER_FIRST_STEP, step: 0 } : { ...SERVER_FIRST_STEP },
+            }),
+            message: 'interp-prebuilt: node cold start 10: the first step committed step 0 with hash 5be1c0d2a4f39e70, '
+                + `but the server's first record of flat-run-30hz is ${server}`,
+        },
+        {
+            name: 'node cold start 2 reports no first step',
+            reported: (runtime, i) => (runtime === 'node' && i === 2 ? {} : { firstStep: { ...SERVER_FIRST_STEP } }),
+            message: `interp-prebuilt: node cold start 2: ${noStep('undefined')}`,
+        },
+        {
+            name: 'node cold start 8 reports a hash that is not 16 lowercase hex digits',
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'node' && i === 8
+                    ? { step: 1, hash: '5BE1C0D2A4F39E70' }
+                    : { ...SERVER_FIRST_STEP },
+            }),
+            message: `interp-prebuilt: node cold start 8: ${noStep('{"step":1,"hash":"5BE1C0D2A4F39E70"}')}`,
+        },
+    ];
+    for (const row of nodeRows) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub);
+            const fake = fakeMeasurement({ reported: row.reported });
+
+            await assert.rejects(
+                async () => measureMode('interp-prebuilt', dir, work, fake.runners),
+                exactly(MeasurementError, row.message),
+            );
+            // The ten cold starts ran; the steps process and Chromium did not.
+            assert.deepEqual(processesOf(fake.log), Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)));
+            assert.equal(fake.log.served.length, 0);
+            assert.equal(fake.log.launches, 0);
+        });
+    }
+
+    const chromiumRows = [
+        {
+            name: 'chromium cold start 3 reports another hash',
+            reported: (runtime, i) => ({
+                firstStep: runtime === 'chromium' && i === 3 ? { step: 1, hash: 'ffffffffffffffff' } : { ...SERVER_FIRST_STEP },
+            }),
+            message: 'interp-prebuilt: chromium cold start 3: the first step committed step 1 with hash ffffffffffffffff, '
+                + `but the server's first record of flat-run-30hz is ${server}`,
+            contexts: 3,
+        },
+        {
+            name: 'chromium cold start 10 reports a null first step',
+            reported: (runtime, i) => ({ firstStep: runtime === 'chromium' && i === 10 ? null : { ...SERVER_FIRST_STEP } }),
+            message: `interp-prebuilt: chromium cold start 10: ${noStep('null')}`,
+            contexts: 10,
+        },
+    ];
+    for (const row of chromiumRows) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub);
+            const fake = fakeMeasurement({ reported: row.reported });
+
+            await assert.rejects(
+                async () => measureMode('interp-prebuilt', dir, work, fake.runners),
+                exactly(MeasurementError, row.message),
+            );
+            assert.deepEqual(processesOf(fake.log), [
+                ...Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)),
+                nodeProcess('steps', app, work),
+            ]);
+            assert.deepEqual(
+                contextsOf(fake.log),
+                Array.from({ length: row.contexts }, () => ({ urls: [COLD_START_PAGE], closed: 1 })),
+                'no page runs after the one that failed, and every context is closed',
+            );
+            assert.equal(fake.log.browserClosed, 1);
+            assert.equal(fake.log.serverClosed, 1);
+        });
+    }
+
+    const serverRows = [
+        {
+            name: 'the work directory holds no server records of flat-run-30hz',
+            serverRecords: null,
+            message: (file) => `interp-prebuilt: cannot read ${file}: ENOENT: no such file or directory, open '${file}'`,
+        },
+        {
+            name: 'the server records of flat-run-30hz are empty',
+            serverRecords: Buffer.alloc(0),
+            message: (file) => `interp-prebuilt: ${file} holds no step record`,
+        },
+        {
+            name: 'the server\'s first record of flat-run-30hz is cut off',
+            serverRecords: SERVER_RECORDS.subarray(0, 21),
+            message: (file) => `interp-prebuilt: ${file}: step records: the record at byte 0 is cut off (21 bytes remain)`,
+        },
+    ];
+    for (const row of serverRows) {
+        await t.test(row.name, async (sub) => {
+            const { dir, app, work } = measuredMode(sub, { serverRecords: row.serverRecords });
+            const fake = fakeMeasurement();
+
+            await assert.rejects(
+                async () => measureMode('interp-prebuilt', dir, work, fake.runners),
+                exactly(MeasurementError, row.message(path.join(work, 'server', 'flat-run-30hz.records'))),
+            );
+            assert.deepEqual(processesOf(fake.log), Array.from({ length: 10 }, () => nodeProcess('cold-start', app, work)));
+            assert.equal(fake.log.launches, 0);
+        });
+    }
+});
+
 test('a wedged browser fails the mode within its bounds instead of hanging it', async (t) => {
     // T322 (independent review): measureMode passes its page and close bounds to every page and to the
     // browser's close, so a browser that stops answering ends the run with its `measure:` line.
@@ -1547,10 +1759,26 @@ test('a wedged browser fails the mode within its bounds instead of hanging it', 
     });
 });
 
+/** The record the stand-in runtime's `StepQueued` commits, as the cold start must report it. */
+const STAND_IN_STEP = Object.freeze({ step: 12, hash: '0123456789abcdef' });
+
+/**
+ * The stand-in's report buffer once `StepQueued(1)` has committed STAND_IN_STEP: the header (one record,
+ * its length) and the record (contracts/wasm-api.md#report-buffer-layouts).
+ */
+function standInReport() {
+    const record = packRecords([{ ...STAND_IN_STEP, state: Uint8Array.of(7, 7, 7, 7) }]);
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(1, 0);
+    header.writeUInt32LE(record.length, 4);
+    return Buffer.concat([header, record]);
+}
+
 /**
  * A publish folder whose `_framework/dotnet.js` stands for the runtime: `withRuntimeOptions(options)`
  * refuses any option, `create()` gives a runtime with the contract's build info plus one field the report
- * leaves out, the host's exports (the load calls return 0, `StepQueued(n)` commits `n`) and, unless
+ * leaves out, the host's exports (the load calls return 0; `StepQueued(n)` commits `n`, and its first
+ * call writes `standInReport()` to a report buffer that held zeros until then) and, unless
  * `jiterpreterOptions` is undefined, `INTERNAL.jiterpreter_get_options()` returning it.
  */
 function fakeDotnetBuild(dir, jiterpreterOptions) {
@@ -1561,13 +1789,17 @@ function fakeDotnetBuild(dir, jiterpreterOptions) {
         ? ''
         : `INTERNAL: { jiterpreter_get_options: () => (${JSON.stringify(jiterpreterOptions)}) },`;
     fs.writeFileSync(path.join(framework, 'dotnet.js'), `
+const report = new Uint8Array(1024);
 const exports = {
     LoadCollision: () => 0,
     LoadConfig: () => 0,
     Reset: () => 0,
     CommandBuffer: () => ({ set() {}, dispose() {} }),
-    ReportBuffer: () => ({ slice: (start, end) => new Uint8Array(end - start), dispose() {} }),
-    StepQueued: (count) => count,
+    ReportBuffer: () => ({ slice: (start, end) => report.slice(start, end), dispose() {} }),
+    StepQueued: (count) => {
+        report.set(${JSON.stringify(Array.from(standInReport()))}, 0);
+        return count;
+    },
 };
 const runtime = {
     runtimeBuildInfo: { ...${JSON.stringify(MEASURED_BUILD_INFO)}, wasmEnableSIMDOrigin: 'not recorded' },
@@ -1648,7 +1880,13 @@ test('a Node cold start reports the jiterpreter state its runtime booted with', 
             const lines = result.stdout.trimEnd().split('\n');
             assert.equal(lines.length, 1, result.stdout);
             const coldStart = JSON.parse(lines[0]);
-            assert.deepEqual(Object.keys(coldStart), ['importMs', 'createMs', 'firstStepMs', 'totalMs', 'buildInfo', 'jiterpreter']);
+            assert.deepEqual(
+                Object.keys(coldStart),
+                ['importMs', 'createMs', 'firstStepMs', 'totalMs', 'firstStep', 'buildInfo', 'jiterpreter'],
+            );
+            // T320 (second spec-test review): the step the runtime's StepQueued(1) committed, read from its
+            // report buffer, which held no record before the call.
+            assert.deepEqual(coldStart.firstStep, STAND_IN_STEP);
             assert.deepEqual(coldStart.jiterpreter, row.expected);
             assert.deepEqual(coldStart.buildInfo, MEASURED_BUILD_INFO);
             for (const interval of ['importMs', 'createMs', 'firstStepMs']) {
@@ -2425,4 +2663,359 @@ test('both halves time the same steps, in passes of whole 16-command batches', a
             exactly(MeasurementError, 'rifle-burst: 12 commands are fewer than one 16-command batch, so no step can be timed'),
         );
     });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// A cold start's first step (T320 second spec-test review, T322 second independent review)
+// ---------------------------------------------------------------------------------------------------
+
+/** The milliseconds the fake clock moves inside `StepQueued`, and only there. */
+const FIRST_STEP_MS = 7;
+/** A cold start's boot timings, each exact in binary floating point, as `bootRuntime` gives them. */
+const BOOT_TIMINGS = Object.freeze({ importMs: 30.5, createMs: 41.25 });
+/** The step the fake's `StepQueued(1)` commits: `writeReport` with 40 steps before it. */
+const FAKE_FIRST_STEP = Object.freeze({ step: 41, hash: '56e27eb562eddf5d' });
+
+/** Lowercase hex of a byte view, for the call log. */
+function hex(bytes) {
+    return Buffer.from(bytes).toString('hex');
+}
+
+/**
+ * The inputs of the three measured streams, each with distinct bytes: stream k's command i holds bytes
+ * `(64k + 17i + j) & 0xff`, so flat-run-30hz's first command is the bytes 0 to 16 and every other cut of
+ * the commands differs from it; its match salt is negative, as a salt above 2^63 reaches `Reset`.
+ */
+function coldStartInputs() {
+    const encode = (text) => new TextEncoder().encode(text);
+    const inputs = new Map();
+    for (const [k, [scenario, count]] of Object.entries(MEASURED_STREAM_COMMANDS).entries()) {
+        const commands = new Uint8Array(count * COMMAND_SIZE);
+        for (let i = 0; i < commands.length; i++) {
+            commands[i] = (64 * k + i) & 0xff;
+        }
+        inputs.set(scenario, {
+            collision: encode(`collision of ${scenario}`),
+            config: encode(`config of ${scenario}`),
+            initialState: encode(`initial state of ${scenario}`),
+            commands,
+            salt: BigInt(-7 - k),
+        });
+    }
+
+    return inputs;
+}
+
+/**
+ * Fake exports for `timeFirstStep`, which log every call, and a clock in milliseconds that moves by
+ * FIRST_STEP_MS inside `StepQueued` and nowhere else (each reading is logged as `now()`).
+ *
+ * - A load call or `Reset` returns `codes[<call>]`, 0 by default, and on another code leaves
+ *   `texts[<call>]` as the report buffer's load text.
+ * - `LoadConfig` first leaves `stale text of the old report buffer` in the current report buffer, then
+ *   replaces it with a larger one and writes its own text there: a view fetched before it reads the
+ *   stale text. It reallocates on every call, refusals included, a stricter stand-in than BatchStepper,
+ *   which grows the buffer only on a `LoadConfig` that returns `Ok` (`GrowReport`) and writes a refusal
+ *   into the buffer it has.
+ * - `StepQueued(count)` logs the command buffer's first COMMAND_SIZE bytes, moves the clock, writes the
+ *   report buffer as BatchStepper does after `written` steps committed (`writeReport` with 40 steps before,
+ *   so a whole record is FAKE_FIRST_STEP) and returns `committed`. With `recordsLength` given, it then
+ *   overwrites the header's records length with it, so the header can say a record is cut off.
+ * - `CommandBuffer()` and `ReportBuffer()` give views whose `set`, `slice` and `dispose` act on the
+ *   current buffers; `set` and `dispose` are logged.
+ */
+function fakeColdStart({ codes = {}, texts = {}, committed = 1, written = committed, recordsLength } = {}) {
+    const decode = (bytes) => new TextDecoder().decode(bytes);
+    const log = [];
+    const commandBuffer = new Uint8Array(32 * COMMAND_SIZE);
+    let report = new Uint8Array(64 * 1024);
+    let clockMs = 0;
+
+    const load = (call, detail) => {
+        log.push(`${call}(${detail})`);
+        const code = codes[call] ?? 0;
+        writeLoadText(report, code === 0 ? '' : texts[call] ?? '');
+        return code;
+    };
+
+    const exports = {
+        LoadCollision: (file) => load('LoadCollision', decode(file)),
+        LoadConfig(block) {
+            writeLoadText(report, 'stale text of the old report buffer');
+            report = new Uint8Array(96 * 1024);
+            return load('LoadConfig', decode(block));
+        },
+        Reset: (state, salt) => load('Reset', `${decode(state)}, ${salt}n`),
+        CommandBuffer() {
+            log.push('CommandBuffer()');
+            return {
+                set(bytes, offset) {
+                    log.push(`CommandBuffer.set(${bytes.length} bytes ${hex(bytes)}, ${offset})`);
+                    commandBuffer.set(bytes, offset);
+                },
+                dispose() {
+                    log.push('CommandBuffer.dispose()');
+                },
+            };
+        },
+        ReportBuffer() {
+            log.push('ReportBuffer()');
+            const bytes = report;
+            return {
+                slice: (start, end) => bytes.slice(start, end),
+                dispose() {
+                    log.push('ReportBuffer.dispose()');
+                },
+            };
+        },
+        StepQueued(count) {
+            log.push(`StepQueued(${count}) with ${hex(commandBuffer.subarray(0, COMMAND_SIZE))}`);
+            clockMs += FIRST_STEP_MS;
+            writeReport(report, 40, count, written);
+            if (recordsLength !== undefined) {
+                new DataView(report.buffer).setUint32(4, recordsLength, true);
+            }
+
+            return committed;
+        },
+    };
+
+    const now = () => {
+        log.push('now()');
+        return clockMs;
+    };
+    return { exports, log, now };
+}
+
+/** flat-run-30hz's first command in `coldStartInputs`, as the log prints it. */
+const FIRST_COMMAND_HEX = '000102030405060708090a0b0c0d0e0f10';
+
+/** The calls of a cold start up to its `StepQueued(1)`, which every row below reaches. */
+const LOADED = Object.freeze([
+    'now()',
+    'LoadCollision(collision of flat-run-30hz)',
+    'LoadConfig(config of flat-run-30hz)',
+    'Reset(initial state of flat-run-30hz, -7n)',
+    'CommandBuffer()',
+    `CommandBuffer.set(17 bytes ${FIRST_COMMAND_HEX}, 0)`,
+    `StepQueued(1) with ${FIRST_COMMAND_HEX}`,
+    'now()',
+    'CommandBuffer.dispose()',
+    'ReportBuffer()',
+    'ReportBuffer.dispose()',
+]);
+
+test('a cold start times its load calls, first command and StepQueued(1) as one interval', async (t) => {
+    // T320 (second spec-test review), US7 scenario 2: "the time to the first completed step". Both halves
+    // call timeFirstStep. Given a booted runtime's exports and the measured streams' inputs, when it runs,
+    // then the clock is read just before LoadCollision and just after StepQueued(1), flat-run-30hz's first
+    // 17 command bytes are written at the command buffer's start before StepQueued(1), firstStepMs is the
+    // time StepQueued took (the clock moves only there) and totalMs is the three intervals added, and the
+    // result names the record that step committed; a call that does not return what it must throws its
+    // exact MeasurementError and nothing runs after it.
+    const { MeasurementError, timeFirstStep } = await import('../lib/passes.mjs');
+
+    await t.test('one step committed', () => {
+        const fake = fakeColdStart();
+
+        const result = timeFirstStep(fake.exports, coldStartInputs(), fake.now, BOOT_TIMINGS);
+
+        assert.deepEqual(fake.log, LOADED);
+        assert.deepEqual(result, {
+            importMs: 30.5,
+            createMs: 41.25,
+            firstStepMs: 7,
+            totalMs: 78.75,
+            firstStep: FAKE_FIRST_STEP,
+        });
+        assert.deepEqual(Object.keys(result), ['importMs', 'createMs', 'firstStepMs', 'totalMs', 'firstStep']);
+    });
+
+    const stepRows = [
+        {
+            name: 'StepQueued(1) commits no step and stops at a fault',
+            fake: { committed: 0 },
+            message: 'StepQueued(1) committed 0 steps: NonFinite at characters[0].velocity.y',
+        },
+        {
+            name: 'StepQueued(1) refuses the call with NotReady',
+            fake: { committed: -1 },
+            message: 'StepQueued(1) refused the call: -1',
+        },
+        {
+            name: 'StepQueued(1) commits two steps',
+            fake: { committed: 2 },
+            message: 'StepQueued(1) committed 2 steps, more than it was asked to',
+        },
+        {
+            name: 'StepQueued(1) returns 1 with no record in the report buffer',
+            fake: { committed: 1, written: 0 },
+            message: 'StepQueued(1) returned 1, but the report buffer holds 0 records in 0 bytes, not one whole step record',
+        },
+        {
+            name: 'StepQueued(1) returns 1 with two records in the report buffer',
+            fake: { committed: 1, written: 2 },
+            message: `StepQueued(1) returned 1, but the report buffer holds 2 records in ${2 * RECORD_LENGTH} bytes, `
+                + 'not one whole step record',
+        },
+        {
+            // The header counts one record but its length cuts it off: readRecords' RangeError becomes the
+            // cold start's MeasurementError.
+            name: 'StepQueued(1) returns 1 with its one record cut off',
+            fake: { committed: 1, written: 1, recordsLength: RECORD_LENGTH - 1 },
+            message: `StepQueued(1) returned 1, but the report buffer holds 1 records in ${RECORD_LENGTH - 1} bytes, `
+                + 'not one whole step record',
+        },
+    ];
+    for (const row of stepRows) {
+        await t.test(row.name, () => {
+            const fake = fakeColdStart(row.fake);
+
+            assert.throws(
+                () => timeFirstStep(fake.exports, coldStartInputs(), fake.now, BOOT_TIMINGS),
+                exactly(MeasurementError, row.message),
+            );
+            assert.deepEqual(fake.log, LOADED);
+        });
+    }
+
+    const loadRows = [
+        {
+            name: 'LoadCollision refuses the file',
+            codes: { LoadCollision: 1 },
+            texts: { LoadCollision: 'MMCD magic at offset 0: expected 4d4d4344' },
+            message: 'LoadCollision returned 1: MMCD magic at offset 0: expected 4d4d4344',
+            calls: 2,
+        },
+        {
+            name: 'LoadConfig refuses the block after reallocating the report buffer',
+            codes: { LoadConfig: 2 },
+            texts: { LoadConfig: 'world.maxCharacters: must be at least 1\ninput.weaponSlots: must be at most 4' },
+            message: 'LoadConfig returned 2: world.maxCharacters: must be at least 1\ninput.weaponSlots: must be at most 4',
+            calls: 3,
+        },
+        {
+            name: 'Reset returns NotReady, which leaves no text',
+            codes: { Reset: 3 },
+            message: 'Reset returned 3',
+            calls: 4,
+        },
+        {
+            name: 'Reset refuses the state',
+            codes: { Reset: 1 },
+            texts: { Reset: 'canonical state characters at offset 12: 4 characters, more than world.maxCharacters 2' },
+            message: 'Reset returned 1: canonical state characters at offset 12: 4 characters, more than world.maxCharacters 2',
+            calls: 4,
+        },
+    ];
+    for (const row of loadRows) {
+        await t.test(row.name, () => {
+            const fake = fakeColdStart({ codes: row.codes, texts: row.texts });
+
+            assert.throws(
+                () => timeFirstStep(fake.exports, coldStartInputs(), fake.now, BOOT_TIMINGS),
+                exactly(MeasurementError, row.message),
+            );
+            // The calls up to the refused one, then its text through a fresh ReportBuffer() view, disposed.
+            assert.deepEqual(fake.log, [...LOADED.slice(0, row.calls), 'ReportBuffer()', 'ReportBuffer.dispose()']);
+        });
+    }
+});
+
+test('a refused load call\'s text is read through a fresh report buffer', async (t) => {
+    // T322 (second independent review): BatchStepper grows the report buffer only on a LoadConfig that
+    // returns Ok (GrowReport) and writes a refusal into the buffer it has, so a view held from before an
+    // Ok LoadConfig that grew the buffer does not show a later Reset's refusal. Every refusal is
+    // therefore read through a fresh view, as BatchStepper.ReportSegment's doc asks ("a caller reads it
+    // again after each load call"), which also holds if a host reallocates on a refusal. expectLoad
+    // reads the text through a fresh ReportBuffer() view and disposes it, and loadWorld, the
+    // LoadCollision, LoadConfig and Reset of the cold starts (timeFirstStep) and of the agreement Worker's
+    // batch check (web/worker.mjs, pinned in a browser by specs/worker-load-refusal.spec.mjs), checks
+    // each call with it. Given fake exports whose LoadConfig reallocates the buffer on every call, a
+    // stricter stand-in than BatchStepper, when a refusal is checked, then the error carries the current
+    // buffer's text, not the old one's.
+    const { MeasurementError, expectLoad, loadWorld, readLoadText } = await import('../lib/passes.mjs');
+    const refusal = 'world.maxCharacters: must be at least 1\ninput.weaponSlots: must be at most 4';
+    const config = new TextEncoder().encode('config of rifle-burst');
+
+    for (const [scenario, prefix] of [[undefined, ''], ['rifle-burst', 'rifle-burst: ']]) {
+        await t.test(`expectLoad ${scenario === undefined ? 'with no stream named' : `named ${scenario}`}`, () => {
+            const fake = fakeColdStart({ codes: { LoadConfig: 2 }, texts: { LoadConfig: refusal } });
+            const before = fake.exports.ReportBuffer();
+
+            const code = fake.exports.LoadConfig(config);
+
+            // A view held across the call, as the agreement Worker holds one, shows the old buffer's text.
+            assert.equal(readLoadText(before), 'stale text of the old report buffer');
+            assert.throws(
+                () => expectLoad(fake.exports, 'LoadConfig', code, scenario),
+                exactly(MeasurementError, `${prefix}LoadConfig returned 2: ${refusal}`),
+            );
+            assert.deepEqual(fake.log, [
+                'ReportBuffer()',
+                'LoadConfig(config of rifle-burst)',
+                'ReportBuffer()',
+                'ReportBuffer.dispose()',
+            ]);
+        });
+    }
+
+    await t.test('expectLoad reads nothing on Ok', () => {
+        const fake = fakeColdStart();
+
+        assert.equal(expectLoad(fake.exports, 'LoadConfig', fake.exports.LoadConfig(config)), undefined);
+        assert.deepEqual(fake.log, ['LoadConfig(config of rifle-burst)']);
+    });
+
+    const input = coldStartInputs().get('rifle-burst');
+    const loads = [
+        'LoadCollision(collision of rifle-burst)',
+        'LoadConfig(config of rifle-burst)',
+        'Reset(initial state of rifle-burst, -8n)',
+    ];
+    const rows = [
+        { name: 'loadWorld loads the world in order', fake: {}, calls: 3 },
+        {
+            name: 'loadWorld with LoadCollision refused',
+            fake: { codes: { LoadCollision: 1 }, texts: { LoadCollision: 'MMCD version at offset 4: 2 is not 1' } },
+            message: 'LoadCollision returned 1: MMCD version at offset 4: 2 is not 1',
+            calls: 1,
+        },
+        {
+            name: 'loadWorld with LoadConfig refused after reallocating the report buffer',
+            fake: { codes: { LoadConfig: 2 }, texts: { LoadConfig: refusal } },
+            message: `LoadConfig returned 2: ${refusal}`,
+            calls: 2,
+        },
+        { name: 'loadWorld with Reset not ready', fake: { codes: { Reset: 3 } }, message: 'Reset returned 3', calls: 3 },
+        {
+            // The case BatchStepper can produce: LoadConfig returned Ok and grew the buffer, then Reset refused.
+            name: 'loadWorld with Reset refused after a LoadConfig that grew the report buffer',
+            fake: {
+                codes: { Reset: 1 },
+                texts: { Reset: 'canonical state characters at offset 12: 4 characters, more than world.maxCharacters 2' },
+            },
+            message: 'Reset returned 1: canonical state characters at offset 12: 4 characters, more than world.maxCharacters 2',
+            calls: 3,
+        },
+    ];
+    for (const row of rows) {
+        await t.test(row.name, () => {
+            const fake = fakeColdStart(row.fake);
+            const before = fake.exports.ReportBuffer();
+
+            if (row.message === undefined) {
+                assert.equal(loadWorld(fake.exports, input), undefined);
+                assert.deepEqual(fake.log, ['ReportBuffer()', ...loads]);
+                return;
+            }
+
+            assert.throws(() => loadWorld(fake.exports, input), exactly(MeasurementError, row.message));
+            assert.deepEqual(fake.log, ['ReportBuffer()', ...loads.slice(0, row.calls), 'ReportBuffer()', 'ReportBuffer.dispose()']);
+            if (row.calls > 1) {
+                // LoadConfig replaced the buffer the view held before it.
+                assert.equal(readLoadText(before), 'stale text of the old report buffer');
+            }
+        });
+    }
 });
