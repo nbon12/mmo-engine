@@ -2801,7 +2801,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - **tasks.md**: In `specs/015-shared-simulation-core/tasks.md`, check off every Phase 1-10 task that is done. Leave this phase's PR, review and merge tasks unchecked until they finish, and leave Phases 11-13 unchecked. Correct any test name in the Scenario coverage table that was renamed.
   - **Index check**: For each slice-1 scenario in the Scenario coverage table, the named `Class.Method` must appear in `dotnet test tests/MmoEngine.SimCore.Tests --list-tests` or `dotnet test tests/MmoEngine.SimCore.Analyzers.Tests --list-tests`. Check with a `grep -F` per name; every grep exits 0.
   - **Older specs**: Check `specs/013-regionizer-simulator/spec.md` and `specs/014-telemetry-test-harness/spec.md` for statements this feature contradicts. Examples are the known environment names, which `SimEnvironment` keeps equal to the simulator's, and the regionizer's regex banned-API scan, which stays. Update any superseded statement, and record which spec prevails and why in this feature's spec.md Assumptions.
-- [ ] T265 Commit and push, then open the draft PR:
+- [X] T265 Commit and push, then open the draft PR:
   - **Commit**: Commit the slice on `015-shared-simulation-core`. Messages end with the session's `Co-Authored-By:` and `Claude-Session:` lines. Push with `git push origin 015-shared-simulation-core`.
   - **PR body**: Write the body to a file in the session's scratchpad directory, never in the repository. It contains:
     - the commands run in this phase and their exit codes and summary lines (build, format, test, coverage gate with its table, workflow tests, the content, golden and streams reproductions, the guarded-path and package checks);
@@ -2813,7 +2813,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
 
     The body contains no at-sign mention of the Claude workflow.
   - **Open**: Run `gh pr create --draft --base main --head 015-shared-simulation-core --title "015 shared simulation core, slice 1: core, analyzer, formats, simcore CLI and server-side agreement" --body-file <that file>`. Record the PR number.
-- [ ] T266 Add the `docs/patch-notes.md` entry at the top, below the `<!-- Add the newest entry below this line. -->` marker, in the shape the file's header gives, after T265 (it needs the PR number):
+- [X] T266 Add the `docs/patch-notes.md` entry at the top, below the `<!-- Add the newest entry below this line. -->` marker, in the shape the file's header gives, after T265 (it needs the PR number):
   - **Heading**: `## <today's date> — Shared simulation core, slice 1: deterministic core, analyzer, formats and the simcore CLI`.
   - **Links**: `Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #<n>`.
   - **Behavior and contract changes**:
@@ -2841,7 +2841,7 @@ Every Theory below whose result depends on the step length takes `int hz` from `
   - The items in spec.md's `Planned for slice 2: not yet built, no test on main` section (T264) are out of scope for this review, because spec.md does not state them as current behavior: US2.1, US2.2, US2.3, US2.7, US2-IT, the browser-call half of US2.6, US3.8b, US4.2b, US4-ITb (the agreement half of US4-IT), US5.5b, US5-ITb (the agreement half of US5-IT), US7.2, the measurement-job half of US7-IT, SC-001, SC-004's bit half, SC-006, SC-007, the "in every build" clauses of FR-004 and FR-011, the US3 narrative's cross-build sentence, the WebAssembly half of the Constitution Requirements' "Performance and evidence" bullet, and the WebAssembly halves of FR-008, FR-024, FR-025, FR-026, FR-027, FR-029 and FR-031. List them in the PR description. Every item outside that section is in scope, and a finding against one blocks.
   - For every other finding, fix the test it names in its file under `tests/MmoEngine.SimCore.Tests/` or `tests/MmoEngine.SimCore.Analyzers.Tests/`, so that it asserts the scenario's exact Then. Never weaken an assertion or skip a test.
   - Rerun that test project and T259's coverage gate, push, and answer each finding on the PR (fixed, with the commit, or why it is not a problem).
-- [ ] T268 Audit for human steps (Principle XIII) with commands:
+- [X] T268 Audit for human steps (Principle XIII) with commands:
   - `grep -n -i -E "manual|by hand|sign-off|sign off|approv|QA|stop and validate|reviewer must|ask the (owner|maintainer)"` over `specs/015-shared-simulation-core/tasks.md`, `specs/015-shared-simulation-core/spec.md`, `specs/015-shared-simulation-core/quickstart.md` and the PR body file. Every hit must describe system behaviour or an automated check, not a step a person performs. Reword any that does not.
   - Confirm with `gh pr view <n> --json body` that the final description contains no such step.
 - [ ] T269 Mark the PR ready and see it merged under `.routines/merge-policy.md`. This depends on every task above.

@@ -20,6 +20,66 @@ Spec: [specs/NNN-feature/spec.md](../specs/NNN-feature/spec.md) · PR: #NNN
 
 <!-- Add the newest entry below this line. -->
 
+## 2026-11-21 — Shared simulation core, slice 1: deterministic core, analyzer, formats and the simcore CLI
+
+Spec: [specs/015-shared-simulation-core/spec.md](../specs/015-shared-simulation-core/spec.md) · PR: #70
+
+### Behavior and contract changes
+
+- **New projects.** Each has its own tests (`tests/MmoEngine.SimCore.Tests`, `tests/MmoEngine.SimCore.Analyzers.Tests`), and there's a new benchmarks project, `benchmarks/MmoEngine.SimCore.Benchmarks`.
+  - `src/MmoEngine.SimCore` is the deterministic core: movement with capsule collision against heightfields and static meshes, weapon timing, and projectile flight. It uses float32 and its own trig.
+  - `src/MmoEngine.SimCore.Analyzers` holds the analyzer rules.
+  - `src/MmoEngine.SimCore.Server` is the server host.
+  - `src/MmoEngine.SimCore.Cli` is the `simcore` tool.
+  - Steps allocate nothing; the benchmark report shows 0 bytes per op for every step.
+- **Three versioned binary formats.** They're specified in `specs/015-shared-simulation-core/contracts/`, and each has golden fixtures and refusal tables:
+  - the input command;
+  - collision data (`.mmcd`);
+  - the recorded stream (`.mmrs`).
+- **The canonical state** has a fixed serialization. Each step's state hash is XxHash64 over it.
+- **Analyzer rules MMO1001–MMO1009** are attached to `MmoEngine.SimCore` only, as errors that can't be lowered or suppressed. They cover:
+  - vector types outside the `Vector128<float>` allowlist;
+  - platform math outside the allowlist;
+  - FMA;
+  - hash-ordered iteration;
+  - ambient time, randomness and hash seeds;
+  - locks;
+  - `double`, `Half` and `nint`;
+  - platform queries, `#if`, reflection, native code and `Unsafe`;
+  - float-to-integer conversions outside `SimMath`.
+- **`simcore` commands:** `config check`, `content generate`, `golden write`, `streams record|verify`, `agreement prepare|compare` and `measure validate-report`. Their exit codes, as `contracts/simcore-cli.md` gives them:
+  - 0: success.
+  - 1: a divergence or a validation failure.
+  - 2: a usage error, a refused or unreadable input, a NotComparable stream, or a check that could not run.
+- **Committed content in `simcore/`:**
+  - `config/default.json`;
+  - `content/test-world.mmcd`;
+  - 19 recorded streams with `streams/REGENERATIONS.md`;
+  - the golden fixtures (92 cases).
+- **Input limits.** A configuration file is read at most 1 MiB + 1 bytes (`config check`, `SimConfigJson.Load`), so a longer file, or a pipe that passes the limit, is refused with exit 2. A content file without a length (a pipe) is refused as unreadable.
+- **Packages.** `Directory.Packages.props` adds `Microsoft.CodeAnalysis.CSharp` 5.0.0 and `Basic.Reference.Assemblies.Net100` 1.8.14.
+
+### Shared pieces to reuse
+
+- **`SimWorld`**: one world's state, stepped with the injected step number and seed.
+- **`BatchStepper`**: the batched step API that slice 2's WebAssembly host delegates to.
+- **`StreamRunner`**: replays a recorded stream and checks every step's hash. It has a one-ulp perturbation mode to prove that a divergence is caught.
+- **`ConfigGuard` and `SimConfigValidator`**: they refuse a configuration before it reaches the core.
+- **`CompiledConfig`**: the validated, precomputed configuration the steps read.
+- **The regeneration rule**: `simcore streams record --reason "<why>"` is the only writer of `simcore/streams/`. It appends to `REGENERATIONS.md`. `streams verify` fails on any stream that no longer reproduces.
+- **`simcore golden write`**: it regenerates the format fixtures and reports `unchanged` per case when nothing moved.
+- **The analyzer's attach pattern**: a `ProjectReference` with `OutputItemType="Analyzer"` and the rules at Error. It is reusable for any other assembly that must stay deterministic.
+
+### Open follow-ups
+
+- **Slice 2**, on a new branch from `main`, covers tasks.md Phases 11–13:
+  - the WebAssembly host in a Web Worker;
+  - the Node and Playwright agreement runners;
+  - the SimCore workflow, with its gating agreement job on every core change;
+  - the measure job: step cost in the browser, download size, and interpreter vs AOT startup, with the full benchmark run on the runner class.
+- **The regionizer's regex banned-API scan** should move onto the analyzer (plan.md).
+- **Converting a live world's state between step rates**, which the 30 to 20 Hz degradation step needs, is owned by the continent server (sub-spec 5) or a later core slice (spec Assumptions). Open decision 3 (tick rate) and open decision 5 (hit detection) stay open.
+
 ## 2026-11-16 — Sweeps run as Kubernetes Jobs
 
 Spec: [specs/014-telemetry-test-harness/spec.md](../specs/014-telemetry-test-harness/spec.md) (FR-032) · PR: #64 (closes #62)
