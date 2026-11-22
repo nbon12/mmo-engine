@@ -3417,7 +3417,7 @@ On the PR, these checks pass on the head commit: the `SimCore` workflow's `agree
 
 ### Implementation
 
-- [ ] T312 Add `tests/MmoEngine.SimCore.Tests/Support/QuickstartSections.cs`:
+- [X] T312 Add `tests/MmoEngine.SimCore.Tests/Support/QuickstartSections.cs`:
   - a static class with `SliceOne`, the headings Phase 10's test covers, moved out of `QuickstartTests` unchanged;
   - `SliceTwo`, the three headings above;
   - a shared `BashLines(string markdown, string heading)` reader, which takes the document's text so that T311's defect rows can pass an in-memory copy. T311's test reads its result as an `IReadOnlyList<QuickstartBashLine>`, a record `QuickstartBashLine(int First, int Last, string Text)` in the same file: one entry per command line of the ```` ```bash ```` blocks between `## <heading>` and the next `## ` heading, in document order, where `First` and `Last` are the 1-based lines it spans and `Text` joins a line that ends in `\` to the next with one space (the backslash and the next line's leading whitespace dropped). Blank lines are skipped, and a heading the file lacks yields an empty list, so that T311's section check, not an exception, reports it.

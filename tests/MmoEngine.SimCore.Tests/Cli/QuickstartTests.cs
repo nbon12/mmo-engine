@@ -43,17 +43,7 @@ public sealed class QuickstartTests
     /// <summary>The index in <see cref="ExpectedCommands"/> of the documented refusal, <c>streams record --all</c>.</summary>
     private const int RefusalIndex = 4;
 
-    /// <summary>The five slice-1 <c>##</c> sections whose commands are collected, in document order.</summary>
-    private static readonly string[] Sections =
-    [
-        "Check a configuration file",
-        "Reproduce the test world",
-        "Rewrite the golden fixtures",
-        "Verify the committed streams",
-        "Regenerate the committed streams",
-    ];
-
-    /// <summary>The seven commands those sections give, in document order, as their arguments.</summary>
+    /// <summary>The seven commands the <see cref="QuickstartSections.SliceOne"/> sections give, in document order, as their arguments.</summary>
     private static readonly string[][] ExpectedCommands =
     [
         ["config", "check", "simcore/config/default.json"],
@@ -125,9 +115,9 @@ public sealed class QuickstartTests
     }
 
     /// <summary>
-    /// Every line of <see cref="Sections"/> that starts with <see cref="CommandPrefix"/>, split after
-    /// <see cref="ArgumentSeparator"/> into arguments. Its comment is its own trailing <c># ...</c>, or else
-    /// that of an <see cref="EchoExitCode"/> line right after it.
+    /// Every line of the <see cref="QuickstartSections.SliceOne"/> sections that starts with
+    /// <see cref="CommandPrefix"/>, split after <see cref="ArgumentSeparator"/> into arguments. Its comment is
+    /// its own trailing <c># ...</c>, or else that of an <see cref="EchoExitCode"/> line right after it.
     /// </summary>
     private static List<QuickstartCommand> Collect(string markdown)
     {
@@ -141,7 +131,7 @@ public sealed class QuickstartTests
             if (line.StartsWith("## ", StringComparison.Ordinal))
             {
                 var heading = line[3..].Trim();
-                inSection = Sections.Contains(heading, StringComparer.Ordinal);
+                inSection = QuickstartSections.SliceOne.Contains(heading, StringComparer.Ordinal);
                 if (inSection)
                 {
                     found.Add(heading);
@@ -166,7 +156,7 @@ public sealed class QuickstartTests
             commands.Add(new QuickstartCommand(arguments, comment));
         }
 
-        Assert.Equal(Sections, found);
+        Assert.Equal(QuickstartSections.SliceOne, found);
         return commands;
     }
 

@@ -8,13 +8,12 @@ directory. Every expected outcome below is what the command prints or its exit c
 
 - .NET SDK 10.0.100 or a later 10.0.1xx patch (`global.json`). The analyzer's Roslyn pin matches this
   band ([contracts/analyzer-rules.md](contracts/analyzer-rules.md#roslyn-pin)).
-- Node 22 (slice 2, not on main yet), for the agreement and measurement runners that slice 2 adds in
-  tools/agreement/.
+- Node 22, for the agreement and measurement runners in `tools/agreement/`.
 - Python 3 with PyYAML, for the workflow tests.
-- Optional (slice 2, not on main yet): the `wasm-tools` workload, only for the relinked interpreted and
-  AOT builds in [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses
-  the prebuilt runtime, which is the build the gating CI job tests; with it, the prebuilt publishes
-  below pass `-p:UsingBrowserRuntimeWorkload=false` to keep that build.
+- Optional: the `wasm-tools` workload, only for the relinked interpreted and AOT builds in
+  [the measurement report](#the-measurement-report). Without it, `dotnet publish` uses the prebuilt
+  runtime, which is the build the gating CI job tests; with it, the prebuilt publishes below pass
+  `-p:UsingBrowserRuntimeWorkload=false` to keep that build.
 
 ## Build and test
 
@@ -106,8 +105,6 @@ Expected: one `<name>: match, <steps> steps, final <hash>` line per stream in `s
 ([contracts/simcore-cli.md](contracts/simcore-cli.md#streams-verify)).
 
 ## Run the agreement suite
-
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
 This is what the `agreement` job in `.github/workflows/simcore.yml` runs. Publish the WebAssembly
 build, prepare a work directory, run the build in Node and in browser Workers, then compare.
@@ -204,8 +201,6 @@ runner class `local-dev`. The numbers are measurements on this machine only.
 
 ## The measurement report
 
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
-
 This builds the report for the prebuilt interpreted build, with or without the `wasm-tools` workload
 (the publish keeps the prebuilt runtime pack, as in the agreement section). It needs the benchmark
 output above and Playwright's Chromium from the agreement section.
@@ -259,8 +254,6 @@ The report's schema and what `validate-report` checks are in
 [contracts/measurement-report.md](contracts/measurement-report.md).
 
 ## Workflow tests
-
-Planned for slice 2, not on main yet: these commands need the WebAssembly host, the agreement runners and the SimCore workflow, which slice 2 adds.
 
 ```bash
 python3 -m unittest discover -s tests/workflows -v
