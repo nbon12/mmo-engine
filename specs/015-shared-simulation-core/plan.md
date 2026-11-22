@@ -1895,6 +1895,30 @@ The design documents settled these points, which the spec leaves open. They are 
   is left that no log shape reaches, which keeps `StreamFiles.cs` inside the coverage gate. The
   `empty-log` row of `RecordStartsOrExtendsTheRegenerationLog` now expects the heading, and the
   contract's bullet and T107 say so.
+- **T271: the missing host fails the build only with `-warnaserror`.** A `ProjectReference` to a
+  project that does not exist is MSBuild warning `MSB9008`, not an error, and none of T271's support
+  files uses the host, so the plain `dotnet build tests/MmoEngine.SimCore.Wasm.Tests` that T271 named
+  exits 0. With `-warnaserror`, the repo's build rule, it exits 1 on `MSB9008` alone, which is the red
+  T271 wants. T271's command now carries `-warnaserror`. T272's red needs no change: its tests do not
+  compile without `SimCoreExports` and `Program` (`CS0103`).
+- **T271 and T272: the host's tests bind the default config with the server's binder.** T272's
+  "default block" (`LoadConfig` sizing the report buffer to 2,935,060 bytes, and `EvaluateTables`) is
+  `ConfigBlock.Encode` of `simcore/config/default.json`, the block `agreement prepare` writes to
+  `tables/config.bin`. Only `SimConfigJson` in `MmoEngine.SimCore.Server` reads that file, so the test
+  project also references the server project, test-only, and `Support/DefaultConfig.cs` builds the
+  block as slice 1's `TestConfigs.Default()` does. `CommittedStreamInputs` still decodes streams with
+  core APIs only, and the host references only the core. A copy of the JSON as a committed binary block
+  was not chosen: it would be a second source of the default that nothing keeps in step.
+- **T272: the export tests' shape.** `RunStreamReturnsTheServerRecords` is a Theory with one row per
+  case (`flat-run-30hz`, `fuzz-all-buttons`, the perturbation at step 15, and the version-2 copy), as
+  the repo's data-variation rule asks, so there are still seven test methods. In
+  `LoadCallsReturnTheSteppersCodes` the collision world is loaded again, and a `Reset` returns 0, before
+  the NaN-gravity `LoadConfig`, so the `Reset` that then returns 3 is refused because of the failed
+  configuration alone. The rifle-burst salt test takes the first shot step from the server's records,
+  the first whose `events.shots.count` is non-zero. Checked against a contract-exact host in a scratch
+  worktree (not committed; T285 adds it): all ten cases pass, each method also passes alone in its own
+  process, and a host that truncates the salt to 32 bits, ignores `perturbStep`, or returns a 64 KiB
+  report segment each fails the matching test.
 
 ## Delivery
 
