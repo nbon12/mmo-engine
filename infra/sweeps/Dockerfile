@@ -24,7 +24,7 @@ COPY src/MmoEngine.Regionizer.Simulator/ src/MmoEngine.Regionizer.Simulator/
 COPY src/MmoEngine.Regionizer.Simulator.Cli/ src/MmoEngine.Regionizer.Simulator.Cli/
 RUN dotnet publish src/MmoEngine.Regionizer.Simulator.Cli -c Release -nologo --no-restore -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0.15@sha256:80a51954ac70925e5783cb1ed35129a4243dcb1cddef20066b67346e17db284d
+FROM mcr.microsoft.com/dotnet/runtime:10.0.15@sha256:0a0e20d12b84b081fb737fddb92d8d205edce9ac2dc62796d2aab30f03804498
 WORKDIR /app
 COPY --from=build /app/ /app/
 COPY infra/sweeps/job-entrypoint.sh /app/job-entrypoint.sh
