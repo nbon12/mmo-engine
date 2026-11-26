@@ -126,7 +126,7 @@ the chosen engine later, and gate 9 (sub-spec 9) reads the record.
   256.
 - Per engine: 14 committed named streams plus 50 generated seeds of 8 vehicles for 20 s.
 - Three real candidates and the fixture engine (plus its perturbed browser variant) in the selection.
-- New projects: 9 in `src/`, 3 test projects, 1 benchmark project; one C++ shim; three folders in
+- New projects: 9 in `src/`, 3 test projects, 1 benchmark project; one C++ shim; four folders in
   `tools/vehicles/`.
 
 ## Constitution Check

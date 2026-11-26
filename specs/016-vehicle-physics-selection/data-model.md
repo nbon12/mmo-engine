@@ -84,7 +84,7 @@ One vehicle, inside canonical state version 2 (FR-012).
 | --- | --- | --- | --- |
 | `Id` | `u32` | identity | [1, 65535], strictly ascending |
 | `Position` | 3 × `f32` | real | the centre of mass, world frame; inside the playable area, else the step faults (`VehicleOutOfBounds`) |
-| `Orientation` | 4 × `f32` (x, y, z, w) | real | the engine's own bits; unit length within 1e-3 on load |
+| `Orientation` | 4 × `f32` (x, y, z, w) | real | the engine's own bits; \|q\|² within [0.998, 1.002] on load (contracts/vehicle-formats.md) |
 | `LinearVelocity` | 3 × `f32` | real | m/s, world frame |
 | `AngularVelocity` | 3 × `f32` | real | rad/s, world frame |
 | `Wheels[4]` | `WheelState` | | front left, front right, rear left, rear right |

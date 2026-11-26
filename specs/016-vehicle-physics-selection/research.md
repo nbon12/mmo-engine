@@ -1182,7 +1182,7 @@ unchanged. `simcore.yml` gains `workflow_dispatch` and six jobs:
 - **`vehicle-changes`** (2 min): computes, from `git diff` against the pull request's base, whether the
   change touches the selection paths (vehicle code, engine builds, vehicle streams, selection
   configuration) and the gate paths (those plus the core and the record).
-- **`vehicle-engines`** (40 min): builds and tests Jolt's native library and browser module (and the
+- **`vehicle-engines`** (45 min): builds and tests Jolt's native library and browser module (and the
   evidence-only threaded build), each build bounded by `timeout 15m`, cached by identity, with a build
   outcome per build (`Built`, `BuildFailed` or `BuildTimedOut`, the failing step and the last 50 lines);
   runs the shim's own tests with coverage and the native-dependent .NET tests; uploads the
