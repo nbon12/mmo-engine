@@ -377,8 +377,8 @@ per-vehicle cost. Neither is needed to decide whether a candidate qualifies.
 
 **Independent Test**: Run the selection run on a CI runner and check that its report holds every
 listed measurement for every built candidate, with units, the runner class, the build mode and the
-engine's identity (`simcore measure validate-report`). Check that the zero-allocation tests pass for
-every candidate's vehicle step.
+engine's identity (`simcore vehicles select validate-report`). Check that the zero-allocation tests
+pass for every candidate's vehicle step.
 
 **Acceptance Scenarios**:
 
@@ -586,7 +586,8 @@ unknown-version vehicle streams and states to the decoders and check each refusa
   - Bepu's adapter: MMO1001, for the `System.Numerics` vector types that Bepu's API and callbacks
     use.
   - Jolt's and Rapier's adapters: the native-interop members of MMO1008 (`extern` and
-    `[LibraryImport]` declarations, `NativeLibrary` and `Marshal`), plus, in the browser build,
+    `[LibraryImport]` declarations, `NativeLibrary`, `Marshal`, and `OperatingSystem.IsBrowser()` in the
+    binding factory), plus, in the browser build,
     `[JSImport]` declarations and the interop code their generator emits. Every other member of
     MMO1008 stays at Error.
 
@@ -1257,7 +1258,8 @@ unknown-version vehicle streams and states to the decoders and check each refusa
   gameplay code. Principle II requires a mechanical no-lock check. The analyzer gives the managed
   code that check (FR-004), and the lock test gives it to the engines' native code (FR-034).
   - An adapter's exemption covers only what its engine's interface forces: MMO1001 for Bepu's
-    `System.Numerics` API, and MMO1008's native-interop members for Jolt and Rapier. So the time,
+    `System.Numerics` API, and MMO1008's native-interop members plus the binding factory's
+    `OperatingSystem.IsBrowser()` check for Jolt and Rapier. So the time,
     randomness, hash-order, `double`, FMA and lock rules still hold in the adapters. Engine-neutral
     logic sits in the core under every rule (FR-033), so no vehicle logic escapes the analyzer by
     living in an adapter.
